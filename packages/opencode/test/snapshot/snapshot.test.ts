@@ -3,6 +3,8 @@ import { $ } from "bun"
 import fs from "fs/promises"
 import path from "path"
 import { Effect } from "effect"
+import { Hash } from "@mimo-ai/shared/util/hash"
+import { Global } from "../../src/global"
 import { Snapshot } from "../../src/snapshot"
 import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util"
@@ -109,6 +111,107 @@ test("revert in subdirectory", async () => {
       // The empty subdirectory will remain
     },
   })
+})
+
+// engine-runtime: [TP-R19-04]
+test("subdirectory tracking records modifications and deletions without staging sibling changes", async () => {
+  await using tmp = await tmpdir({ git: true })
+  const sub = path.join(tmp.path, "sub")
+  await fs.mkdir(sub)
+  await fs.writeFile(path.join(sub, "changed file.txt"), "original\n")
+  await fs.writeFile(path.join(sub, "removed.txt"), "remove me\n")
+  await fs.writeFile(path.join(tmp.path, "sibling.txt"), "sibling original\n")
+  const before = await run(tmp.path, (snapshot) => snapshot.track())
+  await fs.writeFile(path.join(sub, "changed file.txt"), "updated\n")
+  await fs.unlink(path.join(sub, "removed.txt"))
+  await fs.writeFile(path.join(sub, "added.txt"), "added\n")
+  await fs.writeFile(path.join(tmp.path, "sibling.txt"), "sibling pending\n")
+  const after = await run(sub, (snapshot) => snapshot.track())
+  const diff = await run(tmp.path, (snapshot) => snapshot.diffFull(before!, after!))
+  expect(diff.map((item) => item.file)).toEqual(["sub/added.txt", "sub/changed file.txt", "sub/removed.txt"])
+  expect(diff.find((item) => item.file === "sub/changed file.txt")?.patch).toContain("+updated")
+  expect(diff.find((item) => item.file === "sub/removed.txt")?.status).toBe("deleted")
+  const patch = await run(sub, (snapshot) => snapshot.patch(before!))
+  expect(patch.files.toSorted()).toEqual([fwd(sub, "added.txt"), fwd(sub, "changed file.txt"), fwd(sub, "removed.txt")])
+})
+
+// engine-runtime: [TP-R19-04]
+test("subdirectory tracking and patch filtering agree on root-relative ignore rules", async () => {
+  await using tmp = await tmpdir({ git: true })
+  const sub = path.join(tmp.path, "sub")
+  await fs.mkdir(sub)
+  await fs.writeFile(path.join(sub, "ignored.txt"), "original\n")
+  const before = await run(tmp.path, (snapshot) => snapshot.track())
+  await fs.writeFile(path.join(tmp.path, ".gitignore"), "sub/ignored.txt\nsub/new-ignored.txt\n")
+  await fs.writeFile(path.join(sub, "ignored.txt"), "ignored update\n")
+  await fs.writeFile(path.join(sub, "new-ignored.txt"), "ignored addition\n")
+  await fs.writeFile(path.join(sub, "kept.txt"), "kept addition\n")
+  const after = await run(sub, (snapshot) => snapshot.track())
+  const diff = await run(tmp.path, (snapshot) => snapshot.diffFull(before!, after!))
+  expect(diff.map((item) => [item.file, item.status])).toEqual([["sub/kept.txt", "added"]])
+  const store = await Instance.provide({
+    directory: sub,
+    fn: () => path.join(Global.Path.data, "snapshot", Instance.project.id, Hash.fast(Instance.worktree)),
+  })
+  const tree = (await $`git --git-dir ${store} ls-tree -r --name-only ${after}`.text()).trim().split("\n")
+  expect(tree).toContain("sub/kept.txt")
+  expect(tree).not.toContain("sub/ignored.txt")
+  expect(tree).not.toContain("sub/new-ignored.txt")
+  expect((await run(sub, (snapshot) => snapshot.patch(before!))).files).toEqual([fwd(sub, "kept.txt")])
+})
+
+// engine-runtime: [TP-R19-04]
+test("subdirectory tracking treats pathspec metacharacters as literal names", async () => {
+  await using tmp = await tmpdir({ git: true })
+  const sub = path.join(tmp.path, "sub[12]")
+  const sibling = path.join(tmp.path, "sub1")
+  await fs.mkdir(sub)
+  await fs.mkdir(sibling)
+  await fs.writeFile(path.join(sub, "file.txt"), "caller original\n")
+  await fs.writeFile(path.join(sibling, "file.txt"), "sibling original\n")
+  const before = await run(tmp.path, (snapshot) => snapshot.track())
+  await fs.writeFile(path.join(sub, "file.txt"), "caller updated\n")
+  await fs.writeFile(path.join(sibling, "file.txt"), "sibling pending\n")
+  const after = await run(sub, (snapshot) => snapshot.track())
+  const store = await Instance.provide({
+    directory: sub,
+    fn: () => path.join(Global.Path.data, "snapshot", Instance.project.id, Hash.fast(Instance.worktree)),
+  })
+  expect(await $`git --git-dir ${store} show ${`${after}:sub1/file.txt`}`.text()).toBe("sibling original\n")
+  expect(await $`git --git-dir ${store} show ${`${after}:sub[12]/file.txt`}`.text()).toBe("caller updated\n")
+  expect((await run(tmp.path, (snapshot) => snapshot.diffFull(before!, after!))).map((item) => item.file)).toEqual([
+    "sub[12]/file.txt",
+  ])
+  await fs.writeFile(path.join(tmp.path, ".gitignore"), "sub\\[12\\]/file.txt\n")
+  await fs.writeFile(path.join(sub, "file.txt"), "ignored update\n")
+  const ignored = await run(sub, (snapshot) => snapshot.track())
+  expect(await $`git --git-dir ${store} show ${`${ignored}:sub1/file.txt`}`.text()).toBe("sibling original\n")
+  const tree = (await $`git --git-dir ${store} ls-tree -r --name-only ${ignored}`.text()).trim().split("\n")
+  expect(tree).not.toContain("sub[12]/file.txt")
+})
+
+// engine-runtime: [TP-R19-04]
+test("subdirectory diffFull ignores diff.relative when resolving paths and ignore rules", async () => {
+  await using tmp = await tmpdir({ git: true })
+  const sub = path.join(tmp.path, "sub")
+  await fs.mkdir(sub)
+  await fs.writeFile(path.join(sub, "ignored.txt"), "before ignored\n")
+  await fs.writeFile(path.join(sub, "kept.txt"), "before kept\n")
+  const before = await run(tmp.path, (snapshot) => snapshot.track())
+  await fs.writeFile(path.join(sub, "ignored.txt"), "after ignored\n")
+  await fs.writeFile(path.join(sub, "kept.txt"), "after kept\n")
+  const after = await run(sub, (snapshot) => snapshot.track())
+  const store = await Instance.provide({
+    directory: sub,
+    fn: () => path.join(Global.Path.data, "snapshot", Instance.project.id, Hash.fast(Instance.worktree)),
+  })
+  await $`git --git-dir ${store} config diff.relative true`.quiet()
+  await fs.writeFile(path.join(tmp.path, ".gitignore"), "sub/ignored.txt\n")
+  const diff = await run(sub, (snapshot) => snapshot.diffFull(before!, after!))
+  expect(diff.map((item) => item.file)).toEqual(["sub/kept.txt"])
+  expect(diff[0]?.status).toBe("modified")
+  expect(diff[0]?.patch).toContain("-before kept")
+  expect(diff[0]?.patch).toContain("+after kept")
 })
 
 test("multiple file operations", async () => {

@@ -1,6 +1,8 @@
 import { describe, expect, afterEach } from "bun:test"
 import { Effect, Layer } from "effect"
-import { Database } from "../../src/storage"
+import { Database, eq } from "../../src/storage"
+import { SessionID } from "../../src/session/schema"
+import { ProjectID } from "../../src/project/schema"
 import { MessageTable, SessionTable, PartTable } from "../../src/session/session.sql"
 import { ProjectTable } from "../../src/project/project.sql"
 import { makeResolver } from "../../src/history/resolve"
@@ -50,12 +52,13 @@ describe("history.resolve", () => {
             .run()
         })
         const resolver = makeResolver()
-        expect(yield* resolver.projectID("ses_x")).toBe("proj_42")
+        expect(Database.use((db) => resolver.projectID("ses_x", db))).toBe("proj_42")
       }),
     ),
   )
 
-  it.live("LRU caches results — second call returns same value", () =>
+  // [TP-R12-06]
+  it.live("repeated lookups follow project changes and session removal", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const now = Date.now()
@@ -93,10 +96,34 @@ describe("history.resolve", () => {
             .run()
         })
         const resolver = makeResolver()
-        yield* resolver.projectID("ses_c")
+        Database.use((db) => resolver.projectID("ses_c", db))
 
-        // Project lookup should still resolve on a second call
-        expect(yield* resolver.projectID("ses_c")).toBe("proj_c")
+        expect(Database.use((db) => resolver.projectID("ses_c", db))).toBe("proj_c")
+        const project = Database.use((db) =>
+          db
+            .select()
+            .from(ProjectTable)
+            .where(eq(ProjectTable.id, ProjectID.make("proj_c")))
+            .get(),
+        )
+        if (!project) throw new Error("missing project fixture")
+        Database.use((db) => {
+          db.insert(ProjectTable)
+            .values({ ...project, id: ProjectID.make("proj_updated") })
+            .run()
+          db.update(SessionTable)
+            .set({ project_id: ProjectID.make("proj_updated") })
+            .where(eq(SessionTable.id, SessionID.make("ses_c")))
+            .run()
+        })
+        expect(Database.use((db) => resolver.projectID("ses_c", db))).toBe("proj_updated")
+        Database.use((db) =>
+          db
+            .delete(SessionTable)
+            .where(eq(SessionTable.id, SessionID.make("ses_c")))
+            .run(),
+        )
+        expect(Database.use((db) => resolver.projectID("ses_c", db))).toBeUndefined()
       }),
     ),
   )

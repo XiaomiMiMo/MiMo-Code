@@ -1,5 +1,6 @@
 import os from "os"
 import path from "path"
+import fs from "node:fs/promises"
 import { pathToFileURL } from "url"
 import z from "zod"
 import { Duration, Effect, Layer, Context } from "effect"
@@ -25,6 +26,7 @@ const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
 const MIMOCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
 const SKILL_PATTERN = "**/SKILL.md"
 const BUILTIN_SKILL_PATTERN = "skills/*/SKILL.md"
+const PARSED_SKILL_LIMIT = 512
 
 export const Info = z.object({
   name: z.string(),
@@ -91,9 +93,73 @@ export interface Interface {
   readonly reload: () => Effect.Effect<void>
 }
 
-const add = Effect.fnUntraced(function* (state: State, match: string, bundledRoots: string[], bus: Bus.Interface) {
-  const md = yield* Effect.tryPromise({
-    try: () => ConfigMarkdown.parse(match),
+type ParsedSkill = Readonly<Omit<Info, "location" | "bundled" | "aliases"> & { aliases?: readonly string[] }>
+
+async function fileVersion(file: string) {
+  const stat = await fs.stat(file, { bigint: true })
+  return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":")
+}
+
+// Share validated file data, not caller-specific discovery or authorization.
+function createFileLoader() {
+  const files = new Map<string, { version: string; value: Promise<ParsedSkill | undefined> }>()
+  return async (match: string) => {
+    const file = await fs.realpath(match)
+    const version = await fileVersion(file)
+    const existing = files.get(file)
+    if (existing?.version === version) {
+      files.delete(file)
+      files.set(file, existing)
+      return existing.value
+    }
+
+    const value = ConfigMarkdown.parse(file)
+      .then(async (md): Promise<ParsedSkill | undefined> => {
+        const parsed = Frontmatter.safeParse(md.data)
+        if (!parsed.success) return undefined
+        // A completed read is usable, but a changed source must not stay cached.
+        const verified = await fileVersion(file).catch(() => undefined)
+        if (verified !== version && files.get(file)?.value === value) files.delete(file)
+        return Object.freeze({
+          name: parsed.data.name,
+          description: parsed.data.description,
+          aliases: parsed.data.aliases && Object.freeze(parsed.data.aliases),
+          content: md.content,
+          disable_model_invocation: parsed.data["disable-model-invocation"],
+        })
+      })
+      .then(
+        (result) => {
+          if (!result && files.get(file)?.value === value) files.delete(file)
+          return result
+        },
+        (error) => {
+          if (files.get(file)?.value === value) files.delete(file)
+          throw error
+        },
+      )
+    // Register before awaiting so concurrent discovery shares the same read.
+    files.delete(file)
+    files.set(file, { version, value })
+    if (files.size > PARSED_SKILL_LIMIT) {
+      const oldest = files.keys().next().value
+      if (oldest) files.delete(oldest)
+    }
+    return value
+  }
+}
+
+type FileLoader = ReturnType<typeof createFileLoader>
+
+const add = Effect.fnUntraced(function* (
+  state: State,
+  match: string,
+  bundledRoots: string[],
+  bus: Bus.Interface,
+  loadFile: FileLoader,
+) {
+  const parsed = yield* Effect.tryPromise({
+    try: () => loadFile(match),
     catch: (err) => err,
   }).pipe(
     Effect.catch(
@@ -109,22 +175,19 @@ const add = Effect.fnUntraced(function* (state: State, match: string, bundledRoo
     ),
   )
 
-  if (!md) return
-
-  const parsed = Frontmatter.safeParse(md.data)
-  if (!parsed.success) return
+  if (!parsed) return
 
   const isBundled = bundledRoots.some((root) => match.startsWith(root))
-  const existing = state.skills[parsed.data.name]
+  const existing = state.skills[parsed.name]
 
   if (existing) {
     // User overrides always win: bundled must not overwrite non-bundled
     if (isBundled && !existing.bundled) return
     if (!isBundled && existing.bundled) {
-      log.info("user skill overrides bundled", { name: parsed.data.name, location: match })
+      log.info("user skill overrides bundled", { name: parsed.name, location: match })
     } else {
       log.warn("duplicate skill name", {
-        name: parsed.data.name,
+        name: parsed.name,
         existing: existing.location,
         duplicate: match,
       })
@@ -132,13 +195,10 @@ const add = Effect.fnUntraced(function* (state: State, match: string, bundledRoo
   }
 
   state.dirs.add(path.dirname(match))
-  state.skills[parsed.data.name] = {
-    name: parsed.data.name,
-    description: parsed.data.description,
-    aliases: parsed.data.aliases,
+  state.skills[parsed.name] = {
+    ...parsed,
+    aliases: parsed.aliases?.slice(),
     location: match,
-    content: md.content,
-    disable_model_invocation: parsed.data["disable-model-invocation"],
     bundled: isBundled || undefined,
   }
 })
@@ -173,17 +233,13 @@ const scan = Effect.fnUntraced(function* (
   }
 })
 
-const discoverStableSkills = Effect.fnUntraced(function* (
-  fsys: AppFileSystem.Interface,
-) {
+const discoverStableSkills = Effect.fnUntraced(function* (fsys: AppFileSystem.Interface) {
   const state: ScanState = { matches: new Set(), dirs: new Set() }
   const bundledRoots: string[] = []
 
   // Extract builtin skills to disk first (user skills with same name override)
   if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS) {
-    const builtinSkillRoot = yield* extractBuiltinBundle(fsys).pipe(
-      Effect.catch(() => Effect.succeed(undefined)),
-    )
+    const builtinSkillRoot = yield* extractBuiltinBundle(fsys).pipe(Effect.catch(() => Effect.succeed(undefined)))
     if (builtinSkillRoot && (yield* fsys.isDir(builtinSkillRoot))) {
       bundledRoots.push(builtinSkillRoot)
       yield* scan(state, builtinSkillRoot, BUILTIN_SKILL_PATTERN, { scope: "builtin" })
@@ -204,9 +260,7 @@ const discoverStableSkills = Effect.fnUntraced(function* (
 
   // Extract compose skills to disk (user skills with same name override)
   if (!Flag.MIMOCODE_DISABLE_COMPOSE_SKILLS) {
-    const composeSkillRoot = yield* extractComposeBundle(fsys).pipe(
-      Effect.catch(() => Effect.succeed(undefined)),
-    )
+    const composeSkillRoot = yield* extractComposeBundle(fsys).pipe(Effect.catch(() => Effect.succeed(undefined)))
     if (composeSkillRoot && (yield* fsys.isDir(composeSkillRoot))) {
       bundledRoots.push(composeSkillRoot)
       yield* scan(state, composeSkillRoot, SKILL_PATTERN, { scope: "compose" })
@@ -296,8 +350,13 @@ const discoverSkills = Effect.fnUntraced(function* (
   }
 })
 
-const loadSkills = Effect.fnUntraced(function* (state: State, discovered: DiscoveryState, bus: Bus.Interface) {
-  yield* Effect.forEach(discovered.matches, (match) => add(state, match, discovered.bundledRoots, bus), {
+const loadSkills = Effect.fnUntraced(function* (
+  state: State,
+  discovered: DiscoveryState,
+  bus: Bus.Interface,
+  loadFile: FileLoader,
+) {
+  yield* Effect.forEach(discovered.matches, (match) => add(state, match, discovered.bundledRoots, bus, loadFile), {
     concurrency: 1,
     discard: true,
   })
@@ -314,6 +373,7 @@ export const layer = Layer.effect(
     const config = yield* Config.Service
     const bus = yield* Bus.Service
     const fsys = yield* AppFileSystem.Service
+    const loadFile = createFileLoader()
     const [stable, invalidateStable] = yield* Effect.cachedInvalidateWithTTL(
       discoverStableSkills(fsys),
       Duration.infinity,
@@ -324,9 +384,9 @@ export const layer = Layer.effect(
       }),
     )
     const state = yield* InstanceState.make(
-      Effect.fn("Skill.state")(function* (ctx) {
+      Effect.fn("Skill.state")(function* () {
         const s: State = { skills: {}, dirs: new Set() }
-        yield* loadSkills(s, yield* InstanceState.get(discovered), bus)
+        yield* loadSkills(s, yield* InstanceState.get(discovered), bus, loadFile)
         return s
       }),
     )

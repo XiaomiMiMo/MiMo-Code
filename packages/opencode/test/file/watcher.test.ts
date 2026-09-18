@@ -9,6 +9,10 @@ import { Config } from "../../src/config"
 import { FileWatcher } from "../../src/file/watcher"
 import { Git } from "../../src/git"
 import { Instance } from "../../src/project/instance"
+import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
+import { WorkspaceRef } from "../../src/effect/instance-ref"
 
 // Native @parcel/watcher bindings aren't reliably available in CI (missing on Linux, flaky on Windows)
 const describeWatcher = FileWatcher.hasNativeBinding() && !process.env.CI ? describe : describe.skip
@@ -221,6 +225,119 @@ describeWatcher("FileWatcher", () => {
           await $`git add .`.cwd(tmp.path).quiet().nothrow()
         }),
       ),
+    )
+  })
+
+  // engine-runtime: [TP-R12-11]
+  test("routes shared HEAD updates to both Instances and keeps the remaining subscriber alive", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const directories = [path.join(tmp.path, "first"), path.join(tmp.path, "second")]
+    await Promise.all(directories.map((directory) => fs.mkdir(directory)))
+    await $`git branch next-head`.cwd(tmp.path).quiet()
+    await $`git branch final-head`.cwd(tmp.path).quiet()
+    const runtime = ManagedRuntime.make(FileWatcher.defaultLayer.pipe(Layer.provide(watcherConfigLayer)))
+    const counts = [0, 0]
+    const head = path.join(tmp.path, ".git", "HEAD")
+    const observed = (predicate: () => boolean) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          while (!predicate()) yield* Effect.sleep("10 millis")
+        }).pipe(Effect.timeout("5 seconds")),
+      )
+    try {
+      for (const [index, directory] of directories.entries()) {
+        await Instance.provide({
+          directory,
+          fn: async () => {
+            Bus.subscribe(FileWatcher.Event.Updated, (event) => {
+              if (event.properties.file === head) counts[index]++
+            })
+            await runtime.runPromise(FileWatcher.Service.use((service) => service.init()))
+          },
+        })
+      }
+      await fs.writeFile(head, "ref: refs/heads/next-head\n")
+      await observed(() => counts.every((count) => count > 0))
+      await Instance.provide({ directory: directories[0], fn: () => Instance.dispose() })
+      const before = counts.slice()
+      await fs.writeFile(head, "ref: refs/heads/final-head\n")
+      await observed(() => counts[1] > before[1])
+      expect(counts[0]).toBe(before[0])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  for (const scenario of ["named", "first-absent", "second-absent", "effect-only"] as const) {
+    // engine-runtime: [TP-R12-11]
+    test(`preserves each shared subscriber workspace: ${scenario}`, async () => {
+      await using tmp = await tmpdir({ git: true })
+      const directories = [path.join(tmp.path, "a"), path.join(tmp.path, "b")]
+      await Promise.all(directories.map((directory) => fs.mkdir(directory)))
+      await $`git branch workspace-next`.cwd(tmp.path).quiet()
+      const workspaces = [
+        scenario === "first-absent" ? undefined : WorkspaceID.make("workspace-a"),
+        scenario === "second-absent" ? undefined : WorkspaceID.make("workspace-b"),
+      ]
+      const runtime = ManagedRuntime.make(FileWatcher.defaultLayer.pipe(Layer.provide(watcherConfigLayer)))
+      const rows: GlobalEvent[] = []
+      const head = path.join(tmp.path, ".git", "HEAD")
+      const receive = (event: GlobalEvent) => {
+        if (event.payload.type === FileWatcher.Event.Updated.type && event.payload.properties.file === head)
+          rows.push(event)
+      }
+      GlobalBus.on("event", receive)
+      try {
+        for (const [index, directory] of directories.entries()) {
+          await WorkspaceContext.provide({
+            workspaceID: scenario === "effect-only" ? undefined : workspaces[index],
+            fn: () =>
+              Instance.provide({
+                directory,
+                fn: () =>
+                  runtime.runPromise(
+                    FileWatcher.Service.use((service) => service.init()).pipe(
+                      Effect.provideService(WorkspaceRef, scenario === "effect-only" ? workspaces[index] : undefined),
+                    ),
+                  ),
+              }),
+          })
+        }
+        await fs.writeFile(head, "ref: refs/heads/workspace-next\n")
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            while (!directories.every((directory) => rows.some((row) => row.directory === directory))) {
+              yield* Effect.sleep("10 millis")
+            }
+          }).pipe(Effect.timeout("5 seconds")),
+        )
+        for (const [index, directory] of directories.entries()) {
+          expect(rows.filter((row) => row.directory === directory).map((row) => row.workspace)).toEqual([
+            workspaces[index],
+          ])
+        }
+      } finally {
+        GlobalBus.off("event", receive)
+        await runtime.dispose()
+      }
+    })
+  }
+
+  // engine-runtime: [TP-R12-11]
+  test("watches a linked worktree's own HEAD rather than the project main HEAD", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const linked = path.join(tmp.path, "linked")
+    await $`git worktree add -b linked ${linked}`.cwd(tmp.path).quiet()
+    const gitdir = (await $`git rev-parse --absolute-git-dir`.cwd(linked).quiet().text()).trim()
+    const head = path.join(gitdir, "HEAD")
+    await $`git branch linked-next`.cwd(linked).quiet()
+    await withWatcher(
+      linked,
+      nextUpdate(
+        linked,
+        (evt) => evt.file === head && evt.event !== "unlink",
+        Effect.promise(() => fs.writeFile(head, "ref: refs/heads/linked-next\n")),
+      ).pipe(Effect.tap((evt) => Effect.sync(() => expect(evt.file).toBe(head)))),
     )
   })
 

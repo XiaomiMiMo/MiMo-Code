@@ -3,10 +3,10 @@ import os from "os"
 import fuzzysort from "fuzzysort"
 import { Config } from "../config"
 import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
-import { NoSuchModelError, type Provider as SDK } from "ai"
+import { NoSuchModelError } from "ai"
 import { Log } from "../util"
 import { Npm } from "../npm"
-import { Hash } from "@mimo-ai/shared/util/hash"
+import { canShareSDK, SDKBindingCache } from "./sdk-binding"
 import { Plugin } from "../plugin"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { type LanguageModelV3 } from "@ai-sdk/provider"
@@ -230,8 +230,72 @@ export function wrapRequestTimeout(
   )
 }
 
+// Capture explicit constructor input, never a model projection, Instance state or Effect bridge.
+function sdkOptions(input: Record<string, unknown>, defaultFetch: typeof fetch) {
+  const options = { ...input }
+  const customFetch = options["fetch"] as typeof fetch | undefined
+  const userChunkTimeout = options["chunkTimeout"]
+  const headerTimeout = options["headerTimeout"]
+  const chunkTimeout = typeof userChunkTimeout === "number" ? userChunkTimeout : DEFAULT_CHUNK_TIMEOUT
+  delete options["chunkTimeout"]
+  delete options["headerTimeout"]
+
+  options["fetch"] = async (input: RequestInfo | URL, init?: BunFetchRequestInit) => {
+    const fetchFn = customFetch ?? defaultFetch
+    const opts = init ?? {}
+    const callerSignal = requestSignal(input, opts)
+    const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
+    const headerTimeoutMs = headerTimeout === false ? undefined : headerTimeout
+    const headerTimeoutCtl = typeof headerTimeoutMs === "number" ? timeoutController(headerTimeoutMs) : undefined
+    const requestTimeoutCtl =
+      typeof options["timeout"] === "number" && options["timeout"] > 0
+        ? timeoutController(options["timeout"], `Request timed out after ${options["timeout"]}ms`)
+        : undefined
+    const tracked = trackAbortSource(
+      callerSignal,
+      [headerTimeoutCtl?.signal, requestTimeoutCtl?.signal].filter((signal) => signal !== undefined),
+    )
+    const signals = [tracked.signal, chunkAbortCtl?.signal].filter((signal) => signal !== undefined)
+    if (signals.length > 0) opts.signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
+
+    const res = await Promise.resolve()
+      .then(() =>
+        fetchFn(input, {
+          ...opts,
+          // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
+          timeout: false,
+        }),
+      )
+      .catch((error: unknown) => {
+        requestTimeoutCtl?.clear()
+        tracked.dispose()
+        throw normalizeTimeoutError(error, tracked.source(), tracked.winner())
+      })
+      .finally(() => headerTimeoutCtl?.clear())
+
+    tracked.dispose()
+    const bounded = requestTimeoutCtl
+      ? wrapRequestTimeout(res, callerSignal, requestTimeoutCtl.signal, requestTimeoutCtl.clear)
+      : res
+    if (!chunkAbortCtl) return bounded
+    return wrapSSE(bounded, chunkTimeout, chunkAbortCtl)
+  }
+  return options
+}
+
 type BundledSDK = {
   languageModel(modelId: string): LanguageModelV3
+}
+
+async function sdkFactory(npm: string) {
+  const bundled = BUNDLED_PROVIDERS[npm]
+  if (bundled) return bundled()
+  const installed = npm.startsWith("file://") ? npm : (await Npm.add(npm)).entrypoint
+  if (!installed) throw new Error(`Package ${npm} has no import entrypoint`)
+  const mod = await import(installed.startsWith("file://") ? installed : pathToFileURL(installed).href)
+  return mod[Object.keys(mod).find((key) => key.startsWith("create"))!] as (
+    options: Record<string, unknown>,
+  ) => BundledSDK
 }
 
 const BUNDLED_PROVIDERS: Record<string, () => Promise<(opts: any) => BundledSDK>> = {
@@ -1088,9 +1152,10 @@ export interface Interface {
 }
 
 interface State {
-  models: Map<string, LanguageModelV3>
+  models: Map<string, { key: string; language: LanguageModelV3 }>
   providers: Record<ProviderID, Info>
-  sdk: Map<string, BundledSDK>
+  sdk: SDKBindingCache
+  authBindings: Set<ProviderID>
   modelLoaders: Record<string, CustomModelLoader>
   varsLoaders: Record<string, CustomVarsLoader>
 }
@@ -1238,6 +1303,7 @@ const layer: Layer.Layer<
     const auth = yield* Auth.Service
     const env = yield* Env.Service
     const plugin = yield* Plugin.Service
+    const bindings = new SDKBindingCache()
 
     const state = yield* InstanceState.make<State>(() =>
       Effect.gen(function* () {
@@ -1248,14 +1314,15 @@ const layer: Layer.Layer<
         const database = mapValues(modelsDev, fromModelsDevProvider)
 
         const providers: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
-        const languages = new Map<string, LanguageModelV3>()
+        const languages: State["models"] = new Map()
         const modelLoaders: {
           [providerID: string]: CustomModelLoader
         } = {}
         const varsLoaders: {
           [providerID: string]: CustomVarsLoader
         } = {}
-        const sdk = new Map<string, BundledSDK>()
+        const sdk = new SDKBindingCache()
+        const authBindings = new Set<ProviderID>()
         const discoveryLoaders: {
           [providerID: string]: CustomDiscoverModels
         } = {}
@@ -1465,11 +1532,10 @@ const layer: Layer.Layer<
             continue
           }
 
+          // Auth loaders may capture their Host/Instance even when they return only data.
+          authBindings.add(providerID)
           const options = yield* Effect.promise(() =>
-            plugin.auth!.loader!(
-              () => bridge.promise(auth.get(providerID).pipe(Effect.orDie)) as any,
-              catalog,
-            ),
+            plugin.auth!.loader!(() => bridge.promise(auth.get(providerID).pipe(Effect.orDie)) as any, catalog),
           )
           const opts = options ?? {}
           const patch: Partial<Info> = providers[providerID] ? { options: opts } : { source: "custom", options: opts }
@@ -1604,6 +1670,7 @@ const layer: Layer.Layer<
           models: languages,
           providers,
           sdk,
+          authBindings,
           modelLoaders,
           varsLoaders,
         }
@@ -1657,106 +1724,22 @@ const layer: Layer.Layer<
             ...model.headers,
           }
 
-        const key = Hash.fast(
-          JSON.stringify({
-            providerID: model.providerID,
-            npm: model.api.npm,
-            options,
-          }),
-        )
-        const existing = s.sdk.get(key)
-        if (existing) return existing
-
-        const customFetch = options["fetch"]
-        const userChunkTimeout = options["chunkTimeout"]
-        const headerTimeout = options["headerTimeout"]
-        const chunkTimeout =
-          typeof userChunkTimeout === "number"
-            ? userChunkTimeout  // user-set value (incl. 0 / negative to disable)
-            : DEFAULT_CHUNK_TIMEOUT
-        delete options["chunkTimeout"]
-        delete options["headerTimeout"]
-
-        options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
-          const fetchFn = customFetch ?? fetch
-          const opts = init ?? {}
-          const callerSignal = requestSignal(input, opts)
-          const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
-          const headerTimeoutMs = headerTimeout === false ? undefined : headerTimeout
-          const headerTimeoutCtl = typeof headerTimeoutMs === "number" ? timeoutController(headerTimeoutMs) : undefined
-          const requestTimeoutCtl =
-            typeof options["timeout"] === "number" && options["timeout"] > 0
-              ? timeoutController(options["timeout"], `Request timed out after ${options["timeout"]}ms`)
-              : undefined
-          const tracked = trackAbortSource(
-            callerSignal,
-            [headerTimeoutCtl?.signal, requestTimeoutCtl?.signal].filter((signal) => signal !== undefined),
-          )
-          const signals = [tracked.signal, chunkAbortCtl?.signal].filter((signal) => signal !== undefined)
-          if (signals.length > 0) opts.signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
-
-          const res = await Promise.resolve()
-            .then(() =>
-              fetchFn(input, {
-                ...opts,
-                // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
-                timeout: false,
-              }),
-            )
-            .catch((error: unknown) => {
-              requestTimeoutCtl?.clear()
-              tracked.dispose()
-              throw normalizeTimeoutError(error, tracked.source(), tracked.winner())
-            })
-            .finally(() => {
-              headerTimeoutCtl?.clear()
-            })
-
-          tracked.dispose()
-          const bounded = requestTimeoutCtl
-            ? wrapRequestTimeout(res, callerSignal, requestTimeoutCtl.signal, requestTimeoutCtl.clear)
-            : res
-          if (!chunkAbortCtl) return bounded
-          return wrapSSE(bounded, chunkTimeout, chunkAbortCtl)
-        }
-
-        const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
-        if (bundledLoader) {
-          log.info("using bundled provider", {
-            providerID: model.providerID,
-            pkg: model.api.npm,
-          })
-          const factory = await bundledLoader()
-          const loaded = factory({
-            name: model.providerID,
-            ...options,
-          })
-          s.sdk.set(key, loaded)
-          return loaded as SDK
-        }
-
-        let installedPath: string
-        if (!model.api.npm.startsWith("file://")) {
-          const item = await Npm.add(model.api.npm)
-          if (!item.entrypoint) throw new Error(`Package ${model.api.npm} has no import entrypoint`)
-          installedPath = item.entrypoint
-        } else {
-          log.info("loading local provider", { pkg: model.api.npm })
-          installedPath = model.api.npm
-        }
-
-        // `installedPath` is a local entry path or an existing `file://` URL. Normalize
-        // only path inputs so Node on Windows accepts the dynamic import.
-        const importSpec = installedPath.startsWith("file://") ? installedPath : pathToFileURL(installedPath).href
-        const mod = await import(importSpec)
-
-        const fn = mod[Object.keys(mod).find((key) => key.startsWith("create"))!]
-        const loaded = fn({
-          name: model.providerID,
-          ...options,
+        const input = { name: model.providerID, ...options }
+        const shared = !s.authBindings.has(model.providerID) && canShareSDK(model.api.npm, input)
+        // A pooled SDK must not retain mutable nested options owned by its first caller.
+        const snapshot = shared ? structuredClone(input) : input
+        const factory = await sdkFactory(model.api.npm)
+        const cache = shared ? bindings : s.sdk
+        const defaultFetch = fetch
+        const key = cache.key({
+          factory,
+          providerID: model.providerID,
+          npm: model.api.npm,
+          options: snapshot,
+          envs,
+          defaultFetch,
         })
-        s.sdk.set(key, loaded)
-        return loaded as SDK
+        return await cache.get(key, () => factory(sdkOptions(snapshot, defaultFetch)))
       } catch (e) {
         throw new InitError({ providerID: model.providerID }, { cause: e })
       }
@@ -1790,12 +1773,20 @@ const layer: Layer.Layer<
       }
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
-      const key = `${model.providerID}/${model.id}`
-      if (s.models.has(key)) return s.models.get(key)!
+      const slot = `${model.providerID}/${model.id}`
 
       return yield* Effect.promise(async () => {
         const provider = s.providers[model.providerID]
         const sdk = await resolveSDK(model, s, envs)
+        const key = s.sdk.key({
+          sdk: s.sdk.reference(sdk),
+          apiID: model.api.id,
+          options: provider.options,
+          modelOptions: model.options,
+          loader: s.modelLoaders[model.providerID],
+        })
+        const existing = s.models.get(slot)
+        if (existing?.key === key) return existing.language
 
         try {
           const language = s.modelLoaders[model.providerID]
@@ -1804,7 +1795,7 @@ const layer: Layer.Layer<
                 ...model.options,
               })
             : sdk.languageModel(model.api.id)
-          s.models.set(key, language)
+          s.models.set(slot, { key, language })
           return language
         } catch (e) {
           if (e instanceof NoSuchModelError)
@@ -1947,7 +1938,9 @@ const layer: Layer.Layer<
         return { providerID: entry.providerID, modelID: entry.modelID }
       }
 
-      const allowed = Object.values(s.providers).filter((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
+      const allowed = Object.values(s.providers).filter(
+        (p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id),
+      )
       if (!allowed.length) throw new Error("no providers found")
       for (const provider of allowed) {
         const model = sortBy(
@@ -1961,7 +1954,17 @@ const layer: Layer.Layer<
       throw new Error("no models found")
     })
 
-    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, getVisionModel, defaultModel, resolveModelRef })
+    return Service.of({
+      list,
+      getProvider,
+      getModel,
+      getLanguage,
+      closest,
+      getSmallModel,
+      getVisionModel,
+      defaultModel,
+      resolveModelRef,
+    })
   }),
 )
 

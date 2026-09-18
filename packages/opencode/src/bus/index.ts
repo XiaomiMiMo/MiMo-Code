@@ -26,6 +26,10 @@ type State = {
   typed: Map<string, PubSub.PubSub<Payload>>
 }
 
+function isPayloadFor<D extends BusEvent.Definition>(event: Payload, def: D): event is Payload<D> {
+  return event.type === def.type
+}
+
 export interface Interface {
   readonly publish: <D extends BusEvent.Definition>(
     def: D,
@@ -38,6 +42,10 @@ export interface Interface {
     callback: (event: Payload<D>) => unknown,
   ) => Effect.Effect<() => void>
   readonly subscribeAllCallback: (callback: (event: any) => unknown) => Effect.Effect<() => void>
+  readonly subscribeRuntimeCallback: <D extends BusEvent.Definition>(
+    def: D,
+    callback: (event: Payload<D>) => void,
+  ) => Effect.Effect<() => void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Bus") {}
@@ -45,6 +53,8 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Bu
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
+    const runtimeListeners = new Map<string, Set<(event: Payload) => void>>()
+    yield* Effect.addFinalizer(() => Effect.sync(() => runtimeListeners.clear()))
     const state = yield* InstanceState.make<State>(
       Effect.fn("Bus.state")(function* (ctx) {
         const wildcard = yield* PubSub.unbounded<Payload>()
@@ -85,6 +95,16 @@ export const layer = Layer.effect(
         const s = yield* InstanceState.get(state)
         const payload: Payload = { type: def.type, properties }
         log.debug("publishing", { type: def.type })
+
+        // Keep local delivery separate from GlobalBus's raw remote events.
+        const listeners = Array.from(runtimeListeners.get(def.type) ?? [])
+        for (const listener of listeners) {
+          try {
+            listener(payload)
+          } catch (cause) {
+            log.error("runtime subscriber failed", { type: def.type, cause })
+          }
+        }
 
         const ps = s.typed.get(def.type)
         if (ps) yield* PubSub.publish(ps, payload)
@@ -166,7 +186,28 @@ export const layer = Layer.effect(
       return yield* on(s.wildcard, "*", callback)
     })
 
-    return Service.of({ publish, subscribe, subscribeAll, subscribeCallback, subscribeAllCallback })
+    const subscribeRuntimeCallback = <D extends BusEvent.Definition>(def: D, callback: (event: Payload<D>) => void) =>
+      Effect.sync(() => {
+        const listeners = runtimeListeners.get(def.type) ?? new Set<(event: Payload) => void>()
+        const listener = (event: Payload) => {
+          if (isPayloadFor(event, def)) callback(event)
+        }
+        runtimeListeners.set(def.type, listeners)
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+          if (listeners.size === 0 && runtimeListeners.get(def.type) === listeners) runtimeListeners.delete(def.type)
+        }
+      })
+
+    return Service.of({
+      publish,
+      subscribe,
+      subscribeAll,
+      subscribeCallback,
+      subscribeAllCallback,
+      subscribeRuntimeCallback,
+    })
   }),
 )
 

@@ -1,8 +1,11 @@
-import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { describe, expect, spyOn } from "bun:test"
+import { Effect, Fiber, Layer } from "effect"
 import { Skill } from "../../src/skill"
+import { ConfigMarkdown } from "../../src/config"
+import { Permission } from "../../src/permission"
+import { Filesystem } from "../../src/util"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { provideInstance, provideTmpdirInstance, tmpdir } from "../fixture/fixture"
+import { provideInstance, provideTmpdirInstance, tmpdir, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { withEnv } from "../lib/env"
 import path from "path"
@@ -261,71 +264,74 @@ description: A skill in the .claude/skills directory.
     }),
   )
 
-  it.live("keeps one global snapshot across project instances until reload", () =>
-    Effect.gen(function* () {
-      const home = yield* Effect.acquireRelease(
-        Effect.promise(() => tmpdir({ git: true })),
-        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
-      )
-      const firstProject = yield* Effect.acquireRelease(
-        Effect.promise(() => tmpdir({ git: true })),
-        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
-      )
-      const secondProject = yield* Effect.acquireRelease(
-        Effect.promise(() => tmpdir({ git: true })),
-        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
-      )
+  it.live(
+    "keeps one global snapshot across project instances until reload",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* Effect.acquireRelease(
+          Effect.promise(() => tmpdir({ git: true })),
+          (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+        )
+        const firstProject = yield* Effect.acquireRelease(
+          Effect.promise(() => tmpdir({ git: true })),
+          (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+        )
+        const secondProject = yield* Effect.acquireRelease(
+          Effect.promise(() => tmpdir({ git: true })),
+          (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+        )
 
-      yield* withHome(
-        home.path,
-        Effect.gen(function* () {
-          yield* Effect.promise(() => createSkill(home.path, ".claude", "first-global", "First snapshot"))
-          const skill = yield* Skill.Service
-          expect((yield* skill.all().pipe(provideInstance(firstProject.path))).map((item) => item.name)).toEqual([
-            "first-global",
-          ])
+        yield* withHome(
+          home.path,
+          Effect.gen(function* () {
+            yield* Effect.promise(() => createSkill(home.path, ".claude", "first-global", "First snapshot"))
+            const skill = yield* Skill.Service
+            expect((yield* skill.all().pipe(provideInstance(firstProject.path))).map((item) => item.name)).toEqual([
+              "first-global",
+            ])
 
-          yield* Effect.promise(() => createSkill(home.path, ".agents", "second-global", "Added later"))
-          expect((yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name)).toEqual([
-            "first-global",
-          ])
+            yield* Effect.promise(() => createSkill(home.path, ".agents", "second-global", "Added later"))
+            expect((yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name)).toEqual([
+              "first-global",
+            ])
 
-          yield* skill.reload().pipe(provideInstance(secondProject.path))
-          expect((yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name).toSorted()).toEqual([
-            "first-global",
-            "second-global",
-          ])
-        }),
-      )
-    }),
+            yield* skill.reload().pipe(provideInstance(secondProject.path))
+            expect(
+              (yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name).toSorted(),
+            ).toEqual(["first-global", "second-global"])
+          }),
+        )
+      }),
     30_000,
   )
 
-  it.live("uses deterministic source order when global skills share a name", () =>
-    Effect.gen(function* () {
-      const tmp = yield* Effect.acquireRelease(
-        Effect.promise(() => tmpdir({ git: true })),
-        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
-      )
+  it.live(
+    "uses deterministic source order when global skills share a name",
+    () =>
+      Effect.gen(function* () {
+        const tmp = yield* Effect.acquireRelease(
+          Effect.promise(() => tmpdir({ git: true })),
+          (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+        )
 
-      yield* withHome(
-        tmp.path,
-        Effect.gen(function* () {
-          yield* Effect.promise(() =>
-            Promise.all([
-              createSkill(tmp.path, ".claude", "duplicate-global", "Claude copy"),
-              createSkill(tmp.path, ".agents", "duplicate-global", "Agents copy"),
-            ]),
-          )
-          const skill = yield* Skill.Service
-          const item = (yield* skill.all().pipe(provideInstance(tmp.path))).find(
-            (item) => item.name === "duplicate-global",
-          )
-          expect(item?.description).toBe("Agents copy")
-          expect(item?.location).toContain(path.join(".agents", "skills", "duplicate-global", "SKILL.md"))
-        }),
-      )
-    }),
+        yield* withHome(
+          tmp.path,
+          Effect.gen(function* () {
+            yield* Effect.promise(() =>
+              Promise.all([
+                createSkill(tmp.path, ".claude", "duplicate-global", "Claude copy"),
+                createSkill(tmp.path, ".agents", "duplicate-global", "Agents copy"),
+              ]),
+            )
+            const skill = yield* Skill.Service
+            const item = (yield* skill.all().pipe(provideInstance(tmp.path))).find(
+              (item) => item.name === "duplicate-global",
+            )
+            expect(item?.description).toBe("Agents copy")
+            expect(item?.location).toContain(path.join(".agents", "skills", "duplicate-global", "SKILL.md"))
+          }),
+        )
+      }),
     30_000,
   )
 
@@ -616,4 +622,359 @@ description: Anyone may start this one.
       { git: true },
     ),
   )
+})
+
+// engine-runtime: [TP-R12-01] [TP-R12-02] [TP-R12-03] [TP-R12-08]
+describe("shared skill parsing", () => {
+  const observeParsing = () =>
+    Effect.acquireRelease(
+      Effect.sync(() => spyOn(ConfigMarkdown, "parse")),
+      (parse) => Effect.sync(() => parse.mockRestore()),
+    )
+
+  // [TP-R12-08]
+  it.live(
+    "joins a pending file read before the first parser is released",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* tmpdirScoped({ git: true })
+        const first = yield* tmpdirScoped({ git: true })
+        const second = yield* tmpdirScoped({ git: true })
+        const file = path.join(home, ".agents", "skills", "pending", "SKILL.md")
+        yield* Effect.promise(() =>
+          Bun.write(file, "---\nname: pending\ndescription: Pending read\n---\nOne shared read\n"),
+        )
+        const original = ConfigMarkdown.parse
+        const parse = yield* observeParsing()
+        const stat = yield* Effect.acquireRelease(
+          Effect.sync(() => spyOn(fs, "stat")),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        )
+        const started = Promise.withResolvers<void>()
+        const gate = Promise.withResolvers<void>()
+        let blocked = false
+        parse.mockImplementation(async (target) => {
+          if (target === file && !blocked) {
+            blocked = true
+            started.resolve()
+            await gate.promise
+          }
+          return original(target)
+        })
+        const skill = yield* Skill.Service
+        yield* withHome(
+          home,
+          Effect.gen(function* () {
+            const a = yield* skill.get("pending").pipe(provideInstance(first), Effect.forkScoped)
+            try {
+              yield* Effect.promise(() => started.promise).pipe(Effect.timeout("5 seconds"))
+              const before = stat.mock.calls.length
+              const b = yield* skill.get("pending").pipe(provideInstance(second), Effect.forkScoped)
+              try {
+                const index = yield* Effect.gen(function* () {
+                  for (;;) {
+                    const index = stat.mock.calls.findIndex(
+                      (call, index) => index >= before && call[0] === file && call[1]?.bigint === true,
+                    )
+                    if (index >= 0) return index
+                    yield* Effect.sleep("1 millis")
+                  }
+                }).pipe(Effect.timeout("5 seconds"))
+                const result = stat.mock.results[index]
+                if (!result || result.type !== "return") throw new Error("metadata lookup did not return")
+                yield* Effect.promise(() => Promise.resolve(result.value))
+                yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)))
+                expect(parse.mock.calls.filter((call) => call[0] === file)).toHaveLength(1)
+                gate.resolve()
+                expect((yield* Fiber.join(a))?.content).toBe("One shared read\n")
+                expect((yield* Fiber.join(b))?.content).toBe("One shared read\n")
+              } finally {
+                gate.resolve()
+                yield* Fiber.await(b)
+              }
+            } finally {
+              gate.resolve()
+              yield* Fiber.await(a)
+            }
+          }),
+        )
+      }),
+    30_000,
+  )
+
+  // [TP-R12-08]
+  it.live(
+    "does not publish a changed-during-read version into the shared cache",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* tmpdirScoped({ git: true })
+        const first = yield* tmpdirScoped({ git: true })
+        const second = yield* tmpdirScoped({ git: true })
+        const file = path.join(home, ".agents", "skills", "changing", "SKILL.md")
+        yield* Effect.promise(() =>
+          Bun.write(file, "---\nname: changing\ndescription: First version\n---\nFirst body\n"),
+        )
+        const original = ConfigMarkdown.parse
+        const parse = yield* observeParsing()
+        parse.mockImplementationOnce(async (target) => {
+          const parsed = await original(target)
+          await fs.writeFile(file, "---\nname: changing\ndescription: Second version\n---\nSecond body\n")
+          return parsed
+        })
+        const skill = yield* Skill.Service
+        yield* withHome(
+          home,
+          Effect.gen(function* () {
+            expect((yield* skill.get("changing").pipe(provideInstance(first)))?.content).toBe("First body\n")
+            expect((yield* skill.get("changing").pipe(provideInstance(second)))?.content).toBe("Second body\n")
+            expect(parse.mock.calls.filter((call) => call[0] === file)).toHaveLength(2)
+          }),
+        )
+      }),
+    30_000,
+  )
+
+  it.live(
+    "coalesces global parsing across instances without sharing mutable results or permissions",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* tmpdirScoped({ git: true })
+        const first = yield* tmpdirScoped({ git: true })
+        const second = yield* tmpdirScoped({ git: true })
+        const third = yield* tmpdirScoped({ git: true })
+        const file = path.join(home, ".agents", "skills", "shared", "SKILL.md")
+        yield* Effect.promise(() =>
+          Bun.write(
+            file,
+            "---\nname: shared\ndescription: Shared instructions\naliases: [original]\n---\nOriginal body\n",
+          ),
+        )
+        const parse = yield* observeParsing()
+        const read = yield* Effect.acquireRelease(
+          Effect.sync(() => spyOn(Filesystem, "readText")),
+          (read) => Effect.sync(() => read.mockRestore()),
+        )
+        const skill = yield* Skill.Service
+
+        yield* withHome(
+          home,
+          Effect.gen(function* () {
+            const [a, b] = yield* Effect.all(
+              [skill.get("shared").pipe(provideInstance(first)), skill.get("shared").pipe(provideInstance(second))],
+              { concurrency: "unbounded" },
+            )
+            expect(a?.content).toBe("Original body\n")
+            expect(b?.location).toBe(file)
+            expect(parse).toHaveBeenCalledTimes(1)
+            expect(a).not.toBe(b)
+            expect(a?.aliases).not.toBe(b?.aliases)
+            a!.aliases!.push("first-only")
+            a!.description = "First instance only"
+            a!.disable_model_invocation = true
+            expect(b?.aliases).toEqual(["original"])
+            expect(b?.description).toBe("Shared instructions")
+
+            const c = yield* skill.get("shared").pipe(provideInstance(third))
+            expect(c?.aliases).toEqual(["original"])
+            expect(c?.disable_model_invocation).toBeUndefined()
+            expect(parse).toHaveBeenCalledTimes(1)
+            expect(read.mock.calls.filter(([target]) => target === file)).toHaveLength(1)
+            const denied = {
+              name: "test",
+              mode: "all" as const,
+              options: {},
+              permission: Permission.fromConfig({ skill: "deny" }),
+            }
+            const allowed = { ...denied, permission: Permission.fromConfig({ skill: "allow" }) }
+            expect(yield* skill.available(denied).pipe(provideInstance(second))).toEqual([])
+            expect((yield* skill.available(allowed).pipe(provideInstance(third))).map((item) => item.name)).toEqual([
+              "shared",
+            ])
+            expect(yield* skill.modelInvocable(allowed).pipe(provideInstance(first))).toEqual([])
+            expect(
+              (yield* skill.modelInvocable(allowed).pipe(provideInstance(second))).map((item) => item.name),
+            ).toEqual(["shared"])
+          }),
+        )
+      }),
+    30_000,
+  )
+
+  it.live(
+    "shares a physical file reached through different symlinks but preserves each discovered location",
+    () =>
+      Effect.gen(function* () {
+        const source = yield* tmpdirScoped({ git: true })
+        const first = yield* tmpdirScoped({ git: true })
+        const second = yield* tmpdirScoped({ git: true })
+        yield* Effect.promise(() =>
+          Bun.write(path.join(source, "SKILL.md"), "---\nname: linked\ndescription: Linked source\n---\nLinked body\n"),
+        )
+        const roots = [first, second].map((dir) => path.join(dir, ".agents", "skills", "linked"))
+        yield* Effect.promise(() =>
+          Promise.all(
+            roots.map(async (root) => {
+              await fs.mkdir(path.dirname(root), { recursive: true })
+              await fs.symlink(source, root, "junction")
+            }),
+          ),
+        )
+        const parse = yield* observeParsing()
+        const skill = yield* Skill.Service
+        const [a, b] = yield* Effect.all(
+          [skill.get("linked").pipe(provideInstance(first)), skill.get("linked").pipe(provideInstance(second))],
+          { concurrency: "unbounded" },
+        )
+        expect(a?.content).toBe("Linked body\n")
+        expect(b?.content).toBe("Linked body\n")
+        expect(a?.location).toBe(path.join(roots[0], "SKILL.md"))
+        expect(b?.location).toBe(path.join(roots[1], "SKILL.md"))
+        expect(yield* skill.dirs().pipe(provideInstance(first))).toEqual([roots[0]])
+        expect(yield* skill.dirs().pipe(provideInstance(second))).toEqual([roots[1]])
+        expect(parse).toHaveBeenCalledTimes(1)
+
+        const replacement = yield* tmpdirScoped({ git: true })
+        yield* Effect.promise(async () => {
+          await Bun.write(
+            path.join(replacement, "SKILL.md"),
+            "---\nname: linked\ndescription: New source\n---\nNew body\n",
+          )
+          await fs.unlink(roots[1])
+          await fs.symlink(replacement, roots[1], "junction")
+        })
+        yield* skill.reload().pipe(provideInstance(second))
+        expect((yield* skill.get("linked").pipe(provideInstance(second)))?.content).toBe("New body\n")
+        expect((yield* skill.get("linked").pipe(provideInstance(second)))?.location).toBe(
+          path.join(roots[1], "SKILL.md"),
+        )
+        expect((yield* skill.get("linked").pipe(provideInstance(first)))?.content).toBe("Linked body\n")
+        expect(parse).toHaveBeenCalledTimes(2)
+      }),
+    30_000,
+  )
+
+  it.live(
+    "keeps global and project definitions with the same name in their own discovery roots",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* tmpdirScoped({ git: true })
+        const first = yield* tmpdirScoped({ git: true })
+        const second = yield* tmpdirScoped({ git: true })
+        const third = yield* tmpdirScoped({ git: true })
+        yield* Effect.promise(() =>
+          Promise.all([
+            createSkill(home, ".agents", "same-name", "Global source"),
+            createSkill(first, ".agents", "same-name", "First source"),
+            createSkill(second, ".agents", "same-name", "Second source"),
+            createSkill(first, ".agents", "first-only", "Not globally discovered"),
+          ]),
+        )
+        const parse = yield* observeParsing()
+        const skill = yield* Skill.Service
+        yield* withHome(
+          home,
+          Effect.gen(function* () {
+            const [a, b, c] = yield* Effect.all(
+              [first, second, third].map((dir) => skill.get("same-name").pipe(provideInstance(dir))),
+              { concurrency: "unbounded" },
+            )
+            expect(a?.description).toBe("First source")
+            expect(b?.description).toBe("Second source")
+            expect(c?.description).toBe("Global source")
+            expect(a?.location).toBe(path.join(first, ".agents", "skills", "same-name", "SKILL.md"))
+            expect(b?.location).toBe(path.join(second, ".agents", "skills", "same-name", "SKILL.md"))
+            expect(yield* skill.get("first-only").pipe(provideInstance(second))).toBeUndefined()
+            expect(yield* skill.get("first-only").pipe(provideInstance(third))).toBeUndefined()
+            expect(yield* skill.dirs().pipe(provideInstance(second))).not.toContain(
+              path.join(first, ".agents", "skills", "first-only"),
+            )
+            expect(parse).toHaveBeenCalledTimes(4)
+          }),
+        )
+      }),
+    30_000,
+  )
+
+  it.live(
+    "reload observes changed, deleted and recreated files without mutating another instance snapshot",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* tmpdirScoped({ git: true })
+        const first = yield* tmpdirScoped({ git: true })
+        const second = yield* tmpdirScoped({ git: true })
+        const file = path.join(home, ".agents", "skills", "versioned", "SKILL.md")
+        const content = (version: string) => `---\nname: versioned\ndescription: ${version}\n---\n${version}\n`
+        yield* Effect.promise(() => Bun.write(file, content("first")))
+        const parse = yield* observeParsing()
+        const skill = yield* Skill.Service
+        yield* withHome(
+          home,
+          Effect.gen(function* () {
+            expect((yield* skill.get("versioned").pipe(provideInstance(first)))?.content).toBe("first\n")
+            expect((yield* skill.get("versioned").pipe(provideInstance(second)))?.content).toBe("first\n")
+            const before = yield* Effect.promise(() => fs.stat(file))
+            // Same size and restored mtime must still be recognized as a new version.
+            yield* Effect.promise(async () => {
+              await fs.writeFile(file, content("other"))
+              await fs.utimes(file, before.atime, before.mtime)
+            })
+            yield* skill.reload().pipe(provideInstance(second))
+            expect((yield* skill.get("versioned").pipe(provideInstance(second)))?.content).toBe("other\n")
+            expect((yield* skill.get("versioned").pipe(provideInstance(first)))?.content).toBe("first\n")
+            expect(parse).toHaveBeenCalledTimes(2)
+            yield* skill.reload().pipe(provideInstance(first))
+            expect((yield* skill.get("versioned").pipe(provideInstance(first)))?.content).toBe("other\n")
+            expect(parse).toHaveBeenCalledTimes(2)
+
+            yield* Effect.promise(() => fs.unlink(file))
+            // Even a retained discovery entry must not resurrect deleted file data.
+            const third = yield* tmpdirScoped({ git: true })
+            expect(yield* skill.get("versioned").pipe(provideInstance(third))).toBeUndefined()
+            yield* skill.reload().pipe(provideInstance(second))
+            expect(yield* skill.get("versioned").pipe(provideInstance(second))).toBeUndefined()
+            expect(yield* skill.dirs().pipe(provideInstance(second))).toEqual([])
+            expect((yield* skill.get("versioned").pipe(provideInstance(first)))?.content).toBe("other\n")
+            yield* Effect.promise(() => fs.writeFile(file, content("third")))
+            yield* skill.reload().pipe(provideInstance(second))
+            expect((yield* skill.get("versioned").pipe(provideInstance(second)))?.content).toBe("third\n")
+            expect(parse).toHaveBeenCalledTimes(3)
+          }),
+        )
+      }),
+    30_000,
+  )
+
+  for (const invalid of [
+    "---\nname: [unterminated\n---\nInvalid YAML\n",
+    "---\nname: repaired\n---\nMissing description\n",
+  ]) {
+    it.live(
+      `does not cache unsuccessful parsing: ${invalid.includes("unterminated") ? "YAML error" : "invalid schema"}`,
+      () =>
+        Effect.gen(function* () {
+          const home = yield* tmpdirScoped({ git: true })
+          const first = yield* tmpdirScoped({ git: true })
+          const second = yield* tmpdirScoped({ git: true })
+          const file = path.join(home, ".agents", "skills", "repaired", "SKILL.md")
+          yield* Effect.promise(() => Bun.write(file, invalid))
+          const parse = yield* observeParsing()
+          const skill = yield* Skill.Service
+          yield* withHome(
+            home,
+            Effect.gen(function* () {
+              expect(yield* skill.all().pipe(provideInstance(first))).toEqual([])
+              expect(yield* skill.all().pipe(provideInstance(second))).toEqual([])
+              expect(parse).toHaveBeenCalledTimes(2)
+              yield* Effect.promise(() =>
+                Bun.write(file, "---\nname: repaired\ndescription: Repaired source\n---\nWorking body\n"),
+              )
+              yield* skill.reload().pipe(provideInstance(second))
+              expect((yield* skill.get("repaired").pipe(provideInstance(second)))?.content).toBe("Working body\n")
+              expect(parse).toHaveBeenCalledTimes(3)
+            }),
+          )
+        }),
+      30_000,
+    )
+  }
 })

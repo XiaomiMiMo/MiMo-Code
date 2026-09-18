@@ -1,10 +1,12 @@
-import { Cause, Duration, Effect, Layer, Schedule, Semaphore, Context, Stream } from "effect"
+import { Cause, Duration, Effect, Layer, Schedule, Context, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { formatPatch, structuredPatch } from "diff"
 import path from "path"
 import z from "zod"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { InstanceState } from "@/effect"
+import { InstanceRef } from "@/effect/instance-ref"
+import * as Resources from "./resources"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Hash } from "@mimo-ai/shared/util/hash"
 import { Config } from "../config"
@@ -67,16 +69,49 @@ export const layer: Layer.Layer<
     const fs = yield* AppFileSystem.Service
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const config = yield* Config.Service
-    const locks = new Map<string, Semaphore.Semaphore>()
+    const resources = Resources.make()
 
-    const lock = (key: string) => {
-      const hit = locks.get(key)
-      if (hit) return hit
+    const git = Effect.fnUntraced(
+      function* (
+        cmd: string[],
+        opts?: { cwd?: string; env?: Record<string, string>; stdin?: ChildProcess.CommandInput },
+      ) {
+        const proc = ChildProcess.make("git", cmd, {
+          cwd: opts?.cwd,
+          env: opts?.env,
+          extendEnv: true,
+          stdin: opts?.stdin,
+        })
+        const handle = yield* spawner.spawn(proc)
+        const [text, stderr] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr))],
+          { concurrency: 2 },
+        )
+        const code = yield* handle.exitCode
+        return { code, text, stderr } satisfies GitResult
+      },
+      Effect.scoped,
+      Effect.catch((err) =>
+        Effect.succeed({
+          code: ChildProcessSpawner.ExitCode(1),
+          text: "",
+          stderr: err instanceof Error ? err.message : String(err),
+        }),
+      ),
+    )
 
-      const next = Semaphore.makeUnsafe(1)
-      locks.set(key, next)
-      return next
-    }
+    const cleanup = Effect.fnUntraced(function* (resource: Resources.Resource, cwd = resource.worktree) {
+      if (!(yield* fs.exists(resource.gitdir).pipe(Effect.orDie))) return
+      const result = yield* git(
+        ["--git-dir", resource.gitdir, "--work-tree", resource.worktree, "gc", `--prune=${prune}`],
+        { cwd },
+      )
+      if (result.code !== 0) {
+        log.warn("cleanup failed", { exitCode: result.code, stderr: result.stderr })
+        return
+      }
+      log.info("cleanup", { prune })
+    })
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Snapshot.state")(function* (ctx) {
@@ -91,35 +126,6 @@ export const layer: Layer.Layer<
 
         const enc = new TextEncoder()
         const feed = (list: string[]) => Stream.make(enc.encode(list.join("\0") + "\0"))
-
-        const git = Effect.fnUntraced(
-          function* (
-            cmd: string[],
-            opts?: { cwd?: string; env?: Record<string, string>; stdin?: ChildProcess.CommandInput },
-          ) {
-            const proc = ChildProcess.make("git", cmd, {
-              cwd: opts?.cwd,
-              env: opts?.env,
-              extendEnv: true,
-              stdin: opts?.stdin,
-            })
-            const handle = yield* spawner.spawn(proc)
-            const [text, stderr] = yield* Effect.all(
-              [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr))],
-              { concurrency: 2 },
-            )
-            const code = yield* handle.exitCode
-            return { code, text, stderr } satisfies GitResult
-          },
-          Effect.scoped,
-          Effect.catch((err) =>
-            Effect.succeed({
-              code: ChildProcessSpawner.ExitCode(1),
-              text: "",
-              stderr: err instanceof Error ? err.message : String(err),
-            }),
-          ),
-        )
 
         const ignore = Effect.fnUntraced(function* (files: string[]) {
           if (!files.length) return new Set<string>()
@@ -136,7 +142,7 @@ export const layer: Layer.Layer<
               "-z",
             ],
             {
-              cwd: state.directory,
+              cwd: state.worktree,
               stdin: feed(files),
             },
           )
@@ -148,11 +154,12 @@ export const layer: Layer.Layer<
           if (!files.length) return
           yield* git(
             [
+              "--literal-pathspecs",
               ...cfg,
               ...args(["rm", "--cached", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"]),
             ],
             {
-              cwd: state.directory,
+              cwd: state.worktree,
               stdin: feed(files),
             },
           )
@@ -161,9 +168,13 @@ export const layer: Layer.Layer<
         const stage = Effect.fnUntraced(function* (files: string[]) {
           if (!files.length) return
           const result = yield* git(
-            [...cfg, ...args(["add", "--all", "--sparse", "--pathspec-from-file=-", "--pathspec-file-nul"])],
+            [
+              "--literal-pathspecs",
+              ...cfg,
+              ...args(["add", "--all", "--sparse", "--pathspec-from-file=-", "--pathspec-file-nul"]),
+            ],
             {
-              cwd: state.directory,
+              cwd: state.worktree,
               stdin: feed(files),
             },
           )
@@ -177,7 +188,7 @@ export const layer: Layer.Layer<
         const exists = (file: string) => fs.exists(file).pipe(Effect.orDie)
         const read = (file: string) => fs.readFileString(file).pipe(Effect.catch(() => Effect.succeed("")))
         const remove = (file: string) => fs.remove(file).pipe(Effect.catch(() => Effect.void))
-        const locked = <A, E, R>(fx: Effect.Effect<A, E, R>) => lock(state.gitdir).withPermits(1)(fx)
+        const locked = <A, E, R>(fx: Effect.Effect<A, E, R>) => resources.locked(state, fx)
 
         const enabled = Effect.fnUntraced(function* () {
           if (state.vcs !== "git") return false
@@ -211,10 +222,10 @@ export const layer: Layer.Layer<
           yield* sync()
           const [diff, other] = yield* Effect.all(
             [
-              git([...quote, ...args(["diff-files", "--name-only", "-z", "--", "."])], {
+              git([...quote, ...args(["diff-files", "--no-relative", "--name-only", "-z", "--", "."])], {
                 cwd: state.directory,
               }),
-              git([...quote, ...args(["ls-files", "--others", "--exclude-standard", "-z", "--", "."])], {
+              git([...quote, ...args(["ls-files", "--full-name", "--others", "--exclude-standard", "-z", "--", "."])], {
                 cwd: state.directory,
               }),
             ],
@@ -253,7 +264,7 @@ export const layer: Layer.Layer<
             (yield* Effect.all(
               allow.map((item) =>
                 fs
-                  .stat(path.join(state.directory, item))
+                  .stat(path.join(state.worktree, item))
                   .pipe(Effect.catch(() => Effect.void))
                   .pipe(
                     Effect.map((stat) => {
@@ -272,20 +283,11 @@ export const layer: Layer.Layer<
           yield* stage(allow.filter((item) => !block.has(item)))
         })
 
-        const cleanup = Effect.fnUntraced(function* () {
+        const cleanupCaller = Effect.fnUntraced(function* () {
           return yield* locked(
             Effect.gen(function* () {
               if (!(yield* enabled())) return
-              if (!(yield* exists(state.gitdir))) return
-              const result = yield* git(args(["gc", `--prune=${prune}`]), { cwd: state.directory })
-              if (result.code !== 0) {
-                log.warn("cleanup failed", {
-                  exitCode: result.code,
-                  stderr: result.stderr,
-                })
-                return
-              }
-              log.info("cleanup", { prune })
+              yield* cleanup(state, state.directory)
             }),
           )
         })
@@ -320,7 +322,10 @@ export const layer: Layer.Layer<
             Effect.gen(function* () {
               yield* add()
               const result = yield* git(
-                [...quote, ...args(["diff", "--cached", "--no-ext-diff", "--name-only", hash, "--", "."])],
+                [
+                  ...quote,
+                  ...args(["diff", "--cached", "--no-ext-diff", "--no-relative", "--name-only", hash, "--", "."]),
+                ],
                 {
                   cwd: state.directory,
                 },
@@ -652,7 +657,20 @@ export const layer: Layer.Layer<
               const status = new Map<string, "added" | "deleted" | "modified">()
 
               const statuses = yield* git(
-                [...quote, ...args(["diff", "--no-ext-diff", "--name-status", "--no-renames", from, to, "--", "."])],
+                [
+                  ...quote,
+                  ...args([
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-relative",
+                    "--name-status",
+                    "--no-renames",
+                    from,
+                    to,
+                    "--",
+                    ".",
+                  ]),
+                ],
                 { cwd: state.directory },
               )
 
@@ -664,7 +682,10 @@ export const layer: Layer.Layer<
               }
 
               const numstat = yield* git(
-                [...quote, ...args(["diff", "--no-ext-diff", "--no-renames", "--numstat", from, to, "--", "."])],
+                [
+                  ...quote,
+                  ...args(["diff", "--no-ext-diff", "--no-relative", "--no-renames", "--numstat", from, to, "--", "."]),
+                ],
                 {
                   cwd: state.directory,
                 },
@@ -725,18 +746,21 @@ export const layer: Layer.Layer<
           )
         })
 
-        yield* cleanup().pipe(
-          Effect.catchCause((cause) => {
-            log.error("cleanup loop failed", { cause: Cause.pretty(cause) })
-            return Effect.void
-          }),
-          Effect.repeat(Schedule.spaced(Duration.hours(1))),
-          Effect.delay(Duration.minutes(1)),
-          Effect.forkScoped,
-        )
+        yield* resources.acquire(state, enabled().pipe(Effect.provideService(InstanceRef, ctx)))
 
-        return { cleanup, track, patch, restore, revert, diff, diffFull }
+        return { cleanup: cleanupCaller, track, patch, restore, revert, diff, diffFull }
       }),
+    )
+
+    yield* resources.sweep(cleanup).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterrupts(cause)) return Effect.failCause(cause)
+        log.error("cleanup loop failed", { cause: Cause.pretty(cause) })
+        return Effect.void
+      }),
+      Effect.repeat(Schedule.spaced(Duration.hours(1))),
+      Effect.delay(Duration.minutes(1)),
+      Effect.forkScoped,
     )
 
     return Service.of({

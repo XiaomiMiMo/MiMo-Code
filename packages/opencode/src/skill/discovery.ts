@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { NodePath } from "@effect/platform-node"
 import { Effect, Layer, Path, Schema, Context } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
@@ -8,6 +9,33 @@ import { Log } from "../util"
 
 const skillConcurrency = 4
 const fileConcurrency = 8
+
+function sourceURL(input: string): URL | undefined {
+  try {
+    const url = new URL(input)
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) return undefined
+    if (!url.pathname.endsWith("/")) url.pathname += "/"
+    url.hash = ""
+    return url
+  } catch {
+    return undefined
+  }
+}
+
+function safeSegment(value: string) {
+  if (!value || value === "." || value === ".." || value.endsWith(".") || value.endsWith(" ")) return false
+  if (/[\\/:<>"|?*]/.test(value)) return false
+  for (const char of value) {
+    if (char.charCodeAt(0) < 32) return false
+  }
+  if (/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$)(?:\.|$)/i.test(value)) return false
+  try {
+    encodeURIComponent(value)
+    return true
+  } catch {
+    return false
+  }
+}
 
 class IndexSkill extends Schema.Class<IndexSkill>("IndexSkill")({
   name: Schema.String,
@@ -32,7 +60,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Path.Pat
       const fs = yield* AppFileSystem.Service
       const path = yield* Path.Path
       const http = HttpClient.filterStatusOk(withTransientReadRetry(yield* HttpClient.HttpClient))
-      const cache = path.join(Global.Path.cache, "skills")
+      const cache = path.join(Global.Path.cache, "skill-sources-v1")
 
       const download = Effect.fn("Discovery.download")(function* (url: string, dest: string) {
         if (yield* fs.exists(dest).pipe(Effect.orDie)) return true
@@ -52,9 +80,11 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Path.Pat
       })
 
       const pull = Effect.fn("Discovery.pull")(function* (url: string) {
-        const base = url.endsWith("/") ? url : `${url}/`
+        const base = sourceURL(url)
+        if (!base) return []
         const index = new URL("index.json", base).href
-        const host = base.slice(0, -1)
+        const source = createHash("sha256").update(base.href).digest("hex")
+        const sourceCache = path.join(cache, source)
 
         log.info("fetching index", { url: index })
 
@@ -73,6 +103,10 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Path.Pat
         if (!data) return []
 
         const list = data.skills.filter((skill) => {
+          if (!safeSegment(skill.name) || !skill.files.every((file) => file.split("/").every(safeSegment))) {
+            log.warn("skill entry has an unsafe path", { source })
+            return false
+          }
           if (!skill.files.includes("SKILL.md")) {
             log.warn("skill entry missing SKILL.md", { url: index, skill: skill.name })
             return false
@@ -84,11 +118,16 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Path.Pat
           list,
           (skill) =>
             Effect.gen(function* () {
-              const root = path.join(cache, skill.name)
+              const root = path.join(sourceCache, skill.name)
+              const skillURL = new URL(`${encodeURIComponent(skill.name)}/`, base)
 
               yield* Effect.forEach(
                 skill.files,
-                (file) => download(new URL(file, `${host}/${skill.name}/`).href, path.join(root, file)),
+                (file) =>
+                  download(
+                    new URL(file.split("/").map(encodeURIComponent).join("/"), skillURL).href,
+                    path.join(root, file),
+                  ),
                 {
                   concurrency: fileConcurrency,
                 },

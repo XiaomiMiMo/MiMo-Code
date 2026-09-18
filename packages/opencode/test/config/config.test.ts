@@ -1,5 +1,5 @@
-import { test, expect, describe, mock, afterEach, beforeEach } from "bun:test"
-import { Effect, Layer, Option } from "effect"
+import { test, expect, describe, mock, afterEach, beforeEach, spyOn } from "bun:test"
+import { Effect, Exit, Layer, Option } from "effect"
 import { NodeFileSystem, NodePath } from "@effect/platform-node"
 import { Config, ConfigManaged } from "../../src/config"
 import { ConfigParse } from "../../src/config/parse"
@@ -11,7 +11,7 @@ import { Account } from "../../src/account/account"
 import { AccessToken, AccountID, OrgID } from "../../src/account/schema"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Env } from "../../src/env"
-import { provideTmpdirInstance } from "../fixture/fixture"
+import { provideInstance, provideTmpdirInstance, tmpdirScoped } from "../fixture/fixture"
 import { tmpdir } from "../fixture/fixture"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
@@ -51,6 +51,39 @@ const layer = Config.layer.pipe(
 )
 
 const it = testEffect(layer)
+const sharedParsing = testEffect(
+  Config.layer.pipe(
+    Layer.provide(testFlock),
+    Layer.provide(AppFileSystem.defaultLayer),
+    Layer.provide(Env.defaultLayer),
+    Layer.provide(emptyAuth),
+    Layer.provide(emptyAccount),
+    Layer.provideMerge(infra),
+    Layer.provide(Layer.mock(Npm.Service)({ install: () => Effect.void })),
+  ),
+)
+
+function sharedSource(config: Config.Info) {
+  return Effect.gen(function* () {
+    const dir = yield* tmpdirScoped({ git: true })
+    const file = path.join(dir, "mimocode.json")
+    yield* Effect.promise(() =>
+      writeConfig(dir, { $schema: "https://mimo.xiaomi.com/mimocode/config.json", ...config }),
+    )
+    const previous = process.env.MIMOCODE_CONFIG_DIR
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        process.env.MIMOCODE_CONFIG_DIR = dir
+      }),
+      () =>
+        Effect.sync(() => {
+          if (previous == null) delete process.env.MIMOCODE_CONFIG_DIR
+          else process.env.MIMOCODE_CONFIG_DIR = previous
+        }),
+    )
+    return { dir, file }
+  })
+}
 
 const load = () => Effect.runPromise(Config.Service.use((svc) => svc.get()).pipe(Effect.scoped, Effect.provide(layer)))
 const save = (config: Config.Info) =>
@@ -313,7 +346,8 @@ test("loads project config from Cygwin paths on Windows", async () => {
 
 test("ignores removed auto_worktree without changing other config", async () => {
   await using tmp = await tmpdir({
-    init: (dir) => writeConfig(dir, { $schema: "https://opencode.ai/config.json", model: "test/model", auto_worktree: true }),
+    init: (dir) =>
+      writeConfig(dir, { $schema: "https://opencode.ai/config.json", model: "test/model", auto_worktree: true }),
   })
   await Instance.provide({
     directory: tmp.path,
@@ -2673,28 +2707,161 @@ test("ignores removed history kinds in existing configuration", async () => {
 
 for (const extension of ["json", "jsonc"]) {
   it.live(`updateGlobal accepts removed history kinds in ${extension}`, () =>
-    provideTmpdirInstance(() => Effect.gen(function* () {
-      const original = Global.Path.config
-      const dir = yield* Effect.promise(() => fs.mkdtemp(path.join(original, "history-write-")))
-      const file = path.join(dir, `mimocode.${extension}`)
-      const before = extension === "jsonc"
-        ? '{\n // keep this comment\n "history": {"kinds": []}, "model": "test/original"\n}'
-        : JSON.stringify({ history: { kinds: [] }, model: "test/original" })
-      yield* Effect.promise(() => Filesystem.write(file, before))
-      Global.Path.config = dir
-      try {
-        const svc = yield* Config.Service
-        const next = yield* svc.updateGlobal({ model: "test/updated" })
-        expect(next.model).toBe("test/updated")
-        expect((next as Record<string, unknown>).history).toBeUndefined()
-        const written = yield* Effect.promise(() => Filesystem.readText(file))
-        expect(ConfigParse.jsonc(written, file)).toMatchObject({ model: "test/updated" })
-        if (extension === "jsonc") expect(written).toContain("// keep this comment")
-        expect((yield* svc.get()).model).toBe("test/updated")
-      } finally {
-        Global.Path.config = original
-        yield* Effect.promise(() => fs.rm(dir, { recursive: true, force: true }))
-      }
-    }))
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const original = Global.Path.config
+        const dir = yield* Effect.promise(() => fs.mkdtemp(path.join(original, "history-write-")))
+        const file = path.join(dir, `mimocode.${extension}`)
+        const before =
+          extension === "jsonc"
+            ? '{\n // keep this comment\n "history": {"kinds": []}, "model": "test/original"\n}'
+            : JSON.stringify({ history: { kinds: [] }, model: "test/original" })
+        yield* Effect.promise(() => Filesystem.write(file, before))
+        Global.Path.config = dir
+        try {
+          const svc = yield* Config.Service
+          const next = yield* svc.updateGlobal({ model: "test/updated" })
+          expect(next.model).toBe("test/updated")
+          expect((next as Record<string, unknown>).history).toBeUndefined()
+          const written = yield* Effect.promise(() => Filesystem.readText(file))
+          expect(ConfigParse.jsonc(written, file)).toMatchObject({ model: "test/updated" })
+          if (extension === "jsonc") expect(written).toContain("// keep this comment")
+          expect((yield* svc.get()).model).toBe("test/updated")
+        } finally {
+          Global.Path.config = original
+          yield* Effect.promise(() => fs.rm(dir, { recursive: true, force: true }))
+        }
+      }),
+    ),
   )
 }
+
+describe("shared config parsing", () => {
+  // [TP-R12-07]
+  sharedParsing.live("reuses a source parse across directories without sharing mutable config or origins", () =>
+    Effect.gen(function* () {
+      const source = yield* sharedSource({ instructions: ["shared-source"], plugin: ["./shared-plugin.ts"] })
+      yield* Effect.promise(() =>
+        fs.writeFile(path.join(source.dir, "shared-plugin.ts"), "export default async () => ({})"),
+      )
+      const outside = yield* tmpdirScoped({ outsideGit: true })
+      const config = yield* Config.Service
+      const parsed = spyOn(ConfigParse, "jsonc")
+      try {
+        const first = yield* config.get().pipe(provideInstance(source.dir))
+        first.instructions!.push("first-only")
+        first.plugin!.push("first-only-plugin")
+        const second = yield* config.get().pipe(provideInstance(outside))
+        expect(second.instructions).toEqual(["shared-source"])
+        expect(second.plugin).toEqual([pathToFileURL(path.join(source.dir, "shared-plugin.ts")).href])
+        expect(first.plugin_origins?.find((origin) => origin.source === source.file)?.scope).toBe("local")
+        expect(second.plugin_origins?.find((origin) => origin.source === source.file)?.scope).toBe("global")
+        expect(parsed.mock.calls.filter((call) => call[1] === source.file)).toHaveLength(1)
+      } finally {
+        parsed.mockRestore()
+      }
+    }),
+  )
+
+  // [TP-R12-07]
+  sharedParsing.live("refreshes expanded environment and file values without mutating loaded snapshots", () =>
+    Effect.gen(function* () {
+      const previous = process.env.TEST_SHARED_CONFIG_MODEL
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          process.env.TEST_SHARED_CONFIG_MODEL = "first"
+        }),
+        () =>
+          Effect.sync(() => {
+            if (previous == null) delete process.env.TEST_SHARED_CONFIG_MODEL
+            else process.env.TEST_SHARED_CONFIG_MODEL = previous
+          }),
+      )
+      const source = yield* sharedSource({
+        model: "test/{env:TEST_SHARED_CONFIG_MODEL}",
+        instructions: ["{file:prompt.txt}"],
+      })
+      yield* Effect.promise(() => fs.writeFile(path.join(source.dir, "prompt.txt"), "first prompt"))
+      const secondDir = yield* tmpdirScoped({ outsideGit: true })
+      const thirdDir = yield* tmpdirScoped({ outsideGit: true })
+      const config = yield* Config.Service
+      const first = yield* config.get().pipe(provideInstance(source.dir))
+      process.env.TEST_SHARED_CONFIG_MODEL = "second"
+      const second = yield* config.get().pipe(provideInstance(secondDir))
+      yield* Effect.promise(() => fs.writeFile(path.join(source.dir, "prompt.txt"), "second prompt"))
+      const third = yield* config.get().pipe(provideInstance(thirdDir))
+      expect(first.model).toBe("test/first")
+      expect(first.instructions).toEqual(["first prompt"])
+      expect(second.model).toBe("test/second")
+      expect(second.instructions).toEqual(["first prompt"])
+      expect(third.model).toBe("test/second")
+      expect(third.instructions).toEqual(["second prompt"])
+    }),
+  )
+
+  // [TP-R12-07]
+  sharedParsing.live("keeps identical source text relative to its own declaring file", () =>
+    Effect.gen(function* () {
+      const firstDir = yield* tmpdirScoped({ git: true })
+      const secondDir = yield* tmpdirScoped({ git: true })
+      const body = { $schema: "https://mimo.xiaomi.com/mimocode/config.json", plugin: ["./local-plugin.ts"] }
+      for (const dir of [firstDir, secondDir]) {
+        yield* Effect.promise(() => writeConfig(dir, body))
+        yield* Effect.promise(() => fs.writeFile(path.join(dir, "local-plugin.ts"), "export default async () => ({})"))
+      }
+      const config = yield* Config.Service
+      const first = yield* config.get().pipe(provideInstance(firstDir))
+      const second = yield* config.get().pipe(provideInstance(secondDir))
+      expect(first.plugin).toContain(pathToFileURL(path.join(firstDir, "local-plugin.ts")).href)
+      expect(second.plugin).toContain(pathToFileURL(path.join(secondDir, "local-plugin.ts")).href)
+      expect(second.plugin).not.toContain(pathToFileURL(path.join(firstDir, "local-plugin.ts")).href)
+      expect(
+        first.plugin_origins?.find((origin) => origin.source === path.join(firstDir, "mimocode.json")),
+      ).toBeDefined()
+      expect(
+        second.plugin_origins?.find((origin) => origin.source === path.join(secondDir, "mimocode.json")),
+      ).toBeDefined()
+    }),
+  )
+
+  // [TP-R12-07]
+  sharedParsing.live("does not serve a deleted or invalid source and recovers after repair", () =>
+    Effect.gen(function* () {
+      const source = yield* sharedSource({ username: "shared-source-marker" })
+      const config = yield* Config.Service
+      expect((yield* config.get().pipe(provideInstance(source.dir))).username).toBe("shared-source-marker")
+      yield* Effect.promise(() => fs.unlink(source.file))
+      const absentDir = yield* tmpdirScoped({ outsideGit: true })
+      expect((yield* config.get().pipe(provideInstance(absentDir))).username).not.toBe("shared-source-marker")
+      yield* Effect.promise(() => fs.writeFile(source.file, "{"))
+      const invalidDir = yield* tmpdirScoped({ outsideGit: true })
+      expect(Exit.isFailure(yield* config.get().pipe(provideInstance(invalidDir), Effect.exit))).toBe(true)
+      yield* Effect.promise(() =>
+        writeConfig(source.dir, {
+          $schema: "https://mimo.xiaomi.com/mimocode/config.json",
+          username: "repaired-source-marker",
+        }),
+      )
+      const repairedDir = yield* tmpdirScoped({ outsideGit: true })
+      expect((yield* config.get().pipe(provideInstance(repairedDir))).username).toBe("repaired-source-marker")
+    }),
+  )
+
+  // [TP-R12-07]
+  sharedParsing.live("explicit invalidation clears the shared parsed source", () =>
+    Effect.gen(function* () {
+      const source = yield* sharedSource({ username: "invalidate-source-marker" })
+      const config = yield* Config.Service
+      const parsed = spyOn(ConfigParse, "jsonc")
+      try {
+        yield* config.get().pipe(provideInstance(source.dir))
+        expect(parsed.mock.calls.filter((call) => call[1] === source.file)).toHaveLength(1)
+        yield* config.invalidate(true)
+        expect((yield* config.get().pipe(provideInstance(source.dir))).username).toBe("invalidate-source-marker")
+        expect(parsed.mock.calls.filter((call) => call[1] === source.file)).toHaveLength(2)
+      } finally {
+        parsed.mockRestore()
+      }
+    }),
+  )
+})

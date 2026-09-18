@@ -1,4 +1,3 @@
-// Search and per-instance incremental Bus writer. Historical index migration
-// belongs to the database connection lifecycle, not directory bootstrap.
+// Index migration belongs to the database lifecycle; incremental writes belong to the Runtime.
 export * as History from "./service"
 export { Service as WriterService } from "./writer"
