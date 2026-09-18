@@ -253,7 +253,7 @@ describe("subagent resume recovery negatives", () => {
   }, 120_000)
 
   // [TP-RUN-R12-34] C07: full missing ForkContext via send stays failure this run.
-  test("send continue on full actor without fork context fails honestly", async () => {
+  test("send follow-up on full actor without fork context fails honestly", async () => {
     await using tmp = await tmpdir({ git: true })
     const server = startScriptedLLMServer([{ lines: textStopResponse("UNUSED") }])
     try {
@@ -264,6 +264,7 @@ describe("subagent resume recovery negatives", () => {
           AppRuntime.runPromise(
             Effect.gen(function* () {
               const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
               const reg = yield* ActorRegistry.Service
               const inbox = yield* Inbox.Service
               const session = yield* sessions.create({ title: "missing fork send" })
@@ -303,21 +304,33 @@ describe("subagent resume recovery negatives", () => {
                 type: "text" as const,
                 text: "full-seed",
               })
+              // Durable follow-up, then join the same wake path production uses
+              // (loop + inboxWake). Forked inbox.wake timing is not CI-stable.
               yield* inbox.send({
                 receiverSessionID: session.id,
                 receiverActorID: "custom-full",
                 senderSessionID: session.id,
                 senderActorID: "main",
-                content: "continue",
+                content: "follow-up",
+                wake: false,
               })
-              // Wait for structured terminal notification (failed), not prose "failed".
-              // description in notification is actor.description, not actorID.
+              yield* prompt
+                .loop({
+                  sessionID: session.id,
+                  agentID: "custom-full",
+                  notifyParentOnComplete: true,
+                  inboxWake: true,
+                })
+                .pipe(
+                  Effect.timeout("20 seconds"),
+                  Effect.catchCause(() => Effect.void),
+                )
               const inboxSvc = yield* Inbox.Service
               let notifyFailed = false
               let fakeCompleted = false
               let fullErr = ""
               let fullOutcome = ""
-              for (let i = 0; i < 200; i++) {
+              for (let i = 0; i < 80; i++) {
                 yield* inboxSvc.drain(session.id, "main").pipe(Effect.catch(() => Effect.succeed(0)))
                 const msgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
                 const parsed = msgs.flatMap((m) =>
@@ -663,13 +676,17 @@ describe("subagent resume recovery negatives", () => {
                 type: "text" as const,
                 text: "full-seed",
               })
-              yield* prompt.cascadeSubagentResume(session.id)
+              // Cascade only waits for admission; the missing-fork failure +
+              // terminal notify settle on the background fiber afterwards.
+              const outcomes = yield* prompt.cascadeSubagentResume(session.id).pipe(
+                Effect.catchCause(() => Effect.succeed([] as { actorID: string; status: string; reason?: string }[])),
+              )
               const inboxSvc = yield* Inbox.Service
               let notifyFailed = false
               let fakeCompleted = false
               let fullFail = false
               let fullErr = ""
-              for (let i = 0; i < 200; i++) {
+              for (let i = 0; i < 120; i++) {
                 yield* inboxSvc.drain(session.id, "main").pipe(Effect.catch(() => Effect.succeed(0)))
                 const msgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
                 const parsed = msgs.flatMap((m) =>
@@ -687,10 +704,19 @@ describe("subagent resume recovery negatives", () => {
                 if (notifyFailed && fullFail && fullErr.includes("missing fork")) break
                 yield* Effect.sleep("50 millis")
               }
-              return { notifyFailed, fakeCompleted, fullFail, fullErr, providerCalls: server.captures.length }
+              return {
+                outcomes,
+                notifyFailed,
+                fakeCompleted,
+                fullFail,
+                fullErr,
+                providerCalls: server.captures.length,
+              }
             }).pipe(Effect.provide(Inbox.defaultLayer)),
           ),
       })
+      const cascadeEntry = result.outcomes.find((o) => o.actorID === "custom-full")
+      expect(cascadeEntry?.status).toBe("resumed")
       expect(result.notifyFailed).toBe(true)
       expect(result.fakeCompleted).toBe(false)
       expect(result.fullFail).toBe(true)
