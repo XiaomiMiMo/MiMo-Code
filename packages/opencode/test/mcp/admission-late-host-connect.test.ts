@@ -70,3 +70,70 @@ it.live("[TP-MCU-R7-21][TP-MCU-R10-20] late host connect cannot replace newer ho
     )
   }),
 )
+
+// [TP-MCU-R7-21][TP-MCU-R10-20] R001 ABA: remove+restore same config is a new generation.
+it.live("[TP-MCU-R7-21][TP-MCU-R10-20] late host connect after remove-and-restore same config is rejected", () =>
+  Effect.gen(function* () {
+    let release!: () => void
+    let entered!: () => void
+    let oldLists = 0
+    const blocked = new Promise<void>((r) => (release = r))
+    const started = new Promise<void>((r) => (entered = r))
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        release()
+        HostMcp.set({})
+      }),
+    )
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          async fetch(request) {
+            if (request.method !== "POST") return new Response(null, { status: 405 })
+            const msg = (await request.json()) as { id?: number | string; method?: string }
+            if (msg.id == null) return new Response(null, { status: 202 })
+            const name = new URL(request.url).pathname === "/old" ? "old" : "new"
+            if (msg.method === "tools/list" && name === "old" && ++oldLists === 2) {
+              entered()
+              await blocked
+            }
+            const result =
+              msg.method === "initialize"
+                ? { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name, version: "1" } }
+                : { tools: [{ name, inputSchema: { type: "object" } }] }
+            return Response.json({ jsonrpc: "2.0", id: msg.id, result })
+          },
+        }),
+      ),
+      (server) => Effect.promise(() => server.stop(true)),
+    )
+    const cfg = (endpoint: string) => ({
+      type: "remote" as const,
+      url: `${server.url}${endpoint}`,
+      enabled: true,
+    })
+    HostMcp.set({ example: cfg("old") })
+    yield* provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const mcp = yield* MCP.Service
+        yield* mcp.tools()
+        const pending = yield* mcp.connect("example").pipe(Effect.forkChild)
+        yield* Effect.promise(() => started)
+        // ABA: remove then restore the identical config content.
+        HostMcp.set({})
+        yield* mcp.tools()
+        HostMcp.set({ example: cfg("old") })
+        yield* mcp.tools()
+        expect(Object.keys(yield* mcp.tools())).toEqual(["example_old"])
+        release()
+        yield* Fiber.join(pending)
+        // Late old attempt must not replace the restored connection.
+        expect(Object.keys(yield* mcp.tools())).toEqual(["example_old"])
+        const clients = yield* mcp.clients()
+        expect(clients.example).toBeTruthy()
+      }),
+    )
+  }),
+)

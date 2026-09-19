@@ -918,7 +918,7 @@ export const layer = Layer.effect(
           yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
           return s.status[name] ?? { status: "disabled" as const }
         }
-        if (opts.hostRevision != null && opts.hostRevision !== JSON.stringify(hostNow)) {
+        if (opts.hostRevision != null && opts.hostRevision !== HostMcp.revisionOf(name)) {
           yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
           return s.status[name] ?? { status: "connected" as const }
         }
@@ -970,7 +970,7 @@ export const layer = Layer.effect(
     ) {
       const s = yield* InstanceState.get(state)
       const hostAtStart = HostMcp.get()[name]
-      const hostRevision = hostAtStart ? JSON.stringify(hostAtStart) : undefined
+      const hostRevision = hostAtStart ? HostMcp.revisionOf(name) : undefined
       const result = yield* create(name, mcp)
 
       if (!result.mcpClient) {
@@ -980,7 +980,7 @@ export const layer = Layer.effect(
         if (opts?.fromHost) {
           const stillValidHost = !!hostNow
             && hostNow.enabled !== false
-            && (hostRevision == null || hostRevision === JSON.stringify(hostNow))
+            && (hostRevision == null || hostRevision === HostMcp.revisionOf(name))
           if (!stillValidHost) {
             return s.status[name] ?? { status: "disabled" as const }
           }
@@ -1222,7 +1222,7 @@ export const layer = Layer.effect(
                 oauthState,
                 client,
                 resolved,
-                hostRevision: resolved.hostOwned ? JSON.stringify(mcpConfig) : undefined,
+                hostRevision: resolved.hostOwned ? HostMcp.revisionOf(mcpName) : undefined,
               }) satisfies AuthResult,
           )
         },
