@@ -30,11 +30,11 @@ MEMORY_PATH structure (4 sections):
 
 PROCEDURE:
 
-Turn 1 - Read all sources in parallel:
+Turn 1 - `read` all sources in parallel:
   `read` CHECKPOINT_PATH
-  Read MEMORY_PATH
-  Read NOTES_PATH (file may not exist for v8.1-era sessions; treat as empty if so)
-  (also Read any spillover files referenced in either main file's index lines)
+  `read` MEMORY_PATH
+  `read` NOTES_PATH (file may not exist for v8.1-era sessions; treat as empty if so)
+  (also `read` any spillover files referenced in either main file's index lines)
 
 Turn 2a - Reconcile pass (read sources, decide migrations, then plan Edits):
 
