@@ -4,6 +4,7 @@ import { Bus } from "@/bus"
 import type { SessionID, MessageID } from "@/session/schema"
 import { ActorRegistryTable } from "./actor.sql"
 import { PartTable, SessionTable } from "@/session/session.sql"
+import { SessionStatus } from "@/session/status"
 import type {
   Actor,
   ActorStatus,
@@ -223,7 +224,7 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ActorRegistry") {}
 
-export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
+export const layer: Layer.Layer<Service, never, Bus.Service | SessionStatus.Service> = Layer.effect(
   Service,
   Effect.gen(function* () {
     const bus = yield* Bus.Service
@@ -575,10 +576,22 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     //
     // Open question tool parts die with the fiber: the in-memory Deferred is
     // gone, but part.state stays running. Clients keep the card pending and
-    // free-text answers hit "unknown request". After the registry rows settle,
-    // if a session has no remaining live actor, settle those orphan question
-    // parts to error so history/UI treat them as cancelled.
-    yield* Effect.sync(sweepAbandonedZombies).pipe(Effect.ignore)
+    // free-text answers hit "unknown request".
+    //
+    // Same-process main activity lives in SessionStatus (busy/retry), not in
+    // the main registry row. Every production sweep entry reads SessionStatus
+    // and skips those sessions — layer rebuild while main waits on a question
+    // must not cancel that card. Cross-instance reclaim still uses the
+    // abandon-threshold age gate (see sweepAbandonedZombies).
+    yield* Effect.gen(function* () {
+      const status = yield* SessionStatus.Service
+      const map = yield* status.list()
+      const busySessionIds = new Set<string>()
+      for (const [sid, info] of map) {
+        if (info.type === "busy" || info.type === "retry") busySessionIds.add(sid)
+      }
+      sweepAbandonedZombies({ busySessionIds })
+    }).pipe(Effect.ignore)
 
     // --- Stuck Detection ---
     const scanStuck = Effect.gen(function* () {
@@ -627,6 +640,6 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Bus.layer))
+export const defaultLayer = layer.pipe(Layer.provide(Bus.layer), Layer.provide(SessionStatus.defaultLayer))
 
 export * as ActorRegistry from "./registry"
