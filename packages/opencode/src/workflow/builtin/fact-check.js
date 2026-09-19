@@ -147,7 +147,7 @@ const searchPrompt = (line) =>
   "Overall question: \"" + TOPIC + "\"\n\n" +
   "Your line: **" + line.topic + "**" + (line.why ? " — " + line.why : "") + "\n" +
   "Suggested query: `" + line.query + "`\n\n" +
-  "Run WebSearch (refine the query if you can do better) and hand back the 4-6 most useful results.\n" +
+  "Run `websearch` (refine the query if you can do better) and hand back the 4-6 most useful results.\n" +
   "Judge usefulness against the OVERALL question, not just your query. Drop content farms and SEO spam.\n" +
   "Give each result a one-line note on why it matters.\n\nReturn structured output only."
 
@@ -155,7 +155,7 @@ const readPrompt = (source, line) =>
   "Read one source and pull out checkable facts.\n\n" +
   "Overall question: \"" + TOPIC + "\"\n\n" +
   "**URL:** " + source.url + "\n**Title:** " + source.title + "\n**Surfaced by:** the \"" + line + "\" line\n\n" +
-  "## Steps\n1. Fetch the page with WebFetch.\n" +
+  "## Steps\n1. Fetch the page with `webfetch`.\n" +
   "2. Judge the source tier: primary (research / the institution itself), secondary (reporting), blog/opinion, forum, or weak/unreliable.\n" +
   "3. Pull 2-5 FALSIFIABLE facts that bear on the question. Each fact must:\n" +
   "   - state something concrete and checkable (no vague hand-waving)\n" +

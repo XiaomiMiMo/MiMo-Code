@@ -3,7 +3,7 @@ export const meta = {
   description:
     "Deep research report generator — brief → plan angles → parallel sub-agents → reflect → single-writer cited report → cold review. Convergent (resumable via file checkpoints).",
   whenToUse:
-    'Use when the user wants a comprehensive, multi-source investigation written as a cited Markdown report. Best for broad research questions ("survey X", "what are the recent advances in Y", "compare the options for Z"). NOT for simple lookups (single WebSearch suffices) and NOT for precise fact-checking (use fact-check workflow instead). If the request is broad, ask one narrowing question first, then pass the refined question as args.',
+    'Use when the user wants a comprehensive, multi-source investigation written as a cited Markdown report. Best for broad research questions ("survey X", "what are the recent advances in Y", "compare the options for Z"). NOT for simple lookups (single `websearch` suffices) and NOT for precise fact-checking (use fact-check workflow instead). If the request is broad, ask one narrowing question first, then pass the refined question as args.',
   phases: [
     { title: "Brief", detail: "Refine the question into an unambiguous research brief" },
     { title: "Plan", detail: "Decompose brief into independent research angles" },
@@ -46,8 +46,8 @@ Your ONLY task — research this single angle, nothing else:
 ${angle}
 
 Rules:
-1. Run up to ${DEPTH.queryBudget} web searches. Start with 2-3 differently-phrased queries in parallel; refine based on what comes back. Prefer primary sources (official docs, papers, original announcements) over aggregators and SEO farms. If the WebSearch tool is unavailable, use DuckDuckGo HTML as fallback: WebFetch https://html.duckduckgo.com/html/?q=<query> (decode uddg param for real URLs). Also try free APIs: arXiv, Semantic Scholar, GitHub search, HN Algolia.
-2. WebFetch the 3-6 most promising results to read actual content. Do not cite a page you did not fetch.
+1. Run up to ${DEPTH.queryBudget} web searches. Start with 2-3 differently-phrased queries in parallel; refine based on what comes back. Prefer primary sources (official docs, papers, original announcements) over aggregators and SEO farms. If the `websearch` tool is unavailable, use DuckDuckGo HTML as fallback: `webfetch` https://html.duckduckgo.com/html/?q=<query> (decode uddg param for real URLs). Also try free APIs: arXiv, Semantic Scholar, GitHub search, HN Algolia.
+2. `webfetch` the 3-6 most promising results to read actual content. Do not cite a page you did not fetch.
 3. Judge each source: official/primary > reputable media/peer-reviewed > forums/blogs > content farms. Discard low-quality sources rather than citing them.
 4. Extract findings as information-dense claims: include exact entities, numbers, dates, versions. One claim per finding.
 5. Write your findings to findings/F${n}.md in EXACTLY this format:
