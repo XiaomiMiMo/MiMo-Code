@@ -325,6 +325,30 @@ test("general and explore agents use dedicated prompts", async () => {
       expect(PROMPT_GENERAL).not.toContain("**Status**:")
       expect(PROMPT_EXPLORE).toContain("Read-only")
       expect(PROMPT_EXPLORE).not.toContain("**Status**:")
+      // general sees skills (catalog + skill tool); explore's `*: deny` disables them.
+      expect(PROMPT_GENERAL).toContain("## Skills")
+      expect(PROMPT_GENERAL).toContain(".mimocode/skill(s)")
+      expect(PROMPT_GENERAL).toContain(".agents/skills")
+      expect(PROMPT_GENERAL).toContain("bundled skill packs")
+      expect(PROMPT_GENERAL).toContain("brand compatibility roots")
+      expect(PROMPT_GENERAL).toContain("do not assume or advertise which brands those are")
+      // Brand-root paths (catalog location / skill_content base dir) must not flip identity.
+      expect(PROMPT_GENERAL).toContain("not your identity")
+      expect(PROMPT_GENERAL).toContain("MiMoCode general subagent")
+      expect(PROMPT_GENERAL).toContain("`skill` tool")
+      expect(PROMPT_GENERAL).toContain("skill_search")
+      expect(PROMPT_GENERAL).toContain("Never call a tool absent from the current tool surface")
+      expect(PROMPT_GENERAL).toContain("don't guess slash commands from training data")
+      expect(PROMPT_GENERAL).toContain("treat it as authoritative")
+      // Skill body must not override identity — the S1 failure mode via content.
+      expect(PROMPT_GENERAL).toContain("Identity and the parent task still win")
+      expect(PROMPT_GENERAL).toContain("do not change the tool set")
+      expect(PROMPT_GENERAL).not.toContain(".claude/skills")
+      expect(PROMPT_GENERAL).not.toContain(".codex/skills")
+      // Placement: after Using your tools, before Tone and style (mirror default.txt).
+      expect(PROMPT_GENERAL.indexOf("## Using your tools")).toBeLessThan(PROMPT_GENERAL.indexOf("## Skills"))
+      expect(PROMPT_GENERAL.indexOf("## Skills")).toBeLessThan(PROMPT_GENERAL.indexOf("## Tone and style"))
+      expect(PROMPT_EXPLORE).not.toContain("## Skills")
     },
   })
 })
