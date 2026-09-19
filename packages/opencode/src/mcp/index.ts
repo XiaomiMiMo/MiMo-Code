@@ -321,6 +321,7 @@ export type Status = z.infer<typeof Status>
 type PendingOAuthAttempt = {
   transport: TransportWithAuth
   hostRevision?: string
+  fromHost: boolean
 }
 const pendingOAuthTransports = new Map<string, PendingOAuthAttempt>()
 
@@ -505,6 +506,9 @@ export const layer = Layer.effect(
       key: string,
       mcp: ConfigMCP.Info & { type: "remote" },
     ) {
+      // Capture attempt identity at create start, not when Unauthorized arrives (R007).
+      const hostRevisionAtCreate = HostMcp.get()[key] ? HostMcp.revisionOf(key) : undefined
+      const fromHostAtCreate = hostRevisionAtCreate != null
       const oauthDisabled = mcp.oauth === false
       const oauthConfig = typeof mcp.oauth === "object" ? mcp.oauth : undefined
       let authProvider: McpOAuthProvider | undefined
@@ -575,7 +579,8 @@ export const layer = Layer.effect(
               } else {
                 pendingOAuthTransports.set(key, {
                   transport,
-                  hostRevision: HostMcp.revisionOf(key),
+                  hostRevision: hostRevisionAtCreate,
+                  fromHost: fromHostAtCreate,
                 })
                 lastStatus = { status: "needs_auth" as const }
                 return bus
@@ -1266,7 +1271,11 @@ export const layer = Layer.effect(
       }).pipe(
         Effect.catch((error) => {
           if (error instanceof UnauthorizedError && capturedUrl) {
-            pendingOAuthTransports.set(mcpName, { transport, hostRevision: hostRevisionAtStart })
+            pendingOAuthTransports.set(mcpName, {
+              transport,
+              hostRevision: hostRevisionAtStart,
+              fromHost: resolved.hostOwned,
+            })
             return Effect.succeed({
               kind: "redirect",
               authorizationUrl: capturedUrl.toString(),
@@ -1355,7 +1364,7 @@ export const layer = Layer.effect(
     const finishAuth = Effect.fn("MCP.finishAuth")(function* (mcpName: string, authorizationCode: string) {
       const attempt = pendingOAuthTransports.get(mcpName)
       if (!attempt) throw new Error(`No pending OAuth flow for MCP server: ${mcpName}`)
-      const { transport, hostRevision } = attempt
+      const { transport, hostRevision, fromHost } = attempt
 
       const result = yield* Effect.tryPromise({
         try: () => transport.finishAuth(authorizationCode).then(() => true as const),
@@ -1369,18 +1378,21 @@ export const layer = Layer.effect(
         return { status: "failed", error: "OAuth completion failed" } as Status
       }
 
-      yield* auth.clearCodeVerifier(mcpName)
-      // Only clear if this attempt is still the registered one (R007).
-      if (pendingOAuthTransports.get(mcpName) === attempt) {
-        pendingOAuthTransports.delete(mcpName)
+      // Stale/attempt-replaced completion must not clear the new flow's verifier
+      // or publish a connection (R007).
+      if (pendingOAuthTransports.get(mcpName) !== attempt) {
+        log.info("stale oauth completion ignored", { mcpName })
+        return { status: "failed", error: "OAuth attempt superseded" } as Status
       }
+      pendingOAuthTransports.delete(mcpName)
+      yield* auth.clearCodeVerifier(mcpName)
 
       const resolved = yield* getMcpConfig(mcpName)
       if (!resolved) return { status: "failed", error: "MCP config not found after auth" } as Status
 
-      return yield* createAndStore(mcpName, resolved.mcp, hostEffectiveSampling(resolved.mcp, resolved.hostOwned), {
-        fromHost: resolved.hostOwned,
-        hostRevision: hostRevision ?? (resolved.hostOwned ? HostMcp.revisionOf(mcpName) : undefined),
+      return yield* createAndStore(mcpName, resolved.mcp, hostEffectiveSampling(resolved.mcp, fromHost), {
+        fromHost,
+        hostRevision,
       })
     })
 
