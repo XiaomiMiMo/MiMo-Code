@@ -1,9 +1,9 @@
 import { Effect, Layer, Context, Schedule } from "effect"
-import { Database, inArray, eq, and, lte, ne, sql } from "@/storage"
+import { Database, inArray, eq, and, lte, sql } from "@/storage"
 import { Bus } from "@/bus"
 import type { SessionID, MessageID } from "@/session/schema"
 import { ActorRegistryTable } from "./actor.sql"
-import { SessionTable } from "@/session/session.sql"
+import { PartTable, SessionTable } from "@/session/session.sql"
 import type {
   Actor,
   ActorStatus,
@@ -24,6 +24,99 @@ const SCAN_INTERVAL_MS = 60 * 1000 // every 60s
 
 // Identifies the registering process; a different token does not prove termination.
 const PROCESS_INSTANCE_ID = randomUUID()
+
+/**
+ * Persist terminal state for other-instance running/pending actors that have
+ * been silent past the abandon threshold, then settle orphaned running
+ * question tool parts on sessions that no longer have any live actor.
+ * Called on registry layer init; tests may invoke after seeding zombie rows.
+ */
+export function sweepAbandonedZombies(): void {
+  const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
+  Database.use((db) => {
+    const all = db.select().from(ActorRegistryTable).all()
+    const abandonedSessions = all
+      .filter((row) => row.status === "running" || row.status === "pending")
+      .filter((row) => row.instance_id !== PROCESS_INSTANCE_ID)
+      .filter((row) => (row.last_activity_time ?? row.time_created) < cutoff)
+      .map((row) => row.session_id)
+    if (!abandonedSessions.length) return
+
+    for (const row of all) {
+      if (row.status !== "running" && row.status !== "pending") continue
+      if (row.instance_id === PROCESS_INSTANCE_ID) continue
+      if ((row.last_activity_time ?? row.time_created) >= cutoff) continue
+      db.update(ActorRegistryTable)
+        .set({
+          status: "idle",
+          last_outcome: "failure",
+          last_error:
+            "Process restarted while actor was active; settled by abandon threshold. Not final — actor send can recover.",
+          time_completed: Date.now(),
+          time_updated: Date.now(),
+        })
+        .where(and(eq(ActorRegistryTable.session_id, row.session_id), eq(ActorRegistryTable.actor_id, row.actor_id)))
+        .run()
+    }
+
+    const end = Date.now()
+    const orphanQuestionError =
+      "Process restarted while this question was open; settled by abandon threshold. The card is cancelled — send a new message to continue."
+    for (const sessionID of new Set(abandonedSessions)) {
+      // Session.create seeds a pending main row; it does not hold question
+      // Deferreds. Only a remaining non-main running/pending actor means a
+      // fiber might still be waiting on this question.
+      const stillLive = db
+        .select()
+        .from(ActorRegistryTable)
+        .where(eq(ActorRegistryTable.session_id, sessionID))
+        .all()
+        .some((row) => (row.status === "running" || row.status === "pending") && row.actor_id !== "main")
+      if (stillLive) continue
+      const openQuestions = db
+        .select()
+        .from(PartTable)
+        .where(eq(PartTable.session_id, sessionID))
+        .all()
+        .filter((row) => {
+          const data = row.data as {
+            type?: string
+            tool?: string
+            state?: { status?: string }
+          }
+          return (
+            data?.type === "tool" &&
+            data?.tool === "question" &&
+            (data.state?.status === "running" || data.state?.status === "pending")
+          )
+        })
+      for (const row of openQuestions) {
+        const data = row.data as {
+          type?: string
+          tool?: string
+          state?: { status?: string; error?: string; time?: Record<string, unknown> }
+        }
+        const state = data.state && typeof data.state === "object" ? data.state : {}
+        const time = state.time && typeof state.time === "object" ? state.time : {}
+        db.update(PartTable)
+          .set({
+            data: {
+              ...data,
+              state: {
+                ...state,
+                status: "error",
+                error: orphanQuestionError,
+                time: { ...time, end: end },
+              },
+            } as never,
+            time_updated: end,
+          })
+          .where(eq(PartTable.id, row.id))
+          .run()
+      }
+    }
+  })
+}
 
 type ActorRow = typeof ActorRegistryTable.$inferSelect
 
@@ -459,30 +552,13 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     // never settle a still-running fiber that merely has not written a part
     // for >abandon (long LLM step). Other-instance abandoned rows are fair
     // game — their process is gone or silent past the abandon threshold.
-    yield* Effect.sync(() => {
-      const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
-      Database.use((db) =>
-        db
-          .update(ActorRegistryTable)
-          .set({
-            status: "idle",
-            last_outcome: "failure",
-            last_error:
-              "Process restarted while actor was active; settled by abandon threshold. Not final — actor send can recover.",
-            time_completed: Date.now(),
-            time_updated: Date.now(),
-          })
-          .where(
-            and(
-              inArray(ActorRegistryTable.status, ["running", "pending"]),
-              ne(ActorRegistryTable.instance_id, PROCESS_INSTANCE_ID),
-              // last_activity_time is nullable; fall back to time_created like deriveLiveness does.
-              sql`COALESCE(${ActorRegistryTable.last_activity_time}, ${ActorRegistryTable.time_created}) < ${cutoff}`,
-            ),
-          )
-          .run(),
-      )
-    }).pipe(Effect.ignore)
+    //
+    // Open question tool parts die with the fiber: the in-memory Deferred is
+    // gone, but part.state stays running. Clients keep the card pending and
+    // free-text answers hit "unknown request". After the registry rows settle,
+    // if a session has no remaining live actor, settle those orphan question
+    // parts to error so history/UI treat them as cancelled.
+    yield* Effect.sync(sweepAbandonedZombies).pipe(Effect.ignore)
 
     // --- Stuck Detection ---
     const scanStuck = Effect.gen(function* () {
