@@ -61,7 +61,7 @@ export function sweepAbandonedZombies(): void {
 
     const end = Date.now()
     const orphanQuestionError =
-      "Process restarted while this question was open; settled by abandon threshold. The card is cancelled — send a new message to continue."
+      "This question was left open by a process instance that is no longer live; settled by abandon threshold. The card is cancelled — send a new message to continue."
     for (const sessionID of new Set(abandonedSessions)) {
       // Session.create seeds a pending main row; it does not hold question
       // Deferreds. Only a remaining non-main running/pending actor means a
