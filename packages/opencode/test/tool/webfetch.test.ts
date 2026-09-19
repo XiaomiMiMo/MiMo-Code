@@ -5,7 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "../../src/tool"
 import { Instance } from "../../src/project/instance"
-import { WebFetchTool } from "../../src/tool/webfetch"
+import { WebFetchTool, assertReadableHTML } from "../../src/tool/webfetch"
 import { SessionID, MessageID } from "../../src/session/schema"
 
 const projectRoot = path.join(import.meta.dir, "../..")
@@ -36,6 +36,31 @@ function exec(args: { url: string; format: "text" | "markdown" | "html" }) {
 }
 
 describe("tool.webfetch", () => {
+  test("distinguishes browser shells from small useful documents", () => {
+    for (const html of [
+      '<html><body><script src="app.js"></script></body></html>',
+      '<html><title>Google Search</title><body>Please enable JavaScript. <a href="/retry">Click here</a></body></html>',
+      '<html><title>Just a moment...</title><body>Checking your browser</body></html>',
+      '<html><title>Sign in</title><body><form><input type="password"></form></body></html>',
+    ]) expect(() => assertReadableHTML(html)).toThrow("Page content unavailable")
+    expect(() => assertReadableHTML('<html><body><h1>Status</h1><p>All services operational.</p></body></html>')).not.toThrow()
+    expect(() => assertReadableHTML('<html><body><h1>How to enable JavaScript</h1><p>Open Settings, then enable JavaScript.</p></body></html>')).not.toThrow()
+    expect(() => assertReadableHTML('<html><title>Sign in</title><body><p>Use the account menu to sign in.</p></body></html>')).not.toThrow()
+    expect(() => assertReadableHTML('<html><title>Guide</title><body><h1>How to enable JavaScript</h1><p>' + 'Useful instructions. '.repeat(100) + '</p></body></html>')).not.toThrow()
+  })
+  test("HTTP 200 shells fail and rendered HTML remains readable", async () => {
+    await withFetch((req) => new Response(new URL(req.url).pathname === "/shell"
+      ? '<html><body><script src="app.js"></script></body></html>'
+      : '<html><body><h1>Result</h1><p>Useful page content.</p></body></html>',
+    { headers: { "content-type": "text/html" } }), async (url) => {
+      await Instance.provide({ directory: projectRoot, fn: async () => {
+        for (const format of ["text", "markdown", "html"] as const) {
+          await expect(exec({ url: new URL("/shell", url).toString(), format })).rejects.toThrow("Page content unavailable")
+          expect((await exec({ url: url.toString(), format })).output).toContain("Useful page content.")
+        }
+      } })
+    })
+  })
   test("returns image responses as file attachments", async () => {
     const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     await withFetch(
