@@ -3,7 +3,7 @@ feature: default-prompt-p0
 status: delivered
 updated: 2026-09-19
 branch: fix/default-prompt-p0
-commits: 50cd713989f47225cfc717868b245e1de32b35b7..0543ef5a69964b22928927aacbee7fd7365e4d16
+commits: 50cd7139..ac7bbf66
 ---
 
 # Default System Prompt P0 Cleanup
