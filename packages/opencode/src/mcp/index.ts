@@ -1188,6 +1188,10 @@ export const layer = Layer.effect(
     const startAuth = Effect.fn("MCP.startAuth")(function* (mcpName: string) {
       const result = yield* startAuthInternal(mcpName)
       if (result.kind === "connected") {
+        // This public probe does not transfer its client to the connection registry.
+        yield* auth
+          .clearOAuthState(mcpName)
+          .pipe(Effect.ensuring(Effect.tryPromise(() => result.client.close()).pipe(Effect.ignore)))
         return { authorizationUrl: "", oauthState: result.oauthState }
       }
       return { authorizationUrl: result.authorizationUrl, oauthState: result.oauthState }
@@ -1275,11 +1279,7 @@ export const layer = Layer.effect(
       const resolved = yield* getMcpConfig(mcpName)
       if (!resolved) return { status: "failed", error: "MCP config not found after auth" } as Status
 
-      return yield* createAndStore(
-        mcpName,
-        resolved.mcp,
-        hostEffectiveSampling(resolved.mcp, resolved.hostOwned),
-      )
+      return yield* createAndStore(mcpName, resolved.mcp, hostEffectiveSampling(resolved.mcp, resolved.hostOwned))
     })
 
     const removeAuth = Effect.fn("MCP.removeAuth")(function* (mcpName: string) {
