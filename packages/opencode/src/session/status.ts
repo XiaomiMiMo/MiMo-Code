@@ -2,6 +2,7 @@ import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { InstanceState } from "@/effect"
 import { SessionID } from "./schema"
+import { orphanToolIdleSweepRef } from "./orphan-tool-idle-hook"
 import { Effect, Layer, Context } from "effect"
 import z from "zod"
 import { Log } from "@/util"
@@ -112,6 +113,12 @@ export const layer = Layer.effect(
         yield* bus.publish(Event.Idle, { sessionID })
         data.statuses.delete(sessionID)
         data.retryAttempts.delete(sessionID)
+        // Orphan tool parts (pending/running whose abort finalizer was skipped)
+        // must be rewritten on this edge — not deferred to the next prompt, whose
+        // entry sweep would emit the abort into the NEW turn's UI stream.
+        // before-cutoff: only parts already running at the idle edge.
+        const sweep = orphanToolIdleSweepRef.current
+        if (sweep) yield* sweep(sessionID, { before: Date.now() }).pipe(Effect.ignore)
       } else {
         data.statuses.set(sessionID, normalized)
       }

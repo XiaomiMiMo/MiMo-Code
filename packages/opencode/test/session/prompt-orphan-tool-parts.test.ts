@@ -193,6 +193,52 @@ describe("sweepOrphanToolParts", () => {
       }),
     ),
   )
+
+  it.live("skips a running part that started after the before-cutoff", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const svc = yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+        const part = yield* seedRunningToolPart(dir, session.id)
+        const started = part.state.status === "running" ? part.state.time.start : Date.now()
+
+        // Simulates the idle-edge sweep racing a new prompt: only parts that
+        // were already running when the session went idle may be rewritten.
+        yield* svc.sweepOrphanToolParts(session.id, { before: started - 1 })
+
+        const after = yield* readPart(session.id, part.id)
+        if (after?.type !== "tool") throw new Error("expected a tool part")
+        expect(after.state.status).toBe("running")
+      }),
+    ),
+  )
+
+  it.live("idle transition rewrites an orphan running part without a new prompt", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const status = yield* SessionStatus.Service
+        // Construct SessionPrompt so orphanToolIdleSweepRef is wired.
+        yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+        const part = yield* seedRunningToolPart(dir, session.id)
+
+        // No SessionPrompt.prompt() call — only the idle edge. This is the
+        // regression for: natural turn end left a tool `running`, Desktop
+        // settled it as completed, then the next user message's entry sweep
+        // emitted the abort into the NEW turn.
+        yield* status.set(session.id, { type: "idle" })
+
+        const after = yield* readPart(session.id, part.id)
+        if (after?.type !== "tool") throw new Error("expected a tool part")
+        expect(after.state.status).toBe("error")
+        if (after.state.status !== "error") throw new Error("expected an error state")
+        expect(after.state.error).toBe("Tool execution aborted")
+        expect(after.state.metadata?.interrupted).toBe(true)
+      }),
+    ),
+  )
 })
 
 describe("MessageV2.abortedToolState", () => {

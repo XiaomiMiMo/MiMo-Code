@@ -133,6 +133,7 @@ import { prefixCaptureRef } from "./prefix-capture-ref"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Inbox } from "@/inbox"
 import { sessionPromptRef, defaultModelRef } from "@/inbox/inbox-ref"
+import { orphanToolIdleSweepRef } from "./orphan-tool-idle-hook"
 import { Tool } from "@/tool"
 import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
@@ -574,7 +575,7 @@ export interface Interface {
   readonly resolvePromptParts: (template: string) => Effect.Effect<PromptInput["parts"]>
   readonly genTitle: (input: { text?: string; parts?: GenTitlePart[]; locale?: string; sessionID?: SessionID; providerID?: ProviderID; model?: { providerID: ProviderID; modelID: ModelID } }) => Effect.Effect<{ title: string; status: "generated" | "fallback" | "untitled" }>
   readonly sweepOrphanAssistants: (sessionID: SessionID, immediate?: boolean) => Effect.Effect<void>
-  readonly sweepOrphanToolParts: (sessionID: SessionID) => Effect.Effect<void>
+  readonly sweepOrphanToolParts: (sessionID: SessionID, opts?: { before?: number }) => Effect.Effect<void>
   readonly predict: (input: { sessionID: SessionID }) => Effect.Effect<string>
 }
 
@@ -3301,13 +3302,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     //      publishes status for the main slice (`if (isMain) status.set(...)`), so a
     //      subagent slice can be executing tools while the session status reads
     //      `idle` — its parts are out of scope.
-    const sweepOrphanToolParts = Effect.fn("SessionPrompt.sweepOrphanToolParts")(function* (sessionID: SessionID) {
+    // `before` (optional): only rewrite parts whose `time.start` is at or before
+    // this epoch. Used by the idle-edge sweep so a tool that began AFTER the
+    // busy→idle transition (a new prompt that raced in while this sweep was
+    // forked) is never rewritten. Per-part idle re-check is the second guard.
+    const sweepOrphanToolParts = Effect.fn("SessionPrompt.sweepOrphanToolParts")(function* (
+      sessionID: SessionID,
+      opts?: { before?: number },
+    ) {
       if ((yield* status.get(sessionID)).type !== "idle") return
       for (const m of yield* sessions.messages({ sessionID })) {
         if (m.info.role !== "assistant") continue
         for (const part of m.parts) {
           if (part.type !== "tool") continue
           if (part.state.status !== "pending" && part.state.status !== "running") continue
+          if ((yield* status.get(sessionID)).type !== "idle") return
+          const started = part.state.status === "running" ? part.state.time.start : undefined
+          if (opts?.before !== undefined && started !== undefined && started > opts.before) continue
           yield* sessions
             .updatePart({ ...part, state: MessageV2.abortedToolState(part.state) })
             .pipe(
@@ -3324,6 +3335,25 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
       }
     })
+
+    // Sweep orphan tool parts on the busy→idle edge, not only at the next prompt
+    // entry. A tool whose abort finalizer was skipped (crash / process kill /
+    // registration race) stays `running` in the DB after a natural turn end; the
+    // Desktop UI settles that step as `completed` so the user sees nothing, then
+    // the next prompt's entry sweep emits `Tool execution aborted` into the NEW
+    // turn's stream. Cleaning on idle closes that window.
+    // Wired via module ref (not bus.subscribeCallback): SessionStatus.commit
+    // invokes it on every idle path, and SessionPrompt.layer must not require
+    // Instance context at construction time.
+    // Wire the idle-edge sweep. Identity-guarded clear so a rebuilt layer does
+    // not wipe a newer registration (same pattern as sessionPromptRef).
+    const idleSweep = (sid: SessionID, opts?: { before?: number }) => sweepOrphanToolParts(sid, opts)
+    orphanToolIdleSweepRef.current = idleSweep
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (orphanToolIdleSweepRef.current === idleSweep) orphanToolIdleSweepRef.current = undefined
+      }),
+    )
 
     const prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.prompt")(
       function* (input: PromptInput) {
