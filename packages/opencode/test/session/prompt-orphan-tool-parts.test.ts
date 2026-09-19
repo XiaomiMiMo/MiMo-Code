@@ -2,11 +2,11 @@ import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import path from "path"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { Bus } from "../../src/bus"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
+import { SessionRunState } from "../../src/session/run-state"
 import { SessionStatus } from "../../src/session/status"
 import { MessageV2 } from "../../src/session/message-v2"
 import { orphanToolIdleSweepRef } from "../../src/session/orphan-tool-idle-hook"
@@ -22,9 +22,8 @@ const it = testEffect(
   Layer.mergeAll(
     SessionPrompt.defaultLayer,
     Session.defaultLayer,
-    // Shared Bus so the test can observe Event.Idle published by THIS Status
-    // instance (the same one the test calls status.set on).
-    SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer)),
+    SessionStatus.defaultLayer,
+    SessionRunState.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
   ),
 )
@@ -80,6 +79,17 @@ const readPart = (sessionID: SessionID, partID: string) =>
     return undefined
   })
 
+const dummyWork = (sessionID: SessionID) =>
+  Effect.succeed({
+    info: {
+      id: MessageID.ascending(),
+      role: "assistant" as const,
+      sessionID,
+      time: { created: Date.now() },
+    },
+    parts: [],
+  } as unknown as MessageV2.WithParts)
+
 describe("sweepOrphanToolParts", () => {
   it.live("repairs a tool part orphaned at running when the session is idle", () =>
     provideTmpdirInstance((dir) =>
@@ -98,7 +108,6 @@ describe("sweepOrphanToolParts", () => {
         if (after.state.status !== "error") throw new Error("expected an error state")
         expect(after.state.error).toBe("Tool execution aborted")
         expect(after.state.metadata?.interrupted).toBe(true)
-        // The original start time survives so the transcript keeps its duration.
         expect(after.state.time.start).toBe(part.state.status === "running" ? part.state.time.start : 0)
       }),
     ),
@@ -113,8 +122,6 @@ describe("sweepOrphanToolParts", () => {
         const session = yield* sessions.create({})
         const part = yield* seedRunningToolPart(dir, session.id)
 
-        // A CURRENTLY EXECUTING tool is persisted as `running` too — this is the
-        // half that matters: a sweep that fires here would corrupt a live turn.
         yield* status.set(session.id, { type: "busy" })
         yield* svc.sweepOrphanToolParts(session.id)
 
@@ -207,8 +214,6 @@ describe("sweepOrphanToolParts", () => {
         const part = yield* seedRunningToolPart(dir, session.id)
         const started = part.state.status === "running" ? part.state.time.start : Date.now()
 
-        // Simulates the idle-edge sweep racing a new prompt: only parts that
-        // were already running when the session went idle may be rewritten.
         yield* svc.sweepOrphanToolParts(session.id, { before: started - 1 })
 
         const after = yield* readPart(session.id, part.id)
@@ -218,41 +223,14 @@ describe("sweepOrphanToolParts", () => {
     ),
   )
 
-  it.live("idle transition rewrites an orphan running part without a new prompt", () =>
+  // [RL-ORPHAN-D01] Primary ownership boundary: sweep in work ensuring while
+  // Runner is still Running. status.set(idle) runs after finishRun already
+  // flipped Runner to Idle — that is NOT a safe sweep point.
+  it.live("work ensuring aborts orphans before Runner releases ownership", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
-        const status = yield* SessionStatus.Service
-        // Construct SessionPrompt so orphanToolIdleSweepRef is wired.
-        yield* SessionPrompt.Service
-        const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id)
-
-        // No SessionPrompt.prompt() call — only the idle edge. This is the
-        // regression for: natural turn end left a tool `running`, Desktop
-        // settled it as completed, then the next user message's entry sweep
-        // emitted the abort into the NEW turn.
-        yield* status.set(session.id, { type: "idle" })
-
-        const after = yield* readPart(session.id, part.id)
-        if (after?.type !== "tool") throw new Error("expected a tool part")
-        expect(after.state.status).toBe("error")
-        if (after.state.status !== "error") throw new Error("expected an error state")
-        expect(after.state.error).toBe("Tool execution aborted")
-        expect(after.state.metadata?.interrupted).toBe(true)
-      }),
-    ),
-  )
-
-  // [RL-ORPHAN-D01] Terminal tool states must complete BEFORE idle is announced.
-  // Desktop finishes/unsubscribes on idle; abort after that reopens the original
-  // bug one edge later.
-  it.live("sweep completes before session.idle is published", () =>
-    provideTmpdirInstance((dir) =>
-      Effect.gen(function* () {
-        const sessions = yield* Session.Service
-        const status = yield* SessionStatus.Service
-        const bus = yield* Bus.Service
+        const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
         const part = yield* seedRunningToolPart(dir, session.id)
@@ -260,110 +238,56 @@ describe("sweepOrphanToolParts", () => {
         const order: string[] = []
         const real = orphanToolIdleSweepRef.current
         expect(real).toBeDefined()
-        orphanToolIdleSweepRef.current = (sid, opts) => {
-          order.push("sweep")
-          return real!(sid, opts)
-        }
-        const off = yield* bus.subscribeCallback(SessionStatus.Event.Idle, (evt) => {
-          if (evt.properties.sessionID === session.id) order.push("idle")
-        })
+        orphanToolIdleSweepRef.current = (sid, opts) =>
+          Effect.gen(function* () {
+            order.push("sweep")
+            yield* real!(sid, opts)
+          })
 
         try {
-          yield* status.set(session.id, { type: "idle" })
-          // Bus delivery may be async relative to publish return; flush.
-          yield* Effect.sleep("50 millis")
+          yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
         } finally {
-          off()
           orphanToolIdleSweepRef.current = real
         }
 
-        expect(order).toEqual(["sweep", "idle"])
+        expect(order).toEqual(["sweep"])
         const after = yield* readPart(session.id, part.id)
         if (after?.type !== "tool") throw new Error("expected a tool part")
         expect(after.state.status).toBe("error")
+        if (after.state.status !== "error") throw new Error("expected an error state")
+        expect(after.state.error).toBe("Tool execution aborted")
       }),
     ),
   )
 
-  // [RL-ORPHAN-D01] Queryable idle must not open before orphans are terminal.
-  // Desktop can finish from status.get() alone, not only from session.idle.
-  it.live("status.get is not idle during the idle-commit sweep", () =>
+  // [RL-ORPHAN-D01] force=true is the ownership contract: sweep only from work
+  // ensuring (Runner still Running) or cancel-with-no-busy-runner — never from
+  // status.set(idle) after finishRun released the Runner.
+  it.live("work ensuring sweep is force while Runner owns execution", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
-        const status = yield* SessionStatus.Service
+        const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
         yield* seedRunningToolPart(dir, session.id)
 
-        yield* status.set(session.id, { type: "busy" })
-
-        let statusDuringSweep: string | undefined
+        let sawForce = false
         const real = orphanToolIdleSweepRef.current
         expect(real).toBeDefined()
         orphanToolIdleSweepRef.current = (sid, opts) =>
           Effect.gen(function* () {
-            statusDuringSweep = (yield* status.get(sid)).type
+            if (opts?.force) sawForce = true
             yield* real!(sid, opts)
           })
 
         try {
-          yield* status.set(session.id, { type: "idle" })
+          yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
         } finally {
           orphanToolIdleSweepRef.current = real
         }
 
-        expect(statusDuringSweep).toBe("busy")
-        expect((yield* status.get(session.id)).type).toBe("idle")
-      }),
-    ),
-  )
-
-  // [RL-ORPHAN-D01] A newer busy during the idle-commit sweep must win: the
-  // stale idle must not be published after the new turn's busy.
-  it.live("does not publish idle when a newer busy wins during sweep", () =>
-    provideTmpdirInstance((dir) =>
-      Effect.gen(function* () {
-        const sessions = yield* Session.Service
-        const status = yield* SessionStatus.Service
-        const bus = yield* Bus.Service
-        yield* SessionPrompt.Service
-        const session = yield* sessions.create({})
-        yield* seedRunningToolPart(dir, session.id)
-        yield* status.set(session.id, { type: "busy" })
-
-        const events: string[] = []
-        const real = orphanToolIdleSweepRef.current
-        expect(real).toBeDefined()
-        orphanToolIdleSweepRef.current = (sid, opts) =>
-          Effect.gen(function* () {
-            events.push("sweep-start")
-            // Concurrent new turn starts mid-sweep.
-            yield* status.set(sid, { type: "busy" })
-            events.push("busy")
-            yield* real!(sid, opts)
-            events.push("sweep-end")
-          })
-        const off = yield* bus.subscribeCallback(SessionStatus.Event.Idle, (evt) => {
-          if (evt.properties.sessionID === session.id) events.push("idle")
-        })
-        const offStatus = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
-          if (evt.properties.sessionID === session.id) events.push(`status:${evt.properties.status.type}`)
-        })
-
-        try {
-          yield* status.set(session.id, { type: "idle" })
-          yield* Effect.sleep("50 millis")
-        } finally {
-          off()
-          offStatus()
-          orphanToolIdleSweepRef.current = real
-        }
-
-        expect(events).toContain("sweep-start")
-        expect(events).toContain("busy")
-        expect(events).not.toContain("idle")
-        expect((yield* status.get(session.id)).type).toBe("busy")
+        expect(sawForce).toBe(true)
       }),
     ),
   )

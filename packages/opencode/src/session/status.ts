@@ -2,7 +2,6 @@ import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { InstanceState } from "@/effect"
 import { SessionID } from "./schema"
-import { orphanToolIdleSweepRef } from "./orphan-tool-idle-hook"
 import { Effect, Layer, Context } from "effect"
 import z from "zod"
 import { Log } from "@/util"
@@ -71,15 +70,7 @@ export const layer = Layer.effect(
 
     const state = yield* InstanceState.make(
       Effect.fn("SessionStatus.state")(() =>
-        Effect.succeed({
-          statuses: new Map<SessionID, Info>(),
-          retryAttempts: new Map<SessionID, number>(),
-          // Monotonic per-session commit token (RL-ORPHAN-D01). Every non-idle
-          // commit bumps it; an idle commit captures a token and may publish
-          // idle only if the token is unchanged after its sweep — otherwise a
-          // newer busy/retry won and a stale idle must not tail the new turn.
-          commitEpoch: new Map<SessionID, number>(),
-        }),
+        Effect.succeed({ statuses: new Map<SessionID, Info>(), retryAttempts: new Map<SessionID, number>() }),
       ),
     )
 
@@ -117,27 +108,17 @@ export const layer = Layer.effect(
         })
       }
       if (normalized.type === "idle") {
-        // Causal order + ownership (RL-ORPHAN-D01):
-        // 1. Do NOT clear the status map yet — get() must keep reporting the
-        //    prior non-idle status so clients cannot query idle (and finish)
-        //    before orphan tools are terminal.
-        // 2. Force-sweep orphans while still non-idle; `before` protects tools
-        //    from a concurrent new turn that races in mid-sweep.
-        // 3. Publish idle only if this commit still owns the epoch. A newer
-        //    busy/retry during sweep bumps the epoch and must win — publishing
-        //    stale idle after the new turn's busy would corrupt turn boundaries.
-        const myEpoch = (data.commitEpoch.get(sessionID) ?? 0) + 1
-        data.commitEpoch.set(sessionID, myEpoch)
-        const sweep = orphanToolIdleSweepRef.current
-        const before = Date.now()
-        if (sweep) yield* sweep(sessionID, { before, force: true }).pipe(Effect.ignore)
-        if (data.commitEpoch.get(sessionID) !== myEpoch) return normalized
+        // Orphan tool sweep is NOT done here. finishRun already flipped the
+        // Runner to Idle before onIdle → status.set, so this is not an
+        // execution-ownership boundary (RL-ORPHAN-D01). Primary sweep is
+        // SessionRunState's work ensuring (Runner still Running). Publish idle
+        // only — tool terminal states from that ensuring have already been
+        // persisted and emitted.
         data.statuses.delete(sessionID)
         data.retryAttempts.delete(sessionID)
         yield* bus.publish(Event.Status, { sessionID, status: normalized })
         yield* bus.publish(Event.Idle, { sessionID })
       } else {
-        data.commitEpoch.set(sessionID, (data.commitEpoch.get(sessionID) ?? 0) + 1)
         yield* bus.publish(Event.Status, { sessionID, status: normalized })
         data.statuses.set(sessionID, normalized)
       }
