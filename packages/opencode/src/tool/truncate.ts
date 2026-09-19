@@ -36,8 +36,8 @@ function hasActorTool(agent?: Agent.Info) {
 export function formatToolTruncationHint(file: string, outcome: "success" | "error", agent?: Agent.Info): string {
   const result = outcome === "error" ? "failed" : "succeeded"
   return hasActorTool(agent)
-    ? `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse the actor tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-    : `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+    ? `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse the actor tool to have explore agent process this file with \`grep\` and \`read\` (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
+    : `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse \`grep\` to search the full content or \`read\` with offset/limit to view specific sections.`
 }
 
 export interface Interface {

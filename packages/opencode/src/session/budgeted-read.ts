@@ -22,7 +22,7 @@ export async function readBudgeted(
   const hint =
     `\n\n⚠️ Truncated at ~${budgetTokens} tokens. ` +
     `${filePath} is ~${totalTokens} tokens total. ` +
-    `Read("${filePath}", offset=${clean.length}) for the rest.`
+    `read("${filePath}", offset=${clean.length}) for the rest.`
   return { text: clean + hint, truncated: true, totalTokens }
 }
 
@@ -83,7 +83,7 @@ export async function readBudgetedSectionAware(
     ].join("\n")
     const hint =
       `\n\n⚠️ File extremely large (${totalTokens} tokens vs budget ${budgetTokens}). ` +
-      `Only structure shown.\n   Read("${filePath}") for full content.`
+      `Only structure shown.\n   read("${filePath}") for full content.`
     return { text: skeleton + hint, truncated: true, totalTokens }
   }
 
@@ -113,6 +113,6 @@ export async function readBudgetedSectionAware(
   const hint =
     `\n\n⚠️ Truncated at ~${budgetTokens} tokens. ` +
     `${filePath} is ~${totalTokens} tokens total. ` +
-    `Read("${filePath}") for full content.`
+    `read("${filePath}") for full content.`
   return { text: out.join("\n") + hint, truncated: true, totalTokens }
 }

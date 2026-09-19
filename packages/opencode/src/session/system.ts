@@ -163,7 +163,7 @@ export const layer = Layer.effect(
             [
               `<vision-capability>`,
               `You CANNOT see or interpret image content — this model has no vision support.`,
-              `Never attempt to analyze an image's visual content yourself. If a task needs image understanding, dispatch a vision-capable subagent via the actor tool, passing the image file path so the subagent can Read it.`,
+              `Never attempt to analyze an image's visual content yourself. If a task needs image understanding, dispatch a vision-capable subagent via the actor tool, passing the image file path so the subagent can \`read\` it.`,
               visionModels.length
                 ? `Vision-capable models you can pass to --model: ${visionModels.join(", ")}. Run \`actor models --vision\` to see all of them. Example: actor run <type> "<desc>" "analyze the image at <path>" --model ${preferredRef}.`
                 : `No vision-capable model is currently configured. Ask the user to configure a vision model, or use an OCR tool to extract text.`,

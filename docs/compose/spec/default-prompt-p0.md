@@ -51,20 +51,24 @@ rules + two real roots; Tone (progress rhythm, end-of-turn summary).
 3. Over-slashed then restored Agent system; final product call: **architecture out of base sys** (mimocode-docs / tool desc own it); tests lock the slim shape.
 4. Subagent return format belongs on spawn task injection, not the main memory block.
 5. `general` must keep a nested-spawn ban: `toolAllowlist` is unset so it can inherit `actor`.
+6. Tool-name casing across **all injectors** (not just `default.txt`): when a word names a tool, use the registered snake_case id in backticks (`read`/`grep`/`edit`/`write`); plain English verbs may stay unquoted. No `Grep`/`Glob`/`Read tool`/`Don't Edit` in model-facing strings.
 
 ## [S1] Problem
 
 `default.txt` mixed Claude Code brand residue, invented dispatch tools, a
 wrong Memory block, compose advertising, and tool-limit/path dumps that
 duplicate real injectors — while the architecture prose (Agent system, skills
-rules, session, MCP, trust) is still needed.
+rules, session, MCP, trust) is still needed. Memory/tool descriptions also
+advertised capitalized tool names (`Grep`/`Read`/`Edit`) that violate the
+case-sensitive registered-id rule.
 
 ## [S2] Design
 
 Base sys = behavior + trust + tool routing + skills roots + tone. Delete wrong,
 branded, or already-injected content. Architecture lives in tool descriptions /
 mimocode-docs / runtime injectors. compose never appears. Return format is
-spawn-owned. `general` forbids nested spawn.
+spawn-owned. `general` forbids nested spawn. Tool names in every model-facing
+injector use exact registered ids (backticked snake_case when they mean the tool).
 
 See Report tables.
 

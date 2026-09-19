@@ -379,7 +379,7 @@ function composeWriterPrompt(input: {
     `TASK_MEM_DIR    = ${input.taskMemDir}`,
     `NOTES_PATH      = ${input.notesFile}`,
     "",
-    "When using the Write tool, the first arg MUST be one of these literal",
+    "When using the `write` tool, the first arg MUST be one of these literal",
     "absolute paths (or for task narrative, TASK_MEM_DIR + '/' + task_id +",
     "'/progress.md' or '/notes.md'). Do NOT abbreviate. Do NOT change",
     "parent directories. Do NOT insert paths from memory of similar projects.",
@@ -397,7 +397,7 @@ function composeWriterPrompt(input: {
     "",
     input.rangeDesc,
     "",
-    "Use the `task` tool for ALL task state ops (create / start / progress / done / abandon / approve / rename / block / unblock / batch_create). Use the Write tool for the checkpoint, memory, and task narrative files at the CHECKPOINT_PATH / MEMORY_PATH / TASK_MEM_DIR locations declared above. After all writes and tool calls, stop immediately.",
+    "Use the `task` tool for ALL task state ops (create / start / progress / done / abandon / approve / rename / block / unblock / batch_create). Use the `write` tool for the checkpoint, memory, and task narrative files at the CHECKPOINT_PATH / MEMORY_PATH / TASK_MEM_DIR locations declared above. After all writes and tool calls, stop immediately.",
   ].join("\n")
 }
 
@@ -1417,7 +1417,7 @@ export const layer: Layer.Layer<
       // to that file. Non-file sections are also H1 so nothing nests under
       // the previous file by accident.
       lines.push(
-        "The sections below are auto-loaded session context already in this message. File-backed sections list their path on a `File:` line — Grep that path for specific facts; do not Read the whole file again.",
+        "The sections below are auto-loaded session context already in this message. File-backed sections list their path on a `File:` line — `grep` that path for specific facts; do not `read` the whole file again.",
       )
       lines.push("")
 

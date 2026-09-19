@@ -35,7 +35,7 @@ If CLAUDE.md says "don't use TDD" and a skill says "always use TDD," follow the 
 
 ## How to Access Skills
 
-Use the skill capability exposed in the current tool surface. If `skill` is a top-level tool, call it directly. In GPT/Codex mode, call `exec` with `const result = await tools.skill({ name: "<skill-name>" }); return result.output`. Never call a tool that is absent from the current surface, and never use the Read tool on skill files.
+Use the skill capability exposed in the current tool surface. If `skill` is a top-level tool, call it directly. In GPT/Codex mode, call `exec` with `const result = await tools.skill({ name: "<skill-name>" }); return result.output`. Never call a tool that is absent from the current surface, and never use the `read` tool on skill files.
 
 ## Simplicity
 

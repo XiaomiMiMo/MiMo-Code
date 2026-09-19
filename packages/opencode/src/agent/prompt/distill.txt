@@ -44,7 +44,7 @@ Memory files root: `<DATA>/memory/`
 
 1. Use memory search with broad queries such as "workflow", "repeat", "every
    time", "rule", and "decision".
-2. Use Glob/Read to inspect the memory paths from the system memory instructions.
+2. Use `glob`/`read` to inspect the memory paths from the system memory instructions.
 3. Use bash to locate the database:
    - Infer `<DATA>/mimocode.db` from the resolved memory root.
    - If `MIMOCODE_DB` is visible in the shell environment, account for its

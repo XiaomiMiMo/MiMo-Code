@@ -48,7 +48,7 @@ Actions:
 - search: OR-joined BM25 query, optional scope/scope_id/type filters
 
 After search returns paths, use Read on the most relevant ones to
-load full content (snippets are truncated). Use Glob on
+load full content (snippets are truncated). Use `glob` on
 `<data>/memory/**/*.md` to inspect the tree if you need to find files
 by name pattern instead of body.
 

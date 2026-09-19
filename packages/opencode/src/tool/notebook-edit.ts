@@ -19,7 +19,7 @@ const Parameters = z.object({
     .string()
     .optional()
     .describe(
-      "Cell id from the Read tool's <cell id=\"...\"> output. Required for replace/delete; for insert, the new cell is added after this cell (or at the beginning if omitted).",
+      "Cell id from the `read` tool's <cell id=\"...\"> output. Required for replace/delete; for insert, the new cell is added after this cell (or at the beginning if omitted).",
     ),
   new_source: z.string().optional().describe("The cell's new content. Required for replace and insert; ignored for delete."),
   cell_type: z

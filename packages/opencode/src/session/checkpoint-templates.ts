@@ -17,7 +17,7 @@ _This session's specific working style. Project-level rules are in projects/<pid
 (none)
 
 ## §4 Task tree
-_Hierarchical view of tasks with current focus marked. Pulled from task tool's DB; one bullet per top-level task with status + summary. Append \` (progress: tasks/<id>/progress.md)\` so the next agent can Read the per-task journal directly. Indent sub-tasks two spaces under their parent._
+_Hierarchical view of tasks with current focus marked. Pulled from task tool's DB; one bullet per top-level task with status + summary. Append \` (progress: tasks/<id>/progress.md)\` so the next agent can \`read\` the per-task journal directly. Indent sub-tasks two spaces under their parent._
 
 (none yet)
 

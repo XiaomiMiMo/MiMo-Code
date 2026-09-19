@@ -152,9 +152,9 @@ ${files.join("\n")}`,
           "The checkpoint writer is the sole curator of the structured files. You don't maintain them mid-task — the writer extracts everything from the conversation at checkpoint events.",
         ]
       : []),
-    `## When to Edit MEMORY.md directly
+    `## When to edit MEMORY.md directly
 
-You may Edit MEMORY.md when:
+You may edit MEMORY.md when:
 - User states a project-level rule that should hold across sessions → ## Rules
 - User states a project-level architectural decision → ## Architecture decisions
 - A clearly durable cross-session fact emerges that you want available immediately${checkpointEnabled ? ", before the next checkpoint" : ""} → ## Discovered durable knowledge${
@@ -181,9 +181,9 @@ This is your ONLY legal scratchpad — don't create \`learning.md\`, \`scratch.m
     `## What NOT to do
 
 ${[
-  ...(checkpointEnabled ? ["- Don't Edit checkpoint.md — that's the writer's domain."] : []),
+  ...(checkpointEnabled ? ["- Don't `edit` checkpoint.md — that's the writer's domain."] : []),
   "- Don't create memory files other than notes.md (no learning.md, no scratch.md). Use notes.md for any free-form entry.",
-  "- Don't ask the user about something memory may already record — search first via Grep / Read.",
+  "- Don't ask the user about something memory may already record — search first via `grep` / `read`.",
 ].join("\n")}`,
     ...(checkpointEnabled
       ? [
@@ -198,11 +198,11 @@ After a checkpoint rebuild, the following dumps may be already in your context (
 
 If these dumps are visible in your context:
 
-- Do NOT Read them again as whole files. The bytes are already in front of you.
-- For specific past details (a particular turn's content, a specific tool output, an old command), use Grep with a keyword pattern to target the exact item — do not pull a whole file.
-- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), Read on demand.
+- Do NOT \`read\` them again as whole files. The bytes are already in front of you.
+- For specific past details (a particular turn's content, a specific tool output, an old command), use \`grep\` with a keyword pattern to target the exact item — do not pull a whole file.
+- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), \`read\` on demand.
 
-If a dump shows "⚠️ Truncated at ~N tokens. Read(<path>, offset=L) for the rest." — that file was budget-cut. Use Read with the offset only when you need the missing tail.
+If a dump shows "⚠️ Truncated at ~N tokens. read(<path>, offset=L) for the rest." — that file was budget-cut. Use \`read\` with the offset only when you need the missing tail.
 
 Memory entries name functions, files, flags, paths — those are CLAIMS about a point in time when they were written. Verify before acting on a specific name.
 
