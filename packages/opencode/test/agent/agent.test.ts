@@ -48,7 +48,9 @@ test("default system prompt has no Claude Code residual and names real dispatch 
   expect(PROMPT_DEFAULT).not.toContain("## Agent system")
   expect(PROMPT_DEFAULT).not.toContain("### Session lifecycle")
   expect(PROMPT_DEFAULT).toContain("## Skills")
-  expect(PROMPT_DEFAULT).toContain("## Trust boundaries")
+  // Trust rules live under System (deduped); no separate Trust heading.
+  expect(PROMPT_DEFAULT).not.toContain("## Trust boundaries")
+  expect(PROMPT_DEFAULT).toContain("Memory records may be stale")
   expect(PROMPT_DEFAULT).toContain("use `actor`")
   expect(PROMPT_DEFAULT).toContain("`task` tool")
   expect(PROMPT_DEFAULT).toContain("`plan_exit`")
