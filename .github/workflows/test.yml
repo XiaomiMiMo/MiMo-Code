@@ -34,28 +34,11 @@ jobs:
           git config --global user.email "ci@mimo.ai"
           git config --global user.name "mimo-ci"
 
-      # runtime-worktree.test.ts excluded from shards: its deadline-fired test
-      # deadlocks when run after other tests (QuickJS WASM state leak).
-      # It runs separately below in an isolated process.
-      #
-      # stdio-exit-observe.test.ts excluded from shards: it needs the real
-      # ObservingStdioTransport. lifecycle.test.ts mock.module's that path
-      # process-wide, so sharing a bun test process with it always breaks
-      # these tests. Same isolation pattern as runtime-worktree.
-      #
-      # Sharding is path-hash, NOT list position: `NR % n` on the sorted file
-      # list reassigns every later file when one is added/removed, which
-      # reshuffles process-wide mocks and breaks order-sensitive tests
-      # (e.g. mcp/sampling-e2e). hash(path) % n keeps each file's shard
-      # independent of its neighbors.
-      #
-      # Scope: this stabilizes shard membership and isolates the one pair that
-      # actually broke. It is NOT a general mock.module isolation scheme —
-      # other files that mock.module still share a bun test process with their
-      # shard neighbors. If a new mock lands on the same hash bucket as a test
-      # that needs the real implementation, isolate that file the same way as
-      # runtime-worktree / stdio-exit-observe rather than assuming hash-sharding
-      # alone is enough.
+      # These MCP suites mock SDK modules process-wide. Run each in its own
+      # process below so they neither replace real transports in integration tests
+      # nor inherit a ManagedClient subclass bound to another suite's SDK Client.
+      # runtime-worktree and stdio-exit-observe also keep their isolated runs.
+      # Path-hash sharding keeps existing files in the same shard when files change.
       - name: Run unit tests (shard ${{ matrix.shard }})
         timeout-minutes: 8
         working-directory: packages/opencode
@@ -70,7 +53,11 @@ jobs:
             fi
           done < <(find test -name '*.test.ts' \
             ! -name 'runtime-worktree.test.ts' \
-            ! -name 'stdio-exit-observe.test.ts' | sort))
+            ! -name 'stdio-exit-observe.test.ts' \
+            ! -path 'test/mcp/lifecycle.test.ts' \
+            ! -path 'test/mcp/headers.test.ts' \
+            ! -path 'test/mcp/oauth-auto-connect.test.ts' \
+            ! -path 'test/mcp/oauth-browser.test.ts' | sort))
           # Empty shard: `bun test` with no file args discovers everything,
           # including the excluded isolation files. Skip instead of running
           # the whole suite in this leg.
@@ -89,6 +76,19 @@ jobs:
         with:
           name: junit-shard-${{ strategy.job-index }}
           path: packages/opencode/.artifacts/unit/junit.xml
+
+      - name: Run MCP mock suites (isolated)
+        if: matrix.shard == '4/4'
+        timeout-minutes: 3
+        working-directory: packages/opencode
+        run: |
+          for file in \
+            test/mcp/lifecycle.test.ts \
+            test/mcp/headers.test.ts \
+            test/mcp/oauth-auto-connect.test.ts \
+            test/mcp/oauth-browser.test.ts; do
+            bun test "$file" --timeout 120000
+          done
 
       # Run deadline worktree test in isolation (shard 4/4 only).
       - name: Run deadline worktree test (isolated)
