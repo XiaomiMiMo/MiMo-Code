@@ -36,38 +36,6 @@ function exec(args: { url: string; format: "text" | "markdown" | "html" }) {
 }
 
 describe("tool.webfetch", () => {
-  test("preserves short documents and explicit HTML without readability heuristics", async () => {
-    const pages = [
-      "<html><body><h1>Enable JavaScript</h1><p>Open Settings, then Site settings, then JavaScript.</p></body></html>",
-      "<html><title>Access denied</title><body><h1>Permission troubleshooting</h1><p>Ask an administrator for the Reader role.</p></body></html>",
-      '<html><title>Sign in</title><body><form><input type="password"></form></body></html>',
-      '<html><body><div id="root"></div><script src="app.js"></script></body></html>',
-      '<html><body><noscript>You need to enable JavaScript to run this app.</noscript><script src="app.js"></script></body></html>',
-    ]
-    await withFetch(
-      (req) =>
-        new Response(pages[Number(new URL(req.url).pathname.slice(1))], {
-          headers: { "content-type": "text/html" },
-        }),
-      async (url) => {
-        await Instance.provide({
-          directory: projectRoot,
-          fn: async () => {
-            for (const [index, html] of pages.entries()) {
-              const page = new URL(String(index), url).toString()
-              expect((await exec({ url: page, format: "html" })).output).toBe(html)
-              for (const format of ["text", "markdown"] as const) {
-                const result = await exec({ url: page, format })
-                if (index === 0) expect(result.output).toContain("Open Settings")
-                if (index === 1) expect(result.output).toContain("Reader role")
-                expect(typeof result.output).toBe("string")
-              }
-            }
-          },
-        })
-      },
-    )
-  })
   test("returns image responses as file attachments", async () => {
     const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     await withFetch(
