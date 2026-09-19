@@ -1908,5 +1908,180 @@ describe("ActorRegistry", () => {
         expect(data?.state?.status).toBe("running")
       })
     })
+
+    test("[TP-ABANDON-Q-12] pending→running with fresh start after select is not reclaimed", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            Database.use((db) => {
+              const messageId = MessageID.ascending()
+              const partId = PartID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: stale,
+                  time_updated: stale,
+                  data: { role: "assistant", time: { created: stale } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: stale,
+                  time_updated: stale,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_refresh_q",
+                    state: {
+                      status: "pending",
+                      input: {
+                        questions: [{ question: "refresh?", header: "r", options: [{ label: "A", description: "" }] }],
+                      },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonRefreshQ = { part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonRefreshQ as { part: string }
+      await withRegistry(tmp.path, async () => {
+        const now = Date.now()
+        sweepAbandonedZombies({
+          __afterSelect: () => {
+            Database.use((db) => {
+              const part = db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get()
+              const data = part?.data as { state?: Record<string, unknown> }
+              db.update(PartTable)
+                .set({
+                  data: {
+                    ...data,
+                    state: {
+                      ...(data?.state ?? {}),
+                      status: "running",
+                      time: { start: now },
+                    },
+                  } as never,
+                  time_updated: now,
+                })
+                .where(eq(PartTable.id, ids.part as never))
+                .run()
+            })
+          },
+        })
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const data = part?.data as { state?: { status?: string; time?: { start?: number } } }
+        expect(data?.state?.status).toBe("running")
+        expect(data?.state?.time?.start).toBe(now)
+      })
+    })
+
+    test("[TP-ABANDON-Q-13] question write opens a real SQLite transaction (not nested-use)", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            Database.use((db) => {
+              const messageId = MessageID.ascending()
+              const partId = PartID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: stale,
+                  time_updated: stale,
+                  data: { role: "assistant", time: { created: stale } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: stale,
+                  time_updated: stale,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_tx_q",
+                    state: {
+                      status: "running",
+                      input: {
+                        questions: [{ question: "tx?", header: "tx", options: [{ label: "A", description: "" }] }],
+                      },
+                      time: { start: stale },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonTxQ = { part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonTxQ as { part: string }
+      await withRegistry(tmp.path, async () => {
+        // Prove nested use short-circuits transaction (the r3 regression mode).
+        let nestedOpened = false
+        Database.use(() => {
+          const client = Database.Client() as { transaction: (...a: unknown[]) => unknown }
+          const orig = client.transaction.bind(client)
+          client.transaction = (...args: unknown[]) => {
+            nestedOpened = true
+            return orig(...args)
+          }
+          try {
+            Database.transaction(() => {})
+          } finally {
+            client.transaction = orig
+          }
+        })
+        expect(nestedOpened).toBe(false)
+
+        // Sweep of one orphan question must open ≥2 real transactions:
+        // actor abandon batch + per-question write.
+        let txCalls = 0
+        const client = Database.Client() as { transaction: (...a: unknown[]) => unknown }
+        const orig = client.transaction.bind(client)
+        client.transaction = (...args: unknown[]) => {
+          txCalls += 1
+          return orig(...args)
+        }
+        try {
+          sweepAbandonedZombies()
+        } finally {
+          client.transaction = orig
+        }
+        expect(txCalls).toBeGreaterThanOrEqual(2)
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const data = part?.data as { state?: { status?: string } }
+        expect(data?.state?.status).toBe("error")
+      })
+    })
   })
 })
