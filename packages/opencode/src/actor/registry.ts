@@ -46,9 +46,10 @@ const PROCESS_INSTANCE_ID = randomUUID()
  * call this — ActorRegistry is process-shared and layer build may lack Instance
  * context (C-02).
  *
- * Writes re-check eligibility in the UPDATE WHERE (C-03). Terminal shape uses
- * `MessageV2.abortedToolState` (C-04). Candidate reads are limited to the
- * directory's sessions (C-05).
+ * Writes use top-level `Database.transaction` (not nested in `Database.use`)
+ * with re-read + status CAS so concurrent completions are not overwritten (C-03).
+ * Terminal shape uses `MessageV2.abortedToolState` (C-04). Candidate parts are
+ * SQL-filtered to open question tools in this directory (C-05).
  */
 export function sweepAbandonedZombies(opts?: {
   busySessionIds?: ReadonlySet<string>
@@ -57,15 +58,16 @@ export function sweepAbandonedZombies(opts?: {
   const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
   const busySessions = opts?.busySessionIds
   const directory = opts?.directory
-  Database.use((db) => {
-    const isLiveActor = (row: { actor_id: string; status: string }): boolean => {
-      if (row.status === "running") return true
-      if (row.status === "pending" && row.actor_id !== "main") return true
-      return false
-    }
+  const isLiveActor = (row: { actor_id: string; status: string }): boolean => {
+    if (row.status === "running") return true
+    if (row.status === "pending" && row.actor_id !== "main") return true
+    return false
+  }
 
-    // Actor abandon: conditional UPDATE keeps concurrent terminal writes safe.
-    db.update(ActorRegistryTable)
+  // Top-level Database.transaction — do NOT nest inside Database.use (that
+  // short-circuits to a non-transactional tx, C-03).
+  Database.transaction((tx) => {
+    tx.update(ActorRegistryTable)
       .set({
         status: "idle",
         last_outcome: "failure",
@@ -82,70 +84,81 @@ export function sweepAbandonedZombies(opts?: {
         ),
       )
       .run()
+  })
 
-    const orphanQuestionError =
-      "Question left open past the abandon threshold with no live actor; reclaimed and cancelled. Send a new message to continue."
+  const orphanQuestionError =
+    "Question left open past the abandon threshold with no live actor; reclaimed and cancelled. Send a new message to continue."
 
-    const sessionRows =
-      directory == null
-        ? db.select().from(SessionTable).all()
-        : db.select().from(SessionTable).where(eq(SessionTable.directory, directory)).all()
-    if (!sessionRows.length) return
-    const scopedSessions = new Set(sessionRows.map((s) => String(s.id)))
+  const sessionRows = Database.use((db) =>
+    directory == null
+      ? db.select().from(SessionTable).all()
+      : db.select().from(SessionTable).where(eq(SessionTable.directory, directory)).all(),
+  )
+  if (!sessionRows.length) return
+  const sessionIds = sessionRows.map((s) => s.id)
 
-    const actorsAfter = db.select().from(ActorRegistryTable).all()
-    const liveBySession = new Set<string>()
-    for (const a of actorsAfter) {
-      if (isLiveActor(a)) liveBySession.add(String(a.session_id))
-    }
+  const actorsAfter = Database.use((db) => db.select().from(ActorRegistryTable).all())
+  const liveBySession = new Set<string>()
+  for (const a of actorsAfter) {
+    if (isLiveActor(a)) liveBySession.add(String(a.session_id))
+  }
 
-    const openQuestions = db
+  // Push tool/status predicates to SQL so completed history payloads are not materialized (C-05).
+  const openQuestions = Database.use((db) =>
+    db
       .select()
       .from(PartTable)
-      .where(inArray(PartTable.session_id, sessionRows.map((s) => s.id)))
-      .all()
-      .filter((row) => {
-        if (!scopedSessions.has(String(row.session_id))) return false
-        const data = row.data as {
-          type?: string
-          tool?: string
-          state?: { status?: string; time?: Record<string, unknown> }
-        }
-        if (data?.type !== "tool" || data?.tool !== "question") return false
-        if (data.state?.status !== "running" && data.state?.status !== "pending") return false
-        const start = data.state?.time && typeof data.state.time.start === "number" ? data.state.time.start : row.time_created
-        return start < cutoff
-      })
+      .where(
+        and(
+          inArray(PartTable.session_id, sessionIds),
+          sql`json_extract(${PartTable.data}, '$.type') = 'tool'`,
+          sql`json_extract(${PartTable.data}, '$.tool') = 'question'`,
+          sql`json_extract(${PartTable.data}, '$.state.status') IN ('running', 'pending')`,
+        ),
+      )
+      .all(),
+  )
 
-    const end = Date.now()
-    for (const row of openQuestions) {
-      if (busySessions?.has(String(row.session_id))) continue
-      if (liveBySession.has(String(row.session_id))) continue
-      // Transaction: re-read eligibility so a concurrent complete/answer wins (C-03).
-      Database.transaction((tx) => {
-        const fresh = tx.select().from(PartTable).where(eq(PartTable.id, row.id)).get()
-        if (!fresh) return
-        const data = fresh.data as {
-          type?: string
-          tool?: string
-          state?: { status?: string; time?: Record<string, unknown> }
-        }
-        if (data?.type !== "tool" || data?.tool !== "question") return
-        if (data.state?.status !== "running" && data.state?.status !== "pending") return
-        const start =
-          data.state?.time && typeof data.state.time.start === "number" ? data.state.time.start : fresh.time_created
-        if (start >= cutoff) return
-        const next = {
-          ...data,
-          state: MessageV2.abortedToolState(data.state as never, orphanQuestionError),
-        }
-        tx.update(PartTable)
-          .set({ data: next as never, time_updated: end })
-          .where(eq(PartTable.id, row.id))
-          .run()
-      })
+  const end = Date.now()
+  for (const row of openQuestions) {
+    if (busySessions?.has(String(row.session_id))) continue
+    if (liveBySession.has(String(row.session_id))) continue
+    const pre = row.data as {
+      type?: string
+      tool?: string
+      state?: { status?: string; time?: Record<string, unknown> }
     }
-  })
+    const preStart =
+      pre.state?.time && typeof pre.state.time.start === "number" ? pre.state.time.start : row.time_created
+    if (preStart >= cutoff) continue
+    Database.transaction((tx) => {
+      const fresh = tx.select().from(PartTable).where(eq(PartTable.id, row.id)).get()
+      if (!fresh) return
+      const data = fresh.data as {
+        type?: string
+        tool?: string
+        state?: { status?: string; time?: Record<string, unknown> }
+      }
+      if (data?.type !== "tool" || data?.tool !== "question") return
+      if (data.state?.status !== "running" && data.state?.status !== "pending") return
+      const start =
+        data.state?.time && typeof data.state.time.start === "number" ? data.state.time.start : fresh.time_created
+      if (start >= cutoff) return
+      const next = {
+        ...data,
+        state: MessageV2.abortedToolState(data.state as never, orphanQuestionError),
+      }
+      tx.update(PartTable)
+        .set({ data: next as never, time_updated: end })
+        .where(
+          and(
+            eq(PartTable.id, row.id),
+            sql`json_extract(${PartTable.data}, '$.state.status') IN ('running', 'pending')`,
+          ),
+        )
+        .run()
+    })
+  }
 }
 
 type ActorRow = typeof ActorRegistryTable.$inferSelect

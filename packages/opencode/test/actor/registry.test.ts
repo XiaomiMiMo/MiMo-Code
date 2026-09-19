@@ -1055,7 +1055,8 @@ describe("ActorRegistry", () => {
               )
             insertZombieActor(zombieSession.id, "zombie-q-1")
             insertZombieActor(liveSession.id, "zombie-q-2")
-            // liveSession also has a same-process running actor → question must stay open
+            // liveSession also has a same-process running actor → stale question must stay open
+            // (age gate alone would settle it; live non-main is the guard under test).
             Database.use((db) =>
               db
                 .insert(ActorRegistryTable)
@@ -1121,8 +1122,8 @@ describe("ActorRegistry", () => {
                   .run()
               })
             insertRunningQuestion(zombieSession.id, MessageID.ascending(), PartID.ascending(), stale)
-            // fresh question on liveSession — age gate keeps it even without a live actor row
-            insertRunningQuestion(liveSession.id, MessageID.ascending(), PartID.ascending(), Date.now())
+            // stale on liveSession too — only live non-main actor keeps it open
+            insertRunningQuestion(liveSession.id, MessageID.ascending(), PartID.ascending(), stale)
             ;(globalThis as Record<string, unknown>).__abandonQuestionTest = {
               zombieSession: zombieSession.id,
               liveSession: liveSession.id,
@@ -1137,8 +1138,7 @@ describe("ActorRegistry", () => {
         liveSession: string
       }
       await withRegistry(tmp.path, async () => {
-        // Session.defaultLayer inits ActorRegistry (and the layer-init sweep)
-        // before zombie rows are seeded; re-run the sweep after the inserts.
+        // Session.defaultLayer inits ActorRegistry without sweeping; re-run after inserts.
         sweepAbandonedZombies()
         const statusOf = (sessionID: string) =>
           Database.use((db) =>
@@ -1201,7 +1201,8 @@ describe("ActorRegistry", () => {
                   time_updated: stale,
                 })
                 .run()
-              // live main on this process — holds a real question Deferred
+              // live main on this process — registry row shape only (main turns
+              // use SessionRunState, not registry running); stale question kept by this guard
               db.update(ActorRegistryTable)
                 .set({ status: "running", last_activity_time: now, time_updated: now })
                 .where(and(eq(ActorRegistryTable.session_id, session.id), eq(ActorRegistryTable.actor_id, "main")))
@@ -1654,6 +1655,8 @@ describe("ActorRegistry", () => {
           }
           const rt2 = ManagedRuntime.make(testLayer)
           try {
+            // Sweep after rebuild — same-process running row must stay (layer no longer sweeps).
+            sweepAbandonedZombies()
             const actor = await rt2.runPromise(
               ActorRegistry.Service.use((svc) => svc.get(parentId, taskId)),
             )
@@ -1664,6 +1667,71 @@ describe("ActorRegistry", () => {
             await rt2.dispose()
           }
         },
+      })
+    })
+
+    test("[TP-ABANDON-Q-09] completed question is not overwritten by reclaim", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            const now = Date.now()
+            Database.use((db) => {
+              const messageId = MessageID.ascending()
+              const partId = PartID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: stale,
+                  time_updated: now,
+                  data: { role: "assistant", time: { created: stale } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: stale,
+                  time_updated: now,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_done_q",
+                    state: {
+                      status: "completed",
+                      input: {
+                        questions: [{ question: "done?", header: "done", options: [{ label: "A", description: "" }] }],
+                      },
+                      output: "answered",
+                      metadata: { answers: [["A"]] },
+                      time: { start: stale, end: now },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonDoneQ = { part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonDoneQ as { part: string }
+      await withRegistry(tmp.path, async () => {
+        sweepAbandonedZombies()
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const data = part?.data as { state?: { status?: string; metadata?: { answers?: string[][] } } }
+        expect(data?.state?.status).toBe("completed")
+        expect(data?.state?.metadata?.answers).toEqual([["A"]])
       })
     })
   })
