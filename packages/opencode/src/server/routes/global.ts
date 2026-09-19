@@ -16,6 +16,7 @@ import { lazy } from "../../util/lazy"
 import { Config } from "../../config"
 import { ExternalImport } from "../../session/external-import"
 import { errors } from "../error"
+import { ProviderID } from "@/provider/schema"
 
 const log = Log.create({ service: "server" })
 
@@ -190,6 +191,36 @@ export const GlobalRoutes = lazy(() =>
       async (c) => {
         const config = c.req.valid("json")
         const next = await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.updateGlobal(config)))
+        return c.json(next)
+      },
+    )
+    .delete(
+      "/config/provider/:providerID",
+      describeRoute({
+        summary: "Remove a global provider configuration",
+        description: "Remove a provider configuration from the global config file.",
+        operationId: "global.config.provider.remove",
+        responses: {
+          200: {
+            description: "Successfully removed global provider configuration",
+            content: {
+              "application/json": {
+                schema: resolver(Config.Info),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          providerID: ProviderID.zod,
+        }),
+      ),
+      async (c) => {
+        const providerID = c.req.valid("param").providerID
+        const next = await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.removeGlobalProvider(providerID)))
         return c.json(next)
       },
     )
