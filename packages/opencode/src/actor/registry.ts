@@ -1,11 +1,10 @@
 import { Effect, Layer, Context, Schedule } from "effect"
-import { Database, inArray, eq, and, lte, sql } from "@/storage"
+import { Database, inArray, eq, and, lte, ne, sql } from "@/storage"
 import { Bus } from "@/bus"
 import type { SessionID, MessageID } from "@/session/schema"
 import { ActorRegistryTable } from "./actor.sql"
 import { PartTable, SessionTable } from "@/session/session.sql"
-import { SessionStatus } from "@/session/status"
-import { Instance } from "@/project/instance"
+import { MessageV2 } from "@/session/message-v2"
 import type {
   Actor,
   ActorStatus,
@@ -35,21 +34,21 @@ const PROCESS_INSTANCE_ID = randomUUID()
  * Live execution (registry): `running` (any actor id, including main) or
  * non-main `pending`. The `pending main` row seeded by Session.create is not
  * live — but normal main turns go through SessionRunState and do **not**
- * flip that registry row to running. Registry alone cannot prove main is idle.
+ * flip that registry row to running.
  *
  * Question settle requires ALL of:
- * 1. Session belongs to the current Instance.directory (write set matches the
- *    SessionStatus busy view, which is also per-directory InstanceState);
- * 2. No live registry actor on that session (after abandoned rows settle);
- * 3. No busy/retry SessionStatus in this instance (same-process live main);
- * 4. The open question itself is older than the abandon threshold.
+ * 1. Session directory matches `directory` (write set ⊆ SessionStatus scope);
+ * 2. No live registry actor on that session after abandoned rows settle;
+ * 3. Session not in `busySessionIds` (same-process SessionStatus busy/retry);
+ * 4. Question start older than the abandon threshold.
  *
- * Cross-directory process peers are never written from this instance's sweep.
- * Cross-instance (other process) reclaim of a directory's leftovers still
- * happens when that directory's instance inits — same intentional-reclaim
- * tradeoff as actor abandon (a fiber blocked on a question writes no parts).
+ * Production entry: `InstanceBootstrap` (per directory). Layer-init does **not**
+ * call this — ActorRegistry is process-shared and layer build may lack Instance
+ * context (C-02).
  *
- * Called on registry layer init; tests may invoke after seeding zombie rows.
+ * Writes re-check eligibility in the UPDATE WHERE (C-03). Terminal shape uses
+ * `MessageV2.abortedToolState` (C-04). Candidate reads are limited to the
+ * directory's sessions (C-05).
  */
 export function sweepAbandonedZombies(opts?: {
   busySessionIds?: ReadonlySet<string>
@@ -61,57 +60,51 @@ export function sweepAbandonedZombies(opts?: {
   Database.use((db) => {
     const isLiveActor = (row: { actor_id: string; status: string }): boolean => {
       if (row.status === "running") return true
-      // pending main is the Session.create seed, not an executing fiber
       if (row.status === "pending" && row.actor_id !== "main") return true
       return false
     }
 
-    const abandoned = db
-      .select()
-      .from(ActorRegistryTable)
-      .all()
-      .filter((row) => row.status === "running" || row.status === "pending")
-      .filter((row) => row.instance_id !== PROCESS_INSTANCE_ID)
-      .filter((row) => (row.last_activity_time ?? row.time_created) < cutoff)
+    // Actor abandon: conditional UPDATE keeps concurrent terminal writes safe.
+    db.update(ActorRegistryTable)
+      .set({
+        status: "idle",
+        last_outcome: "failure",
+        last_error:
+          "Process restarted while actor was active; settled by abandon threshold. Not final — actor send can recover.",
+        time_completed: Date.now(),
+        time_updated: Date.now(),
+      })
+      .where(
+        and(
+          inArray(ActorRegistryTable.status, ["running", "pending"]),
+          ne(ActorRegistryTable.instance_id, PROCESS_INSTANCE_ID),
+          sql`COALESCE(${ActorRegistryTable.last_activity_time}, ${ActorRegistryTable.time_created}) < ${cutoff}`,
+        ),
+      )
+      .run()
 
-    for (const row of abandoned) {
-      db.update(ActorRegistryTable)
-        .set({
-          status: "idle",
-          last_outcome: "failure",
-          last_error:
-            "Process restarted while actor was active; settled by abandon threshold. Not final — actor send can recover.",
-          time_completed: Date.now(),
-          time_updated: Date.now(),
-        })
-        .where(and(eq(ActorRegistryTable.session_id, row.session_id), eq(ActorRegistryTable.actor_id, row.actor_id)))
-        .run()
-    }
-
-    const end = Date.now()
-    // Reclaim copy: abandoned-threshold policy, not a claim the OS process is dead.
     const orphanQuestionError =
       "Question left open past the abandon threshold with no live actor; reclaimed and cancelled. Send a new message to continue."
 
-    // Write set = sessions this instance owns. SessionStatus busy view is also
-    // per-directory; never cancel questions from another directory's sessions
-    // when this instance inits.
-    const scopedSessions = new Set(
-      db
-        .select()
-        .from(SessionTable)
-        .all()
-        .filter((s) => (directory == null ? true : s.directory === directory))
-        .map((s) => s.id),
-    )
+    const sessionRows =
+      directory == null
+        ? db.select().from(SessionTable).all()
+        : db.select().from(SessionTable).where(eq(SessionTable.directory, directory)).all()
+    if (!sessionRows.length) return
+    const scopedSessions = new Set(sessionRows.map((s) => s.id))
 
     const actorsAfter = db.select().from(ActorRegistryTable).all()
+    const liveBySession = new Map<string, boolean>()
+    for (const a of actorsAfter) {
+      if (isLiveActor(a)) liveBySession.set(a.session_id, true)
+    }
+
     const openQuestions = db
       .select()
       .from(PartTable)
+      .where(inArray(PartTable.session_id, [...scopedSessions]))
       .all()
       .filter((row) => {
-        if (!scopedSessions.has(row.session_id)) return false
         const data = row.data as {
           type?: string
           tool?: string
@@ -124,34 +117,33 @@ export function sweepAbandonedZombies(opts?: {
         )
       })
 
+    const end = Date.now()
     for (const row of openQuestions) {
       if (busySessions?.has(row.session_id)) continue
-      const sessionActors = actorsAfter.filter((a) => a.session_id === row.session_id)
-      if (sessionActors.some(isLiveActor)) continue
+      if (liveBySession.get(row.session_id)) continue
       const data = row.data as {
         type?: string
         tool?: string
-        state?: { status?: string; error?: string; time?: Record<string, unknown> }
+        callID?: string
+        state?: { status?: string; time?: Record<string, unknown> }
       }
       const state = data.state && typeof data.state === "object" ? data.state : {}
       const time = state.time && typeof state.time === "object" ? state.time : {}
       const started = typeof time.start === "number" ? time.start : row.time_created
-      // Fresh questions stay open: protects live main even when registry main is still pending.
       if (started >= cutoff) continue
+      const next = {
+        ...data,
+        state: MessageV2.abortedToolState(state as never, orphanQuestionError),
+      }
+      // Re-check open status in WHERE so a concurrent complete/answer wins.
       db.update(PartTable)
-        .set({
-          data: {
-            ...data,
-            state: {
-              ...state,
-              status: "error",
-              error: orphanQuestionError,
-              time: { ...time, end: end },
-            },
-          } as never,
-          time_updated: end,
-        })
-        .where(eq(PartTable.id, row.id))
+        .set({ data: next as never, time_updated: end })
+        .where(
+          and(
+            eq(PartTable.id, row.id),
+            sql`json_extract(${PartTable.data}, '$.state.status') IN ('running', 'pending')`,
+          ),
+        )
         .run()
     }
   })
@@ -242,7 +234,7 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ActorRegistry") {}
 
-export const layer: Layer.Layer<Service, never, Bus.Service | SessionStatus.Service> = Layer.effect(
+export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
   Service,
   Effect.gen(function* () {
     const bus = yield* Bus.Service
@@ -592,23 +584,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service | SessionStatus.Serv
     // for >abandon (long LLM step). Other-instance abandoned rows are fair
     // game — their process is gone or silent past the abandon threshold.
     //
-    // Open question tool parts die with the fiber: the in-memory Deferred is
-    // gone, but part.state stays running. Clients keep the card pending and
-    // free-text answers hit "unknown request".
-    //
-    // Same-process main activity lives in SessionStatus (busy/retry), not in
-    // the main registry row. SessionStatus is per-directory InstanceState, so
-    // question reclaim is scoped to this Instance.directory — the write set
-    // matches the busy view. Cross-directory peers are never cancelled here.
-    yield* Effect.gen(function* () {
-      const status = yield* SessionStatus.Service
-      const map = yield* status.list()
-      const busySessionIds = new Set<string>()
-      for (const [sid, info] of map) {
-        if (info.type === "busy" || info.type === "retry") busySessionIds.add(sid)
-      }
-      sweepAbandonedZombies({ busySessionIds, directory: Instance.directory })
-    }).pipe(Effect.ignore)
+    // Question reclaim runs from InstanceBootstrap (per directory), not here:
+    // ActorRegistry layer is process-shared and layer build may run without
+    // Instance context (see prompt-orphan-tool-parts / C-02).
 
     // --- Stuck Detection ---
     const scanStuck = Effect.gen(function* () {
@@ -657,6 +635,6 @@ export const layer: Layer.Layer<Service, never, Bus.Service | SessionStatus.Serv
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Bus.layer), Layer.provide(SessionStatus.defaultLayer))
+export const defaultLayer = layer.pipe(Layer.provide(Bus.layer))
 
 export * as ActorRegistry from "./registry"

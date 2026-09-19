@@ -991,8 +991,11 @@ describe("ActorRegistry", () => {
         zombieSession: string
         freshSession: string
       }
-      // Init the registry layer — sweep runs here.
+      // Init the registry layer — sweep no longer runs at layer build (needs
+      // Instance.directory); call it explicitly after the layer is live.
       await withRegistry(tmp.path, async (rt) => {
+        void rt
+        sweepAbandonedZombies()
         const zombie = await rt.runPromise(
           ActorRegistry.Service.use((svc) => svc.get(ids.zombieSession as never, "zombie-1")),
         )
@@ -1454,6 +1457,69 @@ describe("ActorRegistry", () => {
         })
       expect(statusOf(a.part)).toBe("error")
       expect(statusOf(b.part)).toBe("running")
+    })
+
+    test("[TP-ABANDON-Q-07] pending question reclaim uses abortedToolState shape", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            Database.use((db) => {
+              const messageId = MessageID.ascending()
+              const partId = PartID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: stale,
+                  time_updated: stale,
+                  data: { role: "assistant", time: { created: stale } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: stale,
+                  time_updated: stale,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_pending_q",
+                    state: {
+                      status: "pending",
+                      input: {
+                        questions: [{ question: "p?", header: "p", options: [{ label: "A", description: "" }] }],
+                      },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonPendingQ = { part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonPendingQ as { part: string }
+      await withRegistry(tmp.path, async () => {
+        sweepAbandonedZombies()
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const state = (part?.data as { state?: { status?: string; time?: { start?: number; end?: number }; metadata?: { interrupted?: boolean } } })?.state
+        expect(state?.status).toBe("error")
+        expect(typeof state?.time?.start).toBe("number")
+        expect(typeof state?.time?.end).toBe("number")
+        expect(state?.metadata?.interrupted).toBe(true)
+      })
     })
 
     test("[TP-ABANDON-Q-03] leftover running question with already-terminal actors is still repaired", async () => {
