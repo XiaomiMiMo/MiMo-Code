@@ -319,6 +319,7 @@ export type Status = z.infer<typeof Status>
 // Store transports for OAuth servers to allow finishing auth
 type TransportWithAuth = StreamableHTTPClientTransport | SSEClientTransport
 const pendingOAuthTransports = new Map<string, TransportWithAuth>()
+const pendingOAuthHostRevision = new Map<string, string | undefined>()
 
 // Prompt cache types
 type PromptInfo = Awaited<ReturnType<MCPClient["listPrompts"]>>["prompts"][number]
@@ -818,6 +819,7 @@ export const layer = Layer.effect(
               { concurrency: "unbounded" },
             )
             pendingOAuthTransports.clear()
+            pendingOAuthHostRevision.clear()
           }),
         )
 
@@ -901,6 +903,13 @@ export const layer = Layer.effect(
       )
     })
 
+    function releaseMcpClient(client: MCPClient | undefined) {
+      if (!client) return Effect.void
+      return McpSampling.cancelAll(client).pipe(
+        Effect.andThen(Effect.tryPromise(() => client.close()).pipe(Effect.ignore)),
+      )
+    }
+
     const storeClient = Effect.fnUntraced(function* (
       s: State,
       name: string,
@@ -922,24 +931,25 @@ export const layer = Layer.effect(
         if (hostNow != null) return "reject-owned" as const
         return "ok" as const
       }
-      const discard = (fallback: Status) =>
-        Effect.tryPromise(() => client.close()).pipe(Effect.ignore, Effect.as(s.status[name] ?? fallback))
+      const discardAttempt = (fallback: Status) =>
+        releaseMcpClient(client).pipe(Effect.as(s.status[name] ?? fallback))
 
       const first = admit()
       if (first !== "ok") {
-        return yield* discard(first === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
+        return yield* discardAttempt(first === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
       }
-      const bridge = yield* EffectBridge.make()
-      yield* closeClient(s, name)
-      // Re-validate after async close: host may have been replaced mid-await (R002).
+      // Capture the previous registry client by identity; close that resource only.
+      const previous = s.clients[name]
+      yield* releaseMcpClient(previous)
+      // Re-admit after async close of *previous* (not a name-keyed wipe).
       const second = admit()
       if (second !== "ok") {
-        return yield* discard(second === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
+        return yield* discardAttempt(second === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
       }
+      const bridge = yield* EffectBridge.make()
       s.status[name] = { status: "connected" }
       s.clients[name] = client
       s.defs[name] = listed
-      // A successful store supersedes any prior failed-refresh cooldown.
       delete s.hostRetryAt[name]
       watch(s, name, client, bridge, timeout, sampling)
       return s.status[name]
@@ -973,11 +983,11 @@ export const layer = Layer.effect(
       name: string,
       mcp: ConfigMCP.Info,
       sampling?: ConfigMCP.Info["sampling"],
-      opts?: { fromHost?: boolean },
+      opts?: { fromHost?: boolean; hostRevision?: string },
     ) {
+      // Prefer revision captured at the config-resolution boundary (R006).
+      const hostRevision = opts?.hostRevision ?? (HostMcp.get()[name] ? HostMcp.revisionOf(name) : undefined)
       const s = yield* InstanceState.get(state)
-      const hostAtStart = HostMcp.get()[name]
-      const hostRevision = hostAtStart ? HostMcp.revisionOf(name) : undefined
       const result = yield* create(name, mcp)
 
       if (!result.mcpClient) {
@@ -996,10 +1006,13 @@ export const layer = Layer.effect(
         }
         if (hostNow == null) {
           s.status[name] = result.status
-          yield* closeClient(s, name)
-          // Host may have taken over during async close; do not delete a live host client.
-          if (HostMcp.get()[name] == null) delete s.clients[name]
-          else return s.status[name] ?? { status: "connected" as const }
+          // Close only the client we captured; do not delete a replacement by name.
+          const victim = s.clients[name]
+          yield* releaseMcpClient(victim)
+          if (victim && s.clients[name] === victim) {
+            delete s.clients[name]
+            delete s.defs[name]
+          }
         }
         return hostNow == null ? result.status : (s.status[name] ?? { status: "connected" as const })
       }
@@ -1036,11 +1049,13 @@ export const layer = Layer.effect(
         log.error("MCP is host-owned and disabled; connect refused", { name })
         return
       }
+      // Bind config + ownership + revision at the resolution boundary (R006).
+      const hostRevision = resolved.hostOwned ? HostMcp.revisionOf(name) : undefined
       yield* createAndStore(
         name,
         { ...resolved.mcp, enabled: true },
         hostEffectiveSampling(resolved.mcp, resolved.hostOwned),
-        { fromHost: resolved.hostOwned },
+        { fromHost: resolved.hostOwned, hostRevision },
       )
     })
 
@@ -1243,6 +1258,7 @@ export const layer = Layer.effect(
         Effect.catch((error) => {
           if (error instanceof UnauthorizedError && capturedUrl) {
             pendingOAuthTransports.set(mcpName, transport)
+            pendingOAuthHostRevision.set(mcpName, hostRevisionAtStart)
             return Effect.succeed({
               kind: "redirect",
               authorizationUrl: capturedUrl.toString(),
@@ -1346,12 +1362,15 @@ export const layer = Layer.effect(
 
       yield* auth.clearCodeVerifier(mcpName)
       pendingOAuthTransports.delete(mcpName)
+      const hostRevision = pendingOAuthHostRevision.get(mcpName)
+      pendingOAuthHostRevision.delete(mcpName)
 
       const resolved = yield* getMcpConfig(mcpName)
       if (!resolved) return { status: "failed", error: "MCP config not found after auth" } as Status
 
       return yield* createAndStore(mcpName, resolved.mcp, hostEffectiveSampling(resolved.mcp, resolved.hostOwned), {
         fromHost: resolved.hostOwned,
+        hostRevision: hostRevision ?? (resolved.hostOwned ? HostMcp.revisionOf(mcpName) : undefined),
       })
     })
 
