@@ -472,9 +472,9 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
                   agent: "build",
                 })
 
-                // usable = floor(50K * 0.9) = 45K. The single 24K checkpoint
-                // threshold is below it, so 25K must write a checkpoint
-                // without rebuilding before the 45K trigger.
+                // usable = min(floor(50K * 0.9), 50K - 20K reserve) = 30K. The
+                // single 24K checkpoint threshold is below it, so 25K must
+                // write a checkpoint without rebuilding before the 30K trigger.
                 const first = yield* Effect.promise(() => seedUserMessage(info.id, "earlier question"))
                 yield* Effect.promise(() => seedFinishedAssistant(info.id, first.id, 25_000))
 

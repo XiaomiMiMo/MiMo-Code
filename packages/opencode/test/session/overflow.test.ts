@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { contextPressureLevel, contextWindow, isOverflow, pressureLevel, usable } from "../../src/session/overflow"
+import {
+  completionBudget,
+  contextPressureLevel,
+  contextWindow,
+  isOverflow,
+  pressureLevel,
+  usable,
+} from "../../src/session/overflow"
 import { Token } from "../../src/util"
 import { Session as SessionNs } from "../../src/session"
 import type { Provider } from "../../src/provider"
@@ -535,20 +542,100 @@ describe("SessionNs.getUsage", () => {
 })
 
 describe("usable", () => {
-  test("is a flat 90% of the model window regardless of output size", () => {
-    // The trigger is a fixed fraction of the window now, so output size no
-    // longer shrinks it — a 32K-output model and an 8K-output model with the
-    // same context share the same 90% trigger.
-    const big = createModel({ context: 200_000, output: 32_000 })
-    const small = createModel({ context: 200_000, output: 8_000 })
-    expect(usable({ cfg: mockCfg(), model: big })).toBe(180_000) // floor(200K * 0.9)
-    expect(usable({ cfg: mockCfg(), model: small })).toBe(180_000)
+  test("leaves output headroom when limit.input is absent", () => {
+    // Providers with no dedicated input cap enforce input + max_tokens <=
+    // context, so the trigger has to stop short of the whole window (#2356).
+    // The reserve is capped at OUTPUT_CAP, which on a 200K window is still
+    // below the 90% trigger — so this model is unaffected.
+    const model = createModel({ context: 200_000, output: 32_000 })
+    // reserve = min(32_000, 20_000) = 20_000; 200_000 - 20_000 = 180_000
+    // trigger = floor(200_000 * 0.9) = 180_000
+    expect(usable({ cfg: mockCfg(), model })).toBe(180_000)
+  })
+
+  test("the reserve bites once 10% of the window is under OUTPUT_CAP", () => {
+    // #2356's model: 131K context, 32K max_tokens. 90% leaves only 13K for the
+    // completion, so the reserve is what decides the trigger here.
+    const model = createModel({ context: 131_072, output: 32_000 })
+    // reserve = 20_000 -> 111_072; trigger = floor(131_072 * 0.9) = 117_964
+    expect(usable({ cfg: mockCfg(), model })).toBe(111_072)
+  })
+
+  test("small output models reserve only what they can emit", () => {
+    const model = createModel({ context: 200_000, output: 8_000 })
+    // reserve = min(8_000, 20_000) = 8_000 -> 192_000, so the 90% trigger wins
+    expect(usable({ cfg: mockCfg(), model })).toBe(180_000)
+  })
+
+  test("models with a dedicated input cap are not further reduced", () => {
+    // When limit.input is set the provider already excludes output tokens
+    // from the input budget, so no extra reserve is needed.
+    const model = createModel({ context: 400_000, input: 272_000, output: 128_000 })
+    // hard = 272_000; trigger = floor(272_000 * 0.9) = 244_800
+    expect(usable({ cfg: mockCfg(), model })).toBe(244_800)
+  })
+
+  test("the large-model output ceiling does not shrink the trigger", () => {
+    // ProviderTransform.maxOutputTokens returns LARGE_MODEL_OUTPUT_TOKEN_MAX
+    // (128K) for any id matching claude/gpt/mimo, whatever limit.output says.
+    // Reserving that in full would drop a 200K window from 180K to 72K, so the
+    // reserve is capped at OUTPUT_CAP and these models keep the flat 90%.
+    for (const id of ["claude-opus-4-5", "gpt-4.1", "mimo-pro"]) {
+      const model = createModel({ context: 200_000, output: 64_000, id })
+      expect(usable({ cfg: mockCfg(), model })).toBe(180_000)
+    }
   })
 
   test("cfg.compaction.reserved no longer shrinks the trigger", () => {
     // reserved only gates config-budget validation now; the trigger stays 90%.
-    const model = createModel({ context: 200_000, output: 32_000 })
+    const model = createModel({ context: 200_000, output: 8_000 })
     expect(usable({ cfg: mockCfg({ reserved: 5_000 }), model })).toBe(180_000)
+  })
+})
+
+describe("completionBudget", () => {
+  const inputTokens = (n: number) => () => n
+
+  test("passes max_tokens through when the prompt leaves room", () => {
+    const model = createModel({ context: 131_072, output: 32_000 })
+    expect(completionBudget({ model, requested: 32_000, inputTokens: inputTokens(50_000) })).toBe(32_000)
+  })
+
+  test("trims max_tokens to what is left of the window", () => {
+    // The exact #2356 failure: 99_509 input + 32_000 max_tokens = 131_509 on a
+    // 131_072 window. Trimming keeps the request inside the limit.
+    const model = createModel({ context: 131_072, output: 32_000 })
+    // 131_072 - 99_509 - 1_024 margin = 30_539
+    expect(completionBudget({ model, requested: 32_000, inputTokens: inputTokens(99_509) })).toBe(30_539)
+  })
+
+  test("never returns less than the floor", () => {
+    // The prompt is already over budget — max_tokens cannot save this request,
+    // and overflow handling owns the recovery.
+    const model = createModel({ context: 131_072, output: 32_000 })
+    expect(completionBudget({ model, requested: 32_000, inputTokens: inputTokens(131_072) })).toBe(1_024)
+  })
+
+  test("leaves models with a dedicated input cap alone", () => {
+    // input and output are budgeted separately, so a full prompt does not
+    // squeeze the completion.
+    const model = createModel({ context: 400_000, input: 272_000, output: 128_000 })
+    expect(completionBudget({ model, requested: 128_000, inputTokens: inputTokens(271_000) })).toBe(128_000)
+  })
+
+  test("keeps an unset max_tokens unset", () => {
+    // Some plugins drop max_tokens entirely; that must survive.
+    const model = createModel({ context: 131_072, output: 32_000 })
+    expect(completionBudget({ model, requested: undefined, inputTokens: inputTokens(130_000) })).toBeUndefined()
+  })
+
+  test("does not estimate the prompt when the model cannot need it", () => {
+    // The estimate stringifies the whole request, so it must stay unpaid for
+    // the models that are exempt.
+    const model = createModel({ context: 400_000, input: 272_000, output: 128_000 })
+    let calls = 0
+    completionBudget({ model, requested: 128_000, inputTokens: () => (calls++, 0) })
+    expect(calls).toBe(0)
   })
 })
 
@@ -567,9 +654,10 @@ describe("MIMOCODE_COMPACTION_TRIGGER_RATIO", () => {
     expect(usable({ cfg: mockCfg(), model: createModel({ context: 200_000 }) })).toBe(150_000)
   })
 
-  test("1 lets usage fill the whole working window", () => {
+  test("1 lets usage fill the window bar the output reserve", () => {
     process.env["MIMOCODE_COMPACTION_TRIGGER_RATIO"] = "1"
-    expect(usable({ cfg: mockCfg(), model: createModel({ context: 200_000 }) })).toBe(200_000)
+    // Even at ratio 1 the completion still needs somewhere to go.
+    expect(usable({ cfg: mockCfg(), model: createModel({ context: 200_000 }) })).toBe(180_000)
   })
 
   test("applies on top of the max_context budget rather than replacing it", () => {
@@ -628,10 +716,12 @@ describe("compaction.max_context", () => {
   test("never raises the window above the provider cap", () => {
     const model = createModel({ context: 128_000, output: 16_384 })
     const cfg = mockCfg({ max_context: "1M" })
+    // reserve = min(16_384, 20_000) = 16_384 -> 111_616
+    // trigger = floor(128_000 * 0.9) = 115_200; usable = min(115_200, 111_616)
     expect(contextWindow({ cfg, model })).toEqual({
       hard: 128_000,
       effective: 128_000,
-      usable: 115_200,
+      usable: 111_616,
       source: "model",
     })
   })
@@ -704,13 +794,15 @@ describe("compaction.max_context reset sentinel", () => {
 describe("small windows", () => {
   test("the trigger stays proportional instead of collapsing to 0", () => {
     // The old fixed-reserve formula could drive usable to 0 on a tiny window
-    // (reserved 8K + output 8K > 8K window). The flat 90% fraction keeps a
-    // usable trigger no matter how small the window is.
+    // (reserved 8K + output 8K > 8K window). Capping the reserve at half the
+    // window keeps a usable trigger no matter how small the window is.
     const model = createModel({ context: 8_192, output: 8_192 })
+    // reserve = min(8_192, floor(8_192 * 0.5)) = 4_096 -> 4_096
+    // trigger = floor(8_192 * 0.9) = 7_372; usable = min(7_372, 4_096) = 4_096
     expect(contextWindow({ cfg: mockCfg(), model })).toEqual({
       hard: 8_192,
       effective: 8_192,
-      usable: 7_372, // floor(8_192 * 0.9)
+      usable: 4_096,
       source: "model",
     })
   })
@@ -718,7 +810,7 @@ describe("small windows", () => {
   test("an oversized cfg.compaction.reserved no longer zeroes the trigger", () => {
     // reserved only gates config-budget validation now, so a huge value leaves
     // the model window's 90% trigger intact.
-    const model = createModel({ context: 200_000, output: 32_000 })
+    const model = createModel({ context: 200_000, output: 8_000 })
     expect(usable({ cfg: mockCfg({ reserved: 500_000 }), model })).toBe(180_000)
   })
 })
