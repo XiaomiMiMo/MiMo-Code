@@ -75,14 +75,13 @@ export const layer = Layer.effect(
       const next = Runner.make<MessageV2.WithParts, never, Session.BusyError>(data.scope, {
         label: `${sessionID}:${agentID}`,
         onReentryWarn: (info) => elog.warn("runner-reentry", info),
-        // Cleanup only when THIS runner is actually idle. Cancel must never
-        // delete a map entry that has already been replaced by a newer run.
+        // Cleanup only when THIS runner is actually idle. Do NOT delete the
+        // main Runner on idle: a waiter parked on Cancelling retries on this
+        // same instance after Idle — deleting it would start B on an
+        // unregistered Runner (RL-ORPHAN-C01). Non-main still deletes (no
+        // Cancelling-wait path).
         onIdle: isMain
-          ? Effect.gen(function* () {
-              byAgent.delete(agentID)
-              if (byAgent.size === 0) data.runners.delete(sessionID)
-              yield* status.set(sessionID, { type: "idle" })
-            })
+          ? status.set(sessionID, { type: "idle" })
           : Effect.sync(() => {
               byAgent.delete(agentID)
               if (byAgent.size === 0) data.runners.delete(sessionID)
@@ -166,8 +165,10 @@ export const layer = Layer.effect(
       const stillBusy = current ? [...current.values()].some((r) => r.busy) : false
       if (stillBusy) return
       if (current) {
+        // Keep main Runner registered (Idle): waiters parked on Cancelling
+        // retry on this instance (RL-ORPHAN-C01). Only drop idle non-main.
         for (const [agentID, r] of [...current.entries()]) {
-          if (!r.busy) current.delete(agentID)
+          if (agentID !== "main" && !r.busy) current.delete(agentID)
         }
         if (current.size === 0) after.runners.delete(sessionID)
       }

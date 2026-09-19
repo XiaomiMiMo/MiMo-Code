@@ -502,4 +502,90 @@ describe("Runner", () => {
       expect(runner.busy).toBe(false)
     }),
   )
+
+  // [RL-ORPHAN-C02] Cancel caller interrupted while waiting on finalizer must
+  // not leave the Runner stuck Cancelling forever.
+  it.live(
+    "Cancelling converges to Idle when the cancel caller is interrupted",
+    Effect.gen(function* () {
+      const s = yield* Scope.Scope
+      const runner = Runner.make<string>(s)
+      const hold = yield* Deferred.make<void>()
+      const started = yield* Deferred.make<void>()
+
+      const work = Effect.gen(function* () {
+        yield* Deferred.succeed(started, undefined)
+        yield* Effect.never
+      }).pipe(
+        Effect.ensuring(Deferred.await(hold)),
+        Effect.as("a" as string),
+      )
+
+      const fiberA = yield* runner.ensureRunning(work).pipe(Effect.exit, Effect.forkChild)
+      yield* Deferred.await(started)
+
+      const cancelFiber = yield* runner.cancel.pipe(Effect.forkChild)
+      yield* Effect.sleep("20 millis")
+      expect(runner.state._tag).toBe("Cancelling")
+      yield* Fiber.interrupt(cancelFiber)
+
+      yield* Deferred.succeed(hold, undefined)
+      yield* Fiber.join(fiberA).pipe(Effect.ignore)
+      yield* Effect.sleep("20 millis")
+
+      expect(runner.state._tag).toBe("Idle")
+      expect(runner.busy).toBe(false)
+      // Second cancel is a no-op and must not re-enter Cancelling.
+      yield* runner.cancel
+      expect(runner.state._tag).toBe("Idle")
+    }),
+  )
+
+  // [RL-ORPHAN-C01] B parked on Cancelling must start only after the finalizer
+  // releases, and remain on a live (busy/queryable) Runner.
+  it.live(
+    "ensureRunning waits for cancel finalizer then starts on the same Runner",
+    Effect.gen(function* () {
+      const s = yield* Scope.Scope
+      const runner = Runner.make<string>(s)
+      const hold = yield* Deferred.make<void>()
+      const startedA = yield* Deferred.make<void>()
+      let bRan = false
+
+      const workA = Effect.gen(function* () {
+        yield* Deferred.succeed(startedA, undefined)
+        yield* Effect.never
+      }).pipe(
+        Effect.ensuring(Deferred.await(hold)),
+        Effect.as("a" as string),
+      )
+
+      const fiberA = yield* runner.ensureRunning(workA).pipe(Effect.exit, Effect.forkChild)
+      yield* Deferred.await(startedA)
+
+      const cancelFiber = yield* runner.cancel.pipe(Effect.forkChild)
+      yield* Effect.sleep("10 millis")
+
+      const fiberB = yield* runner
+        .ensureRunning(
+          Effect.sync(() => {
+            bRan = true
+            return "b"
+          }),
+        )
+        .pipe(Effect.forkChild)
+      yield* Effect.sleep("20 millis")
+      expect(bRan).toBe(false)
+      expect(runner.state._tag).toBe("Cancelling")
+      expect(runner.busy).toBe(true)
+
+      yield* Deferred.succeed(hold, undefined)
+      yield* Fiber.join(fiberA).pipe(Effect.ignore)
+      yield* Fiber.join(cancelFiber).pipe(Effect.ignore)
+      const resultB = yield* Fiber.join(fiberB)
+      expect(resultB).toBe("b")
+      expect(bRan).toBe(true)
+      expect(runner.state._tag).toBe("Idle")
+    }),
+  )
 })

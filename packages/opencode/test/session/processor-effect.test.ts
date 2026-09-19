@@ -742,7 +742,7 @@ it.live("session.processor effect tests mark pending tools as aborted on cleanup
   ),
 )
 
-it.live("session.processor effect tests record aborted errors and idle state", () =>
+it.live("session.processor effect tests record aborted errors; idle deferred to onIdle", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {

@@ -101,6 +101,18 @@ export const make = <A, E = never, B = never>(
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
+        if (st._tag === "Cancelling" && st.run.id === id) {
+          // Cancel's own fiber may have been interrupted before it could flip
+          // to Idle. The retiring work exiting is the reliable convergence
+          // point (RL-ORPHAN-C02).
+          return [
+            Effect.gen(function* () {
+              yield* idle
+              yield* complete(done, exit)
+            }),
+            { _tag: "Idle" } as const,
+          ] as const
+        }
         if (st._tag !== "Running" || st.run.id !== id) return [complete(done, exit), st] as const
         // Pending work attached during this run must still get a loop before Idle.
         // Prompt-loop work reloads the full message table, so one pending is enough.
@@ -270,9 +282,11 @@ export const make = <A, E = never, B = never>(
           Effect.gen(function* () {
             if (st.run.pending) yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
             // Interrupt WAITS for the fiber, including ensuring/finalizers.
-            // State stays Cancelling until this completes so start/ensureRunning
-            // cannot begin the next main execution mid-finalizer (RL-ORPHAN-D01).
+            // State stays Cancelling until finishRun or this effect flips Idle
+            // so start/ensureRunning cannot begin mid-finalizer (RL-ORPHAN-D01).
             yield* Fiber.interrupt(st.run.fiber)
+            // finishRun usually already converged Cancelling → Idle; this is
+            // belt-and-suspenders if the fiber exited without onExit ordering.
             yield* SynchronizedRef.modify(ref, (s) => {
               if (s._tag === "Cancelling" && s.run.id === st.run.id) {
                 return [idle, { _tag: "Idle" }] as const
