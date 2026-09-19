@@ -1,9 +1,9 @@
 ---
 feature: default-prompt-p0
-status: in-progress
+status: delivered
 updated: 2026-09-19
 branch: fix/default-prompt-p0
-commits: 
+commits: 50cd713989f47225cfc717868b245e1de32b35b7..0543ef5a69964b22928927aacbee7fd7365e4d16
 ---
 
 # Default System Prompt P0 Cleanup
@@ -11,14 +11,23 @@ commits:
 ## Report
 
 **What was built** — `default.txt` is a lean behavioral base prompt (System /
-Doing tasks / Executing / Using tools / Skills / Tone). Architecture dumps
-(Agent system, native-agent catalog, permission pedagogy, session lifecycle,
-plan-mode detail, MCP extension essay) are **gone**. Dispatch is `task` /
-`actor` / `workflow` only. Memory is **not** restated (owned by
-`buildMemoryInstructions`). compose never appears. Subagent return format is
-off the main memory path (spawn `RETURN_FORMAT_INSTRUCTION` + `general.txt`
-pointer). `general`/`explore` prompts carry the work-face contract (trust,
-casing, parallel budget) and parent-facing reporting.
+Doing tasks / Executing actions with care / Using your tools / Skills / Tone).
+Architecture dumps (Agent system, native-agent catalog, permission pedagogy,
+session lifecycle, plan-mode detail, MCP essay) are gone. Dispatch is `task` /
+`actor` / `workflow` only. Memory is not restated (owned by
+`buildMemoryInstructions`). compose never appears in base sys. Subagent return
+format is off the main memory path (spawn `RETURN_FORMAT_INSTRUCTION` +
+`general.txt` pointer); `general` keeps a nested-spawn ban and the
+inspect/verify work-face.
+
+`general`/`explore` carry work-face (case-sensitive snake_case tool ids,
+parallel 1–3 / ≤8, trust-as-data) and parent-facing reporting. Model-facing
+injectors across default, memory, recall hints, budgeted-read, truncate,
+checkpoint render/reconcile, checkpoint-writer, dream/distill, write, and
+workflow builtins use registered tool ids; bare `glob`/`grep` are qualified as
+“the `glob` tool” / “the `grep` tool” when they could be read as shell.
+Sibling provider prompts (`glm.txt`, `deepseek.txt`, `minimax.txt`, …) brand
+residuals are deferred follow-up (S3).
 
 **Deletion → injection site** (every removed block names who still carries it):
 
@@ -42,16 +51,19 @@ rules + two real roots; Tone (progress rhythm, end-of-turn summary).
 **Verification** — From `packages/opencode`:
 - `bun typecheck` — PASS
 - `bun test test/agent/agent.test.ts` — PASS (52)
-- `bun test test/session/llm-system-prompt.test.ts test/agent/agent.test.ts` — PASS (58)
-- compose-next review (`general-2`): 7/7 AC met; nested-spawn ban restored; this Report realigned to HEAD
+- `bun test test/session/llm-system-prompt.test.ts` — PASS
+- `bun test test/session/prompt.test.ts test/session/budgeted-read.test.ts` — PASS (65)
+- `bun test test/session/checkpoint-render-verify.test.ts` — PASS
+- CI on `ba2312c1` — lint / typecheck / unit 1–4 SUCCESS
+- `0543ef5a` (Turn 1 `read` casing + `glob` tool qualifiers) — prompt-only; pre-push typecheck PASS
+- compose-next review: acceptance criteria met after casing + general inspect/verify follow-ups
 
 **Journey log**
 1. Memory rewrite was wrong — already in `buildMemoryInstructions`; **delete** the section.
-2. Help is a TUI shim — delete the whole help/feedback block.
-3. Over-slashed then restored Agent system; final product call: **architecture out of base sys** (mimocode-docs / tool desc own it); tests lock the slim shape.
-4. Subagent return format belongs on spawn task injection, not the main memory block.
-5. `general` must keep a nested-spawn ban: `toolAllowlist` is unset so it can inherit `actor`.
-6. Tool-name casing across **all injectors** (not just `default.txt`): when a word names a tool, use the registered snake_case id in backticks (`read`/`grep`/`edit`/`write`); plain English verbs may stay unquoted. No `Grep`/`Glob`/`Read tool`/`Don't Edit` in model-facing strings. Prefer "the `grep` tool" / "the `glob` tool" when a bare id could be read as a shell command.
+2. Over-slashed then restored Agent system; final product call: **architecture out of base sys** (mimocode-docs / tool desc own it); tests lock the slim shape.
+3. Subagent return format belongs on spawn task injection, not the main memory block.
+4. `general` must keep a nested-spawn ban and inspect/verify work-face: `toolAllowlist` is unset so it can inherit `actor`; without verify bullets the parent-report contract is unimplementable.
+5. Tool-name casing across **all injectors**: when a word names a tool, use the registered snake_case id in backticks (`read`/`grep`/`edit`/`write`); plain English verbs may stay unquoted. Prefer "the `grep` tool" / "the `glob` tool" when a bare id could be read as a shell command. Sweep same-list leftovers (checkpoint-writer Turn 1) — partial rewrites look worse than untouched prose.
 
 ## [S1] Problem
 
@@ -75,7 +87,7 @@ See Report tables.
 
 ## [S3] Out of Scope
 
-- Sibling prompts (`compose.txt`, `anthropic.txt`, `glm.txt`, …) residuals.
+- Sibling prompts (`compose.txt`, `anthropic.txt`, `glm.txt`, `deepseek.txt`, `minimax.txt`, …) residuals — deferred follow-up.
 - Changing `buildMemoryInstructions` or skills catalog injection.
 - Further slimming of Agent-system pedagogy beyond the deletions above.
 
