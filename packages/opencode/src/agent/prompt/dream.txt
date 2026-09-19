@@ -139,8 +139,8 @@ Principles:
 - Remove details that mattered only to one session.
 - Remove low-signal memory files or entries that are redundant with stronger project memory.
 - Clear current `notes.md` entries only when fully integrated.
-- Verify mentioned file paths with `glob`.
-- Verify mentioned function/class names with `grep`.
+- Verify mentioned file paths with the `glob` tool.
+- Verify mentioned function/class names with the `grep` tool.
 - Mark unverifiable-but-plausible claims `[unverified]`.
 
 ## Output Format

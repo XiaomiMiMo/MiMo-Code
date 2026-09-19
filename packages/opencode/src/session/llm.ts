@@ -183,7 +183,7 @@ This is your ONLY legal scratchpad — don't create \`learning.md\`, \`scratch.m
 ${[
   ...(checkpointEnabled ? ["- Don't `edit` checkpoint.md — that's the writer's domain."] : []),
   "- Don't create memory files other than notes.md (no learning.md, no scratch.md). Use notes.md for any free-form entry.",
-  "- Don't ask the user about something memory may already record — search first via `grep` / `read`.",
+  "- Don't ask the user about something memory may already record — search first via the `grep` / `read` tools.",
 ].join("\n")}`,
     ...(checkpointEnabled
       ? [

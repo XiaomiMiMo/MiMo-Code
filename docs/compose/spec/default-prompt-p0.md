@@ -51,7 +51,7 @@ rules + two real roots; Tone (progress rhythm, end-of-turn summary).
 3. Over-slashed then restored Agent system; final product call: **architecture out of base sys** (mimocode-docs / tool desc own it); tests lock the slim shape.
 4. Subagent return format belongs on spawn task injection, not the main memory block.
 5. `general` must keep a nested-spawn ban: `toolAllowlist` is unset so it can inherit `actor`.
-6. Tool-name casing across **all injectors** (not just `default.txt`): when a word names a tool, use the registered snake_case id in backticks (`read`/`grep`/`edit`/`write`); plain English verbs may stay unquoted. No `Grep`/`Glob`/`Read tool`/`Don't Edit` in model-facing strings.
+6. Tool-name casing across **all injectors** (not just `default.txt`): when a word names a tool, use the registered snake_case id in backticks (`read`/`grep`/`edit`/`write`); plain English verbs may stay unquoted. No `Grep`/`Glob`/`Read tool`/`Don't Edit` in model-facing strings. Prefer "the `grep` tool" / "the `glob` tool" when a bare id could be read as a shell command.
 
 ## [S1] Problem
 
@@ -68,7 +68,8 @@ Base sys = behavior + trust + tool routing + skills roots + tone. Delete wrong,
 branded, or already-injected content. Architecture lives in tool descriptions /
 mimocode-docs / runtime injectors. compose never appears. Return format is
 spawn-owned. `general` forbids nested spawn. Tool names in every model-facing
-injector use exact registered ids (backticked snake_case when they mean the tool).
+injector use exact registered ids (backticked snake_case when they mean the tool);
+disambiguate `glob`/`grep` as tools when a bare id could be read as shell.
 
 See Report tables.
 

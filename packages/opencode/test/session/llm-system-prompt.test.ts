@@ -550,7 +550,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
           expect(allSys).toContain(path.join(Global.Path.data, "memory", "global", "MEMORY.md"))
           expect(allSys).toContain("Two file types")
           expect(allSys).toContain("When to edit MEMORY.md directly")
-          expect(allSys).toContain("search first via `grep` / `read`")
+          expect(allSys).toContain("search first via the `grep` / `read` tools")
 
           // Checkpoint-write ownership extras stay off when the flag is on.
           // (Base agent.prompt may mention the checkpoint-writer agent name;

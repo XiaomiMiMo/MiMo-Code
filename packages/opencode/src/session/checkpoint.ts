@@ -1417,7 +1417,7 @@ export const layer: Layer.Layer<
       // to that file. Non-file sections are also H1 so nothing nests under
       // the previous file by accident.
       lines.push(
-        "The sections below are auto-loaded session context already in this message. File-backed sections list their path on a `File:` line — `grep` that path for specific facts; do not `read` the whole file again.",
+        "The sections below are auto-loaded session context already in this message. File-backed sections list their path on a `File:` line — use the `grep` tool on that path for specific facts; do not `read` the whole file again.",
       )
       lines.push("")
 
