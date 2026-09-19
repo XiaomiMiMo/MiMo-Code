@@ -114,7 +114,7 @@ describe("Truncate", () => {
 
         expect(result.truncated).toBe(true)
         expect(result.content).toContain("The tool call succeeded but the output was truncated")
-        expect(result.content).toContain("Grep")
+        expect(result.content).toContain("`grep`")
         if (!result.truncated) throw new Error("expected truncated")
         expect(result.outputPath).toBeDefined()
         expect(result.outputPath).toContain("tool_")
@@ -144,7 +144,7 @@ describe("Truncate", () => {
         const result = yield* svc.output(lines, { maxLines: 10 }, agent as any)
 
         expect(result.truncated).toBe(true)
-        expect(result.content).toContain("Grep")
+        expect(result.content).toContain("`grep`")
         expect(result.content).toContain("actor tool")
       }),
     )
@@ -157,7 +157,7 @@ describe("Truncate", () => {
         const result = yield* svc.output(lines, { maxLines: 10 }, agent as any)
 
         expect(result.truncated).toBe(true)
-        expect(result.content).toContain("Grep")
+        expect(result.content).toContain("`grep`")
         expect(result.content).not.toContain("actor tool")
       }),
     )
