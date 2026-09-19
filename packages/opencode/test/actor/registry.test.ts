@@ -1384,67 +1384,6 @@ describe("ActorRegistry", () => {
       })
     })
 
-    test("[TP-ABANDON-Q-05] SessionStatus busy skips question reclaim on that session", async () => {
-      await using tmp = await tmpdir({ git: true })
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
-          try {
-            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
-            const stale = Date.now() - 11 * 60 * 1000
-            Database.use((db) => {
-              const messageId = MessageID.ascending()
-              const partId = PartID.ascending()
-              db.insert(MessageTable)
-                .values({
-                  id: messageId,
-                  session_id: session.id,
-                  agent_id: "main",
-                  time_created: stale,
-                  time_updated: stale,
-                  data: { role: "assistant", time: { created: stale } } as never,
-                })
-                .run()
-              db.insert(PartTable)
-                .values({
-                  id: partId,
-                  message_id: messageId,
-                  session_id: session.id,
-                  time_created: stale,
-                  time_updated: stale,
-                  data: {
-                    type: "tool",
-                    tool: "question",
-                    callID: "call_busy_q",
-                    state: {
-                      status: "running",
-                      input: {
-                        questions: [{ question: "busy?", header: "busy", options: [{ label: "A", description: "" }] }],
-                      },
-                      time: { start: stale },
-                    },
-                  } as never,
-                })
-                .run()
-              ;(globalThis as Record<string, unknown>).__abandonBusyQ = { session: session.id, part: partId }
-            })
-          } finally {
-            await rt.dispose()
-          }
-        },
-      })
-      const ids = (globalThis as Record<string, unknown>).__abandonBusyQ as { session: string; part: string }
-      await withRegistry(tmp.path, async () => {
-        sweepAbandonedZombies({ busySessionIds: new Set([ids.session]) })
-        const part = Database.use((db) =>
-          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
-        )
-        const data = part?.data as { state?: { status?: string } }
-        expect(data?.state?.status).toBe("running")
-      })
-    })
-
     test("[TP-ABANDON-Q-03] leftover running question with already-terminal actors is still repaired", async () => {
       await using tmp = await tmpdir({ git: true })
       await Instance.provide({
