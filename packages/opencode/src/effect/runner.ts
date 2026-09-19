@@ -111,11 +111,36 @@ export const make = <A, E = never, B = never>(
       ref,
       Effect.fnUntraced(function* (st) {
         switch (st._tag) {
-          case "Running":
-          case "ShellThenRun":
+          case "Running": {
+            // Fiber already exited but state is still Running — finishRun/onIdle
+            // lost the race or never ran (abnormal finish left a stale busy
+            // ledger). Reclaim and start the new work so a sent prompt always
+            // gets a loop; do not await a dead Deferred forever.
+            const exit = st.run.fiber.pollUnsafe()
+            if (exit !== undefined) {
+              yield* Deferred.isDone(st.run.done).pipe(
+                Effect.flatMap((done) => (done ? Effect.void : Deferred.done(st.run.done, exit))),
+              )
+              const done = yield* Deferred.make<A, E | Cancelled>()
+              const run = yield* startRun(work, done)
+              return [Deferred.await(done), { _tag: "Running", run }] as const
+            }
             if (opts?.onReentryWarn)
               yield* opts.onReentryWarn({ label: opts.label ?? "(unlabeled)", existingRunId: st.run.id })
             return [Deferred.await(st.run.done), st] as const
+          }
+          case "ShellThenRun": {
+            const exit = st.shell.fiber.pollUnsafe()
+            if (exit !== undefined) {
+              yield* Deferred.fail(st.run.done, new Cancelled()).pipe(Effect.ignore)
+              const done = yield* Deferred.make<A, E | Cancelled>()
+              const run = yield* startRun(work, done)
+              return [Deferred.await(done), { _tag: "Running", run }] as const
+            }
+            if (opts?.onReentryWarn)
+              yield* opts.onReentryWarn({ label: opts.label ?? "(unlabeled)", existingRunId: st.run.id })
+            return [Deferred.await(st.run.done), st] as const
+          }
           case "Shell": {
             const run = {
               id: next(),
