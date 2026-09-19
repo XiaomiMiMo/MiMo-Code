@@ -242,6 +242,7 @@ MiMoCode bundles the following builtin skills:
 | Skill | Description |
 |-------|-------------|
 | `arxiv` | Search, read, cite, and analyze arXiv papers |
+| `browser-use` | Default browser interaction through Browser Use CLI: navigation, forms, scraping, screenshots, and UI verification |
 | `claude-code` | Delegate coding, testing, review, and Git tasks to the Claude Code CLI |
 | `codex` | Run and troubleshoot the Codex CLI in headless automation, CI, containers, and remote environments |
 | `compose-next` | Recommended spec→ship feature delivery workflow; invoke only when explicitly requested by the user |
@@ -255,6 +256,7 @@ MiMoCode bundles the following builtin skills:
 | `mimocode-docs` | Self-documenting reference for MiMoCode features, commands, providers, and configuration |
 | `modern-python-toolchain` | Set up modern Python projects with uv, Ruff, and Pyright |
 | `pdf-official` | Produce, read, fill, and transform PDF files |
+| `playwright` | Playwright CLI automation when explicitly requested |
 | `pptx-official` | Author and manipulate PowerPoint (.pptx) decks |
 | `product-design` | Explore, audit, implement, and QA product and UX designs through focused workflows |
 | `research-paper-writing` | Write and polish academic papers (ML/CV/NLP style) |
@@ -264,6 +266,8 @@ MiMoCode bundles the following builtin skills:
 | `xlsx-official` | Build, clean, and transform spreadsheets (.xlsx/.csv) |
 
 `claude-code` and `codex` are exposed only when the `claude` and `codex` executables, respectively, are installed. Other skills may still require task-specific tools described in their instructions.
+
+**Browser interaction:** MiMoCode bundles the [official Browser Use CLI skill](https://github.com/browser-use/browser-use/tree/main/skills/browser-use) and selects it by default for interactive browser work. Install the CLI with `uv tool install --python 3.12 --upgrade browser-use`, then run `browser-use --doctor` to check the connection to Chrome. The bundled skill includes setup and recovery instructions; no MCP server or additional LLM API key is needed for local browser control. Public information retrieval still uses `webfetch` / `websearch`, and `/playwright` remains available when explicitly requested.
 
 **Overriding a builtin skill:** Create a skill with the same `name` in your project (`.mimocode/skills/<name>/SKILL.md`) or personal skill directory (`~/.claude/skills/`, `~/.opencode/skills/`, etc.). User skills discovered later in the scan order override builtins with the same name.
 
