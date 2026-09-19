@@ -104,12 +104,10 @@ export const layer = Layer.effect(
     })
 
     /**
-     * Orphan tool sweep must run while THIS Runner still owns execution
-     * (work Effect not yet exited → state still Running → new start only
-     * attaches pending, cannot launch new main-slice tools). Primary hook:
-     * Effect.ensuring on the work. status.set(idle) in onIdle runs after
-     * finishRun already flipped the Runner to Idle, so it is NOT a safe
-     * ownership boundary (RL-ORPHAN-D01).
+     * Orphan sweep of COMPLETED assistant messages' tools. Ownership is
+     * message-lifecycle (`time.completed`), not Runner Idle/Running — safe
+     * during work ensuring and after cancel released the Runner (RL-ORPHAN-D01).
+     * Live-turn tools sit on an incomplete message and are never rewritten.
      */
     const withOrphanSweep = (sessionID: SessionID, agentID: string, work: Effect.Effect<MessageV2.WithParts>) => {
       if (agentID !== "main") return work
@@ -118,10 +116,7 @@ export const layer = Layer.effect(
           Effect.suspend(() => {
             const sweep = orphanToolIdleSweepRef.current
             if (!sweep) return Effect.void
-            // force: Runner is still Running, get() is busy — that is correct.
-            // before: belt-and-suspenders only; pending work cannot start until
-            // this ensuring completes, so new-turn tools cannot exist yet.
-            return sweep(sessionID, { force: true, before: Date.now() }).pipe(Effect.ignore)
+            return sweep(sessionID, { completedOnly: true }).pipe(Effect.ignore)
           }),
         ),
       )
@@ -151,11 +146,6 @@ export const layer = Layer.effect(
       const data = yield* InstanceState.get(state)
       const byAgent = data.runners.get(sessionID)
       if (!byAgent || byAgent.size === 0) {
-        // No runner left to own the sweep. Force-clean orphans before idle so
-        // the next prompt does not emit abort into a new turn (backup path;
-        // primary is work ensuring while Runner is Running).
-        const sweep = orphanToolIdleSweepRef.current
-        if (sweep) yield* sweep(sessionID, { force: true, before: Date.now() }).pipe(Effect.ignore)
         yield* status.set(sessionID, { type: "idle" })
         return
       }
@@ -176,8 +166,6 @@ export const layer = Layer.effect(
         }
         if (current.size === 0) after.runners.delete(sessionID)
       }
-      const sweep = orphanToolIdleSweepRef.current
-      if (sweep) yield* sweep(sessionID, { force: true, before: Date.now() }).pipe(Effect.ignore)
       // Main onIdle also sets idle; force-clear when main was already gone so
       // `/session/status` never stays busy after a successful abort.
       yield* status.set(sessionID, { type: "idle" })

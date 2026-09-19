@@ -28,7 +28,7 @@ const it = testEffect(
   ),
 )
 
-const seedRunningToolPart = (dir: string, sessionID: SessionID) =>
+const seedRunningToolPart = (dir: string, sessionID: SessionID, opts?: { completeMessage?: boolean }) =>
   Effect.gen(function* () {
     const sessions = yield* Session.Service
     const user = yield* sessions.updateMessage({
@@ -39,6 +39,7 @@ const seedRunningToolPart = (dir: string, sessionID: SessionID) =>
       model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
       time: { created: Date.now() },
     })
+    const now = Date.now()
     const assistant = yield* sessions.updateMessage({
       id: MessageID.ascending(),
       role: "assistant" as const,
@@ -51,7 +52,7 @@ const seedRunningToolPart = (dir: string, sessionID: SessionID) =>
       modelID: ModelID.make("test-model"),
       providerID: ProviderID.make("test"),
       parentID: user.id,
-      time: { created: Date.now() },
+      time: opts?.completeMessage ? { created: now, completed: now } : { created: now },
     })
     return yield* sessions.updatePart({
       id: PartID.ascending(),
@@ -223,34 +224,23 @@ describe("sweepOrphanToolParts", () => {
     ),
   )
 
-  // [RL-ORPHAN-D01] Primary ownership boundary: sweep in work ensuring while
-  // Runner is still Running. status.set(idle) runs after finishRun already
-  // flipped Runner to Idle — that is NOT a safe sweep point.
-  it.live("work ensuring aborts orphans before Runner releases ownership", () =>
+  // [RL-ORPHAN-D01] Ownership = message lifecycle (time.completed), not Runner
+  // Idle/Running or wall clock. Ensuring sweeps only completed messages' tools.
+  it.live("work ensuring aborts orphans on completed assistant messages", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
         const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id)
-
-        const order: string[] = []
-        const real = orphanToolIdleSweepRef.current
-        expect(real).toBeDefined()
-        orphanToolIdleSweepRef.current = (sid, opts) =>
-          Effect.gen(function* () {
-            order.push("sweep")
-            yield* real!(sid, opts)
-          })
+        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: true })
 
         try {
           yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
         } finally {
-          orphanToolIdleSweepRef.current = real
+          /* ref untouched */
         }
 
-        expect(order).toEqual(["sweep"])
         const after = yield* readPart(session.id, part.id)
         if (after?.type !== "tool") throw new Error("expected a tool part")
         expect(after.state.status).toBe("error")
@@ -260,34 +250,21 @@ describe("sweepOrphanToolParts", () => {
     ),
   )
 
-  // [RL-ORPHAN-D01] force=true is the ownership contract: sweep only from work
-  // ensuring (Runner still Running) or cancel-with-no-busy-runner — never from
-  // status.set(idle) after finishRun released the Runner.
-  it.live("work ensuring sweep is force while Runner owns execution", () =>
+  it.live("work ensuring does not rewrite tools on incomplete assistant messages", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
         const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        yield* seedRunningToolPart(dir, session.id)
+        // Incomplete = live-turn shape; completedOnly must leave it alone.
+        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
 
-        let sawForce = false
-        const real = orphanToolIdleSweepRef.current
-        expect(real).toBeDefined()
-        orphanToolIdleSweepRef.current = (sid, opts) =>
-          Effect.gen(function* () {
-            if (opts?.force) sawForce = true
-            yield* real!(sid, opts)
-          })
+        yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
 
-        try {
-          yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
-        } finally {
-          orphanToolIdleSweepRef.current = real
-        }
-
-        expect(sawForce).toBe(true)
+        const after = yield* readPart(session.id, part.id)
+        if (after?.type !== "tool") throw new Error("expected a tool part")
+        expect(after.state.status).toBe("running")
       }),
     ),
   )
