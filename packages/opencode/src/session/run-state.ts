@@ -5,7 +5,7 @@ import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID } from "./schema"
 import { SessionStatus } from "./status"
-import { orphanToolIdleSweepRef } from "./orphan-tool-idle-hook"
+import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan-tool-idle-hook"
 
 export interface Interface {
   readonly assertNotBusy: (sessionID: SessionID, agentID?: string) => Effect.Effect<void, Session.BusyError>
@@ -104,20 +104,25 @@ export const layer = Layer.effect(
     })
 
     /**
-     * Orphan sweep of COMPLETED assistant messages' tools. Ownership is
-     * message-lifecycle (`time.completed`), not Runner Idle/Running — safe
-     * during work ensuring and after cancel released the Runner (RL-ORPHAN-D01).
-     * Live-turn tools sit on an incomplete message and are never rewritten.
+     * Snapshot assistant message IDs while work is still exiting, then sweep
+     * orphans only on that set (RL-ORPHAN-D01). Field evidence: the original
+     * orphan sat on an INCOMPLETE assistant (completed only stamped at next
+     * prompt entry as Abandoned). Snapshot covers those messages; new turns
+     * create new message IDs and cannot enter an earlier snapshot.
      */
     const withOrphanSweep = (sessionID: SessionID, agentID: string, work: Effect.Effect<MessageV2.WithParts>) => {
       if (agentID !== "main") return work
       return work.pipe(
         Effect.ensuring(
-          Effect.suspend(() => {
-            const sweep = orphanToolIdleSweepRef.current
-            if (!sweep) return Effect.void
-            return sweep(sessionID, { completedOnly: true }).pipe(Effect.ignore)
-          }),
+          Effect.suspend(() =>
+            Effect.gen(function* () {
+              const sweep = orphanToolIdleSweepRef.current
+              const snapshot = assistantMessageIdsSnapshotRef.current
+              if (!sweep || !snapshot) return
+              const ownedMessageIds = yield* snapshot(sessionID)
+              yield* sweep(sessionID, { ownedMessageIds }).pipe(Effect.ignore)
+            }),
+          ),
         ),
       )
     }

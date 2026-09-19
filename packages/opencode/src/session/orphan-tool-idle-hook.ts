@@ -2,22 +2,29 @@ import type { Effect } from "effect"
 import type { SessionID } from "./schema"
 
 /**
- * Invoked by SessionRunState work ensuring (main) and by the prompt-entry
- * sweep. Set by SessionPrompt.layer.
+ * Orphan tool sweep hook. Set by SessionPrompt.layer.
  *
- * Ownership model (RL-ORPHAN-D01):
- * - `completedOnly`: only rewrite tools on assistant messages that already
- *   have `time.completed`. Live-turn tools sit on an incomplete message and
- *   are out of scope — this is message-lifecycle ownership, not wall clock.
- *   Safe to call while Runner is still Running (work ensuring).
- * - Without `completedOnly`: full main-slice sweep. Caller MUST hold a
- *   status==idle gate (prompt entry). Never force-sweep after Runner Idle.
+ * `ownedMessageIds` (optional): only rewrite tools whose messageID is in this
+ * set. Callers snapshot assistant message IDs while they still hold a boundary
+ * (work ensuring, before finishRun releases the Runner). New turns create new
+ * messages — they cannot appear in an earlier snapshot. This is ownership by
+ * message identity, not wall clock or Runner Idle/Running (RL-ORPHAN-D01).
+ *
+ * Without `ownedMessageIds`, full main-slice sweep requires status==idle
+ * (prompt entry).
  */
 export type OrphanToolIdleSweep = (
   sessionID: SessionID,
-  opts?: { before?: number; completedOnly?: boolean },
+  opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> },
 ) => Effect.Effect<void>
 
 export const orphanToolIdleSweepRef: { current: OrphanToolIdleSweep | undefined } = {
+  current: undefined,
+}
+
+/** Snapshot of assistant message IDs for a session. Wired by SessionPrompt. */
+export type AssistantMessageIdsSnapshot = (sessionID: SessionID) => Effect.Effect<ReadonlySet<string>>
+
+export const assistantMessageIdsSnapshotRef: { current: AssistantMessageIdsSnapshot | undefined } = {
   current: undefined,
 }

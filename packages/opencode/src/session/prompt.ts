@@ -133,7 +133,7 @@ import { prefixCaptureRef } from "./prefix-capture-ref"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Inbox } from "@/inbox"
 import { sessionPromptRef, defaultModelRef } from "@/inbox/inbox-ref"
-import { orphanToolIdleSweepRef } from "./orphan-tool-idle-hook"
+import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan-tool-idle-hook"
 import { Tool } from "@/tool"
 import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
@@ -577,7 +577,7 @@ export interface Interface {
   readonly sweepOrphanAssistants: (sessionID: SessionID, immediate?: boolean) => Effect.Effect<void>
   readonly sweepOrphanToolParts: (
     sessionID: SessionID,
-    opts?: { before?: number; completedOnly?: boolean },
+    opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> },
   ) => Effect.Effect<void>
   readonly predict: (input: { sessionID: SessionID }) => Effect.Effect<string>
 }
@@ -3305,22 +3305,25 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     //      publishes status for the main slice (`if (isMain) status.set(...)`), so a
     //      subagent slice can be executing tools while the session status reads
     //      `idle` — its parts are out of scope.
-    // `completedOnly`: only tools on assistant messages with `time.completed`.
-    // Live-turn tools are on an incomplete message — safe while Runner is
-    // still Running (work ensuring). Message-lifecycle ownership, not wall clock.
-    // Full sweep (no completedOnly) requires the caller to hold status==idle.
+    // `ownedMessageIds`: only tools on these assistant messages. Callers
+    // snapshot IDs while still on a lifecycle boundary (work ensuring). New
+    // turns create new messages and cannot enter an earlier snapshot — this is
+    // ownership by message identity (RL-ORPHAN-D01), covering incomplete
+    // messages that field evidence shows carry the original orphans.
+    // Full sweep (no ownedMessageIds) requires status==idle (prompt entry).
     const sweepOrphanToolParts = Effect.fn("SessionPrompt.sweepOrphanToolParts")(function* (
       sessionID: SessionID,
-      opts?: { before?: number; completedOnly?: boolean },
+      opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> },
     ) {
-      if (!opts?.completedOnly && (yield* status.get(sessionID)).type !== "idle") return
+      const owned = opts?.ownedMessageIds
+      if (!owned && (yield* status.get(sessionID)).type !== "idle") return
       for (const m of yield* sessions.messages({ sessionID })) {
         if (m.info.role !== "assistant") continue
-        if (opts?.completedOnly && m.info.time?.completed == null) continue
+        if (owned && !owned.has(m.info.id)) continue
         for (const part of m.parts) {
           if (part.type !== "tool") continue
           if (part.state.status !== "pending" && part.state.status !== "running") continue
-          if (!opts?.completedOnly && (yield* status.get(sessionID)).type !== "idle") return
+          if (!owned && (yield* status.get(sessionID)).type !== "idle") return
           const started = part.state.status === "running" ? part.state.time.start : undefined
           if (opts?.before !== undefined && started !== undefined && started > opts.before) continue
           yield* sessions
@@ -3351,12 +3354,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     // Instance context at construction time.
     // Wire the idle-edge sweep. Identity-guarded clear so a rebuilt layer does
     // not wipe a newer registration (same pattern as sessionPromptRef).
-    const idleSweep = (sid: SessionID, opts?: { before?: number; completedOnly?: boolean }) =>
+    const idleSweep = (sid: SessionID, opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> }) =>
       sweepOrphanToolParts(sid, opts)
     orphanToolIdleSweepRef.current = idleSweep
+    const snapshotAssistantIds = (sid: SessionID) =>
+      Effect.gen(function* () {
+        const msgs = yield* sessions.messages({ sessionID: sid })
+        return new Set(msgs.filter((m) => m.info.role === "assistant").map((m) => m.info.id as string))
+      })
+    assistantMessageIdsSnapshotRef.current = snapshotAssistantIds
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         if (orphanToolIdleSweepRef.current === idleSweep) orphanToolIdleSweepRef.current = undefined
+        if (assistantMessageIdsSnapshotRef.current === snapshotAssistantIds)
+          assistantMessageIdsSnapshotRef.current = undefined
       }),
     )
 

@@ -224,22 +224,20 @@ describe("sweepOrphanToolParts", () => {
     ),
   )
 
-  // [RL-ORPHAN-D01] Ownership = message lifecycle (time.completed), not Runner
-  // Idle/Running or wall clock. Ensuring sweeps only completed messages' tools.
-  it.live("work ensuring aborts orphans on completed assistant messages", () =>
+  // [RL-ORPHAN-D01] Field evidence: orphan sat on an INCOMPLETE assistant
+  // (completed only stamped at next prompt as Abandoned). Snapshot ownership
+  // by message ID at ensuring time covers that set.
+  it.live("work ensuring aborts orphans on snapshotted messages including incomplete", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
         const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: true })
+        // Incomplete — matches field parent msg_g001a0bb2e89bb001WTFuV6NUk
+        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
 
-        try {
-          yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
-        } finally {
-          /* ref untouched */
-        }
+        yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
 
         const after = yield* readPart(session.id, part.id)
         if (after?.type !== "tool") throw new Error("expected a tool part")
@@ -250,17 +248,16 @@ describe("sweepOrphanToolParts", () => {
     ),
   )
 
-  it.live("work ensuring does not rewrite tools on incomplete assistant messages", () =>
+  it.live("sweep skips messages not in ownedMessageIds snapshot", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
-        const runState = yield* SessionRunState.Service
-        yield* SessionPrompt.Service
+        const svc = yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        // Incomplete = live-turn shape; completedOnly must leave it alone.
         const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
 
-        yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
+        // Empty snapshot — nothing owned, nothing rewritten.
+        yield* svc.sweepOrphanToolParts(session.id, { ownedMessageIds: new Set() })
 
         const after = yield* readPart(session.id, part.id)
         if (after?.type !== "tool") throw new Error("expected a tool part")
