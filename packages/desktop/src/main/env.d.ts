@@ -1,11 +1,11 @@
 interface ImportMetaEnv {
-  readonly OPENCODE_CHANNEL: string
+  readonly MIMOCODE_CHANNEL: string
 }
 
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
-declare module "virtual:opencode-server" {
+declare module "virtual:mimocode-server" {
   export namespace Server {
     export const listen: typeof import("../../../opencode/dist/types/src/node").Server.listen
     export type Listener = import("../../../opencode/dist/types/src/node").Server.Listener

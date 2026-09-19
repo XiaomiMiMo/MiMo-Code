@@ -707,7 +707,7 @@ export const SettingsGeneral: Component = () => {
           }}
         </Show>
 
-        <Show when={desktop() && import.meta.env.VITE_OPENCODE_CHANNEL === "beta"}>
+        <Show when={desktop() && import.meta.env.VITE_MIMOCODE_CHANNEL === "beta"}>
           <AdvancedSection />
         </Show>
       </div>
