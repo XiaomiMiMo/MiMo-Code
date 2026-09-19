@@ -35,6 +35,13 @@ describe("Filesystem.contains", () => {
     expect(Filesystem.contains("/project", "/project-other/file")).toBe(false)
     expect(Filesystem.contains("/project", "/projectfile")).toBe(false)
   })
+
+  test("treats cross-drive paths as disjoint", () => {
+    // Windows cross-drive pairs cannot be relativized; both platforms agree.
+    expect(Filesystem.contains("C:/data/worktree", "D:/projects/app")).toBe(false)
+    expect(Filesystem.contains("C:/data/worktree", "C:/Users/x/app")).toBe(false)
+    expect(Filesystem.contains("C:/data/worktree", "C:/data/worktree/p/child")).toBe(true)
+  })
 })
 
 /*

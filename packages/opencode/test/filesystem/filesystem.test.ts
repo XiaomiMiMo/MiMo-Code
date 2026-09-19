@@ -310,6 +310,13 @@ describe("AppFileSystem", () => {
       expect(AppFileSystem.contains("/a/b", "/a/c")).toBe(false)
     })
 
+    test("contains treats cross-drive paths as disjoint", () => {
+      // Windows cross-drive pairs cannot be relativized; both platforms agree.
+      expect(AppFileSystem.contains("C:/data/worktree", "D:/projects/app")).toBe(false)
+      expect(AppFileSystem.contains("C:/data/worktree", "C:/Users/x/app")).toBe(false)
+      expect(AppFileSystem.contains("C:/data/worktree", "C:/data/worktree/p/child")).toBe(true)
+    })
+
     test("overlaps detects overlapping paths", () => {
       expect(AppFileSystem.overlaps("/a/b", "/a/b/c")).toBe(true)
       expect(AppFileSystem.overlaps("/a/b/c", "/a/b")).toBe(true)
