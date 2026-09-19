@@ -3645,7 +3645,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   )
                   .pipe(Effect.ignore),
                 mcp
-                  .clients()
+                  .clients(mcpContext)
                   .pipe(
                     Effect.flatMap((clients) => MCP.notifyTurnLifecycle(clients, mcpContext, lifecycleStatus)),
                     Effect.ignore,
@@ -5594,7 +5594,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           Option.isSome(lastUserForMetrics) ? lastUserForMetrics.value.info.agent : final.info.agent,
         )
         return final
-        }).pipe(Effect.onExit(firePostSession), Effect.orDie)
+        }).pipe(Effect.onExit(firePostSession), Effect.ensuring(MCP.releaseTurnClients(mcpContext)), Effect.orDie)
       },
     )
 

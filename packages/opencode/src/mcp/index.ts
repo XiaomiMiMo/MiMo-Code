@@ -28,6 +28,7 @@ import { TuiEvent } from "@/cli/cmd/tui/event"
 import open from "open"
 import { Effect, Exit, Layer, Option, Context, Stream, Semaphore } from "effect"
 import { HostMcp } from "./host"
+import { ManagedClient } from "./managed-client"
 import { EffectBridge } from "@/effect"
 import { InstanceState } from "@/effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -71,7 +72,7 @@ export const Failed = NamedError.create(
   }),
 )
 
-type MCPClient = Client
+type MCPClient = ManagedClient
 
 export const TURN_LIFECYCLE_CAPABILITY = "com.xiaomi.mimo/turn-lifecycle"
 export const TURN_LIFECYCLE_NOTIFICATION = `notifications/${TURN_LIFECYCLE_CAPABILITY}`
@@ -105,7 +106,7 @@ interface PendingTurnLifecycleNotification {
   readonly startedAt: number
 }
 
-const pendingTurnLifecycleNotifications = new WeakMap<MCPClient, PendingTurnLifecycleNotification>()
+const pendingTurnLifecycleNotifications = new WeakMap<Client, PendingTurnLifecycleNotification>()
 
 export interface TurnContext {
   [key: string]: unknown
@@ -114,9 +115,13 @@ export interface TurnContext {
   actorId?: string
 }
 
+// The same context object is used throughout a runLoop and its finalizer.
+// Keep every generation used by that turn, including between model/tool calls.
+const turnClients = new WeakMap<TurnContext, Map<MCPClient, { name: string; release: () => void }>>()
+
 export type TurnStatus = "completed" | "cancelled" | "error"
 
-function supportsTurnLifecycle(client: MCPClient) {
+function supportsTurnLifecycle(client: Client) {
   const capability = client.getServerCapabilities()?.experimental?.[TURN_LIFECYCLE_CAPABILITY]
   return (
     typeof capability === "object" &&
@@ -126,13 +131,13 @@ function supportsTurnLifecycle(client: MCPClient) {
   )
 }
 
-function startTurnLifecycleNotification(client: MCPClient, context: TurnContext, status: TurnStatus) {
+function startTurnLifecycleNotification(client: Client, context: TurnContext, status: TurnStatus) {
   if (pendingTurnLifecycleNotifications.has(client)) return undefined
   const promise = Promise.resolve().then(() =>
     client.notification({
       method: TURN_LIFECYCLE_NOTIFICATION,
       params: { ...context, status },
-    } as Parameters<MCPClient["notification"]>[0]),
+    } as Parameters<Client["notification"]>[0]),
   )
   const notification: PendingTurnLifecycleNotification = { promise, waiters: new Set(), startedAt: Date.now() }
   pendingTurnLifecycleNotifications.set(client, notification)
@@ -154,7 +159,7 @@ function startTurnLifecycleNotification(client: MCPClient, context: TurnContext,
 // forever. The orphaned promise is never awaited again; its settlement still runs
 // `clear`, which no-ops because the map entry has been replaced.
 function releaseStuckTurnLifecycleNotification(
-  client: MCPClient,
+  client: Client,
   notification: PendingTurnLifecycleNotification,
   clientName: string,
 ) {
@@ -169,7 +174,7 @@ function releaseStuckTurnLifecycleNotification(
   for (const waiter of waiters) waiter()
 }
 
-function waitForTurnLifecycleNotification(client: MCPClient, notification: PendingTurnLifecycleNotification) {
+function waitForTurnLifecycleNotification(client: Client, notification: PendingTurnLifecycleNotification) {
   return Effect.tryPromise({
     try: (signal) =>
       new Promise<void>((resolve, reject) => {
@@ -198,12 +203,7 @@ function waitForTurnLifecycleNotification(client: MCPClient, notification: Pendi
   })
 }
 
-function sendTurnLifecycleNotification(
-  client: MCPClient,
-  context: TurnContext,
-  status: TurnStatus,
-  clientName: string,
-) {
+function sendTurnLifecycleNotification(client: Client, context: TurnContext, status: TurnStatus, clientName: string) {
   return Effect.gen(function* () {
     while (true) {
       const pending = pendingTurnLifecycleNotifications.get(client)
@@ -226,9 +226,10 @@ function sendTurnLifecycleNotification(
   })
 }
 
-export function notifyTurnLifecycle(clients: Record<string, MCPClient>, context: TurnContext, status: TurnStatus) {
+export function notifyTurnLifecycle(clients: Record<string, Client>, context: TurnContext, status: TurnStatus) {
+  const retained = turnClients.get(context)
   return Effect.forEach(
-    Object.entries(clients),
+    retained ? [...retained].map(([client, entry]) => [entry.name, client] as const) : Object.entries(clients),
     ([clientName, client]) => {
       if (!supportsTurnLifecycle(client)) return Effect.void
       return sendTurnLifecycleNotification(client, context, status, clientName).pipe(
@@ -240,7 +241,16 @@ export function notifyTurnLifecycle(clients: Record<string, MCPClient>, context:
       )
     },
     { concurrency: "unbounded", discard: true },
-  )
+  ).pipe(Effect.ensuring(releaseTurnClients(context)))
+}
+
+/** Also used by the outer run finalizer if post-session bookkeeping fails. */
+export function releaseTurnClients(context: TurnContext) {
+  return Effect.sync(() => {
+    const retained = turnClients.get(context)
+    turnClients.delete(context)
+    for (const entry of retained?.values() ?? []) entry.release()
+  })
 }
 
 export const Status = z
@@ -403,7 +413,7 @@ interface AuthResult {
 interface State {
   host: Record<string, string>
   hostRetryAt: Record<string, number>
-  retired: MCPClient[]
+  retired: Set<MCPClient>
   refresh: Semaphore.Semaphore
   status: Record<string, Status>
   clients: Record<string, MCPClient>
@@ -412,7 +422,7 @@ interface State {
 
 export interface Interface {
   readonly status: () => Effect.Effect<Record<string, Status>>
-  readonly clients: () => Effect.Effect<Record<string, MCPClient>>
+  readonly clients: (context?: TurnContext) => Effect.Effect<Record<string, MCPClient>>
   readonly tools: (context?: TurnContext) => Effect.Effect<Record<string, Tool>>
   readonly prompts: () => Effect.Effect<Record<string, PromptInfo & { client: string }>>
   readonly resources: () => Effect.Effect<Record<string, ResourceInfo & { client: string }>>
@@ -445,8 +455,7 @@ export const layer = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const auth = yield* McpAuth.Service
     const bus = yield* Bus.Service
-    const createClient = () =>
-      new Client({ name: "mimocode", version: InstallationVersion }, CLIENT_OPTIONS)
+    const createClient = () => new ManagedClient({ name: "mimocode", version: InstallationVersion }, CLIENT_OPTIONS)
 
     type Transport = ObservingStdioTransport | StreamableHTTPClientTransport | SSEClientTransport
 
@@ -637,7 +646,9 @@ export const layer = Layer.effect(
             natural?.exitCode != null ? `exit=${natural.exitCode}` : undefined,
             natural?.signalCode ? `signal=${natural.signalCode}` : undefined,
             stderrTail || undefined,
-          ].filter(Boolean).join("; ")
+          ]
+            .filter(Boolean)
+            .join("; ")
           return Effect.succeed({ client: undefined, status: { status: "failed", error: detail } })
         }),
       )
@@ -719,7 +730,7 @@ export const layer = Layer.effect(
         const s: State = {
           host: Object.fromEntries(Object.entries(host).map(([key, value]) => [key, JSON.stringify(value)])),
           hostRetryAt: {},
-          retired: [],
+          retired: new Set(),
           refresh: Semaphore.makeUnsafe(1),
           status: {},
           clients: {},
@@ -794,35 +805,54 @@ export const layer = Layer.effect(
       )
     }
 
-    // Refresh only embedder-owned servers. Existing tool closures keep their
-    // client until Instance disposal, so another running turn is not aborted.
+    // Refresh only embedder-owned servers. Requests and turn bindings retain
+    // their original connection until completion, then retired clients close.
     const refreshHost = Effect.fn("MCP.refreshHost")(function* (s: State) {
-      yield* s.refresh.withPermits(1)(Effect.gen(function* () {
-        const host = HostMcp.get()
-        const cfg = yield* cfgSvc.get()
-        const bridge = yield* EffectBridge.make()
-        for (const name of new Set([...Object.keys(s.host), ...Object.keys(host)])) {
-          const revision = JSON.stringify(host[name])
-          if (s.host[name] === revision && (!s.hostRetryAt[name] || Date.now() < s.hostRetryAt[name])) continue
-          const mcp = host[name] ?? cfg.mcp?.[name]
-          const result = !mcp || !isMcpConfigured(mcp) || mcp.enabled === false
-            ? { status: { status: "disabled" as const }, mcpClient: undefined, defs: undefined }
-            : yield* create(name, mcp)
-          if (s.clients[name]) s.retired.push(s.clients[name])
-          delete s.clients[name]
-          delete s.defs[name]
-          s.status[name] = result.status
-          if (revision == null) delete s.host[name]
-          else s.host[name] = revision
-          if (result.status.status === "failed") s.hostRetryAt[name] = Date.now() + 5000
-          else delete s.hostRetryAt[name]
-          if (result.mcpClient) {
-            s.clients[name] = result.mcpClient
-            s.defs[name] = result.defs!
-            watch(s, name, result.mcpClient, bridge, mcp?.timeout)
+      yield* s.refresh.withPermits(1)(
+        Effect.gen(function* () {
+          const host = HostMcp.get()
+          const cfg = yield* cfgSvc.get()
+          const bridge = yield* EffectBridge.make()
+          for (const name of new Set([...Object.keys(s.host), ...Object.keys(host)])) {
+            const revision = JSON.stringify(host[name])
+            if (s.host[name] === revision && (!s.hostRetryAt[name] || Date.now() < s.hostRetryAt[name])) continue
+            const mcp = host[name] ?? cfg.mcp?.[name]
+            const result =
+              !mcp || !isMcpConfigured(mcp) || mcp.enabled === false
+                ? { status: { status: "disabled" as const }, mcpClient: undefined, defs: undefined }
+                : yield* create(name, mcp)
+            const previous = s.clients[name]
+            if (previous) {
+              s.retired.add(previous)
+              previous.retire(() =>
+                bridge.promise(
+                  McpSampling.cancelAll(previous).pipe(
+                    Effect.andThen(Effect.tryPromise(() => previous.close())),
+                    Effect.ignore,
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        s.retired.delete(previous)
+                      }),
+                    ),
+                  ),
+                ),
+              )
+            }
+            delete s.clients[name]
+            delete s.defs[name]
+            s.status[name] = result.status
+            if (revision == null) delete s.host[name]
+            else s.host[name] = revision
+            if (result.status.status === "failed") s.hostRetryAt[name] = Date.now() + 5000
+            else delete s.hostRetryAt[name]
+            if (result.mcpClient) {
+              s.clients[name] = result.mcpClient
+              s.defs[name] = result.defs!
+              watch(s, name, result.mcpClient, bridge, mcp?.timeout)
+            }
           }
-        }
-      }))
+        }),
+      )
     })
 
     const storeClient = Effect.fnUntraced(function* (
@@ -857,7 +887,9 @@ export const layer = Layer.effect(
       return result
     })
 
-    const clients = Effect.fn("MCP.clients")(function* () {
+    const clients = Effect.fn("MCP.clients")(function* (context?: TurnContext) {
+      if (context)
+        return Object.fromEntries([...(turnClients.get(context) ?? [])].map(([client, entry]) => [entry.name, client]))
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
       return s.clients
@@ -912,31 +944,32 @@ export const layer = Layer.effect(
         ([clientName]) => s.status[clientName]?.status === "connected",
       )
 
-      yield* Effect.forEach(
-        connectedClients,
-        ([clientName, client]) =>
-          Effect.gen(function* () {
-            const mcpConfig = config[clientName]
-            const entry = mcpConfig && isMcpConfigured(mcpConfig) ? mcpConfig : undefined
+      // Capture bindings synchronously: refresh must not retire a client between
+      // selecting it and retaining the tool closures returned to a turn.
+      for (const [clientName, client] of connectedClients) {
+        const mcpConfig = config[clientName]
+        const entry = mcpConfig && isMcpConfigured(mcpConfig) ? mcpConfig : undefined
+        const listed = s.defs[clientName]
+        if (!listed) {
+          log.warn("missing cached tools for connected server", { clientName })
+          continue
+        }
 
-            const listed = s.defs[clientName]
-            if (!listed) {
-              log.warn("missing cached tools for connected server", { clientName })
-              return
-            }
-
-            const timeout = entry?.timeout ?? defaultTimeout
-            for (const mcpTool of listed) {
-              result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(
-                mcpTool,
-                client,
-                timeout,
-                context,
-              )
-            }
-          }),
-        { concurrency: "unbounded" },
-      )
+        if (context && listed.length) {
+          const retained = turnClients.get(context) ?? new Map<MCPClient, { name: string; release: () => void }>()
+          if (!retained.has(client)) retained.set(client, { name: clientName, release: client.retain() })
+          turnClients.set(context, retained)
+        }
+        const timeout = entry?.timeout ?? defaultTimeout
+        for (const mcpTool of listed) {
+          result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(
+            mcpTool,
+            client,
+            timeout,
+            context,
+          )
+        }
+      }
       return result
     })
 
@@ -945,21 +978,32 @@ export const layer = Layer.effect(
       listFn: (c: Client) => Promise<T[]>,
       label: string,
     ) {
+      const connected = Object.entries(s.clients).filter(([name]) => s.status[name]?.status === "connected")
+      const releases = connected.map(([, client]) => client.retain())
       return Effect.forEach(
-        Object.entries(s.clients).filter(([name]) => s.status[name]?.status === "connected"),
+        connected,
         ([clientName, client]) =>
           fetchFromClient(clientName, client, listFn, label).pipe(Effect.map((items) => Object.entries(items ?? {}))),
         { concurrency: "unbounded" },
-      ).pipe(Effect.map((results) => Object.fromEntries<T & { client: string }>(results.flat())))
+      ).pipe(
+        Effect.map((results) => Object.fromEntries<T & { client: string }>(results.flat())),
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const release of releases) release()
+          }),
+        ),
+      )
     }
 
     const prompts = Effect.fn("MCP.prompts")(function* () {
       const s = yield* InstanceState.get(state)
+      yield* refreshHost(s)
       return yield* collectFromConnected(s, (c) => c.listPrompts().then((r) => r.prompts), "prompts")
     })
 
     const resources = Effect.fn("MCP.resources")(function* () {
       const s = yield* InstanceState.get(state)
+      yield* refreshHost(s)
       return yield* collectFromConnected(s, (c) => c.listResources().then((r) => r.resources), "resources")
     })
 
@@ -970,18 +1014,23 @@ export const layer = Layer.effect(
       meta?: Record<string, unknown>,
     ) {
       const s = yield* InstanceState.get(state)
+      yield* refreshHost(s)
       const client = s.clients[clientName]
       if (!client) {
         log.warn(`client not found for ${label}`, { clientName })
         return undefined
       }
+      const release = client.retain()
       return yield* Effect.tryPromise({
         try: () => fn(client),
         catch: (e: any) => {
           log.error(`failed to ${label}`, { clientName, ...meta, error: e?.message })
           return e
         },
-      }).pipe(Effect.orElseSucceed(() => undefined))
+      }).pipe(
+        Effect.orElseSucceed(() => undefined),
+        Effect.ensuring(Effect.sync(release)),
+      )
     })
 
     const getPrompt = Effect.fn("MCP.getPrompt")(function* (
