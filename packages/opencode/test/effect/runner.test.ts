@@ -39,7 +39,7 @@ describe("Runner", () => {
   )
 
   it.live(
-    "concurrent callers share the same run",
+    "concurrent callers: first starts run, second attaches pending (runs after)",
     Effect.gen(function* () {
       const s = yield* Scope.Scope
       const runner = Runner.make<string>(s)
@@ -56,7 +56,8 @@ describe("Runner", () => {
 
       expect(a).toBe("shared")
       expect(b).toBe("shared")
-      expect(yield* Ref.get(calls)).toBe(1)
+      // Live attach is not dropped: pending work runs after the first finishes.
+      expect(yield* Ref.get(calls)).toBe(2)
     }),
   )
 
@@ -91,7 +92,7 @@ describe("Runner", () => {
   )
 
   it.live(
-    "second ensureRunning ignores new work if already running",
+    "second ensureRunning attaches pending work; it runs after the live run",
     Effect.gen(function* () {
       const s = yield* Scope.Scope
       const runner = Runner.make<string>(s)
@@ -112,8 +113,9 @@ describe("Runner", () => {
       })
 
       expect(a).toBe("first-result")
-      expect(b).toBe("first-result")
-      expect(yield* Ref.get(ran)).toEqual(["first"])
+      // Pending work is not dropped — finishRun starts it instead of going Idle.
+      expect(b).toBe("second-result")
+      expect(yield* Ref.get(ran)).toEqual(["first", "second"])
     }),
   )
 

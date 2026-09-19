@@ -19,12 +19,13 @@ describe("Runner onReentryWarn", () => {
         return "result"
       })
 
-      const [a, b] = yield* Effect.all([runner.ensureRunning(work), runner.ensureRunning(Effect.succeed("ignored"))], {
+      const [a, b] = yield* Effect.all([runner.ensureRunning(work), runner.ensureRunning(Effect.succeed("pending"))], {
         concurrency: "unbounded",
       })
 
       expect(a).toBe("result")
-      expect(b).toBe("result")
+      // Live reentry attaches pending (does not drop work); caller observes pending's result.
+      expect(b).toBe("pending")
 
       const logged = yield* Ref.get(warnings)
       expect(logged.length).toBe(1)

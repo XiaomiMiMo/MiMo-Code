@@ -140,15 +140,15 @@ describe("SessionRunState tuple key — independent Runners per (sid, agentID)",
         .pipe(Effect.forkChild)
       yield* Deferred.await(started)
 
-      // Second call triggers reentry warn
+      // Second call triggers reentry warn and attaches pending work
       const fiber2 = yield* runner.ensureRunning(Effect.succeed("second")).pipe(Effect.forkChild)
 
       const [exit1, exit2] = yield* Effect.all([Fiber.await(fiber1), Fiber.await(fiber2)])
-      // Both get the first run's result (reentry attaches to existing deferred)
       expect(Exit.isSuccess(exit1)).toBe(true)
       expect(Exit.isSuccess(exit2)).toBe(true)
       if (Exit.isSuccess(exit1)) expect(exit1.value).toBe("first")
-      if (Exit.isSuccess(exit2)) expect(exit2.value).toBe("first")
+      // Pending work runs after the live run; not dropped.
+      if (Exit.isSuccess(exit2)) expect(exit2.value).toBe("second")
       expect(warnings.length).toBe(1)
       expect(warnings[0].label).toBe("session-1:main")
     }),

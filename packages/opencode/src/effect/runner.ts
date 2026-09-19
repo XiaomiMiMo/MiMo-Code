@@ -73,7 +73,25 @@ export const make = <A, E = never, B = never>(
   const idleIfCurrent = () =>
     SynchronizedRef.modify(ref, (st) => [st._tag === "Idle" ? idle : Effect.void, st] as const).pipe(Effect.flatten)
 
-  const finishRun = (id: number, done: Deferred.Deferred<A, E | Cancelled>, exit: Exit.Exit<A, E>) =>
+  // Explicit return types break the finishRun ↔ startRun circular inference.
+  const startRun = (
+    work: Effect.Effect<A, E>,
+    done: Deferred.Deferred<A, E | Cancelled>,
+  ): Effect.Effect<RunHandle<A, E>> =>
+    Effect.gen(function* () {
+      const id = next()
+      const fiber = yield* work.pipe(
+        Effect.onExit((exit) => finishRun(id, done, exit)),
+        Effect.forkIn(scope),
+      )
+      return { id, done, fiber } satisfies RunHandle<A, E>
+    })
+
+  const finishRun = (
+    id: number,
+    done: Deferred.Deferred<A, E | Cancelled>,
+    exit: Exit.Exit<A, E>,
+  ): Effect.Effect<void> =>
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
@@ -85,22 +103,15 @@ export const make = <A, E = never, B = never>(
           const nextRun = yield* startRun(pending.work, pending.done)
           return [complete(done, exit), { _tag: "Running", run: nextRun }] as const
         }
-        return [Effect.gen(function* () {
-          yield* idle
-          yield* complete(done, exit)
-        }), { _tag: "Idle" } as const] as const
+        return [
+          Effect.gen(function* () {
+            yield* idle
+            yield* complete(done, exit)
+          }),
+          { _tag: "Idle" } as const,
+        ] as const
       }),
     ).pipe(Effect.flatten)
-
-  const startRun = (work: Effect.Effect<A, E>, done: Deferred.Deferred<A, E | Cancelled>) =>
-    Effect.gen(function* () {
-      const id = next()
-      const fiber = yield* work.pipe(
-        Effect.onExit((exit) => finishRun(id, done, exit)),
-        Effect.forkIn(scope),
-      )
-      return { id, done, fiber } satisfies RunHandle<A, E>
-    })
 
   const busyFailure = <C>(): Effect.Effect<C, B> =>
     opts?.busy ? Effect.fail(opts.busy()) : Effect.die(new Error("Runner is busy"))
