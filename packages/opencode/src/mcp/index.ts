@@ -420,6 +420,7 @@ type AuthResult =
       client: MCPClient
       /** Config snapshot that opened this connection; sampling must stay bound to it. */
       resolved: { mcp: ConfigMCP.Info; hostOwned: boolean }
+      hostRevision?: string
     }
   | { kind: "redirect"; authorizationUrl: string; oauthState: string }
 
@@ -907,7 +908,25 @@ export const layer = Layer.effect(
       listed: MCPToolDef[],
       timeout?: number,
       sampling?: ConfigMCP.Info["sampling"],
+      opts?: { fromHost?: boolean; hostRevision?: string },
     ) {
+      // Unified admission: every completion validates against the *current*
+      // host ownership/generation before any shared-state mutation.
+      const hostNow = HostMcp.get()[name]
+      if (opts?.fromHost) {
+        if (!hostNow || hostNow.enabled === false) {
+          yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+          return s.status[name] ?? { status: "disabled" as const }
+        }
+        if (opts.hostRevision != null && opts.hostRevision !== JSON.stringify(hostNow)) {
+          yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+          return s.status[name] ?? { status: "connected" as const }
+        }
+      } else if (hostNow != null) {
+        // User-sourced client cannot publish over a host-owned name.
+        yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+        return s.status[name] ?? { status: "disabled" as const }
+      }
       const bridge = yield* EffectBridge.make()
       yield* closeClient(s, name)
       s.status[name] = { status: "connected" }
@@ -947,23 +966,51 @@ export const layer = Layer.effect(
       name: string,
       mcp: ConfigMCP.Info,
       sampling?: ConfigMCP.Info["sampling"],
+      opts?: { fromHost?: boolean },
     ) {
       const s = yield* InstanceState.get(state)
+      const hostAtStart = HostMcp.get()[name]
+      const hostRevision = hostAtStart ? JSON.stringify(hostAtStart) : undefined
       const result = yield* create(name, mcp)
 
-      s.status[name] = result.status
       if (!result.mcpClient) {
-        yield* closeClient(s, name)
-        delete s.clients[name]
-        return result.status
+        // Failure completion uses the same validity rule as success: a host-sourced
+        // attempt that is no longer valid must not mutate the current connection.
+        const hostNow = HostMcp.get()[name]
+        if (opts?.fromHost) {
+          const stillValidHost = !!hostNow
+            && hostNow.enabled !== false
+            && (hostRevision == null || hostRevision === JSON.stringify(hostNow))
+          if (!stillValidHost) {
+            return s.status[name] ?? { status: "disabled" as const }
+          }
+          s.status[name] = result.status
+          return result.status
+        }
+        if (hostNow == null) {
+          s.status[name] = result.status
+          yield* closeClient(s, name)
+          delete s.clients[name]
+        }
+        return hostNow == null ? result.status : (s.status[name] ?? { status: "connected" as const })
       }
 
       // `sampling` must be computed with the same config snapshot as `mcp`.
-      return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout, sampling ?? mcp.sampling)
+      return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout, sampling ?? mcp.sampling, {
+        ...opts,
+        hostRevision,
+      })
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCP.Info) {
-      yield* createAndStore(name, mcp)
+      // HostMcp owns readiness and connection shape for host-projected names.
+      // User/SDK add must not replace or re-enable a host-owned entry.
+      if (HostMcp.get()[name] != null) {
+        log.error("MCP name is host-owned; add refused", { name })
+        const s = yield* InstanceState.get(state)
+        return { status: { ...s.status, [name]: { status: "disabled" as const } } }
+      }
+      yield* createAndStore(name, mcp, undefined, { fromHost: false })
       const s = yield* InstanceState.get(state)
       return { status: s.status }
     })
@@ -974,10 +1021,16 @@ export const layer = Layer.effect(
         log.error("MCP config not found or invalid", { name })
         return
       }
+      // Explicit connect must not lift a host closed gate.
+      if (resolved.hostOwned && resolved.mcp.enabled === false) {
+        log.error("MCP is host-owned and disabled; connect refused", { name })
+        return
+      }
       yield* createAndStore(
         name,
         { ...resolved.mcp, enabled: true },
         hostEffectiveSampling(resolved.mcp, resolved.hostOwned),
+        { fromHost: resolved.hostOwned },
       )
     })
 
@@ -1122,6 +1175,10 @@ export const layer = Layer.effect(
       const resolved = yield* getMcpConfig(mcpName)
       const mcpConfig = resolved?.mcp
       if (!mcpConfig) throw new Error(`MCP server ${mcpName} not found or disabled`)
+      // Auth must not open or complete a connection that Host closed.
+      if (resolved.hostOwned && mcpConfig.enabled === false) {
+        throw new Error(`MCP server ${mcpName} is host-owned and disabled`)
+      }
       if (mcpConfig.type !== "remote") throw new Error(`MCP server ${mcpName} is not a remote server`)
       if (mcpConfig.oauth === false) throw new Error(`MCP server ${mcpName} has OAuth explicitly disabled`)
 
@@ -1165,6 +1222,7 @@ export const layer = Layer.effect(
                 oauthState,
                 client,
                 resolved,
+                hostRevision: resolved.hostOwned ? JSON.stringify(mcpConfig) : undefined,
               }) satisfies AuthResult,
           )
         },
@@ -1217,6 +1275,7 @@ export const layer = Layer.effect(
           listed,
           resolved.mcp.timeout,
           hostEffectiveSampling(resolved.mcp, resolved.hostOwned),
+          { fromHost: resolved.hostOwned, hostRevision: result.hostRevision },
         )
       }
 
@@ -1279,7 +1338,9 @@ export const layer = Layer.effect(
       const resolved = yield* getMcpConfig(mcpName)
       if (!resolved) return { status: "failed", error: "MCP config not found after auth" } as Status
 
-      return yield* createAndStore(mcpName, resolved.mcp, hostEffectiveSampling(resolved.mcp, resolved.hostOwned))
+      return yield* createAndStore(mcpName, resolved.mcp, hostEffectiveSampling(resolved.mcp, resolved.hostOwned), {
+        fromHost: resolved.hostOwned,
+      })
     })
 
     const removeAuth = Effect.fn("MCP.removeAuth")(function* (mcpName: string) {

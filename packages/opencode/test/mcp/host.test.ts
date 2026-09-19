@@ -680,3 +680,39 @@ test.skipIf(process.platform === "win32")(
   },
   20_000,
 )
+
+// [TP-MCU-R7-21] Host-owned disabled entries cannot be lifted by connect/add/authenticate.
+test("host-owned disabled server refuses connect, add, and authenticate", async () => {
+  await using tmp = await fixture()
+  const config = tmp.extra.config
+  await Bun.write(`${tmp.path}/mimocode.json`, JSON.stringify({ mcp: { automation: config("user") } }))
+  HostMcp.set({ automation: config("host", false) })
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        try {
+          await Effect.runPromise(
+            MCP.Service.use((mcp) =>
+              Effect.gen(function* () {
+                yield* mcp.tools()
+                yield* mcp.connect("automation")
+                expect(Object.keys(yield* mcp.tools())).toEqual([])
+                yield* mcp.add("automation", config("user-override"))
+                expect(Object.keys(yield* mcp.tools())).toEqual([])
+                // local type cannot authenticate, but connect/add must not store.
+                const clients = yield* mcp.clients()
+                expect(clients.automation).toBeUndefined()
+              }),
+            ).pipe(Effect.provide(MCP.defaultLayer)),
+          )
+        } finally {
+          await Instance.dispose()
+        }
+      },
+    })
+  } finally {
+    HostMcp.set({})
+  }
+}, 20_000)
+
