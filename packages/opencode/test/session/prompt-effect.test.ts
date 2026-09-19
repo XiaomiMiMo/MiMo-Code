@@ -5153,6 +5153,67 @@ describe("trailing-user resume integration", () => {
   )
 
   it.live(
+    "[C001] resumeBackground surfaces admission re-check failure (no false success)",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: "c001-admission-handshake",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user2 } = yield* seedTail(chat.id, dir, {})
+          const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // Target work() starts with Effect.yieldNow then re-reads tail. Inject a later user
+          // in that window so plan can pass while admission re-check must fail — and that
+          // failure must surface on resumeBackground (C001: no 202 without admission).
+          const injector = yield* Effect.gen(function* () {
+            yield* Effect.yieldNow
+            const newer = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: chat.id,
+              agent: "build",
+              model: ref,
+              time: { created: Date.now() + 9 },
+            })
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: newer.id,
+              sessionID: chat.id,
+              type: "text",
+              text: "newer in C001 window",
+            })
+            return newer
+          }).pipe(Effect.forkChild)
+          const exit = yield* Effect.exit(
+            prompt.resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            }),
+          )
+          yield* Fiber.join(injector)
+          // C001 contract: admission rejection is a typed failure on the caller, not void success.
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            expect(Cause.squash(exit.cause)).toBeInstanceOf(NotFoundError)
+          }
+          yield* Effect.sleep("200 millis")
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          expect(after.filter((m) => m.info.role === "assistant")).toHaveLength(
+            before.filter((m) => m.info.role === "assistant").length,
+          )
+          expect(yield* llm.calls).toBe(0)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    15_000,
+  )
+
+  it.live(
     "[R003] first assistant parents to planned user even if a newer user is written mid-turn",
     () =>
       provideTmpdirServer(

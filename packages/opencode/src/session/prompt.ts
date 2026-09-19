@@ -6293,6 +6293,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const resumeInterrupt = lastAssistant(input.sessionID, input.agentID)
       // [R003] Trailing-user plan requires strict tail at first step.
       const strictTail = plan.action === "user-resume" && plan.strictTail === true
+      // [C001] start() forks work; HTTP must wait for admission handshake, not the full turn.
+      const admission = yield* Deferred.make<void, InstanceType<typeof NotFoundError>>()
 
       const work =
         plan.action === "user-resume"
@@ -6305,26 +6307,37 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 (m) => m.info.role === "user" && m.info.id === plan.parentMessageID,
               )
               if (parentIdx < 0) {
-                throw new Error(
-                  "No resumable trailing user found for message " + plan.parentMessageID + " (missing parent)",
-                )
+                const err = new NotFoundError({
+                  message:
+                    "No resumable trailing user found for message " + plan.parentMessageID + " (missing parent)",
+                })
+                yield* Deferred.fail(admission, err)
+                throw err
               }
               const after = tailMsgs.slice(parentIdx + 1)
               const laterUser = after.some((m) => m.info.role === "user")
               if (laterUser) {
-                throw new Error(
-                  "No resumable trailing user found for message " +
+                const err = new NotFoundError({
+                  message:
+                    "No resumable trailing user found for message " +
                     plan.parentMessageID +
                     " (stale at runner admission)",
-                )
+                })
+                yield* Deferred.fail(admission, err)
+                throw err
               }
               if (strictTail && after.some((m) => m.info.role === "assistant")) {
-                throw new Error(
-                  "No resumable trailing user found for message " +
+                const err = new NotFoundError({
+                  message:
+                    "No resumable trailing user found for message " +
                     plan.parentMessageID +
                     " (assistant after parent at admission)",
-                )
+                })
+                yield* Deferred.fail(admission, err)
+                throw err
               }
+              // Admission granted — tell the waiting HTTP/sync caller before runLoop.
+              yield* Deferred.succeed(admission, void 0)
               // Clear empty residue under parent (including error shells); otherwise lastAssistant
               // may still be an empty shell and classify would block re-dispatch.
               // Only runs after admission succeeded — never on stale reject.
@@ -6370,7 +6383,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ),
                 ),
               )
-            })
+            }).pipe(
+              // If work dies before handshake (interrupt/defect), release the waiter.
+              Effect.ensuring(
+                Deferred.done(
+                  admission,
+                  Exit.fail(
+                    new NotFoundError({ message: "Resume admission did not complete" }),
+                  ),
+                ).pipe(Effect.asVoid, Effect.ignore),
+              ),
+            )
           : Effect.gen(function* () {
               yield* cleanupEmptyResidueAssistants({
                 sessionID: input.sessionID,
@@ -6384,6 +6407,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 assistantMessageID: plan.assistantMessageID,
                 agentID: input.agentID,
               })
+              yield* Deferred.succeed(admission, void 0)
               return yield* runLoop(
                 input.sessionID,
                 input.agentID,
@@ -6412,14 +6436,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ),
                 ),
               ),
+              Effect.ensuring(
+                Deferred.done(
+                  admission,
+                  Exit.fail(
+                    new NotFoundError({ message: "Resume admission did not complete" }),
+                  ),
+                ).pipe(Effect.asVoid, Effect.ignore),
+              ),
             )
 
       // [R003] Exclusive admission: never join an unrelated run (ensureRunning would).
-      // ensure mode waits for work result (sync resume()); start mode forks (HTTP 202).
+      // ensure mode waits for work result (sync resume()); start mode forks (HTTP 202 after handshake).
       if (input.mode === "ensure") {
         return yield* state.ensureExclusive(input.sessionID, input.agentID, resumeInterrupt, work)
       }
       yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
+      // [C001] Propagate admission re-check outcome to the HTTP caller before 202.
+      yield* Deferred.await(admission)
     })
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
