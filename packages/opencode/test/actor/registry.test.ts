@@ -1384,6 +1384,78 @@ describe("ActorRegistry", () => {
       })
     })
 
+    test("[TP-ABANDON-Q-06] question reclaim is scoped to the current instance directory", async () => {
+      await using tmpA = await tmpdir({ git: true })
+      await using tmpB = await tmpdir({ git: true })
+      const stale = Date.now() - 11 * 60 * 1000
+      const seedOrphan = (directory: string, storeKey: string) =>
+        Instance.provide({
+          directory,
+          fn: async () => {
+            const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+            try {
+              const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+              Database.use((db) => {
+                const messageId = MessageID.ascending()
+                const partId = PartID.ascending()
+                db.insert(MessageTable)
+                  .values({
+                    id: messageId,
+                    session_id: session.id,
+                    agent_id: "main",
+                    time_created: stale,
+                    time_updated: stale,
+                    data: { role: "assistant", time: { created: stale } } as never,
+                  })
+                  .run()
+                db.insert(PartTable)
+                  .values({
+                    id: partId,
+                    message_id: messageId,
+                    session_id: session.id,
+                    time_created: stale,
+                    time_updated: stale,
+                    data: {
+                      type: "tool",
+                      tool: "question",
+                      callID: `call_${storeKey}`,
+                      state: {
+                        status: "running",
+                        input: {
+                          questions: [{ question: "orphan?", header: "orphan", options: [{ label: "A", description: "" }] }],
+                        },
+                        time: { start: stale },
+                      },
+                    } as never,
+                  })
+                  .run()
+                ;(globalThis as Record<string, unknown>)[storeKey] = {
+                  directory: session.directory,
+                  session: session.id,
+                  part: partId,
+                }
+              })
+            } finally {
+              await rt.dispose()
+            }
+          },
+        })
+      await seedOrphan(tmpA.path, "__dirA")
+      await seedOrphan(tmpB.path, "__dirB")
+      const a = (globalThis as Record<string, unknown>).__dirA as { directory: string; part: string }
+      const b = (globalThis as Record<string, unknown>).__dirB as { directory: string; part: string }
+      await withRegistry(a.directory, async () => {
+        sweepAbandonedZombies({ directory: a.directory })
+      })
+      const statusOf = (partId: string) =>
+        Database.use((db) => {
+          const part = db.select().from(PartTable).where(eq(PartTable.id, partId as never)).get()
+          return (part?.data as { state?: { status?: string } })?.state?.status
+        })
+      expect(statusOf(a.part)).toBe("error")
+      expect(statusOf(b.part)).toBe("running")
+    })
+
     test("[TP-ABANDON-Q-03] leftover running question with already-terminal actors is still repaired", async () => {
       await using tmp = await tmpdir({ git: true })
       await Instance.provide({

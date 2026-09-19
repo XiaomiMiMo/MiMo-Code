@@ -5,6 +5,7 @@ import type { SessionID, MessageID } from "@/session/schema"
 import { ActorRegistryTable } from "./actor.sql"
 import { PartTable, SessionTable } from "@/session/session.sql"
 import { SessionStatus } from "@/session/status"
+import { Instance } from "@/project/instance"
 import type {
   Actor,
   ActorStatus,
@@ -29,30 +30,34 @@ const PROCESS_INSTANCE_ID = randomUUID()
 /**
  * Persist terminal state for other-instance running/pending actors that have
  * been silent past the abandon threshold, then settle orphaned running
- * question tool parts.
+ * question tool parts **scoped to the current instance directory**.
  *
  * Live execution (registry): `running` (any actor id, including main) or
  * non-main `pending`. The `pending main` row seeded by Session.create is not
  * live — but normal main turns go through SessionRunState and do **not**
  * flip that registry row to running. Registry alone cannot prove main is idle.
  *
- * Question reclaim therefore requires BOTH:
- * 1. No live registry actor on the session (after abandoned rows are settled), and
- * 2. The open question itself is older than the abandon threshold (same
- *    intentional-reclaim tradeoff as actor rows — a fiber blocked on an
- *    unanswered question writes no parts). Fresh questions are never settled,
- *    which protects a live main even while its registry row stays pending.
+ * Question settle requires ALL of:
+ * 1. Session belongs to the current Instance.directory (write set matches the
+ *    SessionStatus busy view, which is also per-directory InstanceState);
+ * 2. No live registry actor on that session (after abandoned rows settle);
+ * 3. No busy/retry SessionStatus in this instance (same-process live main);
+ * 4. The open question itself is older than the abandon threshold.
  *
- * `busySessionIds` (optional) skips sessions this process currently has in
- * SessionStatus busy/retry — used when the sweep is re-invoked after init.
- * Orphan discovery scans all open question parts each pass so leftovers from
- * older boots remain repairable.
+ * Cross-directory process peers are never written from this instance's sweep.
+ * Cross-instance (other process) reclaim of a directory's leftovers still
+ * happens when that directory's instance inits — same intentional-reclaim
+ * tradeoff as actor abandon (a fiber blocked on a question writes no parts).
  *
  * Called on registry layer init; tests may invoke after seeding zombie rows.
  */
-export function sweepAbandonedZombies(opts?: { busySessionIds?: ReadonlySet<string> }): void {
+export function sweepAbandonedZombies(opts?: {
+  busySessionIds?: ReadonlySet<string>
+  directory?: string
+}): void {
   const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
   const busySessions = opts?.busySessionIds
+  const directory = opts?.directory
   Database.use((db) => {
     const isLiveActor = (row: { actor_id: string; status: string }): boolean => {
       if (row.status === "running") return true
@@ -88,12 +93,25 @@ export function sweepAbandonedZombies(opts?: { busySessionIds?: ReadonlySet<stri
     const orphanQuestionError =
       "Question left open past the abandon threshold with no live actor; reclaimed and cancelled. Send a new message to continue."
 
+    // Write set = sessions this instance owns. SessionStatus busy view is also
+    // per-directory; never cancel questions from another directory's sessions
+    // when this instance inits.
+    const scopedSessions = new Set(
+      db
+        .select()
+        .from(SessionTable)
+        .all()
+        .filter((s) => (directory == null ? true : s.directory === directory))
+        .map((s) => s.id),
+    )
+
     const actorsAfter = db.select().from(ActorRegistryTable).all()
     const openQuestions = db
       .select()
       .from(PartTable)
       .all()
       .filter((row) => {
+        if (!scopedSessions.has(row.session_id)) return false
         const data = row.data as {
           type?: string
           tool?: string
@@ -579,10 +597,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service | SessionStatus.Serv
     // free-text answers hit "unknown request".
     //
     // Same-process main activity lives in SessionStatus (busy/retry), not in
-    // the main registry row. Every production sweep entry reads SessionStatus
-    // and skips those sessions — layer rebuild while main waits on a question
-    // must not cancel that card. Cross-instance reclaim still uses the
-    // abandon-threshold age gate (see sweepAbandonedZombies).
+    // the main registry row. SessionStatus is per-directory InstanceState, so
+    // question reclaim is scoped to this Instance.directory — the write set
+    // matches the busy view. Cross-directory peers are never cancelled here.
     yield* Effect.gen(function* () {
       const status = yield* SessionStatus.Service
       const map = yield* status.list()
@@ -590,7 +607,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | SessionStatus.Serv
       for (const [sid, info] of map) {
         if (info.type === "busy" || info.type === "retry") busySessionIds.add(sid)
       }
-      sweepAbandonedZombies({ busySessionIds })
+      sweepAbandonedZombies({ busySessionIds, directory: Instance.directory })
     }).pipe(Effect.ignore)
 
     // --- Stuck Detection ---
