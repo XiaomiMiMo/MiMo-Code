@@ -1082,9 +1082,9 @@ describe("ActorRegistry", () => {
                 })
                 .run(),
             )
-            const insertRunningQuestion = (sessionID: string, messageID: string, partID: string) =>
+            const insertRunningQuestion = (sessionID: string, messageID: string, partID: string, startAt: number) =>
               Database.use((db) => {
-                const now = Date.now()
+                const now = startAt
                 db.insert(MessageTable)
                   .values({
                     id: messageID as never,
@@ -1111,14 +1111,15 @@ describe("ActorRegistry", () => {
                         input: {
                           questions: [{ question: "stuck?", header: "stuck", options: [{ label: "A", description: "" }] }],
                         },
-                        time: { start: now },
+                        time: { start: startAt },
                       },
                     } as never,
                   })
                   .run()
               })
-            insertRunningQuestion(zombieSession.id, MessageID.ascending(), PartID.ascending())
-            insertRunningQuestion(liveSession.id, MessageID.ascending(), PartID.ascending())
+            insertRunningQuestion(zombieSession.id, MessageID.ascending(), PartID.ascending(), stale)
+            // fresh question on liveSession — age gate keeps it even without a live actor row
+            insertRunningQuestion(liveSession.id, MessageID.ascending(), PartID.ascending(), Date.now())
             ;(globalThis as Record<string, unknown>).__abandonQuestionTest = {
               zombieSession: zombieSession.id,
               liveSession: liveSession.id,
@@ -1230,7 +1231,7 @@ describe("ActorRegistry", () => {
                       input: {
                         questions: [{ question: "main q?", header: "main", options: [{ label: "A", description: "" }] }],
                       },
-                      time: { start: now },
+                      time: { start: stale },
                     },
                   } as never,
                 })
@@ -1258,6 +1259,67 @@ describe("ActorRegistry", () => {
             .get(),
         )
         expect(zombie?.status).toBe("idle")
+      })
+    })
+
+    test("[TP-ABANDON-Q-04] fresh question with only pending main seed is not reclaimed", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const now = Date.now()
+            Database.use((db) => {
+              const messageId = MessageID.ascending()
+              const partId = PartID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: now,
+                  time_updated: now,
+                  data: { role: "assistant", time: { created: now } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: now,
+                  time_updated: now,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_fresh_main",
+                    state: {
+                      status: "running",
+                      input: {
+                        questions: [{ question: "fresh?", header: "fresh", options: [{ label: "A", description: "" }] }],
+                      },
+                      time: { start: now },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonFreshQ = { part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonFreshQ as { part: string }
+      await withRegistry(tmp.path, async () => {
+        sweepAbandonedZombies()
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const data = part?.data as { state?: { status?: string } }
+        expect(data?.state?.status).toBe("running")
       })
     })
 
@@ -1326,7 +1388,7 @@ describe("ActorRegistry", () => {
                       input: {
                         questions: [{ question: "leftover?", header: "lo", options: [{ label: "A", description: "" }] }],
                       },
-                      time: { start: now },
+                      time: { start: now - 11 * 60 * 1000 },
                     },
                   } as never,
                 })

@@ -30,19 +30,28 @@ const PROCESS_INSTANCE_ID = randomUUID()
  * been silent past the abandon threshold, then settle orphaned running
  * question tool parts.
  *
- * Live execution = `running` (any actor id, including main) or non-main
- * `pending`. The `pending main` row seeded by Session.create is not live.
+ * Live execution (registry): `running` (any actor id, including main) or
+ * non-main `pending`. The `pending main` row seeded by Session.create is not
+ * live — but normal main turns go through SessionRunState and do **not**
+ * flip that registry row to running. Registry alone cannot prove main is idle.
  *
- * Question reclaim uses the same abandon-threshold tradeoff as actor rows:
- * a fiber blocked on an unanswered question writes no parts, so after the
- * threshold another instance may reclaim both the actor row and its open
- * question parts. Orphan discovery is not limited to sessions settled in
- * this pass — already-terminal leftover questions are repaired too.
+ * Question reclaim therefore requires BOTH:
+ * 1. No live registry actor on the session (after abandoned rows are settled), and
+ * 2. The open question itself is older than the abandon threshold (same
+ *    intentional-reclaim tradeoff as actor rows — a fiber blocked on an
+ *    unanswered question writes no parts). Fresh questions are never settled,
+ *    which protects a live main even while its registry row stays pending.
+ *
+ * `busySessionIds` (optional) skips sessions this process currently has in
+ * SessionStatus busy/retry — used when the sweep is re-invoked after init.
+ * Orphan discovery scans all open question parts each pass so leftovers from
+ * older boots remain repairable.
  *
  * Called on registry layer init; tests may invoke after seeding zombie rows.
  */
-export function sweepAbandonedZombies(): void {
+export function sweepAbandonedZombies(opts?: { busySessionIds?: ReadonlySet<string> }): void {
   const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
+  const busySessions = opts?.busySessionIds
   Database.use((db) => {
     const isLiveActor = (row: { actor_id: string; status: string }): boolean => {
       if (row.status === "running") return true
@@ -74,8 +83,9 @@ export function sweepAbandonedZombies(): void {
     }
 
     const end = Date.now()
+    // Reclaim copy: abandoned-threshold policy, not a claim the OS process is dead.
     const orphanQuestionError =
-      "This question was left open by a process instance that is no longer live; settled by abandon threshold. The card is cancelled — send a new message to continue."
+      "Question left open past the abandon threshold with no live actor; reclaimed and cancelled. Send a new message to continue."
 
     const actorsAfter = db.select().from(ActorRegistryTable).all()
     const openQuestions = db
@@ -96,6 +106,7 @@ export function sweepAbandonedZombies(): void {
       })
 
     for (const row of openQuestions) {
+      if (busySessions?.has(row.session_id)) continue
       const sessionActors = actorsAfter.filter((a) => a.session_id === row.session_id)
       if (sessionActors.some(isLiveActor)) continue
       const data = row.data as {
@@ -105,6 +116,9 @@ export function sweepAbandonedZombies(): void {
       }
       const state = data.state && typeof data.state === "object" ? data.state : {}
       const time = state.time && typeof state.time === "object" ? state.time : {}
+      const started = typeof time.start === "number" ? time.start : row.time_created
+      // Fresh questions stay open: protects live main even when registry main is still pending.
+      if (started >= cutoff) continue
       db.update(PartTable)
         .set({
           data: {
