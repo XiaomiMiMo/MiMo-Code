@@ -445,7 +445,7 @@ const runVerify = () => agent(
   "## Run the project's verification commands and report the outcome\n" +
   "1. First run `pwd` and `ls` to confirm your working directory and that the project's source/test files are actually present here. The implemented code lives in THIS workspace — verify from the workspace root (or the package subdir AGENTS.md specifies), never from a stale or temp cwd.\n" +
   "2. Inspect AGENTS.md / CLAUDE.md / package.json for the project's verify commands (typecheck, test, build).\n" +
-  "3. Run them via the Bash tool from the correct directory. If a command reports 'file not found' or 0 tests, you are in the wrong directory — `cd` to where the files are and re-run before reporting.\n" +
+  "3. Run them via the `bash` tool from the correct directory. If a command reports 'file not found' or 0 tests, you are in the wrong directory — `cd` to where the files are and re-run before reporting.\n" +
   "4. Capture passed/failed test counts from the ACTUAL command output. Summarize failures concisely if any.\n\n" +
   "Return structured output only — and it must reflect the real command output, not an assumption.",
   { label: "verify", phase: "Verify", schema: VERIFY_SHAPE }

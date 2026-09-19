@@ -34,7 +34,7 @@ Usage notes:
     - Any command that reads from stdin and cannot proceed without user input
     When interactive is set, the terminal will be handed to the user for direct interaction. The command will NOT time out while waiting for user input. Do NOT set interactive for commands that can run unattended.
 
-  - Avoid using Bash with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
+  - Avoid using `bash` with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
     - File search: Use `glob` (NOT find or ls)
     - Content search: Use `grep` tool (NOT grep or rg)
     - Read files: Use `read` tool (NOT cat/head/tail)
@@ -42,7 +42,9 @@ Usage notes:
     - Write files: Use `write` tool (NOT echo >/cat <<EOF)
     - Communication: Output text directly (NOT echo/printf)
   - When issuing multiple commands:
-    - If the commands are independent and can run in parallel, make multiple Bash tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two Bash tool calls in parallel.
+    - If the commands are independent and can run in parallel, make multiple `bash` tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two `bash` tool calls in parallel.
+    - If commands must run in order (e.g. commit then push), keep them serial in ONE `bash` call joined with `&&` (or `|` when piping). Never split an order-dependent chain like commit/push across multiple `bash` tools in one step — those calls run in parallel.
+    - Still avoid overly complex or brittle one-liners. If a serial chain would get long or hard to read, split it into separate steps instead of nesting more `&&` segments.
     - ${chaining}
     - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail
     - DO NOT use newlines to separate commands (newlines are ok in quoted strings)
@@ -70,7 +72,7 @@ Git Safety Protocol:
 - CRITICAL: If you already pushed to remote, NEVER amend unless user explicitly requests it (requires force push)
 - NEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive.
 
-1. You can call multiple tools in a single response. When multiple independent pieces of information are requested and all commands are likely to succeed, run multiple tool calls in parallel for optimal performance. run the following bash commands in parallel, each using the Bash tool:
+1. You can call multiple tools in a single response. When multiple independent pieces of information are requested and all commands are likely to succeed, run multiple tool calls in parallel for optimal performance. run the following bash commands in parallel, each using the `bash` tool:
   - Run a git status command to see all untracked files.
   - Run a git diff command to see both staged and unstaged changes that will be committed.
   - Run a git log command to see recent commit messages, so that you can follow this repository's commit message style.
