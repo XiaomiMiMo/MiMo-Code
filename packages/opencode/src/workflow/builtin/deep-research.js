@@ -46,8 +46,8 @@ Your ONLY task — research this single angle, nothing else:
 ${angle}
 
 Rules:
-1. Run up to ${DEPTH.queryBudget} web searches. Start with 2-3 differently-phrased queries in parallel; refine based on what comes back. Prefer primary sources (official docs, papers, original announcements) over aggregators and SEO farms. If the `websearch` tool is unavailable, use DuckDuckGo HTML as fallback: `webfetch` https://html.duckduckgo.com/html/?q=<query> (decode uddg param for real URLs). Also try free APIs: arXiv, Semantic Scholar, GitHub search, HN Algolia.
-2. `webfetch` the 3-6 most promising results to read actual content. Do not cite a page you did not fetch.
+1. Run up to ${DEPTH.queryBudget} web searches. Start with 2-3 differently-phrased queries in parallel; refine based on what comes back. Prefer primary sources (official docs, papers, original announcements) over aggregators and SEO farms. If the \`websearch\` tool is unavailable, use DuckDuckGo HTML as fallback: \`webfetch\` https://html.duckduckgo.com/html/?q=<query> (decode uddg param for real URLs). Also try free APIs: arXiv, Semantic Scholar, GitHub search, HN Algolia.
+2. \`webfetch\` the 3-6 most promising results to read actual content. Do not cite a page you did not fetch.
 3. Judge each source: official/primary > reputable media/peer-reviewed > forums/blogs > content farms. Discard low-quality sources rather than citing them.
 4. Extract findings as information-dense claims: include exact entities, numbers, dates, versions. One claim per finding.
 5. Write your findings to findings/F${n}.md in EXACTLY this format:
