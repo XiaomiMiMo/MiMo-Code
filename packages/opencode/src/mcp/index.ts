@@ -316,10 +316,15 @@ export const Status = z
   })
 export type Status = z.infer<typeof Status>
 
-// Store transports for OAuth servers to allow finishing auth
+// Store transports for OAuth servers to allow finishing auth.
+// Transport + host revision form one pending-attempt record (R007).
+type PendingOAuthAttempt = {
+  transport: TransportWithAuth
+  hostRevision?: string
+}
+const pendingOAuthTransports = new Map<string, PendingOAuthAttempt>()
+
 type TransportWithAuth = StreamableHTTPClientTransport | SSEClientTransport
-const pendingOAuthTransports = new Map<string, TransportWithAuth>()
-const pendingOAuthHostRevision = new Map<string, string | undefined>()
 
 // Prompt cache types
 type PromptInfo = Awaited<ReturnType<MCPClient["listPrompts"]>>["prompts"][number]
@@ -568,7 +573,10 @@ export const layer = Layer.effect(
                   })
                   .pipe(Effect.ignore, Effect.as(undefined))
               } else {
-                pendingOAuthTransports.set(key, transport)
+                pendingOAuthTransports.set(key, {
+                  transport,
+                  hostRevision: HostMcp.revisionOf(key),
+                })
                 lastStatus = { status: "needs_auth" as const }
                 return bus
                   .publish(TuiEvent.ToastShow, {
@@ -819,7 +827,6 @@ export const layer = Layer.effect(
               { concurrency: "unbounded" },
             )
             pendingOAuthTransports.clear()
-            pendingOAuthHostRevision.clear()
           }),
         )
 
@@ -938,20 +945,22 @@ export const layer = Layer.effect(
       if (first !== "ok") {
         return yield* discardAttempt(first === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
       }
-      // Capture the previous registry client by identity; close that resource only.
-      const previous = s.clients[name]
-      yield* releaseMcpClient(previous)
-      // Re-admit after async close of *previous* (not a name-keyed wipe).
       const second = admit()
       if (second !== "ok") {
         return yield* discardAttempt(second === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
       }
+      // Commit first, then release the previous client (R002). Closing previous
+      // before commit can leave a dead registry entry if admission is refused.
+      const previous = s.clients[name]
       const bridge = yield* EffectBridge.make()
       s.status[name] = { status: "connected" }
       s.clients[name] = client
       s.defs[name] = listed
       delete s.hostRetryAt[name]
       watch(s, name, client, bridge, timeout, sampling)
+      if (previous && previous !== client) {
+        yield* releaseMcpClient(previous)
+      }
       return s.status[name]
     })
 
@@ -1257,8 +1266,7 @@ export const layer = Layer.effect(
       }).pipe(
         Effect.catch((error) => {
           if (error instanceof UnauthorizedError && capturedUrl) {
-            pendingOAuthTransports.set(mcpName, transport)
-            pendingOAuthHostRevision.set(mcpName, hostRevisionAtStart)
+            pendingOAuthTransports.set(mcpName, { transport, hostRevision: hostRevisionAtStart })
             return Effect.succeed({
               kind: "redirect",
               authorizationUrl: capturedUrl.toString(),
@@ -1345,8 +1353,9 @@ export const layer = Layer.effect(
     })
 
     const finishAuth = Effect.fn("MCP.finishAuth")(function* (mcpName: string, authorizationCode: string) {
-      const transport = pendingOAuthTransports.get(mcpName)
-      if (!transport) throw new Error(`No pending OAuth flow for MCP server: ${mcpName}`)
+      const attempt = pendingOAuthTransports.get(mcpName)
+      if (!attempt) throw new Error(`No pending OAuth flow for MCP server: ${mcpName}`)
+      const { transport, hostRevision } = attempt
 
       const result = yield* Effect.tryPromise({
         try: () => transport.finishAuth(authorizationCode).then(() => true as const),
@@ -1361,9 +1370,10 @@ export const layer = Layer.effect(
       }
 
       yield* auth.clearCodeVerifier(mcpName)
-      pendingOAuthTransports.delete(mcpName)
-      const hostRevision = pendingOAuthHostRevision.get(mcpName)
-      pendingOAuthHostRevision.delete(mcpName)
+      // Only clear if this attempt is still the registered one (R007).
+      if (pendingOAuthTransports.get(mcpName) === attempt) {
+        pendingOAuthTransports.delete(mcpName)
+      }
 
       const resolved = yield* getMcpConfig(mcpName)
       if (!resolved) return { status: "failed", error: "MCP config not found after auth" } as Status
