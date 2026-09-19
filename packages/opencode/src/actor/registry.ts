@@ -91,60 +91,59 @@ export function sweepAbandonedZombies(opts?: {
         ? db.select().from(SessionTable).all()
         : db.select().from(SessionTable).where(eq(SessionTable.directory, directory)).all()
     if (!sessionRows.length) return
-    const scopedSessions = new Set(sessionRows.map((s) => s.id))
+    const scopedSessions = new Set(sessionRows.map((s) => String(s.id)))
 
     const actorsAfter = db.select().from(ActorRegistryTable).all()
-    const liveBySession = new Map<string, boolean>()
+    const liveBySession = new Set<string>()
     for (const a of actorsAfter) {
-      if (isLiveActor(a)) liveBySession.set(a.session_id, true)
+      if (isLiveActor(a)) liveBySession.add(String(a.session_id))
     }
 
     const openQuestions = db
       .select()
       .from(PartTable)
-      .where(inArray(PartTable.session_id, [...scopedSessions]))
+      .where(inArray(PartTable.session_id, sessionRows.map((s) => s.id)))
       .all()
       .filter((row) => {
+        if (!scopedSessions.has(String(row.session_id))) return false
         const data = row.data as {
           type?: string
           tool?: string
-          state?: { status?: string }
+          state?: { status?: string; time?: Record<string, unknown> }
         }
-        return (
-          data?.type === "tool" &&
-          data?.tool === "question" &&
-          (data.state?.status === "running" || data.state?.status === "pending")
-        )
+        if (data?.type !== "tool" || data?.tool !== "question") return false
+        if (data.state?.status !== "running" && data.state?.status !== "pending") return false
+        const start = data.state?.time && typeof data.state.time.start === "number" ? data.state.time.start : row.time_created
+        return start < cutoff
       })
 
     const end = Date.now()
     for (const row of openQuestions) {
-      if (busySessions?.has(row.session_id)) continue
-      if (liveBySession.get(row.session_id)) continue
-      const data = row.data as {
-        type?: string
-        tool?: string
-        callID?: string
-        state?: { status?: string; time?: Record<string, unknown> }
-      }
-      const state = data.state && typeof data.state === "object" ? data.state : {}
-      const time = state.time && typeof state.time === "object" ? state.time : {}
-      const started = typeof time.start === "number" ? time.start : row.time_created
-      if (started >= cutoff) continue
-      const next = {
-        ...data,
-        state: MessageV2.abortedToolState(state as never, orphanQuestionError),
-      }
-      // Re-check open status in WHERE so a concurrent complete/answer wins.
-      db.update(PartTable)
-        .set({ data: next as never, time_updated: end })
-        .where(
-          and(
-            eq(PartTable.id, row.id),
-            sql`json_extract(${PartTable.data}, '$.state.status') IN ('running', 'pending')`,
-          ),
-        )
-        .run()
+      if (busySessions?.has(String(row.session_id))) continue
+      if (liveBySession.has(String(row.session_id))) continue
+      // Transaction: re-read eligibility so a concurrent complete/answer wins (C-03).
+      Database.transaction((tx) => {
+        const fresh = tx.select().from(PartTable).where(eq(PartTable.id, row.id)).get()
+        if (!fresh) return
+        const data = fresh.data as {
+          type?: string
+          tool?: string
+          state?: { status?: string; time?: Record<string, unknown> }
+        }
+        if (data?.type !== "tool" || data?.tool !== "question") return
+        if (data.state?.status !== "running" && data.state?.status !== "pending") return
+        const start =
+          data.state?.time && typeof data.state.time.start === "number" ? data.state.time.start : fresh.time_created
+        if (start >= cutoff) return
+        const next = {
+          ...data,
+          state: MessageV2.abortedToolState(data.state as never, orphanQuestionError),
+        }
+        tx.update(PartTable)
+          .set({ data: next as never, time_updated: end })
+          .where(eq(PartTable.id, row.id))
+          .run()
+      })
     }
   })
 }
