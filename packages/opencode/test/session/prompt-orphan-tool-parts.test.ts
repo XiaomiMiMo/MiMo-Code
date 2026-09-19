@@ -2,12 +2,14 @@ import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import path from "path"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
+import { Bus } from "../../src/bus"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
 import { MessageV2 } from "../../src/session/message-v2"
+import { orphanToolIdleSweepRef } from "../../src/session/orphan-tool-idle-hook"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -20,7 +22,9 @@ const it = testEffect(
   Layer.mergeAll(
     SessionPrompt.defaultLayer,
     Session.defaultLayer,
-    SessionStatus.defaultLayer,
+    // Shared Bus so the test can observe Event.Idle published by THIS Status
+    // instance (the same one the test calls status.set on).
+    SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer)),
     CrossSpawnSpawner.defaultLayer,
   ),
 )
@@ -236,6 +240,47 @@ describe("sweepOrphanToolParts", () => {
         if (after.state.status !== "error") throw new Error("expected an error state")
         expect(after.state.error).toBe("Tool execution aborted")
         expect(after.state.metadata?.interrupted).toBe(true)
+      }),
+    ),
+  )
+
+  // [RL-ORPHAN-D01] Terminal tool states must complete BEFORE idle is announced.
+  // Desktop finishes/unsubscribes on idle; abort after that reopens the original
+  // bug one edge later.
+  it.live("sweep completes before session.idle is published", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const status = yield* SessionStatus.Service
+        const bus = yield* Bus.Service
+        yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+        const part = yield* seedRunningToolPart(dir, session.id)
+
+        const order: string[] = []
+        const real = orphanToolIdleSweepRef.current
+        expect(real).toBeDefined()
+        orphanToolIdleSweepRef.current = (sid, opts) => {
+          order.push("sweep")
+          return real!(sid, opts)
+        }
+        const off = yield* bus.subscribeCallback(SessionStatus.Event.Idle, (evt) => {
+          if (evt.properties.sessionID === session.id) order.push("idle")
+        })
+
+        try {
+          yield* status.set(session.id, { type: "idle" })
+          // Bus delivery may be async relative to publish return; flush.
+          yield* Effect.sleep("50 millis")
+        } finally {
+          off()
+          orphanToolIdleSweepRef.current = real
+        }
+
+        expect(order).toEqual(["sweep", "idle"])
+        const after = yield* readPart(session.id, part.id)
+        if (after?.type !== "tool") throw new Error("expected a tool part")
+        expect(after.state.status).toBe("error")
       }),
     ),
   )

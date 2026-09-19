@@ -108,18 +108,21 @@ export const layer = Layer.effect(
           waitMs: Math.max(0, normalized.next - Date.now()),
         })
       }
-      yield* bus.publish(Event.Status, { sessionID, status: normalized })
       if (normalized.type === "idle") {
-        yield* bus.publish(Event.Idle, { sessionID })
+        // Causal order (RL-ORPHAN-D01): orphan tool terminal states and their
+        // part.updated events MUST complete before we announce idle. Publishing
+        // idle first lets the Desktop finish/unsubscribe, then deliver the abort
+        // into a later turn — the original bug, just one edge later.
+        // Clear the map first so sweepOrphanToolParts' self-gate (status==idle)
+        // passes; do not publish yet.
         data.statuses.delete(sessionID)
         data.retryAttempts.delete(sessionID)
-        // Orphan tool parts (pending/running whose abort finalizer was skipped)
-        // must be rewritten on this edge — not deferred to the next prompt, whose
-        // entry sweep would emit the abort into the NEW turn's UI stream.
-        // before-cutoff: only parts already running at the idle edge.
         const sweep = orphanToolIdleSweepRef.current
         if (sweep) yield* sweep(sessionID, { before: Date.now() }).pipe(Effect.ignore)
+        yield* bus.publish(Event.Status, { sessionID, status: normalized })
+        yield* bus.publish(Event.Idle, { sessionID })
       } else {
+        yield* bus.publish(Event.Status, { sessionID, status: normalized })
         data.statuses.set(sessionID, normalized)
       }
       return normalized
