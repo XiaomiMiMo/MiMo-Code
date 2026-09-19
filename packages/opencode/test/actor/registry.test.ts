@@ -1734,5 +1734,179 @@ describe("ActorRegistry", () => {
         expect(data?.state?.metadata?.answers).toEqual([["A"]])
       })
     })
+
+    test("[TP-ABANDON-Q-10] concurrent complete after select is not overwritten", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            const partId = PartID.ascending()
+            Database.use((db) => {
+              const messageId = MessageID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: stale,
+                  time_updated: stale,
+                  data: { role: "assistant", time: { created: stale } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: stale,
+                  time_updated: stale,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_race_q",
+                    state: {
+                      status: "running",
+                      input: {
+                        questions: [{ question: "race?", header: "race", options: [{ label: "A", description: "" }] }],
+                      },
+                      time: { start: stale },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonRaceQ = { part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonRaceQ as { part: string }
+      await withRegistry(tmp.path, async () => {
+        const now = Date.now()
+        sweepAbandonedZombies({
+          __afterSelect: () => {
+            // Concurrent writer finalizes the part after candidates are selected.
+            Database.use((db) => {
+              const part = db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get()
+              const data = part?.data as { state?: Record<string, unknown> }
+              db.update(PartTable)
+                .set({
+                  data: {
+                    ...data,
+                    state: {
+                      ...(data?.state ?? {}),
+                      status: "completed",
+                      output: "User has answered",
+                      metadata: { answers: [["A"]] },
+                      time: { start: (data?.state as { time?: { start?: number } })?.time?.start ?? now, end: now },
+                    },
+                  } as never,
+                  time_updated: now,
+                })
+                .where(eq(PartTable.id, ids.part as never))
+                .run()
+            })
+          },
+        })
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const data = part?.data as { state?: { status?: string; metadata?: { answers?: string[][] } } }
+        expect(data?.state?.status).toBe("completed")
+        expect(data?.state?.metadata?.answers).toEqual([["A"]])
+      })
+    })
+
+    test("[TP-ABANDON-Q-11] pending non-main actor keeps stale question open", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            Database.use((db) => {
+              db.insert(ActorRegistryTable)
+                .values({
+                  session_id: session.id,
+                  actor_id: "pending-child",
+                  mode: "subagent",
+                  parent_actor_id: null,
+                  status: "pending",
+                  last_outcome: null,
+                  result_message_id: null,
+                  lifecycle: "ephemeral",
+                  agent: "explore",
+                  description: "pending child",
+                  context_mode: "none",
+                  context_watermark: null,
+                  background: true,
+                  tools: null,
+                  last_turn_time: Date.now(),
+                  turn_count: 0,
+                  last_activity_time: Date.now(),
+                  last_error: null,
+                  instance_id: "this-process",
+                  time_completed: null,
+                  time_created: Date.now(),
+                  time_updated: Date.now(),
+                })
+                .run()
+              const messageId = MessageID.ascending()
+              const partId = PartID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: stale,
+                  time_updated: stale,
+                  data: { role: "assistant", time: { created: stale } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: stale,
+                  time_updated: stale,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_pending_child_q",
+                    state: {
+                      status: "running",
+                      input: {
+                        questions: [{ question: "keep?", header: "keep", options: [{ label: "A", description: "" }] }],
+                      },
+                      time: { start: stale },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonPendingChild = { part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonPendingChild as { part: string }
+      await withRegistry(tmp.path, async () => {
+        sweepAbandonedZombies()
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const data = part?.data as { state?: { status?: string } }
+        expect(data?.state?.status).toBe("running")
+      })
+    })
   })
 })

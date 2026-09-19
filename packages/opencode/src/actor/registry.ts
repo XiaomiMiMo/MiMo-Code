@@ -54,6 +54,8 @@ const PROCESS_INSTANCE_ID = randomUUID()
 export function sweepAbandonedZombies(opts?: {
   busySessionIds?: ReadonlySet<string>
   directory?: string
+  /** Test-only seam after candidate selection, before per-part writes (C-06). */
+  __afterSelect?: () => void
 }): void {
   const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
   const busySessions = opts?.busySessionIds
@@ -120,6 +122,7 @@ export function sweepAbandonedZombies(opts?: {
   )
 
   const end = Date.now()
+  opts?.__afterSelect?.()
   for (const row of openQuestions) {
     if (busySessions?.has(String(row.session_id))) continue
     if (liveBySession.has(String(row.session_id))) continue
