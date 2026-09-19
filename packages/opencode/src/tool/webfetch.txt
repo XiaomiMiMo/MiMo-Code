@@ -11,3 +11,5 @@ Usage notes:
   - Format options: "markdown" (default), "text", or "html"
   - This tool is read-only and does not modify any files
   - Results may be summarized if the content is very large
+  - This fetches the HTTP response and does not execute JavaScript or use browser login state. The response may contain a login, verification page, or app shell instead of the requested content.
+  - When rendered content or a logged-in browser is needed, use an available browser tool to open the URL and read the page.

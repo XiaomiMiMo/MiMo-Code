@@ -5,7 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "../../src/tool"
 import { Instance } from "../../src/project/instance"
-import { WebFetchTool, assertReadableHTML } from "../../src/tool/webfetch"
+import { WebFetchTool } from "../../src/tool/webfetch"
 import { SessionID, MessageID } from "../../src/session/schema"
 
 const projectRoot = path.join(import.meta.dir, "../..")
@@ -36,30 +36,37 @@ function exec(args: { url: string; format: "text" | "markdown" | "html" }) {
 }
 
 describe("tool.webfetch", () => {
-  test("distinguishes browser shells from small useful documents", () => {
-    for (const html of [
-      '<html><body><script src="app.js"></script></body></html>',
-      '<html><title>Google Search</title><body>Please enable JavaScript. <a href="/retry">Click here</a></body></html>',
-      '<html><title>Just a moment...</title><body>Checking your browser</body></html>',
+  test("preserves short documents and explicit HTML without readability heuristics", async () => {
+    const pages = [
+      "<html><body><h1>Enable JavaScript</h1><p>Open Settings, then Site settings, then JavaScript.</p></body></html>",
+      "<html><title>Access denied</title><body><h1>Permission troubleshooting</h1><p>Ask an administrator for the Reader role.</p></body></html>",
       '<html><title>Sign in</title><body><form><input type="password"></form></body></html>',
-    ]) expect(() => assertReadableHTML(html)).toThrow("Page content unavailable")
-    expect(() => assertReadableHTML('<html><body><h1>Status</h1><p>All services operational.</p></body></html>')).not.toThrow()
-    expect(() => assertReadableHTML('<html><body><h1>How to enable JavaScript</h1><p>Open Settings, then enable JavaScript.</p></body></html>')).not.toThrow()
-    expect(() => assertReadableHTML('<html><title>Sign in</title><body><p>Use the account menu to sign in.</p></body></html>')).not.toThrow()
-    expect(() => assertReadableHTML('<html><title>Guide</title><body><h1>How to enable JavaScript</h1><p>' + 'Useful instructions. '.repeat(100) + '</p></body></html>')).not.toThrow()
-  })
-  test("HTTP 200 shells fail and rendered HTML remains readable", async () => {
-    await withFetch((req) => new Response(new URL(req.url).pathname === "/shell"
-      ? '<html><body><script src="app.js"></script></body></html>'
-      : '<html><body><h1>Result</h1><p>Useful page content.</p></body></html>',
-    { headers: { "content-type": "text/html" } }), async (url) => {
-      await Instance.provide({ directory: projectRoot, fn: async () => {
-        for (const format of ["text", "markdown", "html"] as const) {
-          await expect(exec({ url: new URL("/shell", url).toString(), format })).rejects.toThrow("Page content unavailable")
-          expect((await exec({ url: url.toString(), format })).output).toContain("Useful page content.")
-        }
-      } })
-    })
+      '<html><body><div id="root"></div><script src="app.js"></script></body></html>',
+      '<html><body><noscript>You need to enable JavaScript to run this app.</noscript><script src="app.js"></script></body></html>',
+    ]
+    await withFetch(
+      (req) =>
+        new Response(pages[Number(new URL(req.url).pathname.slice(1))], {
+          headers: { "content-type": "text/html" },
+        }),
+      async (url) => {
+        await Instance.provide({
+          directory: projectRoot,
+          fn: async () => {
+            for (const [index, html] of pages.entries()) {
+              const page = new URL(String(index), url).toString()
+              expect((await exec({ url: page, format: "html" })).output).toBe(html)
+              for (const format of ["text", "markdown"] as const) {
+                const result = await exec({ url: page, format })
+                if (index === 0) expect(result.output).toContain("Open Settings")
+                if (index === 1) expect(result.output).toContain("Reader role")
+                expect(typeof result.output).toBe("string")
+              }
+            }
+          },
+        })
+      },
+    )
   })
   test("returns image responses as file attachments", async () => {
     const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])

@@ -131,9 +131,6 @@ export const WebFetchTool = Tool.define(
           }
 
           const content = new TextDecoder().decode(arrayBuffer)
-          if (mime === "text/html" || mime === "application/xhtml+xml") {
-            assertReadableHTML(content)
-          }
 
           // Handle content based on requested format and actual content type
           switch (params.format) {
@@ -208,19 +205,4 @@ function convertHTMLToMarkdown(html: string): string {
   })
   turndownService.remove(["script", "style", "meta", "link"])
   return turndownService.turndown(html)
-}
-
-/** HTTP 200 also serves browser challenges and JS-only shells. Do not present
- * those as a successfully read article. Small useful pages remain valid. */
-export function assertReadableHTML(html: string) {
-  const body = html.replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, "").replace(/<title\b[^>]*>[\s\S]*?<\/title>/gi, "")
-  const text = convertHTMLToMarkdown(body).replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").trim()
-  const title = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() ?? ""
-  const challenge = /^(just a moment[.!…]*|access denied|attention required!?|verify (?:that )?you are human)$/i.test(title)
-  const login = /^(sign in|log in)$/i.test(title) && /<input\b[^>]*\btype\s*=\s*["']?password\b/i.test(html)
-  const browserRequired = /^(?:[#*\s]*)(?:please\s+)?(?:(?:enable|turn on) javascript|javascript (?:is required|is disabled)|enable cookies|verify you are human)\b/i.test(text)
-  const shell = !text && /<script\b/i.test(html)
-  if (shell || (text.length < 1200 && (challenge || login || browserRequired))) {
-    throw new Error("Page content unavailable: the server returned a JavaScript, login, or verification page. Open the URL with browser use and read the rendered page; do not treat this response as the requested content.")
-  }
 }
