@@ -75,17 +75,12 @@ export const layer = Layer.effect(
       const next = Runner.make<MessageV2.WithParts, never, Session.BusyError>(data.scope, {
         label: `${sessionID}:${agentID}`,
         onReentryWarn: (info) => elog.warn("runner-reentry", info),
-        // Cleanup only when THIS runner is actually idle. Do NOT delete the
-        // main Runner on idle: a waiter parked on Cancelling retries on this
-        // same instance after Idle — deleting it would start B on an
-        // unregistered Runner (RL-ORPHAN-C01). Non-main still deletes (no
-        // Cancelling-wait path).
-        onIdle: isMain
-          ? status.set(sessionID, { type: "idle" })
-          : Effect.sync(() => {
-              byAgent.delete(agentID)
-              if (byAgent.size === 0) data.runners.delete(sessionID)
-            }),
+        // Do NOT delete Runners on idle: a waiter parked on Cancelling retries
+        // on this same instance after Idle — deleting it would start B on an
+        // unregistered Runner (RL-ORPHAN-C01). Applies to main AND non-main
+        // (Cancelling-wait is agent-agnostic in Runner.ensureRunning).
+        // Session idle status is main-only (actors do not publish session idle).
+        onIdle: isMain ? status.set(sessionID, { type: "idle" }) : Effect.void,
         onBusy: isMain ? status.set(sessionID, { type: "busy" }) : Effect.void,
         // Child executors must observe cancellation, not a stale assistant.
         onInterrupt: isMain ? onInterrupt : Effect.interrupt,
@@ -165,12 +160,8 @@ export const layer = Layer.effect(
       const stillBusy = current ? [...current.values()].some((r) => r.busy) : false
       if (stillBusy) return
       if (current) {
-        // Keep main Runner registered (Idle): waiters parked on Cancelling
-        // retry on this instance (RL-ORPHAN-C01). Only drop idle non-main.
-        for (const [agentID, r] of [...current.entries()]) {
-          if (agentID !== "main" && !r.busy) current.delete(agentID)
-        }
-        if (current.size === 0) after.runners.delete(sessionID)
+        // Keep Runners registered (Idle): waiters parked on Cancelling retry
+        // on this instance (RL-ORPHAN-C01). Do not delete here.
       }
       // Main onIdle also sets idle; force-clear when main was already gone so
       // `/session/status` never stays busy after a successful abort.

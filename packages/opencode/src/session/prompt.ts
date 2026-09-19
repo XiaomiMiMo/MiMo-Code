@@ -3349,8 +3349,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     // Desktop UI settles that step as `completed` so the user sees nothing, then
     // the next prompt's entry sweep emits `Tool execution aborted` into the NEW
     // turn's stream. Cleaning on idle closes that window.
-    // Wired via module ref: SessionRunState work ensuring (and cancel no-busy
-    // backup) invoke the sweep; SessionStatus.commit does NOT sweep.
+    // Wired via module ref: SessionRunState main-work ensuring invokes the
+    // sweep (ownedMessageIds snapshot). SessionStatus.commit does NOT sweep.
     // Wire the idle-edge sweep. Identity-guarded clear so a rebuilt layer does
     // not wipe a newer registration (same pattern as sessionPromptRef).
     const idleSweep = (sid: SessionID, opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> }) =>

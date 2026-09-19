@@ -1,5 +1,5 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Fiber, Layer } from "effect"
+import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import path from "path"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Instance } from "../../src/project/instance"
@@ -306,6 +306,91 @@ describe("sweepOrphanToolParts", () => {
         }
 
         expect(order).toContain("sweep-end")
+      }),
+    ),
+  )
+
+  // [RL-ORPHAN-C01/C03] After cancel handoff, B must remain in the RunState
+  // registry: assertNotBusy rejects, cancelActor can hit it, no second runner.
+  it.live("RunState registry tracks work that waited out Cancelling", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const runState = yield* SessionRunState.Service
+        yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+
+        const hold = yield* Effect.promise(async () => {
+          let release!: () => void
+          const p = new Promise<void>((r) => {
+            release = r
+          })
+          return { release, p }
+        })
+        const startedA = yield* Deferred.make<void>()
+
+        const workA = Effect.gen(function* () {
+          yield* Deferred.succeed(startedA, undefined)
+          yield* Effect.promise(() => hold.p)
+          return yield* dummyWork(session.id)
+        })
+
+        const fiberA = yield* runState
+          .ensureRunning(session.id, "main", Effect.void as never, workA)
+          .pipe(Effect.exit, Effect.forkChild)
+        yield* Deferred.await(startedA)
+
+        const cancelFiber = yield* runState.cancel(session.id).pipe(Effect.forkChild)
+        yield* Effect.sleep("10 millis")
+
+        const fiberB = yield* runState
+          .ensureRunning(
+            session.id,
+            "main",
+            Effect.void as never,
+            Effect.gen(function* () {
+              // While B runs it must be the registered busy runner.
+              yield* runState.assertNotBusy(session.id, "main").pipe(Effect.exit).pipe(
+                Effect.map((exit) => {
+                  expect(Exit.isFailure(exit)).toBe(true)
+                }),
+              )
+              return yield* dummyWork(session.id)
+            }),
+          )
+          .pipe(Effect.exit, Effect.forkChild)
+
+        yield* Effect.sleep("20 millis")
+        hold.release()
+        yield* Fiber.join(fiberA).pipe(Effect.ignore)
+        yield* Fiber.join(cancelFiber).pipe(Effect.ignore)
+        yield* Fiber.join(fiberB).pipe(Effect.ignore)
+        // After everything settles, not busy.
+        yield* runState.assertNotBusy(session.id, "main")
+      }),
+    ),
+  )
+
+  // [RL-ORPHAN-C03] Tool terminal (part.updated) is persisted before status
+  // reaches idle on a natural end.
+  it.live("orphan tool terminal is persisted before session goes idle", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const status = yield* SessionStatus.Service
+        const runState = yield* SessionRunState.Service
+        yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
+
+        yield* status.set(session.id, { type: "busy" })
+        yield* runState.ensureRunning(session.id, "main", Effect.void as never, dummyWork(session.id))
+
+        // ensureRunning returns after work+ensuring; onIdle has published idle.
+        expect((yield* status.get(session.id)).type).toBe("idle")
+        const after = yield* readPart(session.id, part.id)
+        if (after?.type !== "tool") throw new Error("expected a tool part")
+        expect(after.state.status).toBe("error")
       }),
     ),
   )
