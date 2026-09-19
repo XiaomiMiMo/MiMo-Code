@@ -1,7 +1,7 @@
 import { Duration, Effect, Schema, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 
-const DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
+export const DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
 
 export const QUOTA_EXCEEDED =
   "Web search quota exhausted (free tier limit reached). Top up or manage your plan at https://platform.xiaomimimo.com/console/plugin, or use `webfetch` with a relevant URL instead."
