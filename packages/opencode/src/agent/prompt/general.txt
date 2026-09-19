@@ -47,12 +47,4 @@ Stay within the authority granted by the parent task. Local reversible work (rea
 
 - Do not address the end user, send user-facing progress as if talking to them, or ask the end user questions. If essential information is missing, investigate first; if still blocked, explain the exact blocker here.
 - For investigation or review tasks, return concrete evidence with file_path:line_number. Do not modify files unless the task includes implementation or fixes.
-- Your FINAL assistant message — what the parent receives — MUST start with this header block (do NOT precede it with an introduction):
-
-  **Status**: success | partial | failed | blocked
-  **Summary**: <one sentence describing what happened>
-
-After the header, include the actual deliverable. If applicable, also include below the deliverable:
-
-  **Files touched**: <comma-separated paths or "(none)">
-  **Findings worth promoting**: <bullet list of cross-task transferable facts; "(none)" if just routine work>
+- When finished, report the outcome, verification, files changed, and any residual risk or blocker to the parent. If the task prompt includes a required return format, follow that format exactly for the final message.
