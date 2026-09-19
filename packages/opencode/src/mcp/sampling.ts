@@ -573,6 +573,12 @@ export interface HandleInput {
   readonly chunkTimeoutMs?: number
   /** Absent when the server did not ask for progress; then nothing is emitted. */
   readonly liveness?: Liveness
+  /**
+   * Effective per-server policy for this connection generation. Host overrides can
+   * deny sampling for a server the user config would otherwise allow; when present
+   * this wins over re-reading user config alone.
+   */
+  readonly samplingPolicy?: Policy
 }
 
 /**
@@ -581,12 +587,22 @@ export interface HandleInput {
  */
 export const handle = Effect.fn("MCP.sampling.handle")(function* (input: HandleInput) {
   const started = Date.now()
+  // Host-published deny is process-local and must win before any service lookup.
+  if (input.samplingPolicy === "deny") {
+    return yield* Effect.fail(
+      new SamplingError(REJECTED_CODE, `sampling is denied for MCP server "${input.server}"`, {
+        server: input.server,
+        policy: "deny",
+        deniedBy: "mcp.sampling",
+      }),
+    )
+  }
   const cfgSvc = yield* Config.Service
   const provider = yield* Provider.Service
   const permission = yield* Permission.Service
   const cfg = yield* cfgSvc.get()
 
-  const policy = policyFor(cfg as never, input.server)
+  const policy = input.samplingPolicy ?? policyFor(cfg as never, input.server)
   // TWO controls gate sampling and a `deny` from either one wins: the per-server
   // `mcp.<server>.sampling` policy, and the standard `permission.mcp_sampling`
   // ruleset. Evaluating the ruleset HERE rather than leaning on permission.ask
@@ -977,6 +993,7 @@ export function serve(
   bridge: Bridge,
   livenessIntervalMs: number = DEFAULT_LIVENESS_INTERVAL,
   chunkTimeoutMs?: number,
+  samplingPolicy?: Policy,
 ) {
   client.setRequestHandler(CreateMessageRequestSchema, async (request, extra) => {
     const params = (request.params ?? {}) as CreateMessageParams
@@ -997,6 +1014,7 @@ export function serve(
       signal: extra?.signal,
       chunkTimeoutMs,
       liveness,
+      samplingPolicy,
     }).pipe(Effect.exit)
 
     let fibers = inFlight.get(client)

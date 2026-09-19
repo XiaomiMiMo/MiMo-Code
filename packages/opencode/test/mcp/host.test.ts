@@ -1,7 +1,8 @@
 // [TP-MCU-R7-21] Desktop computer-use: retired host connections follow request/turn lifetimes.
 import { test, expect } from "bun:test"
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { Effect } from "effect"
+import { unlink } from "node:fs/promises"
+import { Effect, Fiber } from "effect"
 import { MCP } from "../../src/mcp"
 import { ObservingStdioTransport } from "../../src/mcp/stdio-transport"
 import { HostMcp } from "../../src/mcp/host"
@@ -293,3 +294,389 @@ test("resource and prompt access refresh host configuration without tool discove
     HostMcp.set({})
   }
 }, 20_000)
+
+test("host sampling deny overrides a user-config allow for the same server", async () => {
+  await using tmp = await fixture()
+  const script = `${tmp.path}/sampling-fixture.mjs`
+  const samplingLog = `${tmp.path}/sampling.log`
+  await Bun.write(
+    script,
+    `
+    import readline from 'node:readline';
+    import fs from 'node:fs';
+    const lines = readline.createInterface({ input: process.stdin });
+    lines.on('close', () => process.exit(0));
+    lines.on('line', async line => {
+      const msg = JSON.parse(line);
+      if (msg.id === 9001 && msg.error) {
+        fs.appendFileSync(process.env.SAMPLING_LOG, JSON.stringify(msg.error) + '\\n');
+        return;
+      }
+      if (msg.id == null) return;
+      const req = msg;
+      if (req.method === 'initialize') {
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result:{protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'sampling-fixture',version:'1'}}}) + '\\n');
+        return;
+      }
+      if (req.method === 'tools/list') {
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result:{tools:[{name:'read',inputSchema:{type:'object'}}]}}) + '\\n');
+        return;
+      }
+      if (req.method === 'tools/call') {
+        process.stdout.write(JSON.stringify({
+          jsonrpc: '2.0',
+          id: 9001,
+          method: 'sampling/createMessage',
+          params: {
+            messages: [{ role: 'user', content: { type: 'text', text: 'hi' } }],
+            maxTokens: 16,
+          },
+        }) + '\\n');
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result:{content:[{type:'text',text:'ok'}]}}) + '\\n');
+        return;
+      }
+      process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result:{content:[]}}) + '\\n');
+    });
+    `,
+  )
+  const hostEnv = { SAMPLING_LOG: samplingLog }
+  await Bun.write(
+    `${tmp.path}/mimocode.json`,
+    JSON.stringify({
+      mcp: {
+        automation: {
+          type: "local",
+          command: [process.execPath, script],
+          enabled: true,
+          sampling: "allow",
+          environment: hostEnv,
+        },
+      },
+    }),
+  )
+  HostMcp.set({
+    automation: {
+      type: "local",
+      command: [process.execPath, script],
+      enabled: true,
+      sampling: "deny",
+      environment: hostEnv,
+    },
+  })
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        try {
+          await Effect.runPromise(
+            MCP.Service.use((mcp) =>
+              Effect.gen(function* () {
+                const client = (yield* mcp.clients()).automation!
+                yield* Effect.promise(() => client.callTool({ name: "read", arguments: {} }))
+                yield* Effect.promise(() => waitForFile(samplingLog))
+                const raw = yield* Effect.promise(() => Bun.file(samplingLog).text())
+                expect(raw).toContain("denied")
+              }),
+            ).pipe(Effect.provide(MCP.defaultLayer)),
+          )
+        } finally {
+          await Instance.dispose()
+        }
+      },
+    })
+  } finally {
+    HostMcp.set({})
+  }
+}, 20_000)
+
+test("host entry without sampling defaults to ask instead of inheriting user allow", () => {
+  const hostWithoutSampling = {
+    type: "local" as const,
+    command: ["true"],
+    enabled: true,
+  }
+  const userAllow = {
+    type: "local" as const,
+    command: ["true"],
+    enabled: true,
+    sampling: "allow" as const,
+  }
+  // Same-snapshot ownership: host-owned entry defaults to ask.
+  expect(MCP.hostEffectiveSampling(hostWithoutSampling, true)).toBe("ask")
+  // Explicit host policy is preserved.
+  expect(MCP.hostEffectiveSampling({ ...hostWithoutSampling, sampling: "deny" }, true)).toBe("deny")
+  // User-owned entry keeps its own field (or undefined → policyFor default).
+  expect(MCP.hostEffectiveSampling(userAllow, false)).toBe("allow")
+  expect(MCP.hostEffectiveSampling(hostWithoutSampling, false)).toBeUndefined()
+  // Ownership must be decided with the config object, not re-read later.
+  expect(MCP.hostEffectiveSampling(hostWithoutSampling, false)).not.toBe(MCP.hostEffectiveSampling(hostWithoutSampling, true))
+})
+
+test("removed override with a failed user fallback retries after cooldown without reload", async () => {
+  await using tmp = await fixture()
+  const script = `${tmp.path}/flaky-user.mjs`
+  const failGate = `${tmp.path}/fail-gate`
+  await Bun.write(
+    script,
+    `
+    import readline from 'node:readline';
+    import fs from 'node:fs';
+    if (fs.existsSync(process.env.FAIL_GATE)) process.exit(1);
+    const lines = readline.createInterface({ input: process.stdin });
+    lines.on('close', () => process.exit(0));
+    lines.on('line', async line => {
+      const req = JSON.parse(line);
+      if (req.id == null) return;
+      const result = req.method === 'initialize'
+        ? { protocolVersion: '2024-11-05', capabilities: {tools:{}}, serverInfo: {name: 'flaky', version: '1'} }
+        : req.method === 'tools/list'
+        ? { tools: [{name: 'read', inputSchema: {type: 'object'}}] }
+        : { content: [{type: 'text', text: 'recovered'}] };
+      process.stdout.write(JSON.stringify({jsonrpc: '2.0', id: req.id, result}) + '\\n');
+    });
+    `,
+  )
+  const userCfg = {
+    type: "local" as const,
+    command: [process.execPath, script],
+    enabled: true,
+    environment: { FAIL_GATE: failGate },
+  }
+  await Bun.write(`${tmp.path}/mimocode.json`, JSON.stringify({ mcp: { automation: userCfg } }))
+  await Bun.write(failGate, "fail")
+  const good = tmp.extra.config("good")
+  HostMcp.set({ automation: good })
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        try {
+          await Effect.runPromise(
+            MCP.Service.use((mcp) =>
+              Effect.gen(function* () {
+                expect((yield* mcp.status()).automation?.status).toBe("connected")
+                HostMcp.set({})
+                yield* mcp.tools()
+                expect((yield* mcp.status()).automation?.status).toBe("failed")
+                yield* Effect.promise(() => unlink(failGate))
+                yield* Effect.promise(() => Bun.sleep(5_100))
+                yield* mcp.tools()
+                expect((yield* mcp.status()).automation?.status).toBe("connected")
+                const client = (yield* mcp.clients()).automation!
+                const called = yield* Effect.promise(() => client.callTool({ name: "read", arguments: {} }))
+                expect(called.content).toEqual([{ type: "text", text: "recovered" }])
+              }),
+            ).pipe(Effect.provide(MCP.defaultLayer)),
+          )
+        } finally {
+          await Instance.dispose()
+        }
+      },
+    })
+  } finally {
+    HostMcp.set({})
+  }
+}, 20_000)
+
+test("manual disconnect after a host failure is not auto-revived by discovery", async () => {
+  await using tmp = await fixture()
+  const broken = {
+    type: "local" as const,
+    command: [process.execPath, "-e", "process.exit(1)"],
+    enabled: true,
+    environment: { FIXTURE_LABEL: "broken", FIXTURE_LOG: `${tmp.extra.log}` },
+  }
+  HostMcp.set({ automation: broken })
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        try {
+          await Effect.runPromise(
+            MCP.Service.use((mcp) =>
+              Effect.gen(function* () {
+                yield* mcp.tools()
+                expect((yield* mcp.status()).automation?.status).toBe("failed")
+                yield* mcp.disconnect("automation")
+                expect((yield* mcp.status()).automation?.status).toBe("disabled")
+                yield* Effect.promise(() => Bun.sleep(5_100))
+                yield* mcp.tools()
+                expect((yield* mcp.status()).automation?.status).toBe("disabled")
+                expect((yield* mcp.clients()).automation).toBeUndefined()
+              }),
+            ).pipe(Effect.provide(MCP.defaultLayer)),
+          )
+        } finally {
+          await Instance.dispose()
+        }
+      },
+    })
+  } finally {
+    HostMcp.set({})
+  }
+}, 20_000)
+
+test("interrupting create during tools/list closes the unpublished client", async () => {
+  await using tmp = await fixture()
+  const script = `${tmp.path}/hang-list.mjs`
+  const listed = `${tmp.path}/tools-list.started`
+  const pidFile = `${tmp.path}/hang.pid`
+  await Bun.write(
+    script,
+    `
+    import readline from 'node:readline';
+    import fs from 'node:fs';
+    const lines = readline.createInterface({ input: process.stdin });
+    lines.on('close', () => process.exit(0));
+    lines.on('line', async line => {
+      const req = JSON.parse(line);
+      if (req.id == null) return;
+      if (req.method === 'initialize') {
+        fs.writeFileSync(process.env.PID_FILE, String(process.pid));
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result:{protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'hang',version:'1'}}}) + '\\n');
+        return;
+      }
+      if (req.method === 'tools/list') {
+        fs.writeFileSync(process.env.LISTED_FILE, 'listed');
+        await new Promise(() => {});
+        return;
+      }
+      process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:req.id,result:{content:[]}}) + '\\n');
+    });
+    process.on('SIGTERM', () => process.exit(0));
+    `,
+  )
+  HostMcp.set({
+    automation: {
+      type: "local",
+      command: [process.execPath, script],
+      enabled: true,
+      timeout: 10_000,
+      environment: { LISTED_FILE: listed, PID_FILE: pidFile },
+    },
+  })
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        try {
+          await Effect.runPromise(
+            Effect.gen(function* () {
+              const fiber = yield* Effect.forkChild(
+                MCP.Service.use((mcp) => mcp.tools()).pipe(Effect.provide(MCP.defaultLayer)),
+              )
+              // Barrier is tools/list itself: initialize completed and defs() is waiting.
+              yield* Effect.promise(() => waitForFile(listed))
+              yield* Fiber.interrupt(fiber)
+              yield* Effect.promise(async () => {
+                const pid = Number(await Bun.file(pidFile).text())
+                for (let i = 0; i < 200; i++) {
+                  try {
+                    process.kill(pid, 0)
+                    await Bun.sleep(20)
+                  } catch {
+                    break
+                  }
+                }
+                expect(() => process.kill(pid, 0)).toThrow()
+              })
+              yield* MCP.Service.use((mcp) =>
+                Effect.gen(function* () {
+                  expect((yield* mcp.status()).automation?.status).not.toBe("connected")
+                }),
+              ).pipe(Effect.provide(MCP.defaultLayer))
+            }),
+          )
+        } finally {
+          await Instance.dispose()
+        }
+      },
+    })
+  } finally {
+    HostMcp.set({})
+  }
+}, 20_000)
+
+test.skipIf(process.platform === "win32")(
+  "retired local server reaps worker descendants before dropping the registry entry",
+  async () => {
+    await using tmp = await fixture()
+    const script = `${tmp.path}/parent-worker.mjs`
+    const workerPid = `${tmp.path}/worker.pid`
+    let worker: number | undefined
+    await Bun.write(
+      script,
+      `
+    import readline from 'node:readline';
+    import { spawn } from 'node:child_process';
+    import fs from 'node:fs';
+    const worker = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio:'ignore', detached:true});
+    worker.unref();
+    fs.writeFileSync(process.env.WORKER_PID, String(worker.pid));
+    const lines = readline.createInterface({ input: process.stdin });
+    lines.on('close', () => process.exit(0));
+    lines.on('line', async line => {
+      const req = JSON.parse(line);
+      if (req.id == null) return;
+      const result = req.method === 'initialize'
+        ? { protocolVersion: '2024-11-05', capabilities: {tools:{}}, serverInfo: {name: 'parent', version: '1'} }
+        : req.method === 'tools/list'
+        ? { tools: [{name: 'read', inputSchema: {type: 'object'}}] }
+        : { content: [{type: 'text', text: process.env.FIXTURE_LABEL}] };
+      process.stdout.write(JSON.stringify({jsonrpc: '2.0', id: req.id, result}) + '\\n');
+    });
+    `,
+    )
+    const config = (label: string, enabled = true) => ({
+      type: "local" as const,
+      command: [process.execPath, script],
+      enabled,
+      environment: { FIXTURE_LABEL: label, WORKER_PID: workerPid },
+    })
+    HostMcp.set({ automation: config("first") })
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          try {
+            await Effect.runPromise(
+              MCP.Service.use((mcp) =>
+                Effect.gen(function* () {
+                  yield* mcp.tools()
+                  yield* Effect.promise(() => waitForFile(workerPid))
+                  const pid = Number(yield* Effect.promise(() => Bun.file(workerPid).text()))
+                  worker = pid
+                  expect(() => process.kill(pid, 0)).not.toThrow()
+                  HostMcp.set({ automation: config("second") })
+                  yield* mcp.tools()
+                  yield* Effect.promise(async () => {
+                    for (let i = 0; i < 200; i++) {
+                      try {
+                        process.kill(pid, 0)
+                        await Bun.sleep(20)
+                      } catch {
+                        break
+                      }
+                    }
+                    expect(() => process.kill(pid, 0)).toThrow()
+                  })
+                  worker = undefined
+                }),
+              ).pipe(Effect.provide(MCP.defaultLayer)),
+            )
+          } finally {
+            await Instance.dispose()
+          }
+        },
+      })
+    } finally {
+      HostMcp.set({})
+      if (worker !== undefined) {
+        try {
+          process.kill(worker, "SIGTERM")
+        } catch {}
+      }
+    }
+  },
+  20_000,
+)

@@ -39,6 +39,17 @@ import { SessionID } from "@/session/schema"
 const log = Log.create({ service: "mcp" })
 const DEFAULT_TIMEOUT = 30_000
 
+/**
+ * Host entries fully replace the user record for that name. When the host omits
+ * sampling, default to ask rather than silently inheriting the covered user field.
+ * Exported for unit tests that pin the same-snapshot ownership binding.
+ */
+export function hostEffectiveSampling(mcp: ConfigMCP.Info | undefined, hostOwned: boolean) {
+  if (!mcp) return undefined
+  if (hostOwned) return mcp.sampling ?? ("ask" as const)
+  return mcp.sampling
+}
+
 export const Resource = z
   .object({
     name: z.string(),
@@ -402,11 +413,15 @@ interface CreateResult {
   defs?: MCPToolDef[]
 }
 
-interface AuthResult {
-  authorizationUrl: string
-  oauthState: string
-  client?: MCPClient
-}
+type AuthResult =
+  | {
+      kind: "connected"
+      oauthState: string
+      client: MCPClient
+      /** Config snapshot that opened this connection; sampling must stay bound to it. */
+      resolved: { mcp: ConfigMCP.Info; hostOwned: boolean }
+    }
+  | { kind: "redirect"; authorizationUrl: string; oauthState: string }
 
 // --- Effect Service ---
 
@@ -671,7 +686,14 @@ export const layer = Layer.effect(
         return { status } satisfies CreateResult
       }
 
-      const listed = yield* defs(key, mcpClient, mcp.timeout)
+      // Ownership stays with this acquire/use/release until create() returns:
+      // interruption during tools/list must close the unpublished client.
+      const listed = yield* Effect.acquireUseRelease(
+        Effect.succeed(mcpClient),
+        (client) => defs(key, client, mcp.timeout),
+        (client, exit) =>
+          Exit.isFailure(exit) ? Effect.tryPromise(() => client.close()).pipe(Effect.ignore) : Effect.void,
+      )
       if (!listed) {
         yield* Effect.tryPromise(() => mcpClient.close()).pipe(Effect.ignore)
         return { status: { status: "failed", error: "Failed to get tools" } } satisfies CreateResult
@@ -706,7 +728,14 @@ export const layer = Layer.effect(
       Effect.catch(() => Effect.succeed([] as number[])),
     )
 
-    function watch(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape, timeout?: number) {
+    function watch(
+      s: State,
+      name: string,
+      client: MCPClient,
+      bridge: EffectBridge.Shape,
+      timeout?: number,
+      sampling?: ConfigMCP.Info["sampling"],
+    ) {
       client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
         log.info("tools list changed notification received", { server: name })
         if (s.clients[name] !== client || s.status[name]?.status !== "connected") return
@@ -718,7 +747,9 @@ export const layer = Layer.effect(
         s.defs[name] = listed
         await bridge.promise(bus.publish(ToolsChanged, { server: name }).pipe(Effect.ignore))
       })
-      McpSampling.serve(name, client, bridge)
+      // Bind the effective policy for this generation so host deny is not
+      // re-resolved from user config alone at sampling time.
+      McpSampling.serve(name, client, bridge, undefined, undefined, sampling)
     }
 
     const state = yield* InstanceState.make<State>(
@@ -759,7 +790,7 @@ export const layer = Layer.effect(
               if (result.mcpClient) {
                 s.clients[key] = result.mcpClient
                 s.defs[key] = result.defs!
-                watch(s, key, result.mcpClient, bridge, mcp.timeout)
+                watch(s, key, result.mcpClient, bridge, mcp.timeout, hostEffectiveSampling(mcp, key in host))
               }
             }),
           { concurrency: "unbounded" },
@@ -813,7 +844,8 @@ export const layer = Layer.effect(
           const host = HostMcp.get()
           const cfg = yield* cfgSvc.get()
           const bridge = yield* EffectBridge.make()
-          for (const name of new Set([...Object.keys(s.host), ...Object.keys(host)])) {
+          // hostRetryAt keeps failed fallbacks reachable after an override is removed.
+          for (const name of new Set([...Object.keys(s.host), ...Object.keys(host), ...Object.keys(s.hostRetryAt)])) {
             const revision = JSON.stringify(host[name])
             if (s.host[name] === revision && (!s.hostRetryAt[name] || Date.now() < s.hostRetryAt[name])) continue
             const mcp = host[name] ?? cfg.mcp?.[name]
@@ -826,8 +858,21 @@ export const layer = Layer.effect(
               s.retired.add(previous)
               previous.retire(() =>
                 bridge.promise(
-                  McpSampling.cancelAll(previous).pipe(
-                    Effect.andThen(Effect.tryPromise(() => previous.close())),
+                  Effect.gen(function* () {
+                    // Kill descendants while the parent PID is still valid; transport
+                    // close only reaps the direct child.
+                    const pid = previous.transport instanceof ObservingStdioTransport ? previous.transport.pid : null
+                    if (typeof pid === "number") {
+                      const pids = yield* descendants(pid)
+                      for (const dpid of pids) {
+                        try {
+                          process.kill(dpid, "SIGTERM")
+                        } catch {}
+                      }
+                    }
+                    yield* McpSampling.cancelAll(previous)
+                    yield* Effect.tryPromise(() => previous.close())
+                  }).pipe(
                     Effect.ignore,
                     Effect.ensuring(
                       Effect.sync(() => {
@@ -848,7 +893,7 @@ export const layer = Layer.effect(
             if (result.mcpClient) {
               s.clients[name] = result.mcpClient
               s.defs[name] = result.defs!
-              watch(s, name, result.mcpClient, bridge, mcp?.timeout)
+              watch(s, name, result.mcpClient, bridge, mcp?.timeout, hostEffectiveSampling(mcp, name in host))
             }
           }
         }),
@@ -861,13 +906,16 @@ export const layer = Layer.effect(
       client: MCPClient,
       listed: MCPToolDef[],
       timeout?: number,
+      sampling?: ConfigMCP.Info["sampling"],
     ) {
       const bridge = yield* EffectBridge.make()
       yield* closeClient(s, name)
       s.status[name] = { status: "connected" }
       s.clients[name] = client
       s.defs[name] = listed
-      watch(s, name, client, bridge, timeout)
+      // A successful store supersedes any prior failed-refresh cooldown.
+      delete s.hostRetryAt[name]
+      watch(s, name, client, bridge, timeout, sampling)
       return s.status[name]
     })
 
@@ -895,7 +943,11 @@ export const layer = Layer.effect(
       return s.clients
     })
 
-    const createAndStore = Effect.fn("MCP.createAndStore")(function* (name: string, mcp: ConfigMCP.Info) {
+    const createAndStore = Effect.fn("MCP.createAndStore")(function* (
+      name: string,
+      mcp: ConfigMCP.Info,
+      sampling?: ConfigMCP.Info["sampling"],
+    ) {
       const s = yield* InstanceState.get(state)
       const result = yield* create(name, mcp)
 
@@ -906,7 +958,8 @@ export const layer = Layer.effect(
         return result.status
       }
 
-      return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout)
+      // `sampling` must be computed with the same config snapshot as `mcp`.
+      return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout, sampling ?? mcp.sampling)
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCP.Info) {
@@ -916,18 +969,24 @@ export const layer = Layer.effect(
     })
 
     const connect = Effect.fn("MCP.connect")(function* (name: string) {
-      const mcp = yield* getMcpConfig(name)
-      if (!mcp) {
+      const resolved = yield* getMcpConfig(name)
+      if (!resolved) {
         log.error("MCP config not found or invalid", { name })
         return
       }
-      yield* createAndStore(name, { ...mcp, enabled: true })
+      yield* createAndStore(
+        name,
+        { ...resolved.mcp, enabled: true },
+        hostEffectiveSampling(resolved.mcp, resolved.hostOwned),
+      )
     })
 
     const disconnect = Effect.fn("MCP.disconnect")(function* (name: string) {
       const s = yield* InstanceState.get(state)
       yield* closeClient(s, name)
       delete s.clients[name]
+      // Explicit disconnect supersedes any host-refresh cooldown; do not auto-revive.
+      delete s.hostRetryAt[name]
       s.status[name] = { status: "disabled" }
     })
 
@@ -1051,13 +1110,17 @@ export const layer = Layer.effect(
 
     const getMcpConfig = Effect.fnUntraced(function* (mcpName: string) {
       const cfg = yield* cfgSvc.get()
-      const mcpConfig = HostMcp.get()[mcpName] ?? cfg.mcp?.[mcpName]
+      const hostEntry = HostMcp.get()[mcpName]
+      const mcpConfig = hostEntry ?? cfg.mcp?.[mcpName]
       if (!mcpConfig || !isMcpConfigured(mcpConfig)) return undefined
-      return mcpConfig
+      // Capture ownership with the config object so async connect cannot re-bind
+      // sampling to a later HostMcp revision.
+      return { mcp: mcpConfig, hostOwned: hostEntry != null }
     })
 
-    const startAuth = Effect.fn("MCP.startAuth")(function* (mcpName: string) {
-      const mcpConfig = yield* getMcpConfig(mcpName)
+    const startAuthInternal = Effect.fn("MCP.startAuthInternal")(function* (mcpName: string) {
+      const resolved = yield* getMcpConfig(mcpName)
+      const mcpConfig = resolved?.mcp
       if (!mcpConfig) throw new Error(`MCP server ${mcpName} not found or disabled`)
       if (mcpConfig.type !== "remote") throw new Error(`MCP server ${mcpName} is not a remote server`)
       if (mcpConfig.oauth === false) throw new Error(`MCP server ${mcpName} has OAuth explicitly disabled`)
@@ -1095,41 +1158,62 @@ export const layer = Layer.effect(
       return yield* Effect.tryPromise({
         try: () => {
           const client = createClient()
-          return client
-            .connect(transport)
-            .then(() => ({ authorizationUrl: "", oauthState, client }) satisfies AuthResult)
+          return client.connect(transport).then(
+            () =>
+              ({
+                kind: "connected",
+                oauthState,
+                client,
+                resolved,
+              }) satisfies AuthResult,
+          )
         },
         catch: (error) => error,
       }).pipe(
         Effect.catch((error) => {
           if (error instanceof UnauthorizedError && capturedUrl) {
             pendingOAuthTransports.set(mcpName, transport)
-            return Effect.succeed({ authorizationUrl: capturedUrl.toString(), oauthState } satisfies AuthResult)
+            return Effect.succeed({
+              kind: "redirect",
+              authorizationUrl: capturedUrl.toString(),
+              oauthState,
+            } satisfies AuthResult)
           }
           return Effect.die(error)
         }),
       )
     })
 
-    const authenticate = Effect.fn("MCP.authenticate")(function* (mcpName: string) {
-      const result = yield* startAuth(mcpName)
-      if (!result.authorizationUrl) {
-        const client = "client" in result ? result.client : undefined
-        const mcpConfig = yield* getMcpConfig(mcpName)
-        if (!mcpConfig) {
-          yield* Effect.tryPromise(() => client?.close() ?? Promise.resolve()).pipe(Effect.ignore)
-          return { status: "failed", error: "MCP config not found after auth" } as Status
-        }
+    /** Public HTTP/SDK shape: never includes the live client or effective config snapshot. */
+    const startAuth = Effect.fn("MCP.startAuth")(function* (mcpName: string) {
+      const result = yield* startAuthInternal(mcpName)
+      if (result.kind === "connected") {
+        return { authorizationUrl: "", oauthState: result.oauthState }
+      }
+      return { authorizationUrl: result.authorizationUrl, oauthState: result.oauthState }
+    })
 
-        const listed = client ? yield* defs(mcpName, client, mcpConfig.timeout) : undefined
-        if (!client || !listed) {
-          yield* Effect.tryPromise(() => client?.close() ?? Promise.resolve()).pipe(Effect.ignore)
+    const authenticate = Effect.fn("MCP.authenticate")(function* (mcpName: string) {
+      const result = yield* startAuthInternal(mcpName)
+      if (result.kind === "connected") {
+        const { client, resolved } = result
+
+        const listed = yield* defs(mcpName, client, resolved.mcp.timeout)
+        if (!listed) {
+          yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
           return { status: "failed", error: "Failed to get tools" } as Status
         }
 
         const s = yield* InstanceState.get(state)
         yield* auth.clearOAuthState(mcpName)
-        return yield* storeClient(s, mcpName, client, listed, mcpConfig.timeout)
+        return yield* storeClient(
+          s,
+          mcpName,
+          client,
+          listed,
+          resolved.mcp.timeout,
+          hostEffectiveSampling(resolved.mcp, resolved.hostOwned),
+        )
       }
 
       log.info("opening browser for oauth", { mcpName, url: result.authorizationUrl, state: result.oauthState })
@@ -1188,10 +1272,14 @@ export const layer = Layer.effect(
       yield* auth.clearCodeVerifier(mcpName)
       pendingOAuthTransports.delete(mcpName)
 
-      const mcpConfig = yield* getMcpConfig(mcpName)
-      if (!mcpConfig) return { status: "failed", error: "MCP config not found after auth" } as Status
+      const resolved = yield* getMcpConfig(mcpName)
+      if (!resolved) return { status: "failed", error: "MCP config not found after auth" } as Status
 
-      return yield* createAndStore(mcpName, mcpConfig)
+      return yield* createAndStore(
+        mcpName,
+        resolved.mcp,
+        hostEffectiveSampling(resolved.mcp, resolved.hostOwned),
+      )
     })
 
     const removeAuth = Effect.fn("MCP.removeAuth")(function* (mcpName: string) {
@@ -1202,9 +1290,9 @@ export const layer = Layer.effect(
     })
 
     const supportsOAuth = Effect.fn("MCP.supportsOAuth")(function* (mcpName: string) {
-      const mcpConfig = yield* getMcpConfig(mcpName)
-      if (!mcpConfig) return false
-      return mcpConfig.type === "remote" && mcpConfig.oauth !== false
+      const resolved = yield* getMcpConfig(mcpName)
+      if (!resolved) return false
+      return resolved.mcp.type === "remote" && resolved.mcp.oauth !== false
     })
 
     const hasStoredTokens = Effect.fn("MCP.hasStoredTokens")(function* (mcpName: string) {
