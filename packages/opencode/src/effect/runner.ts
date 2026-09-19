@@ -4,6 +4,8 @@ export interface Runner<A, E = never, B = never> {
   readonly state: State<A, E>
   readonly busy: boolean
   readonly ensureRunning: (work: Effect.Effect<A, E>) => Effect.Effect<A, E>
+  /** [R003] Start work only if idle; busy → fail B. Never join an existing run. */
+  readonly ensureExclusive: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
   readonly start: (work: Effect.Effect<A, E>) => Effect.Effect<void, B>
   readonly startShell: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
   readonly cancel: Effect.Effect<void>
@@ -257,6 +259,27 @@ export const make = <A, E = never, B = never>(
       }),
     ).pipe(Effect.flatten)
 
+  const ensureExclusive = (work: Effect.Effect<A, E>): Effect.Effect<A, E | B> =>
+    SynchronizedRef.modifyEffect(
+      ref,
+      Effect.fnUntraced(function* (st) {
+        if (st._tag !== "Idle") {
+          return [busyFailure<A>(), st] as readonly [Effect.Effect<A, E | B>, State<A, E>]
+        }
+        const done = yield* Deferred.make<A, E | Cancelled>()
+        const run = yield* startRun(work, done)
+        return [
+          Deferred.await(done) as Effect.Effect<A, E | B>,
+          { _tag: "Running", run } as State<A, E>,
+        ] as const
+      }),
+    ).pipe(
+      Effect.flatten,
+      Effect.catch(
+        (e): Effect.Effect<A, E | B> => (e instanceof Cancelled ? (onInterrupt ?? Effect.die(e)) : Effect.fail(e as E | B)),
+      ),
+    )
+
   const start = (work: Effect.Effect<A, E>): Effect.Effect<void, B> =>
     SynchronizedRef.modifyEffect(
       ref,
@@ -324,6 +347,7 @@ export const make = <A, E = never, B = never>(
       return state()._tag !== "Idle"
     },
     ensureRunning,
+    ensureExclusive,
     start,
     startShell,
     cancel,

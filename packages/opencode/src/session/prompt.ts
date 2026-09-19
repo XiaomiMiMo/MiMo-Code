@@ -583,15 +583,25 @@ export interface Interface {
   readonly predict: (input: { sessionID: SessionID }) => Effect.Effect<string>
 }
 
-export interface RecoveryCandidate {
-  assistantMessageID: MessageID
-  parentMessageID: MessageID
-  created: number
-}
+export type RecoveryCandidate =
+  | {
+      kind: "assistant"
+      assistantMessageID: MessageID
+      parentMessageID: MessageID
+      created: number
+    }
+  | {
+      kind: "parent-user"
+      userMessageID: MessageID
+      created: number
+    }
 
 export interface ResumeTurnInput {
   sessionID: SessionID
-  assistantMessageID: MessageID
+  /** tool/user-resume of an incomplete assistant (existing). */
+  assistantMessageID?: MessageID
+  /** trailing-user resume: start a new run from this user (no new user message). */
+  userMessageID?: MessageID
   agentID?: string
   task_id?: string
   titleLocale?: string
@@ -3570,9 +3580,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
         if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue
         candidates.push({
+          kind: "assistant",
           assistantMessageID: assistant.id,
           parentMessageID: assistant.parentID,
           created: assistant.time.created,
+        })
+      }
+      // [SR-R21 D16f] Trailing user with no following assistant: explicit Resume starts the next
+      // turn from that user. Source (manual/notification/synthetic/noReply) is irrelevant — Resume
+      // is the user's intent to run now.
+      const last = msgs.at(-1)
+      if (last?.info.role === "user") {
+        candidates.push({
+          kind: "parent-user",
+          userMessageID: last.info.id,
+          created: last.info.time.created,
         })
       }
       return candidates
@@ -3610,6 +3632,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       userRedispatch?: boolean,
       /** Prompt source of this turn; "hook" must never re-enter uncommitted-hint. */
       turnSource?: "user" | "spawn" | "hook",
+      /**
+       * [R003/D16f] Locked parent user for user-resume first step. When set on step 0,
+       * lastUser must be this message (not silently replaced by a newer inbox/steer user).
+       */
+      parentUserID?: MessageID,
+      /**
+       * [R003] When true, parent must remain the slice tail (no later user/assistant).
+       * Trailing-user resume sets this; empty-shell user-resume allows completed siblings.
+       */
+      strictParentTail?: boolean,
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (
         sessionID: SessionID,
@@ -3621,6 +3653,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         modelOverride?: { providerID: string; modelID: string },
         userRedispatch = false,
         turnSource?: "user" | "spawn" | "hook",
+        parentUserID?: MessageID,
+        strictParentTail = false,
       ) {
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
@@ -4461,6 +4495,37 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           let lastAssistant: MessageV2.Assistant | undefined
           let lastFinished: MessageV2.Assistant | undefined
           let tasks: MessageV2.SubtaskPart[] = []
+          // [R003] user-resume first step: bind parent to the planned user; do not adopt newer lastUser.
+          // After inbox drain, the locked parent must still be the last user — a later user would
+          // enter the model context while parent stays old. Later assistants are allowed only when
+          // plan did not require strict tail (empty-shell siblings); trailing-user is strict.
+          const lockParentOnStep0 = step === 0 && parentUserID !== undefined
+          if (lockParentOnStep0) {
+            const lockedIdx = msgs.findIndex((m) => m.info.role === "user" && m.info.id === parentUserID)
+            if (lockedIdx < 0) {
+              throw new Error(
+                `Resume parent user ${parentUserID} is no longer in session slice ${sessionID}`,
+              )
+            }
+            const laterUser = msgs.slice(lockedIdx + 1).some((m) => m.info.role === "user")
+            if (laterUser) {
+              throw new Error(
+                `Resume parent user ${parentUserID} is no longer the last user in ${sessionID}`,
+              )
+            }
+            if (strictParentTail && msgs.slice(lockedIdx + 1).some((m) => m.info.role === "assistant")) {
+              throw new Error(
+                `Resume parent user ${parentUserID} is no longer the slice tail in ${sessionID}`,
+              )
+            }
+            const locked = msgs[lockedIdx]!
+            if (locked.info.role !== "user") {
+              throw new Error(
+                `Resume parent user ${parentUserID} is no longer in session slice ${sessionID}`,
+              )
+            }
+            lastUser = locked.info
+          }
           for (let i = msgs.length - 1; i >= 0; i--) {
             const msg = msgs[i]
             if (!lastUser && msg.info.role === "user") lastUser = msg.info
@@ -4470,8 +4535,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const task = msg.parts.filter((part): part is MessageV2.SubtaskPart => part.type === "subtask")
             if (task && !lastFinished) tasks.push(...task)
           }
+          if (!lastUser) {
+            throw new Error("No user message found in stream. This should never happen.")
+          }
 
-          if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
           lastUser = {
             ...lastUser,
             system: sessionPrompt.system,
@@ -6122,39 +6189,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
      * Resume has exactly two launch paths (no cleanup-only that skips runLoop):
      * - **tool-resume**: target assistant has useful parts (tool / non-synthetic text / non-empty reasoning)
      *   → abandon + `resumeFrom` continue that assistant.
-     * - **user-resume**: target has no such parts (dirty empty shells)
-     *   → delete empty residue under the parent user, re-run from that user (no assistant prefill).
+     * - **user-resume**: target has no such parts (dirty empty shells), or the recovery target is a
+     *   trailing user (D16f) → delete empty residue under that user, re-run from that user (no assistant prefill).
      * Classification uses only the assistant the client clicked; empty shells are dirty data
      * cleaned during user-resume, not a third product path.
      * busy / vanished target → reject (no removeMessage).
      */
     type ResumePlan =
       | { action: "tool-resume"; assistantMessageID: MessageID; parentMessageID: MessageID }
-      | { action: "user-resume"; parentMessageID: MessageID }
+      | { action: "user-resume"; parentMessageID: MessageID; strictTail?: boolean }
       | { action: "reject"; error: InstanceType<typeof NotFoundError> | Session.BusyError }
 
     const planResume = Effect.fn("SessionPrompt.planResume")(function* (input: {
       sessionID: SessionID
       agentID: string
-      assistantMessageID: MessageID
+      assistantMessageID?: MessageID
+      userMessageID?: MessageID
       /**
        * Cascade / concurrent actor resume: main may already be busy at the
        * session status layer. Only the per-agent Runner admission applies.
        */
       allowSessionBusy?: boolean
     }) {
-      const targetMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
-      const target = targetMsgs.find((item) => item.info.id === input.assistantMessageID)
-      if (target === undefined || target.info.role !== "assistant") {
-        const missing: ResumePlan = {
-          action: "reject",
-          error: new NotFoundError({
-            message: "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
-          }),
-        }
-        return missing
-      }
-
       const runnerBusy = yield* state
         .assertNotBusy(input.sessionID, input.agentID)
         .pipe(Effect.exit, Effect.map((exit) => exit._tag === "Failure"))
@@ -6168,6 +6224,44 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           error: new Session.BusyError(input.sessionID),
         }
         return busy
+      }
+
+      // [D16f] Trailing-user resume: re-validate the user is still the slice tail, then re-run from it.
+      if (input.userMessageID) {
+        const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
+        const last = msgs.at(-1)
+        if (last?.info.role !== "user" || last.info.id !== input.userMessageID) {
+          const missing: ResumePlan = {
+            action: "reject",
+            error: new NotFoundError({
+              message: "No resumable trailing user found for message " + input.userMessageID,
+            }),
+          }
+          return missing
+        }
+        return { action: "user-resume", parentMessageID: last.info.id, strictTail: true } satisfies ResumePlan
+      }
+
+      if (!input.assistantMessageID) {
+        const missing: ResumePlan = {
+          action: "reject",
+          error: new NotFoundError({
+            message: "Resume requires assistantMessageID or userMessageID",
+          }),
+        }
+        return missing
+      }
+
+      const targetMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
+      const target = targetMsgs.find((item) => item.info.id === input.assistantMessageID)
+      if (target === undefined || target.info.role !== "assistant") {
+        const missing: ResumePlan = {
+          action: "reject",
+          error: new NotFoundError({
+            message: "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
+          }),
+        }
+        return missing
       }
 
       const parentMessageID = target.info.parentID
@@ -6197,51 +6291,86 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const plan = input.plan
       // Same onInterrupt as a normal send.
       const resumeInterrupt = lastAssistant(input.sessionID, input.agentID)
+      // [R003] Trailing-user plan requires strict tail at first step.
+      const strictTail = plan.action === "user-resume" && plan.strictTail === true
 
       const work =
         plan.action === "user-resume"
-          ? Effect.gen(function* () {
+          ? // [R003] Admission re-check runs OUTSIDE the ensuring(final-cleanup) scope so a
+            // stale reject has zero side effects (finalizer must not delete later messages).
+            Effect.gen(function* () {
+              yield* Effect.yieldNow
+              const tailMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
+              const parentIdx = tailMsgs.findIndex(
+                (m) => m.info.role === "user" && m.info.id === plan.parentMessageID,
+              )
+              if (parentIdx < 0) {
+                throw new Error(
+                  "No resumable trailing user found for message " + plan.parentMessageID + " (missing parent)",
+                )
+              }
+              const after = tailMsgs.slice(parentIdx + 1)
+              const laterUser = after.some((m) => m.info.role === "user")
+              if (laterUser) {
+                throw new Error(
+                  "No resumable trailing user found for message " +
+                    plan.parentMessageID +
+                    " (stale at runner admission)",
+                )
+              }
+              if (strictTail && after.some((m) => m.info.role === "assistant")) {
+                throw new Error(
+                  "No resumable trailing user found for message " +
+                    plan.parentMessageID +
+                    " (assistant after parent at admission)",
+                )
+              }
               // Clear empty residue under parent (including error shells); otherwise lastAssistant
               // may still be an empty shell and classify would block re-dispatch.
-              yield* cleanupEmptyResidueAssistants({
-                sessionID: input.sessionID,
-                agentID: input.agentID,
-                parentMessageID: plan.parentMessageID,
-                sessionBusy: false,
-                preserveError: false,
-              })
-              return yield* runLoop(
-                input.sessionID,
-                input.agentID,
-                input.task_id,
-                input.titleLocale,
-                false,
-                undefined,
-                input.model,
-                true,
-                // user-resume re-runs from the parent user message — trusted user source.
-                "user",
-              )
-            }).pipe(
-              Effect.ensuring(
-                cleanupEmptyResidueAssistants({
+              // Only runs after admission succeeded — never on stale reject.
+              return yield* Effect.gen(function* () {
+                yield* cleanupEmptyResidueAssistants({
                   sessionID: input.sessionID,
                   agentID: input.agentID,
                   parentMessageID: plan.parentMessageID,
-                  force: true,
-                  preserveError: true,
-                }).pipe(
-                  Effect.catchCause((cause) =>
-                    elog.warn("empty-residue-assistants-cleanup-failed", {
-                      sessionID: input.sessionID,
-                      parentMessageID: plan.parentMessageID,
-                      phase: "ensuring",
-                      cause,
-                    }),
+                  sessionBusy: false,
+                  preserveError: false,
+                })
+                return yield* runLoop(
+                  input.sessionID,
+                  input.agentID,
+                  input.task_id,
+                  input.titleLocale,
+                  false,
+                  undefined,
+                  input.model,
+                  true,
+                  // user-resume re-runs from the parent user message — trusted user source.
+                  "user",
+                  plan.parentMessageID,
+                  strictTail,
+                )
+              }).pipe(
+                Effect.ensuring(
+                  cleanupEmptyResidueAssistants({
+                    sessionID: input.sessionID,
+                    agentID: input.agentID,
+                    parentMessageID: plan.parentMessageID,
+                    force: true,
+                    preserveError: true,
+                  }).pipe(
+                    Effect.catchCause((cause) =>
+                      elog.warn("empty-residue-assistants-cleanup-failed", {
+                        sessionID: input.sessionID,
+                        parentMessageID: plan.parentMessageID,
+                        phase: "ensuring",
+                        cause,
+                      }),
+                    ),
                   ),
                 ),
-              ),
-            )
+              )
+            })
           : Effect.gen(function* () {
               yield* cleanupEmptyResidueAssistants({
                 sessionID: input.sessionID,
@@ -6285,15 +6414,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ),
             )
 
-      // tool-resume: abandon only inside work (no fake stamp if ensure/start fails).
+      // [R003] Exclusive admission: never join an unrelated run (ensureRunning would).
+      // ensure mode waits for work result (sync resume()); start mode forks (HTTP 202).
       if (input.mode === "ensure") {
-        // Resume must not ensure-join an unrelated in-flight run: busy race => BusyError so the
-        // clicked resume actually runs this plan.
-        const busyNow = yield* state
-          .assertNotBusy(input.sessionID, input.agentID)
-          .pipe(Effect.exit, Effect.map((exit) => exit._tag === "Failure"))
-        if (busyNow) return yield* Effect.fail(new Session.BusyError(input.sessionID))
-        return yield* state.ensureRunning(input.sessionID, input.agentID, resumeInterrupt, work)
+        return yield* state.ensureExclusive(input.sessionID, input.agentID, resumeInterrupt, work)
       }
       yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
     })
@@ -6301,11 +6425,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
       yield* state.assertNotBusy(input.sessionID, input.agentID)
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
-      const candidate = candidates.find((item) => item.assistantMessageID === input.assistantMessageID)
+      const candidate = candidates.find((item) =>
+        input.userMessageID
+          ? item.kind === "parent-user" && item.userMessageID === input.userMessageID
+          : item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+      )
       if (candidate === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
-            message: "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
+            message: input.userMessageID
+              ? "No resumable trailing user found for message " + input.userMessageID
+              : "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
           }),
         )
       }
@@ -6318,6 +6448,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         sessionID: input.sessionID,
         agentID,
         assistantMessageID: input.assistantMessageID,
+        userMessageID: input.userMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
       const launched = yield* launchResume({
@@ -6332,7 +6463,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (launched === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
-            message: "Resume did not produce an assistant result for " + input.assistantMessageID,
+            message: input.userMessageID
+              ? "Resume did not produce an assistant result for user " + input.userMessageID
+              : "Resume did not produce an assistant result for " + input.assistantMessageID,
           }),
         )
       }
@@ -6341,11 +6474,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     const resumeBackground = Effect.fn("SessionPrompt.resumeBackground")(function* (input: ResumeTurnInput) {
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID, allowBusy: true })
-      const candidate = candidates.find((item) => item.assistantMessageID === input.assistantMessageID)
+      const candidate = candidates.find((item) =>
+        input.userMessageID
+          ? item.kind === "parent-user" && item.userMessageID === input.userMessageID
+          : item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+      )
       if (candidate === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
-            message: "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
+            message: input.userMessageID
+              ? "No resumable trailing user found for message " + input.userMessageID
+              : "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
           }),
         )
       }
@@ -6357,6 +6496,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         sessionID: input.sessionID,
         agentID,
         assistantMessageID: input.assistantMessageID,
+        userMessageID: input.userMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
       yield* launchResume({

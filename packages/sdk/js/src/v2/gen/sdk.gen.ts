@@ -172,6 +172,8 @@ import type {
   SessionPromptResponses,
   SessionRecoveryErrors,
   SessionRecoveryResponses,
+  SessionResumeUserResponses,
+  SessionResumeUserErrors,
   SessionResumeErrors,
   SessionResumeResponses,
   SessionRevertErrors,
@@ -2684,6 +2686,50 @@ export class Session2 extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<SessionResumeResponses, SessionResumeErrors, ThrowOnError>({
       url: "/session/{sessionID}/turn/{assistantMessageID}/resume",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Resume from a trailing user
+   *
+   * Start the next turn from a trailing user message without creating another user message.
+   */
+  public resumeUser<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      userMessageID: string
+      directory?: string
+      workspace?: string
+      agentID?: string
+      task_id?: string
+      titleLocale?: string
+      modelProviderID?: string
+      modelID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "agentID" },
+            { in: "query", key: "task_id" },
+            { in: "query", key: "titleLocale" },
+            { in: "query", key: "modelProviderID" },
+            { in: "query", key: "modelID" },
+            { in: "body", key: "userMessageID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionResumeUserResponses, SessionResumeUserErrors, ThrowOnError>({
+      url: "/session/{sessionID}/resume",
       ...options,
       ...params,
     })

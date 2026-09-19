@@ -202,7 +202,7 @@ export function Session() {
     const message = lastAssistant()
     if (!message || currentAgentID() !== "main") return undefined
     return sync.data.session_recovery[route.sessionID]?.find(
-      (candidate) => candidate.assistantMessageID === message.id,
+      (candidate) => candidate.kind === "assistant" && candidate.assistantMessageID === message.id,
     )
   })
 
@@ -517,21 +517,34 @@ export function Session() {
       { sessionID: route.sessionID },
       { throwOnError: true },
     )
+    const list = candidates.data ?? []
     const candidate = assistantMessageID
-      ? candidates.data?.find((item) => item.assistantMessageID === assistantMessageID)
-      : candidates.data?.at(-1)
+      ? list.find((item) => item.kind === "assistant" && item.assistantMessageID === assistantMessageID)
+      : list.at(-1)
     if (!candidate) {
       toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
       return
     }
-    await sdk.client.session.resume(
-      { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
-      { throwOnError: true },
-    )
+    if (candidate.kind === "parent-user") {
+      await sdk.client.session.resumeUser(
+        {
+          sessionID: route.sessionID,
+          userMessageID: candidate.userMessageID,
+          titleLocale: language.intl(),
+        },
+        { throwOnError: true },
+      )
+      sync.set("session_recovery_active", route.sessionID, candidate.userMessageID)
+    } else {
+      await sdk.client.session.resume(
+        { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
+        { throwOnError: true },
+      )
+      sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
+    }
     // 202 = engine accepted; both resume kinds start a run. Do not GET recovery here:
     // recovery without allowBusy returns [] while busy, which would false-report "nothing to recover".
     // Clearing relies on session.status→idle / session.error (see sync.tsx).
-    sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
     toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
   }
 
@@ -546,11 +559,13 @@ export function Session() {
       },
       onSelect: async (dialog) => {
         try {
-          const candidate = recoveryCandidate()
           const status = sync.data.session_status[route.sessionID]
           if (status?.type === "busy" || status?.type === "retry") {
             toast.show({ message: t("tui.toast.session.recover.busy"), variant: "info" })
-          } else await recover(candidate?.assistantMessageID)
+          } else {
+            const c = recoveryCandidate()
+            await recover(c && c.kind === "assistant" ? c.assistantMessageID : undefined)
+          }
         } catch (error) {
           toast.show({
             message: recoveryErrorMessage(error),
@@ -1500,10 +1515,10 @@ export function Session() {
                         last={lastAssistant()?.id === message.id}
                         message={message as AssistantMessage}
                         parts={sync.data.part[message.id] ?? []}
-                        recoverable={
-                          recoveryCandidate()?.assistantMessageID === message.id &&
-                          sync.session.status(route.sessionID) === "idle"
-                        }
+                        recoverable={(() => {
+                          const c = recoveryCandidate()
+                          return !!(c && c.kind === "assistant" && c.assistantMessageID === message.id && sync.session.status(route.sessionID) === "idle")
+                        })()}
                         recovering={sync.data.session_recovery_active[route.sessionID] === message.id}
                         onRecover={recover}
                       />

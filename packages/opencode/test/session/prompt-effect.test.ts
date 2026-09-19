@@ -2,7 +2,7 @@ import { Worktree } from "../../src/worktree"
 import { Instance } from "../../src/project/instance"
 import { NodeFileSystem } from "@effect/platform-node"
 import { FetchHttpClient } from "effect/unstable/http"
-import { afterEach, expect } from "bun:test"
+import { afterEach, describe, expect } from "bun:test"
 import { dynamicTool, jsonSchema, type Tool as AITool } from "ai"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
@@ -61,7 +61,7 @@ import { testEffect } from "../lib/effect"
 import { reply, TestLLMServer } from "../lib/llm-server"
 import { Inbox } from "../../src/inbox"
 import { Metrics } from "../../src/metrics"
-import { Database, eq } from "../../src/storage"
+import { Database, eq, NotFoundError } from "../../src/storage"
 import { prefixCaptureRef } from "../../src/session/prefix-capture-ref"
 import {
   currentMainHintToken,
@@ -2230,7 +2230,7 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
       yield* llm.text("world")
 
       const candidate = yield* prompt.recovery({ sessionID: chat.id })
-      expect(candidate).toEqual([{ assistantMessageID: seeded.assistant.id, parentMessageID: seeded.user.id, created: expect.any(Number) }])
+      expect(candidate).toEqual([{ kind: "assistant", assistantMessageID: seeded.assistant.id, parentMessageID: seeded.user.id, created: expect.any(Number) }])
       const result = yield* prompt.resume({
         sessionID: chat.id,
         assistantMessageID: seeded.assistant.id,
@@ -2293,8 +2293,8 @@ it.live(
         yield* llm.text("found 2 resumes")
 
         const candidates = yield* prompt.recovery({ sessionID: chat.id, allowBusy: true })
-        expect(candidates.some((c) => c.assistantMessageID === shell.id)).toBe(true)
-        expect(candidates.every((c) => Object.keys(c).sort().join(",") === "assistantMessageID,created,parentMessageID")).toBe(true)
+        expect(candidates.some((c) => c.kind === "assistant" && c.assistantMessageID === shell.id)).toBe(true)
+        expect(candidates.every((c) => c.kind === "assistant" && Object.keys(c).sort().join(",") === "assistantMessageID,created,kind,parentMessageID")).toBe(true)
 
         const result = yield* prompt.resume({
           sessionID: chat.id,
@@ -4547,3 +4547,728 @@ for (const failure of ["throw", "rejection", "interruption"] as const) {
     ),
   )
 }
+
+// [TP-SR-R21-17][D16f] Trailing-user resume golden path against the real SessionPrompt/LLM boundary.
+describe("trailing-user resume integration", () => {
+  const waitIdle = Effect.fn("waitIdle")(function* (sessionID: SessionID) {
+    const run = yield* SessionRunState.Service
+    yield* Effect.gen(function* () {
+      while (true) {
+        const exit = yield* run.assertNotBusy(sessionID, "main").pipe(Effect.exit)
+        if (Exit.isSuccess(exit)) return
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(Session.BusyError)
+        yield* Effect.sleep("10 millis")
+      }
+    }).pipe(Effect.timeout("10 seconds"))
+  })
+
+  const seedTail = Effect.fn("seedTail")(function* (
+    sessionID: SessionID,
+    root: string,
+    opts: { noReply?: boolean; synthetic?: boolean; withCompletedTool?: boolean; text?: string },
+  ) {
+    const sessions = yield* Session.Service
+    const user1 = yield* sessions.updateMessage({
+      id: MessageID.ascending(),
+      role: "user",
+      sessionID,
+      agent: "build",
+      model: ref,
+      time: { created: Date.now() },
+    })
+    yield* sessions.updatePart({
+      id: PartID.ascending(),
+      messageID: user1.id,
+      sessionID,
+      type: "text",
+      text: "run a tool",
+    })
+    if (opts.withCompletedTool !== false) {
+      const assistant = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "assistant",
+        parentID: user1.id,
+        sessionID,
+        mode: "build",
+        agent: "build",
+        path: { cwd: root, root },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ref.modelID,
+        providerID: ref.providerID,
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "tool-calls",
+      } as Parameters<typeof sessions.updateMessage>[0])
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: assistant.id,
+        sessionID,
+        type: "tool",
+        callID: "call_done",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { command: "echo ok" },
+          output: "ok",
+          title: "echo ok",
+          metadata: {},
+          time: { start: Date.now(), end: Date.now() },
+        },
+      })
+    }
+    const user2 = yield* sessions.updateMessage({
+      id: MessageID.ascending(),
+      role: "user",
+      sessionID,
+      agent: "build",
+      model: ref,
+      time: { created: Date.now() + 1 },
+      ...(opts.noReply ? { noReply: true } : {}),
+    })
+    yield* sessions.updatePart({
+      id: PartID.ascending(),
+      messageID: user2.id,
+      sessionID,
+      type: "text",
+      text: opts.text ?? (opts.synthetic ? "<actor-notification>subagent failed</actor-notification>" : "continue please"),
+      ...(opts.synthetic ? { synthetic: true } : {}),
+    })
+    return { user1, user2 }
+  })
+
+  it.live("resume from trailing user produces new assistant parented to that user; no new user; tools not re-run", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm, dir }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "trailing-user",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const { user1, user2 } = yield* seedTail(chat.id, dir, { synthetic: true })
+        const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const usersBefore = before.filter((m) => m.info.role === "user").map((m) => m.info.id)
+        const candidates = yield* prompt.recovery({ sessionID: chat.id, agentID: "main" })
+        expect(candidates).toEqual([
+          { kind: "parent-user", userMessageID: user2.id, created: user2.time.created },
+        ])
+        yield* llm.text("RESUMED_FROM_TRAILING_USER")
+        yield* prompt.resumeBackground({
+          sessionID: chat.id,
+          userMessageID: user2.id,
+          agentID: "main",
+          model: ref,
+        })
+        yield* llm.wait(1)
+        yield* waitIdle(chat.id)
+        const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const usersAfter = after.filter((m) => m.info.role === "user").map((m) => m.info.id)
+        expect(usersAfter).toEqual(usersBefore)
+        expect(usersAfter).toEqual([user1.id, user2.id])
+        const newAssistants = after.filter(
+          (m) => m.info.role === "assistant" && m.info.parentID === user2.id,
+        )
+        expect(newAssistants.length).toBe(1)
+        const textParts = newAssistants[0]!.parts.filter((p) => p.type === "text")
+        expect(textParts.some((p) => p.type === "text" && p.text.includes("RESUMED_FROM_TRAILING_USER"))).toBe(true)
+        // one model call for the resumed turn only
+        expect(yield* llm.calls).toBe(1)
+        // completed tool callID must not be re-executed (no new tool parts)
+        const toolParts = after.flatMap((m) => m.parts).filter((p) => p.type === "tool")
+        expect(toolParts.filter((p) => p.type === "tool" && p.callID === "call_done")).toHaveLength(1)
+      }),
+      { git: true, config: providerCfg },
+    ),
+    15_000,
+  )
+
+  for (const opts of [
+    { name: "manual", synthetic: false, text: "MANUAL_ORIGINAL_USER" },
+    { name: "synthetic", synthetic: true, text: "SYNTHETIC_ORIGINAL_USER" },
+    { name: "notification", synthetic: true, text: "<actor-notification>NOTIFICATION_ORIGINAL_USER</actor-notification>" },
+    { name: "noReply", noReply: true, synthetic: false, text: "NO_REPLY_ORIGINAL_USER" },
+  ]) {
+    // [TP-SR-R21-17] Execute each source, not just its candidate-list projection.
+    it.live(`${opts.name} trailing user executes from the original context without replaying tools`, () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: `tail-${opts.name}`,
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user1, user2 } = yield* seedTail(chat.id, dir, opts)
+          const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          expect(yield* prompt.recovery({ sessionID: chat.id, agentID: "main" })).toEqual([
+            { kind: "parent-user", userMessageID: user2.id, created: user2.time.created },
+          ])
+          expect(yield* llm.calls).toBe(0)
+          yield* llm.text(`RESUMED_${opts.name}`)
+          const result = yield* prompt.resume({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
+          expect(result.info).toMatchObject({ role: "assistant", parentID: user2.id, finish: "stop" })
+          expect(result.parts.some((p) => p.type === "text" && p.text === `RESUMED_${opts.name}`)).toBe(true)
+          const inputs = yield* llm.inputs
+          expect(inputs).toHaveLength(1)
+          const messages = inputs[0]?.messages
+          if (!Array.isArray(messages)) throw new Error("model request must contain messages")
+          expect(messages.at(-1)?.role).toBe("user")
+          expect(JSON.stringify(messages.at(-1)?.content)).toContain(opts.text)
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          expect(after.filter((m) => m.info.role === "user").map((m) => m.info.id)).toEqual([user1.id, user2.id])
+          expect(after.filter((m) => m.info.role === "user")).toEqual(before.filter((m) => m.info.role === "user"))
+          expect(after.flatMap((m) => m.parts).filter((p) => p.type === "tool")).toEqual(
+            before.flatMap((m) => m.parts).filter((p) => p.type === "tool"),
+          )
+          expect(yield* prompt.recovery({ sessionID: chat.id, agentID: "main" })).toEqual([])
+          yield* waitIdle(chat.id)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    )
+  }
+
+  it.live("busy session rejects resume; after idle trailing-user resume works", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm, dir }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "busy-resume",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* seedTail(chat.id, dir, {})
+        // hang the first LLM response so the runner stays busy
+        yield* llm.hang
+        const hanging = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "hang" }],
+          })
+          .pipe(Effect.forkChild)
+        yield* llm.wait(1)
+        // A real notification can arrive while the model is held. Keep a valid
+        // trailing target so BusyError cannot accidentally pass as NotFoundError.
+        const { user2 } = yield* seedTail(chat.id, dir, { withCompletedTool: false })
+        const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const busyRecovery = yield* prompt.recovery({ sessionID: chat.id, agentID: "main" })
+        expect(busyRecovery).toEqual([])
+        const busyResume = yield* Effect.exit(
+          prompt.resumeBackground({
+            sessionID: chat.id,
+            userMessageID: user2.id,
+            agentID: "main",
+            model: ref,
+          }),
+        )
+        expect(Exit.isFailure(busyResume)).toBe(true)
+        if (Exit.isFailure(busyResume)) expect(Cause.squash(busyResume.cause)).toBeInstanceOf(Session.BusyError)
+        expect(yield* llm.calls).toBe(1)
+        expect(yield* sessions.messages({ sessionID: chat.id, agentID: "main" })).toEqual(before)
+        yield* prompt.cancel(chat.id)
+        yield* Fiber.await(hanging)
+        yield* waitIdle(chat.id)
+        yield* llm.text("RESUMED_AFTER_BUSY")
+        const result = yield* prompt.resume({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
+        expect(result.info).toMatchObject({ role: "assistant", parentID: user2.id, finish: "stop" })
+        expect(result.parts.some((p) => p.type === "text" && p.text === "RESUMED_AFTER_BUSY")).toBe(true)
+        expect(yield* llm.calls).toBe(2)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  it.live("resume after a newer trailing user: old target is no longer recoverable", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm, dir }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "stale-target",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const { user2 } = yield* seedTail(chat.id, dir, {})
+        const user3 = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          time: { created: Date.now() + 2 },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: user3.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "newer question",
+        })
+        const candidates = yield* prompt.recovery({ sessionID: chat.id, agentID: "main" })
+        expect(candidates).toEqual([
+          { kind: "parent-user", userMessageID: user3.id, created: user3.time.created },
+        ])
+        const stale = yield* Effect.exit(
+          prompt.resumeBackground({
+            sessionID: chat.id,
+            userMessageID: user2.id,
+            agentID: "main",
+            model: ref,
+          }),
+        )
+        expect(Exit.isFailure(stale)).toBe(true)
+        if (Exit.isFailure(stale)) {
+          const error = Cause.squash(stale.cause)
+          expect(error).toBeInstanceOf(NotFoundError)
+          expect(error).toMatchObject({ data: { message: "No resumable trailing user found for message " + user2.id } })
+        }
+        expect(yield* llm.calls).toBe(0)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  /**
+   * Production scene `ses_ffe5f4c46d403ffeDtAFOB396h` (2026-09-19 UTC):
+   * - main assistant `msg_g001a0b6db77a2001dUmpyrod2` finish=tool-calls + completed + tool(actor,completed)
+   * - +1ms trailing user `msg_g001a0b6dc36f4001M9F92aXpY` actor-notification (subagent quota failures)
+   * - /recovery then returned [] → Resume 404 / button hidden; only a new user send could start.
+   * [TP-SR-R21-17] Post-fix: trailing notification user is a parent-user target; resume runs from it.
+   */
+  it.live("production scene: tool-calls+completed then actor-notification user → parent-user resume", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm, dir }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "prod-ses_ffe5f4c46",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const u1 = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: u1.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "授权修改 sendCellRevision",
+        })
+        const a1 = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          parentID: u1.id,
+          sessionID: chat.id,
+          mode: "build",
+          agent: "build",
+          path: { cwd: dir, root: dir },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ref.modelID,
+          providerID: ref.providerID,
+          time: { created: Date.now(), completed: Date.now() },
+          finish: "tool-calls",
+        } as Parameters<typeof sessions.updateMessage>[0])
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: a1.id,
+          sessionID: chat.id,
+          type: "tool",
+          callID: "call_actor_send",
+          tool: "actor",
+          state: {
+            status: "completed",
+            input: { operation: { action: "send", to_actor_id: "general-15", content: "授权修改" } },
+            output: "ok",
+            title: "send general-15",
+            metadata: {},
+            time: { start: Date.now(), end: Date.now() },
+          },
+        })
+        const notice = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          time: { created: Date.now() + 1 },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: notice.id,
+          sessionID: chat.id,
+          type: "text",
+          text: "<actor-notification>Background sub-session failed. token quota is not enough</actor-notification>",
+          synthetic: true,
+        })
+
+        // Pre-fix: "no later user/assistant" disqualified a1; last is user → recovery [].
+        // Post-fix: notice is the only target.
+        const candidates = yield* prompt.recovery({ sessionID: chat.id, agentID: "main" })
+        expect(candidates).toEqual([
+          { kind: "parent-user", userMessageID: notice.id, created: notice.time.created },
+        ])
+        expect(candidates.some((c) => c.kind === "assistant")).toBe(false)
+
+        yield* llm.text("RESUMED_AFTER_PROD_NOTICE")
+        yield* prompt.resumeBackground({
+          sessionID: chat.id,
+          userMessageID: notice.id,
+          agentID: "main",
+          model: ref,
+        })
+        yield* llm.wait(1)
+        yield* waitIdle(chat.id)
+        const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const users = after.filter((m) => m.info.role === "user").map((m) => m.info.id)
+        expect(users).toEqual([u1.id, notice.id])
+        const resumed = after.filter((m) => m.info.role === "assistant" && m.info.parentID === notice.id)
+        expect(resumed).toHaveLength(1)
+        expect(
+          resumed[0]!.parts.some((p) => p.type === "text" && p.text.includes("RESUMED_AFTER_PROD_NOTICE")),
+        ).toBe(true)
+        // actor tool from the interrupted tool-loop is not re-invoked
+        const actorTools = after
+          .flatMap((m) => m.parts)
+          .filter((p) => p.type === "tool" && p.tool === "actor")
+        expect(actorTools).toHaveLength(1)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  it.live(
+    "[R003] plan-then-admission race: newer user before work re-check → fail with zero side effects",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: "r003-admission-race",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user2 } = yield* seedTail(chat.id, dir, {})
+          const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          const toolsBefore = before.flatMap((m) => m.parts).filter((p) => p.type === "tool")
+          // Barrier: work() starts with Effect.yieldNow; inject newer user in that window.
+          const injector = yield* Effect.gen(function* () {
+            yield* Effect.yieldNow
+            yield* Effect.yieldNow
+            const newer = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: chat.id,
+              agent: "build",
+              model: ref,
+              time: { created: Date.now() + 9 },
+            })
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: newer.id,
+              sessionID: chat.id,
+              type: "text",
+              text: "newer in admission window",
+            })
+            return newer
+          }).pipe(Effect.forkChild)
+          const resumeExit = yield* Effect.exit(
+            prompt.resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            }),
+          )
+          const newer = yield* Fiber.join(injector)
+          yield* Effect.sleep("300 millis")
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          const toolsAfter = after.flatMap((m) => m.parts).filter((p) => p.type === "tool")
+          // Either plan/admission rejected, or (if injector lost the race) resume used user2 only.
+          const assistantsFromUser2 = after.filter(
+            (m) => m.info.role === "assistant" && "parentID" in m.info && m.info.parentID === user2.id,
+          )
+          const assistantsFromNewer = after.filter(
+            (m) => m.info.role === "assistant" && "parentID" in m.info && m.info.parentID === newer.id,
+          )
+          expect(assistantsFromNewer).toHaveLength(0)
+          if (Exit.isFailure(resumeExit)) {
+            expect(assistantsFromUser2.filter((m) => m.parts.some((p) => p.type === "text"))).toHaveLength(0)
+            // [R003] Zero side effects: full message set preserved (no silent deletes/rewrites).
+            expect(after.map((m) => m.info.id)).toEqual([...before.map((m) => m.info.id), newer.id].sort())
+            expect(toolsAfter.map((p) => (p as { callID?: string }).callID)).toEqual(
+              toolsBefore.map((p) => (p as { callID?: string }).callID),
+            )
+          }
+          // tools preserved
+          expect(toolsAfter.map((p) => (p as { callID?: string }).callID)).toEqual(
+            toolsBefore.map((p) => (p as { callID?: string }).callID),
+          )
+          expect(yield* llm.calls).toBeLessThanOrEqual(1)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    20_000,
+  )
+
+  it.live(
+    "[R003] assistant after trailing user invalidates target (strict tail)",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: "r003-later-assistant",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user2 } = yield* seedTail(chat.id, dir, {})
+          // New assistant after trailing user → target no longer tail
+          yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "assistant",
+            parentID: user2.id,
+            sessionID: chat.id,
+            mode: "build",
+            agent: "build",
+            path: { cwd: dir, root: dir },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            time: { created: Date.now() + 20, completed: Date.now() + 20 },
+            finish: "stop",
+          } as Parameters<typeof sessions.updateMessage>[0])
+          const exit = yield* Effect.exit(
+            prompt.resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            }),
+          )
+          expect(Exit.isFailure(exit)).toBe(true)
+          expect(yield* llm.calls).toBe(0)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    15_000,
+  )
+
+  it.live(
+    "[R003] admission reject does not delete later empty assistant (finalizer off reject path)",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: "r003-reject-zero-side-effect",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user2 } = yield* seedTail(chat.id, dir, {})
+          const emptyId = MessageID.ascending()
+          // Later empty assistant (no error, no useful parts) — strict tail must reject resume…
+          yield* sessions.updateMessage({
+            id: emptyId,
+            role: "assistant",
+            parentID: user2.id,
+            sessionID: chat.id,
+            mode: "build",
+            agent: "build",
+            path: { cwd: dir, root: dir },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            time: { created: Date.now() + 20, completed: Date.now() + 20 },
+            finish: "stop",
+          } as Parameters<typeof sessions.updateMessage>[0])
+          const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          const exit = yield* Effect.exit(
+            prompt.resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            }),
+          )
+          expect(Exit.isFailure(exit)).toBe(true)
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // …but must NOT force-delete that assistant (zero side effects on stale reject).
+          expect(after.map((m) => m.info.id)).toEqual(before.map((m) => m.info.id))
+          expect(after.some((m) => m.info.id === emptyId)).toBe(true)
+          expect(yield* llm.calls).toBe(0)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    15_000,
+  )
+
+  it.live(
+    "[R003] ensure-mode resume is exclusive: concurrent call gets BusyError, does not join",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: "r003-exclusive",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user2 } = yield* seedTail(chat.id, dir, {})
+          const release = defer<void>()
+          yield* Effect.addFinalizer(() => Effect.sync(() => release.resolve()))
+          yield* llm.hold("EXCLUSIVE_OK", release.promise)
+          const first = yield* prompt
+            .resumeBackground({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
+            .pipe(Effect.forkChild)
+          yield* llm.wait(1)
+          // Sync resume while first run holds the slot → BusyError (must not join first work).
+          const busy = yield* prompt
+            .resume({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
+            .pipe(Effect.exit)
+          expect(Exit.isFailure(busy)).toBe(true)
+          if (Exit.isFailure(busy)) expect(Cause.squash(busy.cause)).toBeInstanceOf(Session.BusyError)
+          release.resolve(undefined)
+          yield* Fiber.join(first).pipe(Effect.timeout("5 seconds"), Effect.exit)
+          yield* Effect.sleep("200 millis")
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          const fromUser2 = after.filter(
+            (m) => m.info.role === "assistant" && "parentID" in m.info && m.info.parentID === user2.id,
+          )
+          // Only one execution — not a second joined/duplicated turn.
+          expect(fromUser2.filter((m) => m.parts.some((p) => p.type === "text" && (p as { text?: string }).text?.includes("EXCLUSIVE_OK")))).toHaveLength(1)
+          expect(yield* llm.calls).toBe(1)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    20_000,
+  )
+
+  it.live(
+    "[R003] first assistant parents to planned user even if a newer user is written mid-turn",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: "r003-parent-lock",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user2 } = yield* seedTail(chat.id, dir, {})
+          const gate = defer<void>()
+          yield* llm.hold("LOCKED_PARENT_OK", gate.promise)
+          const fiber = yield* prompt
+            .resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            })
+            .pipe(Effect.forkChild)
+          yield* llm.wait(1)
+          const newer = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user",
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            time: { created: Date.now() + 9 },
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: newer.id,
+            sessionID: chat.id,
+            type: "text",
+            text: "newer after plan",
+          })
+          gate.resolve(undefined)
+          yield* Fiber.join(fiber).pipe(Effect.timeout("5 seconds"), Effect.exit)
+          // wait until assistant text lands (runLoop work is forked by start)
+          yield* Effect.gen(function* () {
+            for (let i = 0; i < 20; i++) {
+              const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+              if (after.some((m) => m.info.role === "assistant" && m.parts.some((p) => p.type === "text" && p.text.includes("LOCKED_PARENT_OK")))) {
+                return
+              }
+              yield* Effect.sleep("100 millis")
+            }
+          })
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          const parents = after
+            .filter(
+              (m) =>
+                m.info.role === "assistant" &&
+                "parentID" in m.info &&
+                m.parts.some((p) => p.type === "text" && p.text.includes("LOCKED_PARENT_OK")),
+            )
+            .map((m) => (m.info as { parentID: string }).parentID)
+          expect(parents).toEqual([user2.id])
+          expect(parents).not.toContain(newer.id)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    20_000,
+  )
+
+  it.live("concurrent double resume: BusyError or consumed-target NotFoundError; only one execution", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm, dir }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "double-resume",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const { user2 } = yield* seedTail(chat.id, dir, {})
+        const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const release = defer<void>()
+        yield* Effect.addFinalizer(() => Effect.sync(() => release.resolve()))
+        yield* llm.hold("RESUMED_ONCE", release.promise)
+        yield* prompt.resumeBackground({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
+        yield* llm.wait(1)
+        // Synchronous entry checks the busy runner before candidate freshness.
+        const busy = yield* prompt.resume({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref }).pipe(Effect.exit)
+        expect(Exit.isFailure(busy)).toBe(true)
+        if (Exit.isFailure(busy)) expect(Cause.squash(busy.cause)).toBeInstanceOf(Session.BusyError)
+        const second = yield* Effect.exit(
+          prompt.resumeBackground({
+            sessionID: chat.id,
+            userMessageID: user2.id,
+            agentID: "main",
+            model: ref,
+          }),
+        )
+        expect(Exit.isFailure(second)).toBe(true)
+        // Background entry checks freshness first: the first execution already
+        // persisted its assistant, so the original user is no longer the tail.
+        if (Exit.isFailure(second)) {
+          const error = Cause.squash(second.cause)
+          expect(error).toBeInstanceOf(NotFoundError)
+          expect(error).toMatchObject({ data: { message: "No resumable trailing user found for message " + user2.id } })
+        }
+        expect(yield* llm.calls).toBe(1)
+        release.resolve()
+        yield* waitIdle(chat.id)
+        const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const resumed = after.filter((m) => m.info.role === "assistant" && m.info.parentID === user2.id)
+        expect(resumed).toHaveLength(1)
+        expect(resumed[0]!.parts.some((p) => p.type === "text" && p.text === "RESUMED_ONCE")).toBe(true)
+        expect(after.filter((m) => m.info.role === "user")).toEqual(before.filter((m) => m.info.role === "user"))
+        expect(after.flatMap((m) => m.parts).filter((p) => p.type === "tool")).toEqual(
+          before.flatMap((m) => m.parts).filter((p) => p.type === "tool"),
+        )
+        expect(yield* llm.calls).toBe(1)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+})

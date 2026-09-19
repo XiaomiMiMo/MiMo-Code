@@ -5530,14 +5530,65 @@ export type SessionRecoveryResponses = {
   /**
    * Recovery candidates
    */
-  200: Array<{
-    assistantMessageID: string
-    parentMessageID: string
-    created: number
-  }>
+  200: Array<
+    | {
+        kind: "assistant"
+        assistantMessageID: string
+        parentMessageID: string
+        created: number
+      }
+    | {
+        kind: "parent-user"
+        userMessageID: string
+        created: number
+      }
+  >
 }
 
 export type SessionRecoveryResponse = SessionRecoveryResponses[keyof SessionRecoveryResponses]
+
+export type SessionResumeUserData = {
+  body: {
+    userMessageID: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+    agentID?: string
+    task_id?: string
+    titleLocale?: string
+    modelProviderID?: string
+    modelID?: string
+  }
+  url: "/session/{sessionID}/resume"
+}
+
+export type SessionResumeUserErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict — session resource is busy
+   */
+  409: ConflictError
+}
+
+export type SessionResumeUserError = SessionResumeUserErrors[keyof SessionResumeUserErrors]
+
+export type SessionResumeUserResponses = {
+  /**
+   * Resume accepted
+   */
+  202: unknown
+}
 
 export type SessionResumeData = {
   body?: never

@@ -69,7 +69,7 @@ describe("resume empty residue", () => {
             yield* Effect.sleep("200 millis")
             const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
             return {
-              parents: before.map((c) => c.parentMessageID),
+              parents: before.flatMap((c) => (c.kind === "assistant" ? [c.parentMessageID] : [])),
               userParent: user.id,
               shell1Gone: after.find((m) => m.info.id === shell1.id) === undefined,
               shell2Gone: after.find((m) => m.info.id === shell2.id) === undefined,
@@ -140,7 +140,7 @@ describe("resume empty residue", () => {
         ),
     })
     expect(result.candidates.length).toBe(1)
-    expect(result.candidates[0]?.parentMessageID).toBeDefined()
+    expect(result.candidates[0]?.kind).toBe("assistant")
   })
 
   test("tool-resume on useful target cleans empty siblings and keeps useful", async () => {
@@ -409,7 +409,7 @@ describe("resume empty residue", () => {
               shellMessage({ sessionID: session.id, parentID: user.id, created: Date.now(), cwd: tmp.path }) as Parameters<typeof sessions.updateMessage>[0],
             )
             const before = yield* prompt.recovery({ sessionID: session.id, agentID: "main", allowBusy: true })
-            expect(before.some((c) => c.assistantMessageID === shell.id)).toBe(true)
+            expect(before.some((c) => c.kind === "assistant" && c.assistantMessageID === shell.id)).toBe(true)
             yield* sessions.removeMessage({ sessionID: session.id, messageID: shell.id })
             const exit = yield* prompt
               .resumeBackground({ sessionID: session.id, assistantMessageID: shell.id, agentID: "main" })
@@ -458,7 +458,7 @@ describe("resume empty residue", () => {
             yield* Effect.sleep("150 millis")
             const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
             return {
-              listed: candidates.some((c) => c.assistantMessageID === assistant.id),
+              listed: candidates.some((c) => c.kind === "assistant" && c.assistantMessageID === assistant.id),
               shellGone: after.find((m) => m.info.id === assistant.id) === undefined,
             }
           }),

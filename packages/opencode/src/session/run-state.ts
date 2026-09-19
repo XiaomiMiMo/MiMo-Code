@@ -18,6 +18,13 @@ export interface Interface {
     onInterrupt: Effect.Effect<MessageV2.WithParts>,
     work: Effect.Effect<MessageV2.WithParts>,
   ) => Effect.Effect<MessageV2.WithParts>
+  /** [R003] Exclusive: run work only if idle; busy → BusyError. Never join. */
+  readonly ensureExclusive: (
+    sessionID: SessionID,
+    agentID: string,
+    onInterrupt: Effect.Effect<MessageV2.WithParts>,
+    work: Effect.Effect<MessageV2.WithParts>,
+  ) => Effect.Effect<MessageV2.WithParts, Session.BusyError>
   readonly startShell: (
     sessionID: SessionID,
     onInterrupt: Effect.Effect<MessageV2.WithParts>,
@@ -187,6 +194,15 @@ export const layer = Layer.effect(
       return yield* (yield* runner(sessionID, agentID, onInterrupt)).ensureRunning(withOrphanSweep(sessionID, agentID, work))
     })
 
+    const ensureExclusive = Effect.fn("SessionRunState.ensureExclusive")(function* (
+      sessionID: SessionID,
+      agentID: string,
+      onInterrupt: Effect.Effect<MessageV2.WithParts>,
+      work: Effect.Effect<MessageV2.WithParts>,
+    ) {
+      return yield* (yield* runner(sessionID, agentID, onInterrupt)).ensureExclusive(work)
+    })
+
     const startShell = Effect.fn("SessionRunState.startShell")(function* (
       sessionID: SessionID,
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
@@ -195,7 +211,7 @@ export const layer = Layer.effect(
       return yield* (yield* runner(sessionID, "main", onInterrupt)).startShell(work)
     })
 
-    return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, start, startShell })
+    return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, ensureExclusive, start, startShell })
   }),
 )
 

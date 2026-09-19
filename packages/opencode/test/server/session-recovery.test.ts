@@ -65,7 +65,7 @@ describe("session turn recovery routes", () => {
         const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
         const candidates = yield* Effect.promise(() =>
           listed.json() as Promise<
-            Array<{ assistantMessageID: string; parentMessageID: string; created: number }>
+            Array<{ kind: "assistant"; assistantMessageID: string; parentMessageID: string; created: number }>
           >,
         )
         const missing = yield* Effect.promise(() =>
@@ -106,6 +106,7 @@ describe("session turn recovery routes", () => {
     expect(result.listed).toBe(200)
     expect(result.candidates).toEqual([
       {
+        kind: "assistant",
         assistantMessageID: expect.any(String),
         parentMessageID: result.userID,
         created: expect.any(Number),
@@ -205,7 +206,9 @@ describe("recovery candidate predicate", () => {
   test("completed + tool-calls → candidate", async () => {
     const result = await setupAssistant({ completed: true, finish: "tool-calls" })
     expect(result.candidates.length).toBe(1)
-    expect(result.candidates[0]!.assistantMessageID).toBe(result.assistantId)
+    const c0 = result.candidates[0]!;
+    expect(c0.kind).toBe("assistant");
+    if (c0.kind === "assistant") expect(c0.assistantMessageID).toBe(result.assistantId)
   })
 
   test("completed + length → candidate", async () => {
@@ -257,4 +260,159 @@ test("resume with only modelProviderID returns 400", async () => {
     })),
   })
   expect(result).toBe(400)
+})
+
+// [TP-SR-R21-17][D16f] Trailing user is a recovery target when it is the slice tail.
+describe("trailing user recovery target", () => {
+  test("last message is user → parent-user candidate", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => AppRuntime.runPromise(Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const prompt = yield* SessionPrompt.Service
+        const session = yield* sessions.create({ title: "trailing user" })
+        const user = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() },
+        })
+        const candidates = yield* prompt.recovery({ sessionID: session.id, agentID: "main" })
+        expect(candidates).toEqual([
+          { kind: "parent-user", userMessageID: user.id, created: user.time.created },
+        ])
+      })),
+    })
+  })
+
+  test("tool-calls assistant then trailing user → only parent-user (assistant disqualified)", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => AppRuntime.runPromise(Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const prompt = yield* SessionPrompt.Service
+        const session = yield* sessions.create({ title: "notify after tool-calls" })
+        const user1 = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() },
+        })
+        yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          parentID: user1.id,
+          sessionID: session.id,
+          mode: "build",
+          agent: "build",
+          path: { cwd: tmp.path, root: tmp.path },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ModelID.make("test-model"),
+          providerID: ProviderID.make("test"),
+          time: { created: Date.now(), completed: Date.now() },
+          finish: "tool-calls",
+        } as Parameters<typeof sessions.updateMessage>[0])
+        const user2 = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() + 1 },
+        })
+        const candidates = yield* prompt.recovery({ sessionID: session.id, agentID: "main" })
+        expect(candidates).toEqual([
+          { kind: "parent-user", userMessageID: user2.id, created: user2.time.created },
+        ])
+      })),
+    })
+  })
+
+  test("POST /resume with userMessageID validates trailing user", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const result = await Instance.provide({
+      directory: tmp.path,
+      fn: async () => AppRuntime.runPromise(Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({ title: "resume user route" })
+        const user = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() },
+        })
+        const session2 = yield* sessions.create({ title: "resume user missing" })
+        const app = Server.Default().app
+        const query = `?directory=${encodeURIComponent(tmp.path)}`
+        const ok = yield* Effect.promise(() =>
+          Promise.resolve(app.request(`/session/${session.id}/resume${query}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userMessageID: user.id }),
+          })),
+        )
+        // fresh session with no trailing user → 404 (not busy)
+        const missing = yield* Effect.promise(() =>
+          Promise.resolve(app.request(`/session/${session2.id}/resume${query}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userMessageID: MessageID.ascending() }),
+          })),
+        )
+        return { ok: ok.status, missing: missing.status }
+      })),
+    })
+    expect(result.ok).toBe(202)
+    expect(result.missing).toBe(404)
+  })
+})
+
+// [R002] SDK contract: recovery union + resumeUser serialization
+test("SDK recovery response is union and resumeUser posts body userMessageID", async () => {
+  const calls: Array<{ url: string; method: string; body: unknown }> = []
+  const fetchMock = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+      let body: unknown = undefined
+      const raw = init?.body ?? (input instanceof Request ? undefined : undefined)
+      if (typeof raw === "string") body = JSON.parse(raw)
+      else if (input instanceof Request && input.method !== "GET") {
+        try { body = await input.clone().json() } catch { body = undefined }
+      }
+      calls.push({ url, method, body })
+      if (url.includes("/recovery")) {
+        return new Response(
+          JSON.stringify([
+            { kind: "assistant", assistantMessageID: "msg_a", parentMessageID: "msg_u", created: 1 },
+            { kind: "parent-user", userMessageID: "msg_u2", created: 2 },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )
+      }
+      return new Response(null, { status: 202 })
+    },
+    { preconnect: () => {} },
+  )
+  const client = createOpencodeClient({ baseUrl: "http://example.test", fetch: fetchMock })
+  const listed = await client.session.recovery({ sessionID: "ses_test" })
+  expect(listed.data).toEqual([
+    { kind: "assistant", assistantMessageID: "msg_a", parentMessageID: "msg_u", created: 1 },
+    { kind: "parent-user", userMessageID: "msg_u2", created: 2 },
+  ])
+  await client.session.resumeUser({ sessionID: "ses_test", userMessageID: "msg_u2", titleLocale: "fr-FR" })
+  const resumeCall = calls.find((c) => c.url.includes("/session/ses_test/resume") && !c.url.includes("/recovery"))
+  expect(resumeCall).toBeDefined()
+  expect(resumeCall!.method).toBe("POST")
+  expect(resumeCall!.body).toEqual({ userMessageID: "msg_u2" })
+  expect(resumeCall!.url).toContain("titleLocale=fr-FR")
 })
