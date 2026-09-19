@@ -15,6 +15,14 @@ interface RunHandle<A, E> {
   id: number
   done: Deferred.Deferred<A, E | Cancelled>
   fiber: Fiber.Fiber<A, E>
+  /**
+   * Work attached while this run's fiber was still live. The live loop is not
+   * guaranteed to reload messages after its last check (tail between final
+   * message read and finishRun → Idle), so dropping work on reentry can orphan
+   * a newly written prompt. Pending work is started by finishRun instead of
+   * going Idle — same single-loop invariant, no lost wake.
+   */
+  pending?: { work: Effect.Effect<A, E>; done: Deferred.Deferred<A, E | Cancelled> }
 }
 
 interface ShellHandle<A, E> {
@@ -66,16 +74,22 @@ export const make = <A, E = never, B = never>(
     SynchronizedRef.modify(ref, (st) => [st._tag === "Idle" ? idle : Effect.void, st] as const).pipe(Effect.flatten)
 
   const finishRun = (id: number, done: Deferred.Deferred<A, E | Cancelled>, exit: Exit.Exit<A, E>) =>
-    SynchronizedRef.modify(
+    SynchronizedRef.modifyEffect(
       ref,
-      (st) =>
-        [
-          Effect.gen(function* () {
-            if (st._tag === "Running" && st.run.id === id) yield* idle
-            yield* complete(done, exit)
-          }),
-          st._tag === "Running" && st.run.id === id ? ({ _tag: "Idle" } as const) : st,
-        ] as const,
+      Effect.fnUntraced(function* (st) {
+        if (st._tag !== "Running" || st.run.id !== id) return [complete(done, exit), st] as const
+        // Pending work attached during this run must still get a loop before Idle.
+        // Prompt-loop work reloads the full message table, so one pending is enough.
+        const pending = st.run.pending
+        if (pending) {
+          const nextRun = yield* startRun(pending.work, pending.done)
+          return [complete(done, exit), { _tag: "Running", run: nextRun }] as const
+        }
+        return [Effect.gen(function* () {
+          yield* idle
+          yield* complete(done, exit)
+        }), { _tag: "Idle" } as const] as const
+      }),
     ).pipe(Effect.flatten)
 
   const startRun = (work: Effect.Effect<A, E>, done: Deferred.Deferred<A, E | Cancelled>) =>
@@ -118,6 +132,10 @@ export const make = <A, E = never, B = never>(
             // gets a loop; do not await a dead Deferred forever.
             const exit = st.run.fiber.pollUnsafe()
             if (exit !== undefined) {
+              // Close any pending first so a prior attach is not dropped by reclaim.
+              if (st.run.pending) {
+                yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
+              }
               yield* Deferred.isDone(st.run.done).pipe(
                 Effect.flatMap((done) => (done ? Effect.void : Deferred.done(st.run.done, exit))),
               )
@@ -127,7 +145,14 @@ export const make = <A, E = never, B = never>(
             }
             if (opts?.onReentryWarn)
               yield* opts.onReentryWarn({ label: opts.label ?? "(unlabeled)", existingRunId: st.run.id })
-            return [Deferred.await(st.run.done), st] as const
+            // Live fiber: attach work as pending (do not drop). finishRun starts
+            // it instead of Idle, closing the lost-wake window between the loop's
+            // last message check and completion. One pending slot — prompt work
+            // reloads the full table, so later attaches share the same done.
+            if (st.run.pending) return [Deferred.await(st.run.pending.done), st] as const
+            const pendingDone = yield* Deferred.make<A, E | Cancelled>()
+            const run: RunHandle<A, E> = { ...st.run, pending: { work, done: pendingDone } }
+            return [Deferred.await(pendingDone), { _tag: "Running", run }] as const
           }
           case "ShellThenRun": {
             const exit = st.shell.fiber.pollUnsafe()
@@ -139,7 +164,12 @@ export const make = <A, E = never, B = never>(
             }
             if (opts?.onReentryWarn)
               yield* opts.onReentryWarn({ label: opts.label ?? "(unlabeled)", existingRunId: st.run.id })
-            return [Deferred.await(st.run.done), st] as const
+            // Live shell: replace pending work so finishShell starts the latest
+            // (work reloads all messages; later attach subsumes earlier).
+            return [
+              Deferred.await(st.run.done),
+              { _tag: "ShellThenRun", shell: st.shell, run: { ...st.run, work } },
+            ] as const
           }
           case "Shell": {
             const run = {
@@ -206,6 +236,7 @@ export const make = <A, E = never, B = never>(
       case "Running":
         return [
           Effect.gen(function* () {
+            if (st.run.pending) yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
             yield* Fiber.interrupt(st.run.fiber)
             yield* idleIfCurrent()
           }),
