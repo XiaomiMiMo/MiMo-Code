@@ -39,6 +39,12 @@ interface PendingHandle<A, E> {
 export type State<A, E> =
   | { readonly _tag: "Idle" }
   | { readonly _tag: "Running"; readonly run: RunHandle<A, E> }
+  /**
+   * Cancel in progress: fiber interrupt (and its ensuring/finalizers) has not
+   * finished. Stays non-Idle so a new start/ensureRunning cannot begin until
+   * the retiring execution's finalizers complete (RL-ORPHAN-D01 handoff).
+   */
+  | { readonly _tag: "Cancelling"; readonly run: RunHandle<A, E> }
   | { readonly _tag: "Shell"; readonly shell: ShellHandle<A, E> }
   | { readonly _tag: "ShellThenRun"; readonly shell: ShellHandle<A, E>; readonly run: PendingHandle<A, E> }
 
@@ -131,7 +137,7 @@ export const make = <A, E = never, B = never>(
 
   const stopShell = (shell: ShellHandle<A, E>) => Fiber.interrupt(shell.fiber)
 
-  const ensureRunning = (work: Effect.Effect<A, E>) =>
+  const ensureRunning = (work: Effect.Effect<A, E>): Effect.Effect<A, E> =>
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
@@ -195,6 +201,18 @@ export const make = <A, E = never, B = never>(
             const run = yield* startRun(work, done)
             return [Deferred.await(done), { _tag: "Running", run }] as const
           }
+          case "Cancelling": {
+            // Wait for the retiring fiber (and its finalizers) to finish, then
+            // retry — new work must not start mid-finalizer (RL-ORPHAN-D01).
+            const fiber = st.run.fiber
+            return [
+              Fiber.await(fiber).pipe(
+                Effect.ignore,
+                Effect.andThen(Effect.suspend(() => ensureRunning(work))),
+              ),
+              st,
+            ] as const
+          }
         }
       }),
     ).pipe(
@@ -244,14 +262,25 @@ export const make = <A, E = never, B = never>(
     switch (st._tag) {
       case "Idle":
         return [Effect.void, st] as const
+      case "Cancelling":
+        // Already waiting on the same fiber — do not double-interrupt.
+        return [Fiber.await(st.run.fiber).pipe(Effect.asVoid, Effect.ignore), st] as const
       case "Running":
         return [
           Effect.gen(function* () {
             if (st.run.pending) yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
+            // Interrupt WAITS for the fiber, including ensuring/finalizers.
+            // State stays Cancelling until this completes so start/ensureRunning
+            // cannot begin the next main execution mid-finalizer (RL-ORPHAN-D01).
             yield* Fiber.interrupt(st.run.fiber)
-            yield* idleIfCurrent()
+            yield* SynchronizedRef.modify(ref, (s) => {
+              if (s._tag === "Cancelling" && s.run.id === st.run.id) {
+                return [idle, { _tag: "Idle" }] as const
+              }
+              return [Effect.void, s] as const
+            }).pipe(Effect.flatten)
           }),
-          { _tag: "Idle" } as const,
+          { _tag: "Cancelling", run: st.run } as const,
         ] as const
       case "Shell":
         return [

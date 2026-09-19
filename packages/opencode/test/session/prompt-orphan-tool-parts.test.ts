@@ -1,5 +1,5 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Fiber, Layer } from "effect"
 import path from "path"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Instance } from "../../src/project/instance"
@@ -262,6 +262,50 @@ describe("sweepOrphanToolParts", () => {
         const after = yield* readPart(session.id, part.id)
         if (after?.type !== "tool") throw new Error("expected a tool part")
         expect(after.state.status).toBe("running")
+      }),
+    ),
+  )
+
+  // [RL-ORPHAN-D01] Cancel handoff: Runner stays Cancelling until the retiring
+  // fiber's finalizers finish; ensureRunning waits instead of starting B mid-sweep.
+  it.live("new work waits for cancel finalizer before starting", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const runState = yield* SessionRunState.Service
+        yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+
+        const order: string[] = []
+        const real = orphanToolIdleSweepRef.current
+        expect(real).toBeDefined()
+        orphanToolIdleSweepRef.current = (sid, opts) =>
+          Effect.gen(function* () {
+            order.push("sweep-start")
+            yield* Effect.sleep("80 millis")
+            order.push("sweep-end")
+            yield* real!(sid, opts)
+          })
+
+        const workA = Effect.gen(function* () {
+          order.push("A-body")
+          yield* Effect.sleep("150 millis")
+          return yield* dummyWork(session.id)
+        })
+
+        try {
+          const fiberA = yield* runState
+            .ensureRunning(session.id, "main", Effect.void as never, workA)
+            .pipe(Effect.exit, Effect.forkChild)
+          yield* Effect.sleep("40 millis")
+          yield* runState.cancel(session.id)
+          yield* runState.ensureRunning(session.id, "main", Effect.void as never, dummyWork(session.id))
+          yield* Fiber.join(fiberA).pipe(Effect.ignore)
+        } finally {
+          orphanToolIdleSweepRef.current = real
+        }
+
+        expect(order).toContain("sweep-end")
       }),
     ),
   )
