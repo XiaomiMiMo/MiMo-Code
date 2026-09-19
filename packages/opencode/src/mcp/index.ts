@@ -910,25 +910,32 @@ export const layer = Layer.effect(
       sampling?: ConfigMCP.Info["sampling"],
       opts?: { fromHost?: boolean; hostRevision?: string },
     ) {
-      // Unified admission: every completion validates against the *current*
-      // host ownership/generation before any shared-state mutation.
-      const hostNow = HostMcp.get()[name]
-      if (opts?.fromHost) {
-        if (!hostNow || hostNow.enabled === false) {
-          yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
-          return s.status[name] ?? { status: "disabled" as const }
+      const admit = () => {
+        const hostNow = HostMcp.get()[name]
+        if (opts?.fromHost) {
+          if (!hostNow || hostNow.enabled === false) return "reject-disabled" as const
+          if (opts.hostRevision != null && opts.hostRevision !== HostMcp.revisionOf(name)) {
+            return "reject-stale" as const
+          }
+          return "ok" as const
         }
-        if (opts.hostRevision != null && opts.hostRevision !== HostMcp.revisionOf(name)) {
-          yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
-          return s.status[name] ?? { status: "connected" as const }
-        }
-      } else if (hostNow != null) {
-        // User-sourced client cannot publish over a host-owned name.
-        yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
-        return s.status[name] ?? { status: "disabled" as const }
+        if (hostNow != null) return "reject-owned" as const
+        return "ok" as const
+      }
+      const discard = (fallback: Status) =>
+        Effect.tryPromise(() => client.close()).pipe(Effect.ignore, Effect.as(s.status[name] ?? fallback))
+
+      const first = admit()
+      if (first !== "ok") {
+        return yield* discard(first === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
       }
       const bridge = yield* EffectBridge.make()
       yield* closeClient(s, name)
+      // Re-validate after async close: host may have been replaced mid-await (R002).
+      const second = admit()
+      if (second !== "ok") {
+        return yield* discard(second === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
+      }
       s.status[name] = { status: "connected" }
       s.clients[name] = client
       s.defs[name] = listed
@@ -990,7 +997,9 @@ export const layer = Layer.effect(
         if (hostNow == null) {
           s.status[name] = result.status
           yield* closeClient(s, name)
-          delete s.clients[name]
+          // Host may have taken over during async close; do not delete a live host client.
+          if (HostMcp.get()[name] == null) delete s.clients[name]
+          else return s.status[name] ?? { status: "connected" as const }
         }
         return hostNow == null ? result.status : (s.status[name] ?? { status: "connected" as const })
       }
@@ -1008,7 +1017,8 @@ export const layer = Layer.effect(
       if (HostMcp.get()[name] != null) {
         log.error("MCP name is host-owned; add refused", { name })
         const s = yield* InstanceState.get(state)
-        return { status: { ...s.status, [name]: { status: "disabled" as const } } }
+        // Return the real current status — do not fabricate "disabled".
+        return { status: { ...s.status, [name]: s.status[name] ?? { status: "disabled" as const } } }
       }
       yield* createAndStore(name, mcp, undefined, { fromHost: false })
       const s = yield* InstanceState.get(state)
@@ -1179,6 +1189,8 @@ export const layer = Layer.effect(
       if (resolved.hostOwned && mcpConfig.enabled === false) {
         throw new Error(`MCP server ${mcpName} is host-owned and disabled`)
       }
+      // Capture attempt identity at the start of auth, not after connect completes (R003).
+      const hostRevisionAtStart = resolved.hostOwned ? HostMcp.revisionOf(mcpName) : undefined
       if (mcpConfig.type !== "remote") throw new Error(`MCP server ${mcpName} is not a remote server`)
       if (mcpConfig.oauth === false) throw new Error(`MCP server ${mcpName} has OAuth explicitly disabled`)
 
@@ -1222,7 +1234,7 @@ export const layer = Layer.effect(
                 oauthState,
                 client,
                 resolved,
-                hostRevision: resolved.hostOwned ? HostMcp.revisionOf(mcpName) : undefined,
+                hostRevision: hostRevisionAtStart,
               }) satisfies AuthResult,
           )
         },

@@ -127,12 +127,13 @@ it.live("[TP-MCU-R7-21][TP-MCU-R10-20] late host connect after remove-and-restor
         HostMcp.set({ example: cfg("old") })
         yield* mcp.tools()
         expect(Object.keys(yield* mcp.tools())).toEqual(["example_old"])
+        const restored = (yield* mcp.clients()).example
+        expect(restored).toBeTruthy()
         release()
         yield* Fiber.join(pending)
-        // Late old attempt must not replace the restored connection.
+        // Late old attempt must not replace the restored connection (same client object).
+        expect((yield* mcp.clients()).example).toBe(restored)
         expect(Object.keys(yield* mcp.tools())).toEqual(["example_old"])
-        const clients = yield* mcp.clients()
-        expect(clients.example).toBeTruthy()
       }),
     )
   }),
