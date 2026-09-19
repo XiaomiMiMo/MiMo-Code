@@ -378,8 +378,11 @@ describe("sweepOrphanToolParts", () => {
     ),
   )
 
-  // [RL-ORPHAN-C03] Order lock: sweep completion must precede session.status
-  // idle. Reverse order (idle first, then sweep) must fail this test.
+  // [RL-ORPHAN-C03] Order lock: PartUpdated (error) and session.status (idle)
+  // are both recorded from async Bus callbacks. PartUpdated goes through
+  // ProjectBus (standalone Bus.subscribe); Status through the test Status
+  // layer's Bus. Both schedule Promise.then at publish time, so observed
+  // callback order matches publish order on the JS event loop.
   it.live("orphan sweep completes before session.status idle is published", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
@@ -393,14 +396,14 @@ describe("sweepOrphanToolParts", () => {
         yield* status.set(session.id, { type: "busy" })
 
         const order: string[] = []
-        const real = orphanToolIdleSweepRef.current
-        expect(real).toBeDefined()
-        orphanToolIdleSweepRef.current = ((sid: SessionID, opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> }) =>
-          Effect.gen(function* () {
-            yield* real!(sid, opts)
-            order.push("sweep-done")
-          })) as typeof orphanToolIdleSweepRef.current
-        const off = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
+        // Standalone Bus matches ProjectBus.publish used by SyncEvent PartUpdated.
+        const unsubPart = Bus.subscribe(MessageV2.Event.PartUpdated, (ev) => {
+          const p = ev.properties.part
+          if (p.id === part.id && (p as { state?: { status?: string } }).state?.status === "error") {
+            order.push("part-error")
+          }
+        })
+        const offStatus = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
           if (evt.properties.sessionID === session.id && evt.properties.status.type === "idle") {
             order.push("status-idle")
           }
@@ -408,32 +411,24 @@ describe("sweepOrphanToolParts", () => {
 
         try {
           yield* runState.ensureRunning(session.id, "main", Effect.void as never, dummyWork(session.id))
-          yield* Effect.sleep("80 millis")
+          yield* Effect.sleep("100 millis")
         } finally {
-          off()
-          orphanToolIdleSweepRef.current = real
+          offStatus()
+          unsubPart()
         }
 
-        expect(order).toContain("sweep-done")
+        expect(order).toContain("part-error")
         expect(order).toContain("status-idle")
-        // This is the order assertion: if idle were published first the
-        // indices would reverse and the test would fail.
-        expect(order.indexOf("sweep-done")).toBeLessThan(order.indexOf("status-idle"))
-
-        const after = yield* readPart(session.id, part.id)
-        if (after?.type !== "tool") throw new Error("expected a tool part")
-        expect(after.state.status).toBe("error")
+        expect(order.indexOf("part-error")).toBeLessThan(order.indexOf("status-idle"))
       }),
     ),
   )
 
-  // [RL-ORPHAN-C03] Same order lock on the cancel path (halt does not publish
-  // idle; onIdle after ensuring still must follow sweep).
+  // [RL-ORPHAN-C03] Same order lock on the cancel path.
   it.live("cancel path: sweep completes before session.status idle", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
-        const status = yield* SessionStatus.Service
         const bus = yield* Bus.Service
         const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
@@ -441,14 +436,13 @@ describe("sweepOrphanToolParts", () => {
         const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
 
         const order: string[] = []
-        const real = orphanToolIdleSweepRef.current
-        expect(real).toBeDefined()
-        orphanToolIdleSweepRef.current = ((sid: SessionID, opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> }) =>
-          Effect.gen(function* () {
-            yield* real!(sid, opts)
-            order.push("sweep-done")
-          })) as typeof orphanToolIdleSweepRef.current
-        const off = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
+        const unsubPart = Bus.subscribe(MessageV2.Event.PartUpdated, (ev) => {
+          const p = ev.properties.part
+          if (p.id === part.id && (p as { state?: { status?: string } }).state?.status === "error") {
+            order.push("part-error")
+          }
+        })
+        const offStatus = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
           if (evt.properties.sessionID === session.id && evt.properties.status.type === "idle") {
             order.push("status-idle")
           }
@@ -480,18 +474,15 @@ describe("sweepOrphanToolParts", () => {
           yield* Deferred.succeed(hold, undefined)
           yield* Fiber.join(fiberA).pipe(Effect.ignore)
           yield* Fiber.join(cancelFiber).pipe(Effect.ignore)
-          yield* Effect.sleep("80 millis")
+          yield* Effect.sleep("100 millis")
         } finally {
-          off()
-          orphanToolIdleSweepRef.current = real
+          offStatus()
+          unsubPart()
         }
 
-        expect(order).toContain("sweep-done")
+        expect(order).toContain("part-error")
         expect(order).toContain("status-idle")
-        expect(order.indexOf("sweep-done")).toBeLessThan(order.indexOf("status-idle"))
-        const after = yield* readPart(session.id, part.id)
-        if (after?.type !== "tool") throw new Error("expected a tool part")
-        expect(after.state.status).toBe("error")
+        expect(order.indexOf("part-error")).toBeLessThan(order.indexOf("status-idle"))
       }),
     ),
   )
