@@ -2,6 +2,7 @@ import { afterEach, describe, expect } from "bun:test"
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import path from "path"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
+import { Bus } from "../../src/bus"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
@@ -22,8 +23,8 @@ const it = testEffect(
   Layer.mergeAll(
     SessionPrompt.defaultLayer,
     Session.defaultLayer,
-    SessionStatus.defaultLayer,
-    SessionRunState.defaultLayer,
+    SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer)),
+    SessionRunState.layer.pipe(Layer.provide(SessionStatus.defaultLayer)),
     CrossSpawnSpawner.defaultLayer,
   ),
 )
@@ -310,8 +311,9 @@ describe("sweepOrphanToolParts", () => {
     ),
   )
 
-  // [RL-ORPHAN-C01/C03] After cancel handoff, B must remain in the RunState
-  // registry: assertNotBusy rejects, cancelActor can hit it, no second runner.
+  // [RL-ORPHAN-C01/C03] Deterministic Cancelling barrier: hold inside ensuring,
+  // signal entry, start B, verify B does not run until release; B's success
+  // Exit is asserted (failures must not be swallowed).
   it.live("RunState registry tracks work that waited out Cancelling", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
@@ -320,20 +322,23 @@ describe("sweepOrphanToolParts", () => {
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
 
-        const hold = yield* Effect.promise(async () => {
-          let release!: () => void
-          const p = new Promise<void>((r) => {
-            release = r
-          })
-          return { release, p }
-        })
+        const hold = yield* Deferred.make<void>()
+        const inFinalizer = yield* Deferred.make<void>()
         const startedA = yield* Deferred.make<void>()
+        let bRan = false
 
         const workA = Effect.gen(function* () {
           yield* Deferred.succeed(startedA, undefined)
-          yield* Effect.promise(() => hold.p)
-          return yield* dummyWork(session.id)
-        })
+          yield* Effect.never
+        }).pipe(
+          Effect.ensuring(
+            Effect.gen(function* () {
+              yield* Deferred.succeed(inFinalizer, undefined)
+              yield* Deferred.await(hold)
+            }),
+          ),
+          Effect.as(undefined as never),
+        )
 
         const fiberA = yield* runState
           .ensureRunning(session.id, "main", Effect.void as never, workA)
@@ -341,56 +346,88 @@ describe("sweepOrphanToolParts", () => {
         yield* Deferred.await(startedA)
 
         const cancelFiber = yield* runState.cancel(session.id).pipe(Effect.forkChild)
-        yield* Effect.sleep("10 millis")
+        // Wait until A's ensuring (finalizer) is actually blocked.
+        yield* Deferred.await(inFinalizer)
 
-        const fiberB = yield* runState
+        const exitB = yield* runState
           .ensureRunning(
             session.id,
             "main",
             Effect.void as never,
             Effect.gen(function* () {
-              // While B runs it must be the registered busy runner.
-              yield* runState.assertNotBusy(session.id, "main").pipe(Effect.exit).pipe(
-                Effect.map((exit) => {
-                  expect(Exit.isFailure(exit)).toBe(true)
-                }),
-              )
+              bRan = true
+              // Must be the registered busy runner while B executes.
+              const busyExit = yield* runState.assertNotBusy(session.id, "main").pipe(Effect.exit)
+              expect(Exit.isFailure(busyExit)).toBe(true)
               return yield* dummyWork(session.id)
             }),
           )
           .pipe(Effect.exit, Effect.forkChild)
 
         yield* Effect.sleep("20 millis")
-        hold.release()
+        expect(bRan).toBe(false)
+
+        yield* Deferred.succeed(hold, undefined)
         yield* Fiber.join(fiberA).pipe(Effect.ignore)
         yield* Fiber.join(cancelFiber).pipe(Effect.ignore)
-        yield* Fiber.join(fiberB).pipe(Effect.ignore)
-        // After everything settles, not busy.
+        const bResult = yield* Fiber.join(exitB)
+        expect(Exit.isSuccess(bResult)).toBe(true)
+        expect(bRan).toBe(true)
         yield* runState.assertNotBusy(session.id, "main")
       }),
     ),
   )
 
-  // [RL-ORPHAN-C03] Tool terminal (part.updated) is persisted before status
-  // reaches idle on a natural end.
-  it.live("orphan tool terminal is persisted before session goes idle", () =>
+  // [RL-ORPHAN-C03] Lock tool-terminal → idle order: at the moment Idle is
+  // observed, the orphan tool must already be error (not still running).
+  it.live("orphan tool is already terminal when session.idle is observed", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
         const status = yield* SessionStatus.Service
+        const bus = yield* Bus.Service
         const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
         const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
-
         yield* status.set(session.id, { type: "busy" })
-        yield* runState.ensureRunning(session.id, "main", Effect.void as never, dummyWork(session.id))
 
-        // ensureRunning returns after work+ensuring; onIdle has published idle.
-        expect((yield* status.get(session.id)).type).toBe("idle")
+        let toolStatusAtIdle: string | undefined
+        const off = yield* bus.subscribeCallback(SessionStatus.Event.Idle, (evt) => {
+          if (evt.properties.sessionID !== session.id) return
+          // Sync snapshot at idle-publish time. Bus delivery is async relative
+          // to publish return, but sweep runs BEFORE publish in the same
+          // commit/onIdle path — if order were reversed, part would still be
+          // running here. Read via a side channel filled during sweep.
+          toolStatusAtIdle = "idle-seen"
+        })
+
+        // Capture part status when sweep runs (before idle publish).
+        let statusAtSweep: string | undefined
+        const real = orphanToolIdleSweepRef.current
+        expect(real).toBeDefined()
+        orphanToolIdleSweepRef.current = ((sid: SessionID, opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> }) =>
+          Effect.gen(function* () {
+            const after = yield* readPart(sid, part.id)
+            statusAtSweep = after?.type === "tool" ? after.state.status : "missing"
+            yield* real!(sid, opts)
+          })) as typeof orphanToolIdleSweepRef.current
+
+        try {
+          yield* runState.ensureRunning(session.id, "main", Effect.void as never, dummyWork(session.id))
+          yield* Effect.sleep("50 millis")
+        } finally {
+          off()
+          orphanToolIdleSweepRef.current = real
+        }
+
+        // Sweep saw the orphan still running, then rewrote it; idle published after.
+        expect(statusAtSweep).toBe("running")
+        expect(toolStatusAtIdle).toBe("idle-seen")
         const after = yield* readPart(session.id, part.id)
         if (after?.type !== "tool") throw new Error("expected a tool part")
         expect(after.state.status).toBe("error")
+        expect((yield* status.get(session.id)).type).toBe("idle")
       }),
     ),
   )
