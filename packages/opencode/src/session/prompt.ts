@@ -575,7 +575,10 @@ export interface Interface {
   readonly resolvePromptParts: (template: string) => Effect.Effect<PromptInput["parts"]>
   readonly genTitle: (input: { text?: string; parts?: GenTitlePart[]; locale?: string; sessionID?: SessionID; providerID?: ProviderID; model?: { providerID: ProviderID; modelID: ModelID } }) => Effect.Effect<{ title: string; status: "generated" | "fallback" | "untitled" }>
   readonly sweepOrphanAssistants: (sessionID: SessionID, immediate?: boolean) => Effect.Effect<void>
-  readonly sweepOrphanToolParts: (sessionID: SessionID, opts?: { before?: number }) => Effect.Effect<void>
+  readonly sweepOrphanToolParts: (
+    sessionID: SessionID,
+    opts?: { before?: number; force?: boolean },
+  ) => Effect.Effect<void>
   readonly predict: (input: { sessionID: SessionID }) => Effect.Effect<string>
 }
 
@@ -3305,18 +3308,22 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     // `before` (optional): only rewrite parts whose `time.start` is at or before
     // this epoch. Used by the idle-edge sweep so a tool that began AFTER the
     // busy→idle transition (a new prompt that raced in while this sweep was
-    // forked) is never rewritten. Per-part idle re-check is the second guard.
+    // running) is never rewritten.
+    // `force`: skip the status==idle self-gate. SessionStatus.commit idle path
+    // force-sweeps WHILE status still reports busy so get() is not idle until
+    // orphans are terminal (RL-ORPHAN-D01). Per-part idle re-check is also
+    // skipped under force; `before` is the only new-turn guard in that mode.
     const sweepOrphanToolParts = Effect.fn("SessionPrompt.sweepOrphanToolParts")(function* (
       sessionID: SessionID,
-      opts?: { before?: number },
+      opts?: { before?: number; force?: boolean },
     ) {
-      if ((yield* status.get(sessionID)).type !== "idle") return
+      if (!opts?.force && (yield* status.get(sessionID)).type !== "idle") return
       for (const m of yield* sessions.messages({ sessionID })) {
         if (m.info.role !== "assistant") continue
         for (const part of m.parts) {
           if (part.type !== "tool") continue
           if (part.state.status !== "pending" && part.state.status !== "running") continue
-          if ((yield* status.get(sessionID)).type !== "idle") return
+          if (!opts?.force && (yield* status.get(sessionID)).type !== "idle") return
           const started = part.state.status === "running" ? part.state.time.start : undefined
           if (opts?.before !== undefined && started !== undefined && started > opts.before) continue
           yield* sessions
@@ -3347,7 +3354,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     // Instance context at construction time.
     // Wire the idle-edge sweep. Identity-guarded clear so a rebuilt layer does
     // not wipe a newer registration (same pattern as sessionPromptRef).
-    const idleSweep = (sid: SessionID, opts?: { before?: number }) => sweepOrphanToolParts(sid, opts)
+    const idleSweep = (sid: SessionID, opts?: { before?: number; force?: boolean }) =>
+      sweepOrphanToolParts(sid, opts)
     orphanToolIdleSweepRef.current = idleSweep
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {

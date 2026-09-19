@@ -284,6 +284,89 @@ describe("sweepOrphanToolParts", () => {
       }),
     ),
   )
+
+  // [RL-ORPHAN-D01] Queryable idle must not open before orphans are terminal.
+  // Desktop can finish from status.get() alone, not only from session.idle.
+  it.live("status.get is not idle during the idle-commit sweep", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const status = yield* SessionStatus.Service
+        yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+        yield* seedRunningToolPart(dir, session.id)
+
+        yield* status.set(session.id, { type: "busy" })
+
+        let statusDuringSweep: string | undefined
+        const real = orphanToolIdleSweepRef.current
+        expect(real).toBeDefined()
+        orphanToolIdleSweepRef.current = (sid, opts) =>
+          Effect.gen(function* () {
+            statusDuringSweep = (yield* status.get(sid)).type
+            yield* real!(sid, opts)
+          })
+
+        try {
+          yield* status.set(session.id, { type: "idle" })
+        } finally {
+          orphanToolIdleSweepRef.current = real
+        }
+
+        expect(statusDuringSweep).toBe("busy")
+        expect((yield* status.get(session.id)).type).toBe("idle")
+      }),
+    ),
+  )
+
+  // [RL-ORPHAN-D01] A newer busy during the idle-commit sweep must win: the
+  // stale idle must not be published after the new turn's busy.
+  it.live("does not publish idle when a newer busy wins during sweep", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const status = yield* SessionStatus.Service
+        const bus = yield* Bus.Service
+        yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+        yield* seedRunningToolPart(dir, session.id)
+        yield* status.set(session.id, { type: "busy" })
+
+        const events: string[] = []
+        const real = orphanToolIdleSweepRef.current
+        expect(real).toBeDefined()
+        orphanToolIdleSweepRef.current = (sid, opts) =>
+          Effect.gen(function* () {
+            events.push("sweep-start")
+            // Concurrent new turn starts mid-sweep.
+            yield* status.set(sid, { type: "busy" })
+            events.push("busy")
+            yield* real!(sid, opts)
+            events.push("sweep-end")
+          })
+        const off = yield* bus.subscribeCallback(SessionStatus.Event.Idle, (evt) => {
+          if (evt.properties.sessionID === session.id) events.push("idle")
+        })
+        const offStatus = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
+          if (evt.properties.sessionID === session.id) events.push(`status:${evt.properties.status.type}`)
+        })
+
+        try {
+          yield* status.set(session.id, { type: "idle" })
+          yield* Effect.sleep("50 millis")
+        } finally {
+          off()
+          offStatus()
+          orphanToolIdleSweepRef.current = real
+        }
+
+        expect(events).toContain("sweep-start")
+        expect(events).toContain("busy")
+        expect(events).not.toContain("idle")
+        expect((yield* status.get(session.id)).type).toBe("busy")
+      }),
+    ),
+  )
 })
 
 describe("MessageV2.abortedToolState", () => {
