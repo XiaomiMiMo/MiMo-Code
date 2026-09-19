@@ -40,7 +40,7 @@ Memory files root: `<DATA>/memory/`
 
 - Read the current project's `MEMORY.md`.
 - Read current session `notes.md` if it exists.
-- Glob `memory/sessions/*/checkpoint.md` and identify recent checkpoints.
+- `glob` `memory/sessions/*/checkpoint.md` and identify recent checkpoints.
 - Use bash/SQLite to list recent sessions for this project from `session`, newest first.
 - Record the current `MEMORY.md` section structure before editing to avoid duplicates.
 
@@ -139,8 +139,8 @@ Principles:
 - Remove details that mattered only to one session.
 - Remove low-signal memory files or entries that are redundant with stronger project memory.
 - Clear current `notes.md` entries only when fully integrated.
-- Verify mentioned file paths with Glob.
-- Verify mentioned function/class names with Grep.
+- Verify mentioned file paths with `glob`.
+- Verify mentioned function/class names with `grep`.
 - Mark unverifiable-but-plausible claims `[unverified]`.
 
 ## Output Format

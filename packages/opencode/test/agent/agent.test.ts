@@ -320,6 +320,8 @@ test("general and explore agents use dedicated prompts", async () => {
       }
       expect(PROMPT_GENERAL).toContain("Do not spawn or delegate to other subagents")
       expect(PROMPT_GENERAL).toContain("required return format")
+      expect(PROMPT_GENERAL).toContain("Inspect the relevant implementation")
+      expect(PROMPT_GENERAL).toContain("Carry work through verification")
       expect(PROMPT_GENERAL).not.toContain("**Status**:")
       expect(PROMPT_EXPLORE).toContain("Read-only")
       expect(PROMPT_EXPLORE).not.toContain("**Status**:")

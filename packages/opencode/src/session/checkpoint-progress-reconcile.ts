@@ -92,7 +92,7 @@ export function renderProgressDiffBlock(items: ProgressDiffItem[]): string {
   }
   lines.push("")
   lines.push(
-    "For each: Read tasks/<TID>/progress.md, integrate §4 (verbatim commands) verbatim into main §5 Current work; integrate §5 (outcome+discoveries) into main §5 or §7 as appropriate. Then update the corresponding §4 line in main checkpoint to:",
+    "For each: `read` tasks/<TID>/progress.md, integrate §4 (verbatim commands) verbatim into main §5 Current work; integrate §5 (outcome+discoveries) into main §5 or §7 as appropriate. Then update the corresponding §4 line in main checkpoint to:",
   )
   lines.push(
     "  (progress: tasks/<TID>/progress.md, last-reconciled-written-at: <written-at from above>)",

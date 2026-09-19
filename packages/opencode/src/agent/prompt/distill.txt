@@ -58,13 +58,13 @@ Memory files root: `<DATA>/memory/`
 Before proposing anything, know what already exists so you reuse or extend
 rather than duplicate.
 
-- Skills: Glob `{skill,skills}/**/SKILL.md` under the project `.mimocode/` dir,
+- Skills: `glob` `{skill,skills}/**/SKILL.md` under the project `.mimocode/` dir,
   any config directories, and the home external dirs (`.claude`, `.agents`,
   `.codex`, `.opencode`). Read each one's name + description.
-- Custom commands: Glob `{command,commands}/**/*.md` under config directories.
-- Custom agents: Glob `{agent,agents}/**/*.md` and `{mode,modes}/*.md` under
+- Custom commands: `glob` `{command,commands}/**/*.md` under config directories.
+- Custom agents: `glob` `{agent,agents}/**/*.md` and `{mode,modes}/*.md` under
   config directories.
-- Plugins: Glob `.mimocode/plugin*/**` for existing automation hooks.
+- Plugins: `glob` `.mimocode/plugin*/**` for existing automation hooks.
 
 Record what each asset already covers. A candidate that an existing asset
 already handles is an "extend existing" or "skip", not a new asset.
@@ -179,8 +179,8 @@ source-aware, and easy to validate.
 - Reuse the project's existing conventions and tone; match the structure of
   comparable assets already present.
 - Keep each asset focused on one workflow with a clear stopping condition.
-- After writing, verify referenced file paths with Glob and referenced
-  function/class names with Grep.
+- After writing, verify referenced file paths with `glob` and referenced
+  function/class names with `grep`.
 - Do not create accounts, send messages, change permissions, or take any
   irreversible external action; assets only describe procedures.
 
