@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
-import { ActorRegistry } from "../../src/actor/registry"
+import { ActorRegistry, sweepAbandonedZombies } from "../../src/actor/registry"
 import { ActorRegistryTable } from "../../src/actor/actor.sql"
 import { SessionID } from "../../src/session/schema"
 import { Database, eq, and } from "../../src/storage"
+import { MessageTable, PartTable } from "../../src/session/session.sql"
+import { MessageID, PartID } from "../../src/session/schema"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 
@@ -1005,6 +1007,156 @@ describe("ActorRegistry", () => {
           ActorRegistry.Service.use((svc) => svc.get(ids.freshSession as never, "fresh-1")),
         )
         expect(fresh?.status).toBe("running")
+      })
+    })
+
+    test("[TP-ABANDON-Q-01] settles orphaned running question tool parts for abandoned sessions", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const zombieSession = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const liveSession = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            const insertZombieActor = (sessionID: string, actorID: string) =>
+              Database.use((db) =>
+                db
+                  .insert(ActorRegistryTable)
+                  .values({
+                    session_id: sessionID as never,
+                    actor_id: actorID,
+                    mode: "subagent",
+                    parent_actor_id: null,
+                    status: "running",
+                    last_outcome: null,
+                    result_message_id: null,
+                    lifecycle: "ephemeral",
+                    agent: "explore",
+                    description: "crashed child",
+                    context_mode: "none",
+                    context_watermark: null,
+                    background: true,
+                    tools: null,
+                    last_turn_time: stale,
+                    turn_count: 1,
+                    last_activity_time: stale,
+                    last_error: null,
+                    instance_id: "dead-instance",
+                    time_completed: null,
+                    time_created: stale,
+                    time_updated: stale,
+                  })
+                  .run(),
+              )
+            insertZombieActor(zombieSession.id, "zombie-q-1")
+            insertZombieActor(liveSession.id, "zombie-q-2")
+            // liveSession also has a same-process running actor → question must stay open
+            Database.use((db) =>
+              db
+                .insert(ActorRegistryTable)
+                .values({
+                  session_id: liveSession.id,
+                  actor_id: "live-q-1",
+                  mode: "subagent",
+                  parent_actor_id: null,
+                  status: "running",
+                  last_outcome: null,
+                  result_message_id: null,
+                  lifecycle: "ephemeral",
+                  agent: "explore",
+                  description: "alive",
+                  context_mode: "none",
+                  context_watermark: null,
+                  background: true,
+                  tools: null,
+                  last_turn_time: Date.now(),
+                  turn_count: 1,
+                  last_activity_time: Date.now(),
+                  last_error: null,
+                  instance_id: "this-process",
+                  time_completed: null,
+                  time_created: Date.now(),
+                  time_updated: Date.now(),
+                })
+                .run(),
+            )
+            const insertRunningQuestion = (sessionID: string, messageID: string, partID: string) =>
+              Database.use((db) => {
+                const now = Date.now()
+                db.insert(MessageTable)
+                  .values({
+                    id: messageID as never,
+                    session_id: sessionID as never,
+                    agent_id: "main",
+                    time_created: now,
+                    time_updated: now,
+                    data: { role: "assistant", time: { created: now } } as never,
+                  })
+                  .run()
+                db.insert(PartTable)
+                  .values({
+                    id: partID as never,
+                    message_id: messageID as never,
+                    session_id: sessionID as never,
+                    time_created: now,
+                    time_updated: now,
+                    data: {
+                      type: "tool",
+                      tool: "question",
+                      callID: "call_q",
+                      state: {
+                        status: "running",
+                        input: {
+                          questions: [{ question: "stuck?", header: "stuck", options: [{ label: "A", description: "" }] }],
+                        },
+                        time: { start: now },
+                      },
+                    } as never,
+                  })
+                  .run()
+              })
+            insertRunningQuestion(zombieSession.id, MessageID.ascending(), PartID.ascending())
+            insertRunningQuestion(liveSession.id, MessageID.ascending(), PartID.ascending())
+            ;(globalThis as Record<string, unknown>).__abandonQuestionTest = {
+              zombieSession: zombieSession.id,
+              liveSession: liveSession.id,
+            }
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonQuestionTest as {
+        zombieSession: string
+        liveSession: string
+      }
+      await withRegistry(tmp.path, async () => {
+        // Session.defaultLayer inits ActorRegistry (and the layer-init sweep)
+        // before zombie rows are seeded; re-run the sweep after the inserts.
+        sweepAbandonedZombies()
+        const statusOf = (sessionID: string) =>
+          Database.use((db) =>
+            db
+              .select()
+              .from(PartTable)
+              .where(eq(PartTable.session_id, sessionID as never))
+              .all()
+              .map((row) => {
+                const data = row.data as { type?: string; tool?: string; state?: { status?: string; error?: string } }
+                return { type: data.type, tool: data.tool, status: data.state?.status, error: data.state?.error }
+              }),
+          )
+        const zombieParts = statusOf(ids.zombieSession)
+        expect(zombieParts).toHaveLength(1)
+        expect(zombieParts[0]?.tool).toBe("question")
+        expect(zombieParts[0]?.status).toBe("error")
+        expect(zombieParts[0]?.error).toContain("abandon threshold")
+
+        const liveParts = statusOf(ids.liveSession)
+        expect(liveParts).toHaveLength(1)
+        expect(liveParts[0]?.status).toBe("running")
       })
     })
 
