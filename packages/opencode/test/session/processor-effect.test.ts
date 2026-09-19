@@ -807,7 +807,10 @@ it.live("session.processor effect tests record aborted errors and idle state", (
         if (stored.info.role === "assistant") {
           expect(stored.info.error?.name).toBe("MessageAbortedError")
         }
-        expect(state).toMatchObject({ type: "idle" })
+        // halt no longer publishes idle (RL-ORPHAN-D01): SessionRunState onIdle
+        // does so after work ensuring. This test drives Processor directly, so
+        // status stays busy until that lifecycle owner runs.
+        expect(state).toMatchObject({ type: "busy" })
         expect(errs).toContain("MessageAbortedError")
       }),
     { git: true, config: (url) => providerCfg(url) },
@@ -865,7 +868,8 @@ it.live("session.processor effect tests mark interruptions aborted without manua
         if (stored.info.role === "assistant") {
           expect(stored.info.error?.name).toBe("MessageAbortedError")
         }
-        expect(state).toMatchObject({ type: "idle" })
+        // halt no longer publishes idle (RL-ORPHAN-D01); onIdle after ensuring does.
+        expect(state).toMatchObject({ type: "busy" })
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),

@@ -804,7 +804,12 @@ export const layer: Layer.Layer<
           sessionID: ctx.assistantMessage.sessionID,
           error: ctx.assistantMessage.error,
         })
-        if (isMain) yield* status.set(ctx.sessionID, { type: "idle" })
+        // Do NOT status.set(idle) here. halt runs before cleanup and the outer
+        // work ensuring (orphan sweep). Publishing idle first lets the Desktop
+        // finish/unsubscribe, then the sweep's part.updated lands on the NEXT
+        // turn's subscription (RL-ORPHAN-D01). Idle is published by
+        // SessionRunState onIdle after the work Effect (including ensuring)
+        // exits.
       })
 
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
