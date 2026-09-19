@@ -375,7 +375,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
         expect(out).toContain("sections below are auto-loaded session context already in this message")
         expect(out).toContain("File:")
         expect(out).toContain("checkpoint.md")
-        expect(out).toContain("Grep that path")
+        expect(out).toContain("`grep` that path")
       }),
     ),
   )

@@ -627,7 +627,7 @@ describe("session.prompt missing file", () => {
             if (msg.info.role !== "user") throw new Error("expected user message")
 
             const hasFailure = msg.parts.some(
-              (part) => part.type === "text" && part.synthetic && part.text.includes("Read tool failed to read"),
+              (part) => part.type === "text" && part.synthetic && part.text.includes("`read` tool failed to read"),
             )
             expect(hasFailure).toBe(true)
 
@@ -682,8 +682,8 @@ describe("session.prompt missing file", () => {
             })
             const text = stored.parts.filter((part) => part.type === "text").map((part) => part.text)
 
-            expect(text[0]?.startsWith("Called the Read tool with the following input:")).toBe(true)
-            expect(text[1]?.includes("Read tool failed to read")).toBe(true)
+            expect(text[0]?.startsWith("Called the `read` tool with the following input:")).toBe(true)
+            expect(text[1]?.includes("`read` tool failed to read")).toBe(true)
             expect(text[2]).toBe("after-file")
 
             yield* sessions.remove(session.id)
@@ -764,7 +764,7 @@ describe("session.prompt user image attachment envelope", () => {
               { type: "file" }
             >[]
             const joined = texts.map((p) => p.text).join("\n")
-            expect(joined).not.toContain("Called the Read tool")
+            expect(joined).not.toContain("Called the `read` tool")
             expect(files).toHaveLength(1)
             expect(files[0]!.url.startsWith("data:image/png;base64,")).toBe(true)
             expect(files[0]!.mime).toBe("image/png")
@@ -910,7 +910,7 @@ describe("session.prompt user image attachment envelope", () => {
             const env = texts.find((p) => p.synthetic === true && p.text.includes("Files mentioned by the user"))
             expect(env).toBeDefined()
             expect(env!.text).toContain("- pasted.png (image/png)")
-            expect(texts.map((p) => p.text).join("\n")).not.toContain("Called the Read tool")
+            expect(texts.map((p) => p.text).join("\n")).not.toContain("Called the `read` tool")
             yield* sessions.remove(session.id)
           }),
         ),
@@ -1055,7 +1055,7 @@ describe("session.prompt user image attachment envelope", () => {
             })
             if (msg.info.role !== "user") throw new Error("expected user message")
             const texts = msg.parts.filter((part) => part.type === "text").map((part) => part.text)
-            expect(texts.join("\n")).toContain("Called the Read tool")
+            expect(texts.join("\n")).toContain("Called the `read` tool")
             expect(texts.join("\n")).not.toContain("Files mentioned by the user")
             yield* sessions.remove(session.id)
           }),

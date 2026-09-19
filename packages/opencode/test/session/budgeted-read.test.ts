@@ -21,7 +21,7 @@ describe("readBudgeted", () => {
     const result = await readBudgeted(file, 100)
     expect(result?.truncated).toBe(true)
     expect(result?.text).toContain("Truncated at ~100 tokens")
-    expect(result?.text).toContain("Read(")
+    expect(result?.text).toContain("read(")
     expect(result?.text).toContain("offset=")
   })
 

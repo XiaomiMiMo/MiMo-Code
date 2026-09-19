@@ -209,7 +209,7 @@ export function buildRecallReminderText(input: { sessMemDir: string; hints: stri
     `${RECALL_REMINDER_MARKER} ${input.sessMemDir}/. Recall content`,
     "not in your context with:",
     input.hints[0],
-    `- Read(file_path="${input.sessMemDir}/...")`,
+    `- read(file_path="${input.sessMemDir}/...")`,
     ...input.hints.slice(1),
     "",
     "Don't ask the user about something memory may already record.",
