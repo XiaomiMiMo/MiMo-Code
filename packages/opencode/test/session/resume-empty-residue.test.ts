@@ -141,6 +141,12 @@ describe("resume empty residue", () => {
     })
     expect(result.candidates.length).toBe(1)
     expect(result.candidates[0]?.kind).toBe("assistant")
+    // [C004] Keep parent identity — kind alone is not an equivalent assertion.
+    expect(result.candidates[0]).toMatchObject({
+      kind: "assistant",
+      assistantMessageID: expect.any(String),
+      parentMessageID: expect.any(String),
+    })
   })
 
   test("tool-resume on useful target cleans empty siblings and keeps useful", async () => {

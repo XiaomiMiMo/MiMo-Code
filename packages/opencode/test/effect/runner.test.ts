@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Exit, Fiber, Ref, Scope } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Ref, Scope } from "effect"
 import { Runner } from "../../src/effect"
 import { it } from "../lib/effect"
 
@@ -586,6 +586,52 @@ describe("Runner", () => {
       expect(resultB).toBe("b")
       expect(bRan).toBe(true)
       expect(runner.state._tag).toBe("Idle")
+    }),
+  )
+
+  // --- ensureExclusive (R003 / C004) ---
+
+  it.live(
+    "ensureExclusive starts work when idle and returns result",
+    Effect.gen(function* () {
+      const s = yield* Scope.Scope
+      const runner = Runner.make<string, string, string>(s, { busy: () => "BUSY" })
+      const result = yield* runner.ensureExclusive(Effect.succeed("ex"))
+      expect(result).toBe("ex")
+      expect(runner.busy).toBe(false)
+    }),
+  )
+
+  it.live(
+    "ensureExclusive fails when busy instead of joining the existing run",
+    Effect.gen(function* () {
+      const s = yield* Scope.Scope
+      const runner = Runner.make<string, string, string>(s, { busy: () => "BUSY" })
+      const gate = yield* Deferred.make<void>()
+      const other = yield* runner
+        .ensureRunning(Deferred.await(gate).pipe(Effect.as("OTHER")))
+        .pipe(Effect.forkChild)
+      yield* Effect.sleep("10 millis")
+      expect(runner.busy).toBe(true)
+
+      const exit = yield* runner.ensureExclusive(Effect.succeed("RESUME")).pipe(Effect.exit)
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe("BUSY")
+
+      yield* Deferred.succeed(gate, undefined)
+      const otherResult = yield* Fiber.join(other)
+      expect(otherResult).toBe("OTHER")
+    }),
+  )
+
+  it.live(
+    "ensureExclusive propagates work failure",
+    Effect.gen(function* () {
+      const s = yield* Scope.Scope
+      const runner = Runner.make<string, string, string>(s, { busy: () => "BUSY" })
+      const exit = yield* runner.ensureExclusive(Effect.fail("admission")).pipe(Effect.exit)
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe("admission")
     }),
   )
 })

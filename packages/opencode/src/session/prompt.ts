@@ -6288,6 +6288,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       plan: Exclude<ResumePlan, { action: "reject" }>
       mode: "ensure" | "start"
     }) {
+      // [C002] `*` is a message-read selector (every slice), not an execution owner.
+      // Resume must lock the concrete slice Runner that will own the new assistant.
+      if (input.agentID === "*") {
+        return yield* Effect.fail(
+          new NotFoundError({
+            message: "Resume requires a concrete agentID (wildcard \"*\" is not an execution identity)",
+          }),
+        )
+      }
       const plan = input.plan
       // Same onInterrupt as a normal send.
       const resumeInterrupt = lastAssistant(input.sessionID, input.agentID)
@@ -6341,7 +6350,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               // Clear empty residue under parent (including error shells); otherwise lastAssistant
               // may still be an empty shell and classify would block re-dispatch.
               // Only runs after admission succeeded — never on stale reject.
-              return yield* Effect.gen(function* () {
+              // [C003] Force cleanup runs only after successful runLoop return so a later
+              // step-0 strict reject cannot delete a subsequent empty assistant it did not create.
+              const result = yield* Effect.gen(function* () {
                 yield* cleanupEmptyResidueAssistants({
                   sessionID: input.sessionID,
                   agentID: input.agentID,
@@ -6363,26 +6374,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   plan.parentMessageID,
                   strictTail,
                 )
+              })
+              yield* cleanupEmptyResidueAssistants({
+                sessionID: input.sessionID,
+                agentID: input.agentID,
+                parentMessageID: plan.parentMessageID,
+                force: true,
+                preserveError: true,
               }).pipe(
-                Effect.ensuring(
-                  cleanupEmptyResidueAssistants({
+                Effect.catchCause((cause) =>
+                  elog.warn("empty-residue-assistants-cleanup-failed", {
                     sessionID: input.sessionID,
-                    agentID: input.agentID,
                     parentMessageID: plan.parentMessageID,
-                    force: true,
-                    preserveError: true,
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      elog.warn("empty-residue-assistants-cleanup-failed", {
-                        sessionID: input.sessionID,
-                        parentMessageID: plan.parentMessageID,
-                        phase: "ensuring",
-                        cause,
-                      }),
-                    ),
-                  ),
+                    phase: "after-success",
+                    cause,
+                  }),
                 ),
               )
+              return result
             }).pipe(
               // If work dies before handshake (interrupt/defect), release the waiter.
               Effect.ensuring(
