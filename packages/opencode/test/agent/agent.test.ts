@@ -12,6 +12,7 @@ import { testEffect } from "../lib/effect"
 import PROMPT_GENERATE from "../../src/agent/generate.txt"
 import PROMPT_GENERATE_GPT from "../../src/agent/prompt/generate-gpt.txt"
 import PROMPT_EXPLORE from "../../src/agent/prompt/explore.txt"
+import PROMPT_DEFAULT from "../../src/session/prompt/default.txt"
 
 const itTool = testEffect(Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
@@ -40,6 +41,45 @@ test("agent prompts use runtime tool names and GPT generation guidance", () => {
   expect(PROMPT_GENERATE_GPT).toContain("`tools.apply_patch(...)`")
   expect(PROMPT_GENERATE_GPT).toContain("`tools.view_image(...)`")
   expect(PROMPT_GENERATE_GPT).toContain("`tools.actor(...)`")
+})
+
+test("default system prompt has no Claude Code residual and names real dispatch tools", () => {
+  expect(PROMPT_DEFAULT).toContain("MiMoCode")
+  expect(PROMPT_DEFAULT).not.toContain("## Agent system")
+  expect(PROMPT_DEFAULT).not.toContain("### Session lifecycle")
+  expect(PROMPT_DEFAULT).toContain("## Skills")
+  expect(PROMPT_DEFAULT).toContain("## Trust boundaries")
+  expect(PROMPT_DEFAULT).toContain("use `actor`")
+  expect(PROMPT_DEFAULT).toContain("`task` tool")
+  expect(PROMPT_DEFAULT).toContain("`plan_exit`")
+  expect(PROMPT_DEFAULT).not.toContain("### Plan mode in detail")
+  expect(PROMPT_DEFAULT).not.toContain("Desktop Settings")
+  expect(PROMPT_DEFAULT).not.toContain("one short line max")
+  // compose-next is advertised via skill description — never name compose in base sys.
+  expect(PROMPT_DEFAULT).not.toContain("compose")
+  // Skills roots: native + open standard only; other brand roots unnamed.
+  expect(PROMPT_DEFAULT).toContain(".mimocode/skill(s)")
+  expect(PROMPT_DEFAULT).toContain(".agents/skills")
+  expect(PROMPT_DEFAULT).toContain("brand compatibility roots")
+  expect(PROMPT_DEFAULT).not.toContain(".claude/skills")
+  expect(PROMPT_DEFAULT).not.toContain(".codex/skills")
+  expect(PROMPT_DEFAULT).not.toContain(".opencode/skill")
+  expect(PROMPT_DEFAULT).not.toContain("### Memory")
+  expect(PROMPT_DEFAULT).not.toContain("MEMORY.md")
+  expect(PROMPT_DEFAULT).not.toContain("shared token budget")
+  expect(PROMPT_DEFAULT).not.toContain("12h script deadline")
+  expect(PROMPT_DEFAULT).not.toContain("permission mode")
+  expect(PROMPT_DEFAULT).not.toContain("Agent tool")
+  expect(PROMPT_DEFAULT).not.toContain("task_*")
+  expect(PROMPT_DEFAULT).not.toContain("notebook-edit")
+  expect(PROMPT_DEFAULT).not.toContain("Claude Code")
+  expect(PROMPT_DEFAULT).not.toContain("CLAUDE.md")
+  expect(PROMPT_DEFAULT).not.toContain("~/.claude")
+  expect(PROMPT_DEFAULT).not.toContain("anthropics/claude-code")
+  expect(PROMPT_DEFAULT).not.toContain("memory-path-guard")
+  expect(PROMPT_DEFAULT).not.toContain("/help")
+  // Meta tools (e.g. `exec`) stay out of the base prompt's tool lists.
+  expect(PROMPT_DEFAULT).not.toContain("`exec`")
 })
 
 test("returns default native agents when no config", async () => {
