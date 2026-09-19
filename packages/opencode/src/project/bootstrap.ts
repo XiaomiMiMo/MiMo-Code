@@ -16,6 +16,7 @@ import { Config } from "@/config"
 import { Metrics } from "@/metrics"
 import { Memory } from "@/memory"
 import { WriterService } from "@/history"
+import { sweepAbandonedZombies } from "@/actor/registry"
 
 export const InstanceBootstrap = Effect.gen(function* () {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -23,6 +24,17 @@ export const InstanceBootstrap = Effect.gen(function* () {
   yield* Config.Service.use((svc) => svc.get())
   // Plugin can mutate config so it has to be initialized before anything else.
   yield* Plugin.Service.use((svc) => svc.init())
+  // Per-directory reclaim: ActorRegistry layer is process-shared and does not
+  // rebuild when a new directory enters. Question orphans for this directory
+  // must be settled here. SessionStatus for a freshly entered directory is
+  // empty at bootstrap; directory scoping is the liveness boundary.
+  yield* Effect.sync(() => {
+    sweepAbandonedZombies({ directory: Instance.directory })
+  }).pipe(
+    Effect.catch((err: unknown) =>
+      Effect.sync(() => Log.Default.warn("abandon question sweep failed", { error: String(err) })),
+    ),
+  )
   yield* Effect.all(
     [
       LSP.Service,
