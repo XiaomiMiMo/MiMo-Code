@@ -30,11 +30,11 @@ MEMORY_PATH structure (4 sections):
 
 PROCEDURE:
 
-Turn 1 - `read` all sources in parallel:
-  `read` CHECKPOINT_PATH
-  `read` MEMORY_PATH
-  `read` NOTES_PATH (file may not exist for v8.1-era sessions; treat as empty if so)
-  (also `read` any spillover files referenced in either main file's index lines)
+Turn 1 - Read all sources in parallel:
+  Read CHECKPOINT_PATH
+  Read MEMORY_PATH
+  Read NOTES_PATH (file may not exist for v8.1-era sessions; treat as empty if so)
+  (also Read any spillover files referenced in either main file's index lines)
 
 Turn 2a - Reconcile pass (read sources, decide migrations, then plan Edits):
 
@@ -111,7 +111,7 @@ Turn 2 - Issue Edits in parallel (single message), then stop:
         🔵 <TID> <summary> (progress: tasks/<TID>/progress.md, last-reconciled-written-at: <written-at from the diff block>)
       - When no SUBAGENT PROGRESS block is present, do not read any tasks/*/progress.md
         on your own — there is nothing new to reconcile.
-  For notes.md: Use `write` to overwrite notes.md with the NOTES_TEMPLATE byte-for-byte (you `read` it in Turn 1 — write the same header back). Rationale: every entry in notes.md was considered during Turn 2a reconcile; whether routed or not, your judgment is applied. Agent re-appends fresh entries in subsequent turns. Do NOT use `edit` — use `write` with the full template body. Do not invent template text — use what you `read` in Turn 1 verbatim.
+  For notes.md: Use `write` to overwrite notes.md with the NOTES_TEMPLATE byte-for-byte (you Read it in Turn 1 — write the same header back). Rationale: every entry in notes.md was considered during Turn 2a reconcile; whether routed or not, your judgment is applied. Agent re-appends fresh entries in subsequent turns. Do NOT use `edit` — use `write` with the full template body. Do not invent template text — use what you Read in Turn 1 verbatim.
 
 CRITICAL CONSTRAINTS:
 

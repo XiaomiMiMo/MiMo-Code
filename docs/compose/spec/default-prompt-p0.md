@@ -63,7 +63,7 @@ rules + two real roots; Tone (progress rhythm, end-of-turn summary).
 2. Over-slashed then restored Agent system; final product call: **architecture out of base sys** (mimocode-docs / tool desc own it); tests lock the slim shape.
 3. Subagent return format belongs on spawn task injection, not the main memory block.
 4. `general` must keep a nested-spawn ban and inspect/verify work-face: `toolAllowlist` is unset so it can inherit `actor`; without verify bullets the parent-report contract is unimplementable.
-5. Tool-name casing across **all injectors**: when a word names a tool, use the registered snake_case id in backticks (`read`/`grep`/`edit`/`write`); plain English verbs may stay unquoted. Prefer "the `grep` tool" / "the `glob` tool" when a bare id could be read as a shell command. Sweep same-list leftovers (checkpoint-writer Turn 1) — partial rewrites look worse than untouched prose.
+5. Tool-name casing across **all injectors**: English imperatives stay plain English (`Read all sources`, `Glob \`pattern\``, `Read CHECKPOINT_PATH`). When naming the registered tool, use `Use \`glob\` with …` / `the \`grep\` tool` / call form `glob("…")` — never jam a backticked id in front of an argument (`` `glob` `path` `` is unreadable). Prefer registered snake_case ids over `Grep`/`Read tool` prose when the word means the tool.
 
 ## [S1] Problem
 
@@ -80,8 +80,9 @@ Base sys = behavior + trust + tool routing + skills roots + tone. Delete wrong,
 branded, or already-injected content. Architecture lives in tool descriptions /
 mimocode-docs / runtime injectors. compose never appears. Return format is
 spawn-owned. `general` forbids nested spawn. Tool names in every model-facing
-injector use exact registered ids (backticked snake_case when they mean the tool);
-disambiguate `glob`/`grep` as tools when a bare id could be read as shell.
+injector use exact registered ids when naming the tool (`Use \`glob\` with …`,
+`the \`grep\` tool`, `glob("…")`); leave English imperatives as plain English.
+Do not jam a backticked id in front of an argument.
 
 See Report tables.
 
