@@ -505,10 +505,13 @@ export const layer = Layer.effect(
     const connectRemote = Effect.fn("MCP.connectRemote")(function* (
       key: string,
       mcp: ConfigMCP.Info & { type: "remote" },
+      identity?: { hostRevision?: string; fromHost: boolean },
     ) {
-      // Capture attempt identity at create start, not when Unauthorized arrives (R007).
-      const hostRevisionAtCreate = HostMcp.get()[key] ? HostMcp.revisionOf(key) : undefined
-      const fromHostAtCreate = hostRevisionAtCreate != null
+      // Prefer the caller's creation snapshot; only fall back to current HostMcp
+      // when create() was invoked without one (e.g. refreshHost discovery).
+      const hostRevisionAtCreate =
+        identity?.hostRevision ?? (HostMcp.get()[key] ? HostMcp.revisionOf(key) : undefined)
+      const fromHostAtCreate = identity?.fromHost ?? hostRevisionAtCreate != null
       const oauthDisabled = mcp.oauth === false
       const oauthConfig = typeof mcp.oauth === "object" ? mcp.oauth : undefined
       let authProvider: McpOAuthProvider | undefined
@@ -577,11 +580,14 @@ export const layer = Layer.effect(
                   })
                   .pipe(Effect.ignore, Effect.as(undefined))
               } else {
-                pendingOAuthTransports.set(key, {
-                  transport,
-                  hostRevision: hostRevisionAtCreate,
-                  fromHost: fromHostAtCreate,
-                })
+                // Late Unauthorized from a superseded create must not overwrite a newer attempt.
+                if (!pendingOAuthTransports.has(key)) {
+                  pendingOAuthTransports.set(key, {
+                    transport,
+                    hostRevision: hostRevisionAtCreate,
+                    fromHost: fromHostAtCreate,
+                  })
+                }
                 lastStatus = { status: "needs_auth" as const }
                 return bus
                   .publish(TuiEvent.ToastShow, {
@@ -684,7 +690,11 @@ export const layer = Layer.effect(
       )
     })
 
-    const create = Effect.fn("MCP.create")(function* (key: string, mcp: ConfigMCP.Info) {
+    const create = Effect.fn("MCP.create")(function* (
+      key: string,
+      mcp: ConfigMCP.Info,
+      identity?: { hostRevision?: string; fromHost: boolean },
+    ) {
       if (mcp.enabled === false) {
         log.info("mcp server disabled", { key })
         return DISABLED_RESULT
@@ -694,7 +704,7 @@ export const layer = Layer.effect(
 
       const { client: mcpClient, status } =
         mcp.type === "remote"
-          ? yield* connectRemote(key, mcp as ConfigMCP.Info & { type: "remote" })
+          ? yield* connectRemote(key, mcp as ConfigMCP.Info & { type: "remote" }, identity)
           : yield* connectLocal(key, mcp as ConfigMCP.Info & { type: "local" })
 
       if (!mcpClient) {
@@ -1002,7 +1012,10 @@ export const layer = Layer.effect(
       // Prefer revision captured at the config-resolution boundary (R006).
       const hostRevision = opts?.hostRevision ?? (HostMcp.get()[name] ? HostMcp.revisionOf(name) : undefined)
       const s = yield* InstanceState.get(state)
-      const result = yield* create(name, mcp)
+      const result = yield* create(name, mcp, {
+        fromHost: opts?.fromHost === true,
+        hostRevision,
+      })
 
       if (!result.mcpClient) {
         // Failure completion uses the same validity rule as success: a host-sourced
