@@ -1160,6 +1160,196 @@ describe("ActorRegistry", () => {
       })
     })
 
+    test("[TP-ABANDON-Q-02] running main keeps its question while a zombie subagent is reclaimed", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            const now = Date.now()
+            Database.use((db) => {
+              db.insert(ActorRegistryTable)
+                .values({
+                  session_id: session.id,
+                  actor_id: "zombie-sub",
+                  mode: "subagent",
+                  parent_actor_id: null,
+                  status: "running",
+                  last_outcome: null,
+                  result_message_id: null,
+                  lifecycle: "ephemeral",
+                  agent: "explore",
+                  description: "dead child",
+                  context_mode: "none",
+                  context_watermark: null,
+                  background: true,
+                  tools: null,
+                  last_turn_time: stale,
+                  turn_count: 1,
+                  last_activity_time: stale,
+                  last_error: null,
+                  instance_id: "dead-instance",
+                  time_completed: null,
+                  time_created: stale,
+                  time_updated: stale,
+                })
+                .run()
+              // live main on this process — holds a real question Deferred
+              db.update(ActorRegistryTable)
+                .set({ status: "running", last_activity_time: now, time_updated: now })
+                .where(and(eq(ActorRegistryTable.session_id, session.id), eq(ActorRegistryTable.actor_id, "main")))
+                .run()
+              const messageId = MessageID.ascending()
+              const partId = PartID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: now,
+                  time_updated: now,
+                  data: { role: "assistant", time: { created: now } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: now,
+                  time_updated: now,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_main_q",
+                    state: {
+                      status: "running",
+                      input: {
+                        questions: [{ question: "main q?", header: "main", options: [{ label: "A", description: "" }] }],
+                      },
+                      time: { start: now },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonMainQ = { session: session.id, part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonMainQ as { session: string; part: string }
+      await withRegistry(tmp.path, async () => {
+        sweepAbandonedZombies()
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const data = part?.data as { state?: { status?: string } }
+        expect(data?.state?.status).toBe("running")
+        const zombie = Database.use((db) =>
+          db
+            .select()
+            .from(ActorRegistryTable)
+            .where(and(eq(ActorRegistryTable.session_id, ids.session as never), eq(ActorRegistryTable.actor_id, "zombie-sub")))
+            .get(),
+        )
+        expect(zombie?.status).toBe("idle")
+      })
+    })
+
+    test("[TP-ABANDON-Q-03] leftover running question with already-terminal actors is still repaired", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const now = Date.now()
+            Database.use((db) => {
+              // prior boot already settled the abandoned actor; only the question remains open
+              db.insert(ActorRegistryTable)
+                .values({
+                  session_id: session.id,
+                  actor_id: "already-idle",
+                  mode: "subagent",
+                  parent_actor_id: null,
+                  status: "idle",
+                  last_outcome: "failure",
+                  result_message_id: null,
+                  lifecycle: "ephemeral",
+                  agent: "explore",
+                  description: "settled earlier",
+                  context_mode: "none",
+                  context_watermark: null,
+                  background: true,
+                  tools: null,
+                  last_turn_time: now,
+                  turn_count: 1,
+                  last_activity_time: now,
+                  last_error: "settled by abandon threshold",
+                  instance_id: "dead-instance",
+                  time_completed: now,
+                  time_created: now,
+                  time_updated: now,
+                })
+                .run()
+              const messageId = MessageID.ascending()
+              const partId = PartID.ascending()
+              db.insert(MessageTable)
+                .values({
+                  id: messageId,
+                  session_id: session.id,
+                  agent_id: "main",
+                  time_created: now,
+                  time_updated: now,
+                  data: { role: "assistant", time: { created: now } } as never,
+                })
+                .run()
+              db.insert(PartTable)
+                .values({
+                  id: partId,
+                  message_id: messageId,
+                  session_id: session.id,
+                  time_created: now,
+                  time_updated: now,
+                  data: {
+                    type: "tool",
+                    tool: "question",
+                    callID: "call_leftover",
+                    state: {
+                      status: "running",
+                      input: {
+                        questions: [{ question: "leftover?", header: "lo", options: [{ label: "A", description: "" }] }],
+                      },
+                      time: { start: now },
+                    },
+                  } as never,
+                })
+                .run()
+              ;(globalThis as Record<string, unknown>).__abandonLeftover = { part: partId }
+            })
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__abandonLeftover as { part: string }
+      await withRegistry(tmp.path, async () => {
+        sweepAbandonedZombies()
+        const part = Database.use((db) =>
+          db.select().from(PartTable).where(eq(PartTable.id, ids.part as never)).get(),
+        )
+        const data = part?.data as { state?: { status?: string; error?: string } }
+        expect(data?.state?.status).toBe("error")
+        expect(data?.state?.error).toContain("abandon threshold")
+      })
+    })
+
     test("same-process rebuild does not settle a stale-but-alive running row", async () => {
       await using tmp = await tmpdir({ git: true })
       await Instance.provide({

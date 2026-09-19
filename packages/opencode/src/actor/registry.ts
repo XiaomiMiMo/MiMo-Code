@@ -28,24 +28,38 @@ const PROCESS_INSTANCE_ID = randomUUID()
 /**
  * Persist terminal state for other-instance running/pending actors that have
  * been silent past the abandon threshold, then settle orphaned running
- * question tool parts on sessions that no longer have any live actor.
+ * question tool parts.
+ *
+ * Live execution = `running` (any actor id, including main) or non-main
+ * `pending`. The `pending main` row seeded by Session.create is not live.
+ *
+ * Question reclaim uses the same abandon-threshold tradeoff as actor rows:
+ * a fiber blocked on an unanswered question writes no parts, so after the
+ * threshold another instance may reclaim both the actor row and its open
+ * question parts. Orphan discovery is not limited to sessions settled in
+ * this pass — already-terminal leftover questions are repaired too.
+ *
  * Called on registry layer init; tests may invoke after seeding zombie rows.
  */
 export function sweepAbandonedZombies(): void {
   const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
   Database.use((db) => {
-    const all = db.select().from(ActorRegistryTable).all()
-    const abandonedSessions = all
+    const isLiveActor = (row: { actor_id: string; status: string }): boolean => {
+      if (row.status === "running") return true
+      // pending main is the Session.create seed, not an executing fiber
+      if (row.status === "pending" && row.actor_id !== "main") return true
+      return false
+    }
+
+    const abandoned = db
+      .select()
+      .from(ActorRegistryTable)
+      .all()
       .filter((row) => row.status === "running" || row.status === "pending")
       .filter((row) => row.instance_id !== PROCESS_INSTANCE_ID)
       .filter((row) => (row.last_activity_time ?? row.time_created) < cutoff)
-      .map((row) => row.session_id)
-    if (!abandonedSessions.length) return
 
-    for (const row of all) {
-      if (row.status !== "running" && row.status !== "pending") continue
-      if (row.instance_id === PROCESS_INSTANCE_ID) continue
-      if ((row.last_activity_time ?? row.time_created) >= cutoff) continue
+    for (const row of abandoned) {
       db.update(ActorRegistryTable)
         .set({
           status: "idle",
@@ -62,58 +76,50 @@ export function sweepAbandonedZombies(): void {
     const end = Date.now()
     const orphanQuestionError =
       "This question was left open by a process instance that is no longer live; settled by abandon threshold. The card is cancelled — send a new message to continue."
-    for (const sessionID of new Set(abandonedSessions)) {
-      // Session.create seeds a pending main row; it does not hold question
-      // Deferreds. Only a remaining non-main running/pending actor means a
-      // fiber might still be waiting on this question.
-      const stillLive = db
-        .select()
-        .from(ActorRegistryTable)
-        .where(eq(ActorRegistryTable.session_id, sessionID))
-        .all()
-        .some((row) => (row.status === "running" || row.status === "pending") && row.actor_id !== "main")
-      if (stillLive) continue
-      const openQuestions = db
-        .select()
-        .from(PartTable)
-        .where(eq(PartTable.session_id, sessionID))
-        .all()
-        .filter((row) => {
-          const data = row.data as {
-            type?: string
-            tool?: string
-            state?: { status?: string }
-          }
-          return (
-            data?.type === "tool" &&
-            data?.tool === "question" &&
-            (data.state?.status === "running" || data.state?.status === "pending")
-          )
-        })
-      for (const row of openQuestions) {
+
+    const actorsAfter = db.select().from(ActorRegistryTable).all()
+    const openQuestions = db
+      .select()
+      .from(PartTable)
+      .all()
+      .filter((row) => {
         const data = row.data as {
           type?: string
           tool?: string
-          state?: { status?: string; error?: string; time?: Record<string, unknown> }
+          state?: { status?: string }
         }
-        const state = data.state && typeof data.state === "object" ? data.state : {}
-        const time = state.time && typeof state.time === "object" ? state.time : {}
-        db.update(PartTable)
-          .set({
-            data: {
-              ...data,
-              state: {
-                ...state,
-                status: "error",
-                error: orphanQuestionError,
-                time: { ...time, end: end },
-              },
-            } as never,
-            time_updated: end,
-          })
-          .where(eq(PartTable.id, row.id))
-          .run()
+        return (
+          data?.type === "tool" &&
+          data?.tool === "question" &&
+          (data.state?.status === "running" || data.state?.status === "pending")
+        )
+      })
+
+    for (const row of openQuestions) {
+      const sessionActors = actorsAfter.filter((a) => a.session_id === row.session_id)
+      if (sessionActors.some(isLiveActor)) continue
+      const data = row.data as {
+        type?: string
+        tool?: string
+        state?: { status?: string; error?: string; time?: Record<string, unknown> }
       }
+      const state = data.state && typeof data.state === "object" ? data.state : {}
+      const time = state.time && typeof state.time === "object" ? state.time : {}
+      db.update(PartTable)
+        .set({
+          data: {
+            ...data,
+            state: {
+              ...state,
+              status: "error",
+              error: orphanQuestionError,
+              time: { ...time, end: end },
+            },
+          } as never,
+          time_updated: end,
+        })
+        .where(eq(PartTable.id, row.id))
+        .run()
     }
   })
 }
