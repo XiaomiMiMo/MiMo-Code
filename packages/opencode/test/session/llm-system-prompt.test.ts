@@ -396,9 +396,9 @@ describe("session.llm system prompt — memory-instructions guard", () => {
         expect(allSys).toContain("Active recall protocol")
         expect(allSys).toContain("already in your context")
 
-        // (3) Subagent return format hint mentioned
-        expect(allSys).toContain("Subagent return format")
-        expect(allSys).toContain("**Status**:")
+        // (3) Subagent return format lives on spawn task injection, not the main memory block
+        expect(allSys).not.toContain("Subagent return format")
+        expect(allSys).not.toContain("**Status**:")
 
         // (4) Agent's mid-task writing duties removed (v8.0 sections):
         expect(allSys).not.toContain("Maintaining task progress")
@@ -543,7 +543,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
           // Memory write/read contract is NOT gated on checkpoint.
           expect(allSys).toContain("# Memory system")
           expect(allSys).toContain("Notes scratchpad")
-          expect(allSys).toContain("Subagent return format")
+          expect(allSys).not.toContain("Subagent return format")
           expect(allSys).toContain(
             path.join(Global.Path.data, "memory", "projects", Instance.current.project.id, "MEMORY.md"),
           )

@@ -178,19 +178,6 @@ Format each entry as:
   Free-form body.${checkpointEnabled ? " The writer reorganizes structured content at checkpoint time." : ""}
 
 This is your ONLY legal scratchpad — don't create \`learning.md\`, \`scratch.md\`, or any other ad-hoc memory file.`,
-    `## Subagent return format
-
-When you (as a subagent) finish your task, your final assistant message will be delivered to the spawning agent. If the spawn machinery added a "Return format (required)" section to your prompt, follow it exactly:
-
-  **Status**: success | partial | failed | blocked
-  **Summary**: <one-line description>
-
-  <deliverable body>
-
-  **Files touched**: <comma-separated paths or "(none)">
-  **Findings worth promoting**: <bullet list, or "(none)">
-
-If your spawn prompt didn't include this format (e.g., explore/title/summary agents have their own contracts), follow whatever your prompt specifies.`,
     `## What NOT to do
 
 ${[
