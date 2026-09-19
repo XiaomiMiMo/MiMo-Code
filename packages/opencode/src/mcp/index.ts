@@ -26,7 +26,8 @@ import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import open from "open"
-import { Effect, Exit, Layer, Option, Context, Stream } from "effect"
+import { Effect, Exit, Layer, Option, Context, Stream, Semaphore } from "effect"
+import { HostMcp } from "./host"
 import { EffectBridge } from "@/effect"
 import { InstanceState } from "@/effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -400,6 +401,10 @@ interface AuthResult {
 // --- Effect Service ---
 
 interface State {
+  host: Record<string, string>
+  hostRetryAt: Record<string, number>
+  retired: MCPClient[]
+  refresh: Semaphore.Semaphore
   status: Record<string, Status>
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
@@ -709,8 +714,13 @@ export const layer = Layer.effect(
       Effect.fn("MCP.state")(function* () {
         const cfg = yield* cfgSvc.get()
         const bridge = yield* EffectBridge.make()
-        const config = cfg.mcp ?? {}
+        const host = HostMcp.get()
+        const config = { ...cfg.mcp, ...host }
         const s: State = {
+          host: Object.fromEntries(Object.entries(host).map(([key, value]) => [key, JSON.stringify(value)])),
+          hostRetryAt: {},
+          retired: [],
+          refresh: Semaphore.makeUnsafe(1),
           status: {},
           clients: {},
           defs: {},
@@ -734,6 +744,7 @@ export const layer = Layer.effect(
               if (!result) return
 
               s.status[key] = result.status
+              if (key in host && result.status.status === "failed") s.hostRetryAt[key] = Date.now() + 5000
               if (result.mcpClient) {
                 s.clients[key] = result.mcpClient
                 s.defs[key] = result.defs!
@@ -746,7 +757,7 @@ export const layer = Layer.effect(
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
             yield* Effect.forEach(
-              Object.values(s.clients),
+              [...Object.values(s.clients), ...s.retired],
               (client) =>
                 Effect.gen(function* () {
                   const pid = client.transport instanceof ObservingStdioTransport ? client.transport.pid : null
@@ -783,6 +794,37 @@ export const layer = Layer.effect(
       )
     }
 
+    // Refresh only embedder-owned servers. Existing tool closures keep their
+    // client until Instance disposal, so another running turn is not aborted.
+    const refreshHost = Effect.fn("MCP.refreshHost")(function* (s: State) {
+      yield* s.refresh.withPermits(1)(Effect.gen(function* () {
+        const host = HostMcp.get()
+        const cfg = yield* cfgSvc.get()
+        const bridge = yield* EffectBridge.make()
+        for (const name of new Set([...Object.keys(s.host), ...Object.keys(host)])) {
+          const revision = JSON.stringify(host[name])
+          if (s.host[name] === revision && (!s.hostRetryAt[name] || Date.now() < s.hostRetryAt[name])) continue
+          const mcp = host[name] ?? cfg.mcp?.[name]
+          const result = !mcp || !isMcpConfigured(mcp) || mcp.enabled === false
+            ? { status: { status: "disabled" as const }, mcpClient: undefined, defs: undefined }
+            : yield* create(name, mcp)
+          if (s.clients[name]) s.retired.push(s.clients[name])
+          delete s.clients[name]
+          delete s.defs[name]
+          s.status[name] = result.status
+          if (revision == null) delete s.host[name]
+          else s.host[name] = revision
+          if (result.status.status === "failed") s.hostRetryAt[name] = Date.now() + 5000
+          else delete s.hostRetryAt[name]
+          if (result.mcpClient) {
+            s.clients[name] = result.mcpClient
+            s.defs[name] = result.defs!
+            watch(s, name, result.mcpClient, bridge, mcp?.timeout)
+          }
+        }
+      }))
+    })
+
     const storeClient = Effect.fnUntraced(function* (
       s: State,
       name: string,
@@ -801,9 +843,10 @@ export const layer = Layer.effect(
 
     const status = Effect.fn("MCP.status")(function* () {
       const s = yield* InstanceState.get(state)
+      yield* refreshHost(s)
 
       const cfg = yield* cfgSvc.get()
-      const config = cfg.mcp ?? {}
+      const config = { ...cfg.mcp, ...HostMcp.get() }
       const result: Record<string, Status> = {}
 
       for (const [key, mcp] of Object.entries(config)) {
@@ -816,6 +859,7 @@ export const layer = Layer.effect(
 
     const clients = Effect.fn("MCP.clients")(function* () {
       const s = yield* InstanceState.get(state)
+      yield* refreshHost(s)
       return s.clients
     })
 
@@ -858,9 +902,10 @@ export const layer = Layer.effect(
     const tools = Effect.fn("MCP.tools")(function* (context?: TurnContext) {
       const result: Record<string, Tool> = {}
       const s = yield* InstanceState.get(state)
+      yield* refreshHost(s)
 
       const cfg = yield* cfgSvc.get()
-      const config = cfg.mcp ?? {}
+      const config = { ...cfg.mcp, ...HostMcp.get() }
       const defaultTimeout = cfg.experimental?.mcp_timeout
 
       const connectedClients = Object.entries(s.clients).filter(
@@ -957,7 +1002,7 @@ export const layer = Layer.effect(
 
     const getMcpConfig = Effect.fnUntraced(function* (mcpName: string) {
       const cfg = yield* cfgSvc.get()
-      const mcpConfig = cfg.mcp?.[mcpName]
+      const mcpConfig = HostMcp.get()[mcpName] ?? cfg.mcp?.[mcpName]
       if (!mcpConfig || !isMcpConfigured(mcpConfig)) return undefined
       return mcpConfig
     })
