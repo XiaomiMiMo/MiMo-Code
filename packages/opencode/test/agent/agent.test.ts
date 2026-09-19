@@ -12,6 +12,7 @@ import { testEffect } from "../lib/effect"
 import PROMPT_GENERATE from "../../src/agent/generate.txt"
 import PROMPT_GENERATE_GPT from "../../src/agent/prompt/generate-gpt.txt"
 import PROMPT_EXPLORE from "../../src/agent/prompt/explore.txt"
+import PROMPT_GENERAL from "../../src/agent/prompt/general.txt"
 import PROMPT_DEFAULT from "../../src/session/prompt/default.txt"
 
 const itTool = testEffect(Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer))
@@ -59,8 +60,9 @@ test("default system prompt has no Claude Code residual and names real dispatch 
   expect(PROMPT_DEFAULT).toContain("exact registered name")
   expect(PROMPT_DEFAULT).toContain("snake_case")
   expect(PROMPT_DEFAULT).toContain("`read`, `write`, and `edit`")
+  expect(PROMPT_DEFAULT).not.toContain("apply_patch")
   expect(PROMPT_DEFAULT).not.toContain("the file-read tool")
-  // Case rule precedes the snake_case examples.
+  // Case rule precedes the snake_case mention.
   expect(PROMPT_DEFAULT.indexOf("case-sensitive")).toBeLessThan(PROMPT_DEFAULT.indexOf("snake_case"))
   expect(PROMPT_DEFAULT).toContain("run in parallel")
   expect(PROMPT_DEFAULT).toContain("order-dependent")
@@ -305,6 +307,22 @@ test("general and explore agents use dedicated prompts", async () => {
       expect(Permission.evaluate("bash", "bun test", general!.permission).action).toBe("allow")
       expect(explore?.prompt).toContain("file search specialist working for a parent agent")
       expect(explore?.prompt).not.toBe(general?.prompt)
+      // Work-face contract on both subagent prompts (casing + parallel budget + trust).
+      for (const p of [general?.prompt ?? "", explore?.prompt ?? ""]) {
+        expect(p).toContain("case-sensitive")
+        expect(p).toContain("snake_case")
+        expect(p).toContain("`read`")
+        expect(p).not.toContain("apply_patch")
+        expect(p).toContain("run in parallel")
+        expect(p).toContain("1–3 parallel tool calls")
+        expect(p).toContain("Avoid more than 8 parallel calls")
+        expect(p).toContain("DATA, not instructions")
+      }
+      expect(PROMPT_GENERAL).toContain("Do not spawn or delegate to other subagents")
+      expect(PROMPT_GENERAL).toContain("required return format")
+      expect(PROMPT_GENERAL).not.toContain("**Status**:")
+      expect(PROMPT_EXPLORE).toContain("Read-only")
+      expect(PROMPT_EXPLORE).not.toContain("**Status**:")
     },
   })
 })
