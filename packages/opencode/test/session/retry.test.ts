@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { NamedError } from "@mimo-ai/shared/util/error"
+import { NamedError } from "@mimo-ai/shared/util/error"
 import { APICallError, RetryError } from "ai"
 import { setTimeout as sleep } from "node:timers/promises"
 import { Effect, Schedule, Schema } from "effect"
@@ -898,5 +898,66 @@ describe("retry decision and coordinator budget", () => {
     ).rejects.toBe(error)
     expect(attempts).toBe(1)
     expect(retryEvents).toBe(0)
+  })
+
+  // [UnknownError 有限次重试] uncatalogued ≠ proven terminal:fromError catch-all
+  // (含丢掉 statusCode 的 5xx)应走有界预算,耗尽后再 terminal。
+  // 预算按 phase 分流(retry-coordinator.md budgetFor):
+  //   stream → unknown(默认 8 / 15min);request → request(默认 4 / 30s)。
+  test("UnknownError is retryable under the bounded stream unknown budget, not immediate terminal", () => {
+    const unknown = new NamedError.Unknown({ message: '"Internal Server Error"' }).toObject()
+    const decision = decide(unknown, "stream")
+    expect(decision).toMatchObject({ retryable: true, kind: "unknown", phase: "stream" })
+    const resolved = SessionRetry.resolve(undefined, "test")
+    const budget = SessionRetry.budgetFor(resolved, decision)
+    expect(budget.mode).toBe("bounded")
+    expect(budget.maxRetries).toBe(SessionRetry.UNKNOWN_MAX_RETRIES)
+  })
+
+  test("UnknownError in request phase uses the request budget, not the stream unknown budget", () => {
+    // budgetFor 顺序:max-scope → network/rate_limit/server persistent → phase=request → unknown。
+    // request 相位的 unknown 故意走 request 预算(scope 表:仅作用于非三类可恢复的如 unknown)。
+    const unknown = new NamedError.Unknown({ message: "Internal Server Error" }).toObject()
+    const decision = decide(unknown, "request")
+    expect(decision).toMatchObject({ retryable: true, kind: "unknown", phase: "request" })
+    const resolved = SessionRetry.resolve(undefined, "test")
+    const budget = SessionRetry.budgetFor(resolved, decision)
+    expect(budget.mode).toBe("bounded")
+    expect(budget.maxRetries).toBe(SessionRetry.REQUEST_MAX_RETRIES)
+    expect(budget.maxRetries).not.toBe(SessionRetry.UNKNOWN_MAX_RETRIES)
+  })
+
+  test("UnknownError stream policy retries a bounded number of times then terminal", async () => {
+    const unknown = new NamedError.Unknown({ message: '"Internal Server Error"' }).toObject()
+    let attempts = 0
+    let retries = 0
+    const schedule = SessionRetry.policy({
+      phase: "stream",
+      maxRetries: 2,
+      maxElapsedMs: 60_000,
+      initialDelayMs: 1,
+      parse: (input) => input as ReturnType<NamedError["toObject"]>,
+      set: () => Effect.sync(() => retries++),
+    })
+    await expect(
+      Effect.runPromise(
+        Effect.suspend(() => {
+          attempts++
+          return Effect.fail(unknown)
+        }).pipe(Effect.retry(schedule)),
+      ),
+    ).rejects.toBe(unknown)
+    // attempt 1 fail → retry → attempt 2 fail → retry → attempt 3 fail → give up
+    expect(attempts).toBe(3)
+    expect(retries).toBe(2)
+  })
+
+  test("terminal kinds stay terminal and are not swallowed by UnknownError retry", () => {
+    const aborted = new MessageV2.AbortedError({ message: "Aborted" }).toObject()
+    expect(decide(aborted)).toMatchObject({ retryable: false, kind: "terminal" })
+    const auth = new MessageV2.AuthError({ providerID: "mimo", message: "invalid key" }).toObject()
+    expect(decide(auth)).toMatchObject({ retryable: false, kind: "terminal" })
+    const overflow = new MessageV2.ContextOverflowError({ message: "too long" }).toObject()
+    expect(decide(overflow)).toMatchObject({ retryable: false, kind: "terminal" })
   })
 })

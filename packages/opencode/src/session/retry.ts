@@ -1,4 +1,4 @@
-import type { NamedError } from "@mimo-ai/shared/util/error"
+import { NamedError } from "@mimo-ai/shared/util/error"
 import { Cause, Clock, Duration, Effect, Schedule } from "effect"
 import { MessageV2 } from "./message-v2"
 import { ProviderError } from "@/provider"
@@ -372,6 +372,14 @@ export function decide(
     if (status === 400 || status === 401 || status === 403 || status === 422) return terminal()
     if (error.data.isRetryable) return retry("unknown")
   }
+  // UnknownError = fromError catch-all (including 5xx that lost statusCode).
+  // Uncatalogued ≠ proven terminal: retryable under a bounded budget, then terminal.
+  // True terminals stay blocked above: Aborted / Auth / ContextOverflow / 402 / 501 / 505 / 404 / quota.
+  // Budget is phase-sensitive via budgetFor (retry-coordinator.md §Scope):
+  //   request phase → request budget (default 4 / 30s; scope table: request applies to
+  //     recoverable non-network/rate_limit/server kinds such as unknown);
+  //   stream/live-step → unknown budget (default 8 / 15min).
+  if (NamedError.Unknown.isInstance(error)) return retry("unknown")
   return terminal()
 }
 

@@ -229,17 +229,16 @@ describe("max-mode defect handling (SSE timeout surfaces as Cause.die)", () => {
   })
 
   test("candidate degrades a defect to null instead of crashing the fiber", async () => {
-    // Non-transient defect: catchCause contains it and catch degrades to null in
-    // ONE attempt (no retry), which is the decisive containment property.
+    // Uncatalogued defect → UnknownError → bounded unknown retries, then null.
+    // Containment is decisive: never escapes as a Die that would kill the session.
     const { llm, attempts } = dyingLLM({ dieTimes: 99, makeError: fatalDefect, goodEvents: [] })
 
     const exit = await Effect.runPromiseExit(runCandidate(baseInput(llm), 0))
 
-    // The decisive assertion: the defect is CONTAINED (Success with null),
-    // never escaping as a Die that would bubble to the session and kill it.
     expect(exit._tag).toBe("Success")
     if (exit._tag === "Success") expect(exit.value).toBeNull()
-    expect(attempts()).toBe(1) // non-transient -> not retried
+    // max-candidate budget maxRetries=3 → 1 + 3 attempts, then give up
+    expect(attempts()).toBe(4)
   })
 
   test("judge contains a defect and falls back to pick 0", async () => {
