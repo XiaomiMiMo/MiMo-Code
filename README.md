@@ -285,7 +285,7 @@ MiMoCode bundles the following builtin skills:
 | `MIMOCODE_ENABLE_CODEX_SKILLS=true` | unset = off | Opt in `.codex/skills` (user skills only; Codex `skills/.system` is never loaded) |
 | `MIMOCODE_ENABLE_OPENCODE_SKILLS=true` | unset = off | Opt in `.opencode/skills` |
 
-Deprecated and ignored: `MIMOCODE_DISABLE_EXTERNAL_SKILLS`, `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS`, `MIMOCODE_DISABLE_CODEX_SKILLS`, `MIMOCODE_DISABLE_OPENCODE_SKILLS`. External scans never match dotted path segments under `skills/`.
+External scans never match dotted path segments under `skills/`.
 
 The first two options remove the corresponding skills from the agent's available skill list entirely — they will not appear in context and cannot be invoked. `MIMOCODE_DISABLE_SLASH_SKILLS` affects only TUI autocomplete; the skills remain available to agents.
 

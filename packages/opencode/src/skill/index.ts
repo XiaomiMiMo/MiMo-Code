@@ -26,8 +26,8 @@ const MIMOCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
 const SKILL_PATTERN = "**/SKILL.md"
 const BUILTIN_SKILL_PATTERN = "skills/*/SKILL.md"
 
-// Brand roots are opt-in except the open-standard .agents root. No master
-// external-skills gate; see docs/compose/spec/skill-external-root-defaults.md.
+// Brand roots opt in via MIMOCODE_ENABLE_*_SKILLS; .agents stays on unless
+// MIMOCODE_DISABLE_AGENTS_SKILLS is set.
 const externalSkillDirs = () =>
   EXTERNAL_DIRS.filter((dir) => {
     if (dir === ".claude") return Flag.MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS
@@ -224,8 +224,8 @@ const discoverStableSkills = Effect.fnUntraced(function* (
     }
   }
 
-  // Non-dot matching: host-private namespaces (Codex skills/.system, Claude
-  // skills/.trash) must never enter the catalog.
+  // Dotted path segments under skills/ are host-private (e.g. Codex .system)
+  // and must not match.
   for (const dir of externalSkillDirs()) {
     const root = path.join(Global.Path.home, dir)
     if (!(yield* fsys.isDir(root))) continue

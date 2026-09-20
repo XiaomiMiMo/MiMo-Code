@@ -35,8 +35,8 @@ Memory files live under `~/.local/share/mimocode/memory/`:
 - `MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT` — retries when a model emits a tool call as prose markup instead of a structured call (default 2).
 - `MIMOCODE_EXPERIMENTAL_CRON` — scheduled prompts (cron/loop); **on by default**. `MIMOCODE_DISABLE_CRON` kills it at runtime. Tune loop keepalive with `MIMOCODE_LOOP_KEEPALIVE_BUDGET` (default 1) and `MIMOCODE_LOOP_KEEPALIVE_DELAY_S` (default 1200).
 - `MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_HEURISTIC` — shape-based compaction of bash output to save tokens; off by default.
-- `MIMOCODE_MIMO_ONLY` — pure-MiMo mode for Claude inheritance / provider env (does **not** change skill-root selection).
-- **External skill roots** — default load surface is `.mimocode` + open-standard `.agents`. Brand roots are opt-in: `MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS`, `MIMOCODE_ENABLE_CODEX_SKILLS`, `MIMOCODE_ENABLE_OPENCODE_SKILLS`. Turn agents off with `MIMOCODE_DISABLE_AGENTS_SKILLS`. Deprecated and ignored: `MIMOCODE_DISABLE_EXTERNAL_SKILLS`, `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS`, `MIMOCODE_DISABLE_CODEX_SKILLS`, `MIMOCODE_DISABLE_OPENCODE_SKILLS`. External scans never match dotted path segments (so host-private dirs like `skills/.system` stay out).
+- `MIMOCODE_MIMO_ONLY` — pure-MiMo mode: don't inherit Claude Code settings (CLAUDE.md, `~/.claude/CLAUDE.md`), don't read provider API keys from env, fall back to the mimo-auto model.
+- **External skill roots** — default load surface is `.mimocode` + open-standard `.agents`. Brand roots are opt-in: `MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS`, `MIMOCODE_ENABLE_CODEX_SKILLS`, `MIMOCODE_ENABLE_OPENCODE_SKILLS`. Turn agents off with `MIMOCODE_DISABLE_AGENTS_SKILLS`. External scans skip dotted path segments under `skills/`.
 - `MIMOCODE_DISABLE_BUILTIN_SKILLS`, `_COMPOSE_SKILLS`, `_PROJECT_CONFIG`, `_CLAUDE_IMPORT` — feature toggles.
 
 ## Top-level config keys

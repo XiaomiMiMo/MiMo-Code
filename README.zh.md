@@ -276,7 +276,7 @@ MiMoCode 打包了以下内置技能：
 | `MIMOCODE_ENABLE_CODEX_SKILLS=true` | 不设 = 关 | 打开 `.codex/skills`（仅用户 skill；Codex `skills/.system` 永不加载） |
 | `MIMOCODE_ENABLE_OPENCODE_SKILLS=true` | 不设 = 关 | 打开 `.opencode/skills` |
 
-已废弃并忽略：`MIMOCODE_DISABLE_EXTERNAL_SKILLS`、`MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS`、`MIMOCODE_DISABLE_CODEX_SKILLS`、`MIMOCODE_DISABLE_OPENCODE_SKILLS`。外部扫描不匹配 `skills/` 下的点目录段。
+外部扫描不匹配 `skills/` 下的点目录段。
 
 前两个选项会将对应技能从 Agent 可用技能列表中完全移除——不会出现在上下文中，也无法被调用。`MIMOCODE_DISABLE_SLASH_SKILLS` 仅影响 TUI 自动补全，Skill 对 Agent 仍然可用。
 

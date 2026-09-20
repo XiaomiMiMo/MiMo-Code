@@ -8,8 +8,7 @@ import { provideInstance, provideTmpdirInstance, tmpdir } from "../fixture/fixtu
 import { testEffect } from "../lib/effect"
 import { withEnv } from "../lib/env"
 
-// Isolate from bundles and from whatever the developer machine has under
-// ~/.agents. Each case below sets the Active skill-root env it needs.
+// Isolate from bundles and host ~/.agents. Each case sets the root env it needs.
 withEnv({
   MIMOCODE_DISABLE_COMPOSE_SKILLS: "true",
   MIMOCODE_DISABLE_BUILTIN_SKILLS: "true",
@@ -17,13 +16,6 @@ withEnv({
   MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS: undefined,
   MIMOCODE_ENABLE_CODEX_SKILLS: undefined,
   MIMOCODE_ENABLE_OPENCODE_SKILLS: undefined,
-  // Deprecated keys must not change the predicate.
-  MIMOCODE_DISABLE_EXTERNAL_SKILLS: "true",
-  MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS: "true",
-  MIMOCODE_DISABLE_CODEX_SKILLS: "true",
-  MIMOCODE_DISABLE_OPENCODE_SKILLS: "true",
-  MIMOCODE_MIMO_ONLY: "true",
-  MIMOCODE_DISABLE_CLAUDE_CODE: "true",
 })
 
 const it = testEffect(Layer.mergeAll(Skill.defaultLayer, CrossSpawnSpawner.defaultLayer))
@@ -83,7 +75,7 @@ const withHome = <A, E, R>(home: string, self: Effect.Effect<A, E, R>) =>
   )
 
 describe("skill external root defaults", () => {
-  it.live("default surface is empty without brand opt-in (and ignores deprecated gates)", () =>
+  it.live("default surface is empty without brand opt-in", () =>
     provideTmpdirInstance(
       (dir) =>
         Effect.gen(function* () {
