@@ -1,0 +1,6 @@
+=== GET receipt ===
+{"id":"01M2ZTP8Q6K57NFC22QGRD733J","lane":{"sessionID":"ses_ffe5f4054e055ffeqFPYE3b7JG","agentID":"main"},"state":"settled","intent":{"kind":"prompt","messageID":"msg_g001a0bfab22ce001tweqq7KoI"},"epoch":0,"consumed":true,"suspended":false,"outcome":"assistant_error","messageId":"msg_g001a0bfab233a0014LhYoscLo","error":"[object Object]","time":{"created":1789922058982,"updated":1789922065388}}
+HTTP 200
+
+=== sqlite turn_receipt ===
+01M2ZTP8Q6K57NFC22QGRD733J|settled|assistant_error|0|1
