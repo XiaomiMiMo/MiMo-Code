@@ -348,9 +348,18 @@ export const ActorTool = Tool.define(
             actor_id: op.actor_id,
             timeout_ms: op.timeout_ms,
           })
+          const title =
+            snap.status === "interrupted"
+              ? "Actor wait: interrupted by user message"
+              : `Actor wait: ${snap.status}${snap.lastOutcome ? "/" + snap.lastOutcome : ""}`
+          const output =
+            snap.status === "interrupted"
+              ? JSON.stringify(snap) +
+                "\nA user message arrived while you were waiting. Stop calling tools and address the user. The subagent keeps running and will notify when done — do not wait again immediately."
+              : JSON.stringify(snap)
           return {
-            title: `Actor wait: ${snap.status}${snap.lastOutcome ? "/" + snap.lastOutcome : ""}`,
-            output: JSON.stringify(snap),
+            title,
+            output,
             metadata: {
               actor_id: snap.actor_id,
               status: snap.status,

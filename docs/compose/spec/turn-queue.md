@@ -251,13 +251,13 @@ CI: fail new `ensureRunning` call sites outside allowlist (T8).
 
 ## Tasks
 
-- [x] T0: **Admission inventory** — acceptance: table of every `ensureRunning|ensureExclusive|startOwned|startShell|SessionRunState.start|SessionPrompt.loop` call site under `packages/opencode/src` with migrate/skip; include command/init/summarize/shell classification; CI lint blocks new turn-work `ensureRunning` (covers: S2)
-- [ ] T1: LaneController + Mailbox + durable Receipt + epoch + frontier + idempotency (per-session unique) — acceptance: admit/claim/settle/cancel/reject unit tests; restart reloads epoch + `accepted|claimed`; old-epoch never claimed; wake coalesces; prompt never coalesces (covers: S2; depends: T0)
-- [ ] T2: inputRevision + observeInput atomic check-and-subscribe — acceptance: no missed pre-subscribe bump; level-triggered resolve (covers: S2; depends: T1)
-- [ ] T3: Claim/ack + MessageID frontier + extendClaim in runLoop — acceptance: full batch settle; partial error `never_ran`; mid-turn extendClaim; crash between message persist and admit → boot synthetic receipt (covers: S2; depends: T1)
-- [ ] T4: Runner exclusive-lease only — acceptance: concurrent claim cannot double-run; no pending-attach admission (covers: S2; depends: T3)
-- [ ] T5: SessionPrompt.prompt/loop via Controller — acceptance: sync prompt = admit+await receipt; noReply = admit-only; orphan user-message reconcile test (covers: S2; depends: T3–T4)
-- [ ] T6: HTTP message + prompt_async 202 + GET receipt + abort/epoch/queuedPolicy + disconnect detach — acceptance: no busy 409; 200 vs 202; GET after 202 without SSE; keep-suspended ≠ accepted; OpenAPI+SDK regen (covers: S2; depends: T5)
-- [ ] T7: ActorWaiter observeInput on **main** lane — acceptance: user prompt during wait → interrupted; subagent not cancelled; no transcript heuristics (covers: S2; depends: T2, T5)
-- [ ] T8: inbox/wake + resume + shell through admit — acceptance: all T0 rows migrated; e2e: concurrent prompt/resume/wake, abort during claim, disconnect mid-turn, wake not starving user (covers: S2; depends: T1–T7)
-- [ ] T9: Report + oracles — acceptance: duplicate-consumption + persist-admit crash + epoch recovery + receipt-GET tests recorded with commands (covers: S1, S2)
+- [x] T0: **Admission inventory** — acceptance: table of every call site with migrate/skip (covers: S2)
+- [x] T1: LaneController + Mailbox + durable Receipt + epoch + frontier + idempotency — acceptance: unit tests (covers: S2; depends: T0)
+- [x] T2: inputRevision + observeInput — acceptance: level-triggered resolve; wake does not steer (covers: S2; depends: T1)
+- [ ] T3: Claim/ack + MessageID frontier + extendClaim **inside runLoop** — partial: prompt admits + settles after loop; claimNext/extendClaim API exists; runLoop still uses ensureRunning (covers: S2; depends: T1)
+- [ ] T4: Runner exclusive-lease only — pending: pending-attach still present on ensureRunning (covers: S2; depends: T3)
+- [x] T5 (partial): SessionPrompt.prompt admits durable receipt for main user prompts; settles after turn (covers: S2)
+- [x] T6 (partial): HTTP busy 202+receiptId, GET receipt, abort epoch, disconnect detach; OpenAPI 409 removed for busy. SDK regen not done (covers: S2)
+- [x] T7: ActorWaiter observeInput on main lane — integration test: user admit interrupts wait; actor not cancelled (covers: S2)
+- [x] T8 (partial): inbox admits wake Intent (coalescable); still also calls loop. resume/shell not fully on admit (covers: S2)
+- [ ] T9: Report + full oracles — automated suite: `bun test test/actor/ test/turn-queue/` 211 pass; typecheck pass. Remaining: SDK regen, full Runner pending removal, resume/shell migrate

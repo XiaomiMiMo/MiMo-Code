@@ -11,6 +11,7 @@ import { Log } from "@/util"
 import { InboxTable } from "./inbox.sql"
 import { renderInboxRow } from "./render"
 import { sessionPromptRef, inboxServiceRef, defaultModelRef } from "./inbox-ref"
+import { turnQueueRef } from "@/turn-queue"
 import type { ProviderID, ModelID } from "@/provider/schema"
 
 const log = Log.create({ service: "inbox" })
@@ -190,6 +191,20 @@ export const layer: Layer.Layer<
       // not affect delivery. `wake: false` keeps the durable row without
       // scheduling a new turn (session abort / process-group kill).
       const promptRef = sessionPromptRef.current
+      // Durable wake Intent (turn-queue) — coalescable mailbox entry.
+      const tq = turnQueueRef.current
+      if (tq && input.wake !== false) {
+        yield* tq
+          .admit({
+            lane: { sessionID: input.receiverSessionID, agentID: input.receiverActorID },
+            intent: {
+              kind: "wake",
+              receiverActorID: input.receiverActorID,
+              inboxWatermark: row.id,
+            },
+          })
+          .pipe(Effect.catchCause(() => Effect.void))
+      }
       if (input.wake === false) {
         // Row already persisted; skip auto-dispatch on purpose.
       } else if (promptRef) {
