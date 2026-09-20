@@ -1,14 +1,42 @@
 ---
 feature: skill-external-root-defaults
-status: in-progress
+status: delivered
 updated: 2026-09-20
 branch: feat/skill-external-root-defaults
-commits: c17d021c..c17d021c # filled at delivery
+commits: 895ae523..9797f74f
 ---
 
 # Skill External Root Defaults
 
 ## Report
+
+**What was built** — External skill discovery defaults to mimocode +
+open-standard `.agents`. Brand roots (`.claude` / `.codex` / `.opencode`) are
+opt-in via `MIMOCODE_ENABLE_*_SKILLS`; agents turns off with
+`MIMOCODE_DISABLE_AGENTS_SKILLS`. External scans no longer match dotted path
+segments, so host-private namespaces such as Codex `skills/.system` never
+enter the catalog. `MIMOCODE_DISABLE_EXTERNAL_SKILLS` and brand
+`MIMOCODE_DISABLE_*_SKILLS` skill gates are gone; `MIMO_ONLY` /
+`MIMOCODE_DISABLE_CLAUDE_CODE` no longer affect skill roots. Same-name clashes
+are layered last-wins (home brands → project brands → mimocode → paths/urls),
+with `.agents` last among brands in each home/project brand pass.
+
+**Verification** — `bun typecheck` (packages/opencode) PASS;
+`bun test test/skill` 91 pass / 0 fail (and 23 pass after the agents-order
+change on the two focused files); related tool/prompt skill suites 21 pass /
+3 skip (pre-existing); `test/agent/agent.test.ts` 52 pass. Independent review
+follow-ups: `ENABLE_OPENCODE` coverage, layered clash documented in S2.3b,
+misleading test name fixed; retired keys stay out of shipped docs.
+
+**Journey log**
+
+1. Codex `skills/.system` is a SYSTEM install cache (marker
+   `.codex-system-skills.marker`), not user skills — `dot: false` is enough;
+   no marker special-case.
+2. Flat `agents > all brands` would break project-over-home layering; keep
+   layered scope and document it instead of forcing a total order.
+3. Shipped comments/README must describe live behavior only; retired env
+   names belong in the PR body, not the product surface.
 
 ## [S1] Problem
 
