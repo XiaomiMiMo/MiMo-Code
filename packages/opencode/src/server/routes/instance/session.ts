@@ -1173,7 +1173,7 @@ export const SessionRoutes = lazy(() =>
           SessionRunState.Service.use((svc) => svc.assertNotBusy(params.sessionID, query.agentID)),
         )
         // Explicit userMessageID → validate it is still the trailing user.
-        // Omitted → resolveLatestRecoveryTarget picks the tail candidate (404 if none).
+        // Omitted → the engine resolves the latest recovery candidate (404 if none).
         if (body?.userMessageID) {
           await runRequest(
             "SessionRoutes.resumeUser.validate",
