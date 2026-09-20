@@ -10,11 +10,11 @@ export const ResumeTestHooks = {
   beforeAdmissionRecheck: undefined as undefined | (() => Effect.Effect<void>),
   /** After inbox.drain on step-0, before parent-tail lock checks. */
   beforeStep0ParentCheck: undefined as undefined | (() => Effect.Effect<void>),
-  /** After resume() preflight (assertNotBusy), before exclusive occupy. */
-  afterResumePreflight: undefined as undefined | (() => Effect.Effect<void>),
+  /** After successful planResume, before launchResume exclusive occupy (ensureExclusive/start). */
+  beforeExclusiveOccupy: undefined as undefined | (() => Effect.Effect<void>),
   reset() {
     this.beforeAdmissionRecheck = undefined
     this.beforeStep0ParentCheck = undefined
-    this.afterResumePreflight = undefined
+    this.beforeExclusiveOccupy = undefined
   },
 }

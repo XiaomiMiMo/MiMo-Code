@@ -5183,33 +5183,50 @@ describe("trailing-user resume integration", () => {
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
           })
           const { user2 } = yield* seedTail(chat.id, dir, {})
-          // [C004] Race preflight→occupy: first resume pauses AFTER assertNotBusy,
-          // second occupies; first's ensureExclusive must get BusyError (not join).
-          const preflight = resumeRaceBarrier()
-          ResumeTestHooks.afterResumePreflight = preflight.hook
-          const occupy = resumeRaceBarrier()
-          ResumeTestHooks.beforeAdmissionRecheck = occupy.hook
+          yield* llm.text("EXCLUSIVE_OK")
+          // [C004] Race AFTER all busy preflights (incl. planResume): first pauses
+          // before exclusive occupy; second occupies; first's ensureExclusive must
+          // get BusyError (not planResume preflight), and the winner must succeed.
+          const beforeOccupy = resumeRaceBarrier()
+          ResumeTestHooks.beforeExclusiveOccupy = beforeOccupy.hook
+          const occupyHold = resumeRaceBarrier()
+          ResumeTestHooks.beforeAdmissionRecheck = occupyHold.hook
           yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
           const first = yield* prompt
             .resume({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
             .pipe(Effect.exit, Effect.forkChild)
-          yield* Effect.promise(() => preflight.reached)
-          // Second start-mode resume occupies the runner while first is still preflight-paused.
+          yield* Effect.promise(() => beforeOccupy.reached)
+          // Second start-mode resume occupies the runner while first is still pre-occupy.
           const second = yield* prompt
             .resumeBackground({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
             .pipe(Effect.forkChild)
-          yield* Effect.promise(() => occupy.reached)
-          preflight.release()
+          yield* Effect.promise(() => occupyHold.reached)
+          // First resumes into ensureExclusive against an occupied runner.
+          beforeOccupy.release()
           const firstExit = yield* Fiber.join(first).pipe(Effect.timeout("5 seconds"))
           expect(Exit.isFailure(firstExit)).toBe(true)
           if (Exit.isFailure(firstExit)) {
             expect(Cause.squash(firstExit.cause)).toBeInstanceOf(Session.BusyError)
           }
-          // Release second's admission pause so it can fail cleanly on later-user if any;
-          // here no inject — second should proceed (or fail later). We only need occupy + Busy.
-          occupy.release()
-          yield* Fiber.join(second).pipe(Effect.timeout("5 seconds"), Effect.exit)
-          expect(yield* llm.calls).toBeLessThanOrEqual(1)
+          occupyHold.release()
+          // resumeBackground only awaits admission; wait for the winning runLoop to finish.
+          const secondExit = yield* Effect.exit(
+            Fiber.join(second).pipe(Effect.timeout("5 seconds")),
+          )
+          expect(Exit.isSuccess(secondExit)).toBe(true)
+          yield* llm.wait(1)
+          yield* Effect.sleep("300 millis")
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          const fromUser2 = after.filter(
+            (m) => m.info.role === "assistant" && "parentID" in m.info && m.info.parentID === user2.id,
+          )
+          // Winner actually ran once — not zero-exec, not join-duplicated.
+          expect(
+            fromUser2.filter((m) =>
+              m.parts.some((p) => p.type === "text" && (p as { text?: string }).text?.includes("EXCLUSIVE_OK")),
+            ),
+          ).toHaveLength(1)
+          expect(yield* llm.calls).toBe(1)
         }),
         { git: true, config: providerCfg },
       ),
