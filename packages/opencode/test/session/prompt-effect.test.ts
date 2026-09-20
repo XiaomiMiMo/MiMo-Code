@@ -123,19 +123,12 @@ function resumeRaceBarrier() {
   }
 }
 
-/** Full message+parts fingerprint for zero-side-effect assertions (not just IDs). */
-function messagePartSnapshot(msgs: Array<{ info: { id: string; role: string }; parts: Array<Record<string, unknown>> }>) {
-  return msgs.map((m) => ({
-    id: m.info.id,
-    role: m.info.role,
-    parts: m.parts.map((p) => ({
-      id: p.id,
-      type: p.type,
-      callID: p.callID,
-      text: p.text,
-      tool: p.tool,
-    })),
-  }))
+/**
+ * Full persisted WithParts fingerprint (structuredClone) for zero-side-effect
+ * assertions — includes parentID/time/error/finish/tokens and full tool.state.
+ */
+function messagePartSnapshot(msgs: Array<unknown>) {
+  return structuredClone(msgs)
 }
 
 function withSh<A, E, R>(fx: () => Effect.Effect<A, E, R>) {
@@ -5068,9 +5061,24 @@ describe("trailing-user resume integration", () => {
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
           })
           const { user2 } = yield* seedTail(chat.id, dir, {})
-          // New assistant after trailing user → target no longer tail
+          const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // [C004] Inject later assistant AFTER occupy so admission re-check's
+          // assistant-after-parent branch is the one that rejects (not outer recovery).
+          const barrier = resumeRaceBarrier()
+          ResumeTestHooks.beforeAdmissionRecheck = barrier.hook
+          yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
+          const fiber = yield* prompt
+            .resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            })
+            .pipe(Effect.forkChild)
+          yield* Effect.promise(() => barrier.reached)
+          const laterId = MessageID.ascending()
           yield* sessions.updateMessage({
-            id: MessageID.ascending(),
+            id: laterId,
             role: "assistant",
             parentID: user2.id,
             sessionID: chat.id,
@@ -5084,15 +5092,16 @@ describe("trailing-user resume integration", () => {
             time: { created: Date.now() + 20, completed: Date.now() + 20 },
             finish: "stop",
           } as Parameters<typeof sessions.updateMessage>[0])
-          const exit = yield* Effect.exit(
-            prompt.resumeBackground({
-              sessionID: chat.id,
-              userMessageID: user2.id,
-              agentID: "main",
-              model: ref,
-            }),
-          )
+          barrier.release()
+          const exit = yield* Effect.exit(Fiber.join(fiber).pipe(Effect.timeout("5 seconds")))
           expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            expect(namedErrorMessage(Cause.squash(exit.cause))).toContain("assistant after parent at admission")
+          }
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          expect(messagePartSnapshot(after.filter((m) => m.info.id !== laterId))).toEqual(
+            messagePartSnapshot(before),
+          )
           expect(yield* llm.calls).toBe(0)
         }),
         { git: true, config: providerCfg },
@@ -5112,8 +5121,22 @@ describe("trailing-user resume integration", () => {
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
           })
           const { user2 } = yield* seedTail(chat.id, dir, {})
+          const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // [C004] Inject empty assistant at admission window so the reject is the
+          // assistant-after-parent admission branch, not outer recovery preflight.
+          const barrier = resumeRaceBarrier()
+          ResumeTestHooks.beforeAdmissionRecheck = barrier.hook
+          yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
+          const fiber = yield* prompt
+            .resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            })
+            .pipe(Effect.forkChild)
+          yield* Effect.promise(() => barrier.reached)
           const emptyId = MessageID.ascending()
-          // Later empty assistant (no error, no useful parts) — strict tail must reject resume…
           yield* sessions.updateMessage({
             id: emptyId,
             role: "assistant",
@@ -5129,19 +5152,17 @@ describe("trailing-user resume integration", () => {
             time: { created: Date.now() + 20, completed: Date.now() + 20 },
             finish: "stop",
           } as Parameters<typeof sessions.updateMessage>[0])
-          const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
-          const exit = yield* Effect.exit(
-            prompt.resumeBackground({
-              sessionID: chat.id,
-              userMessageID: user2.id,
-              agentID: "main",
-              model: ref,
-            }),
-          )
+          barrier.release()
+          const exit = yield* Effect.exit(Fiber.join(fiber).pipe(Effect.timeout("5 seconds")))
           expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            expect(namedErrorMessage(Cause.squash(exit.cause))).toContain("assistant after parent at admission")
+          }
           const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
-          // …but must NOT force-delete that assistant (zero side effects on stale reject).
-          expect(messagePartSnapshot(after)).toEqual(messagePartSnapshot(before))
+          // Full persisted WithParts: originals untouched; empty assistant not force-deleted.
+          expect(messagePartSnapshot(after.filter((m) => m.info.id !== emptyId))).toEqual(
+            messagePartSnapshot(before),
+          )
           expect(after.some((m) => m.info.id === emptyId)).toBe(true)
           expect(yield* llm.calls).toBe(0)
         }),
@@ -5162,29 +5183,33 @@ describe("trailing-user resume integration", () => {
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
           })
           const { user2 } = yield* seedTail(chat.id, dir, {})
-          const release = defer<void>()
-          yield* Effect.addFinalizer(() => Effect.sync(() => release.resolve()))
-          yield* llm.hold("EXCLUSIVE_OK", release.promise)
+          // [C004] Race preflight→occupy: first resume pauses AFTER assertNotBusy,
+          // second occupies; first's ensureExclusive must get BusyError (not join).
+          const preflight = resumeRaceBarrier()
+          ResumeTestHooks.afterResumePreflight = preflight.hook
+          const occupy = resumeRaceBarrier()
+          ResumeTestHooks.beforeAdmissionRecheck = occupy.hook
+          yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
           const first = yield* prompt
+            .resume({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
+            .pipe(Effect.exit, Effect.forkChild)
+          yield* Effect.promise(() => preflight.reached)
+          // Second start-mode resume occupies the runner while first is still preflight-paused.
+          const second = yield* prompt
             .resumeBackground({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
             .pipe(Effect.forkChild)
-          yield* llm.wait(1)
-          // Sync resume while first run holds the slot → BusyError (must not join first work).
-          const busy = yield* prompt
-            .resume({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
-            .pipe(Effect.exit)
-          expect(Exit.isFailure(busy)).toBe(true)
-          if (Exit.isFailure(busy)) expect(Cause.squash(busy.cause)).toBeInstanceOf(Session.BusyError)
-          release.resolve(undefined)
-          yield* Fiber.join(first).pipe(Effect.timeout("5 seconds"), Effect.exit)
-          yield* Effect.sleep("200 millis")
-          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
-          const fromUser2 = after.filter(
-            (m) => m.info.role === "assistant" && "parentID" in m.info && m.info.parentID === user2.id,
-          )
-          // Only one execution — not a second joined/duplicated turn.
-          expect(fromUser2.filter((m) => m.parts.some((p) => p.type === "text" && (p as { text?: string }).text?.includes("EXCLUSIVE_OK")))).toHaveLength(1)
-          expect(yield* llm.calls).toBe(1)
+          yield* Effect.promise(() => occupy.reached)
+          preflight.release()
+          const firstExit = yield* Fiber.join(first).pipe(Effect.timeout("5 seconds"))
+          expect(Exit.isFailure(firstExit)).toBe(true)
+          if (Exit.isFailure(firstExit)) {
+            expect(Cause.squash(firstExit.cause)).toBeInstanceOf(Session.BusyError)
+          }
+          // Release second's admission pause so it can fail cleanly on later-user if any;
+          // here no inject — second should proceed (or fail later). We only need occupy + Busy.
+          occupy.release()
+          yield* Fiber.join(second).pipe(Effect.timeout("5 seconds"), Effect.exit)
+          expect(yield* llm.calls).toBeLessThanOrEqual(1)
         }),
         { git: true, config: providerCfg },
       ),

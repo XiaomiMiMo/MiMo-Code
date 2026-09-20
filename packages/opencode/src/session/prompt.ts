@@ -6474,6 +6474,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
       yield* state.assertNotBusy(input.sessionID, input.agentID)
+      // [C004] Test seam: pause after preflight, before exclusive occupy.
+      const afterPreflight = ResumeTestHooks.afterResumePreflight
+      if (afterPreflight) yield* afterPreflight()
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
       const candidate = candidates.find((item) =>
         input.userMessageID

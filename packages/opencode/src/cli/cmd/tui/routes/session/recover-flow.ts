@@ -20,9 +20,47 @@ export type RecoverDeps = {
   assistantMessageID?: string | undefined
 }
 
+type SdkErrorShape = {
+  data?: {
+    name?: string
+    message?: string
+    statusCode?: number
+    data?: { message?: string; name?: string }
+  }
+  name?: string
+  message?: string
+  statusCode?: number
+}
+
+function isBusyToken(text: string, name?: string): boolean {
+  return name === "BusyError" || /busy|409/i.test(text)
+}
+
+/**
+ * Map recover failures from real SDK `throwOnError` payloads (parsed JSON, not Error)
+ * as well as Error / string forms used in simpler tests.
+ */
 export function recoverErrorMessage(error: unknown): { message: string; variant: "busy" | "error" } {
-  const message = error instanceof Error ? error.message : String(error)
-  return { message, variant: /busy|409/i.test(message) ? "busy" : "error" }
+  if (error instanceof Error) {
+    const message = error.message || error.name
+    return { message, variant: isBusyToken(message, error.name) ? "busy" : "error" }
+  }
+  if (error && typeof error === "object") {
+    const shaped = error as SdkErrorShape
+    const name = shaped.data?.name ?? shaped.name ?? shaped.data?.data?.name
+    const message =
+      shaped.data?.data?.message ??
+      shaped.data?.message ??
+      (typeof shaped.message === "string" && shaped.message ? shaped.message : undefined)
+    const statusCode = shaped.statusCode ?? shaped.data?.statusCode
+    if (message || name || statusCode !== undefined) {
+      const text = message ?? String(name ?? `HTTP ${statusCode}`)
+      const busy = isBusyToken(text, name) || statusCode === 409
+      return { message: text, variant: busy ? "busy" : "error" }
+    }
+  }
+  const message = String(error)
+  return { message, variant: isBusyToken(message) ? "busy" : "error" }
 }
 
 /** TUI /recover entry: pick candidate, dispatch resume, map 202/reject/busy. */

@@ -7,8 +7,8 @@ import {
   type RecoverCandidate,
 } from "../../../../src/cli/cmd/tui/routes/session/recover-flow"
 
-// [C006] TUI /recover entry automation: parent-user dispatch, 202/reject/busy
-// mapping, active badge set/clear, and assistant recovery regression.
+// [C006] TUI /recover entry automation against real SDK throwOnError shapes
+// (parsed JSON objects, not Error instances).
 
 const parentUser: RecoverCandidate = {
   kind: "parent-user",
@@ -20,6 +20,20 @@ const assistant: RecoverCandidate = {
   assistantMessageID: "msg_a1",
   parentMessageID: "msg_u1",
   created: 1,
+}
+
+/** Real SDK throwOnError payload shapes (client.gen.ts JSON.parse of response body). */
+const sdkNotFound = {
+  data: {
+    name: "NotFoundError",
+    data: { message: "No resumable trailing user found for message msg_u2 (stale at runner admission)" },
+  },
+}
+const sdkBusy = {
+  data: {
+    name: "BusyError",
+    data: { message: "Session is busy" },
+  },
 }
 
 function deps(overrides: Partial<Parameters<typeof runSessionRecover>[0]> = {}) {
@@ -83,10 +97,10 @@ describe("runSessionRecover (TUI /recover entry)", () => {
     expect(c2.resumeUser).toEqual([])
   })
 
-  test("admission reject (404 NotFound) maps to error, no active badge", async () => {
+  test("real SDK 404 JSON reject maps to human message, no active badge", async () => {
     const { calls, base } = deps({
       resumeUser: async () => {
-        throw new Error("No resumable trailing user found for message msg_u2 (stale at runner admission)")
+        throw sdkNotFound
       },
     })
     const out = await runSessionRecover(base)
@@ -94,25 +108,33 @@ describe("runSessionRecover (TUI /recover entry)", () => {
     if (out.type === "error") {
       expect(out.variant).toBe("error")
       expect(out.message).toContain("stale at runner admission")
+      expect(out.message).not.toContain("[object Object]")
     }
     expect(calls.active).toEqual([])
   })
 
-  test("HTTP 409 BusyError maps to busy variant", async () => {
+  test("real SDK 409 BusyError JSON maps to busy variant", async () => {
     const { base } = deps({
       resumeUser: async () => {
-        throw new Error("BusyError: session is busy (409)")
+        throw sdkBusy
       },
     })
     const out = await runSessionRecover(base)
     expect(out.type).toBe("error")
-    if (out.type === "error") expect(out.variant).toBe("busy")
+    if (out.type === "error") {
+      expect(out.variant).toBe("busy")
+      expect(out.message).toBe("Session is busy")
+    }
   })
 
-  test("recoverErrorMessage maps busy|409", () => {
+  test("recoverErrorMessage maps structured SDK shapes", () => {
+    expect(recoverErrorMessage(sdkBusy).variant).toBe("busy")
+    expect(recoverErrorMessage(sdkNotFound).message).toContain("stale at runner admission")
+    expect(recoverErrorMessage(sdkNotFound).variant).toBe("error")
+    expect(recoverErrorMessage({ data: { name: "NotFoundError", data: { message: "x" } }, statusCode: 409 }).variant).toBe("busy")
     expect(recoverErrorMessage(new Error("conflict 409")).variant).toBe("busy")
-    expect(recoverErrorMessage(new Error("busy now")).variant).toBe("busy")
     expect(recoverErrorMessage(new Error("stale")).variant).toBe("error")
+    expect(recoverErrorMessage("plain string 409").variant).toBe("busy")
   })
 })
 
