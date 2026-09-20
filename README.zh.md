@@ -259,7 +259,7 @@ MiMoCode 打包了以下内置技能：
 **覆盖内置技能：** 在项目（`.mimocode/skills/<name>/SKILL.md`）或个人技能目录（`~/.claude/skills/`、`~/.opencode/skills/` 等）中创建同名技能即可。扫描顺序中后发现的用户技能会覆盖同名的内置技能。
 
 <details>
-<summary><strong>通过环境变量禁用内置技能</strong></summary>
+<summary><strong>通过环境变量配置技能</strong></summary>
 
 | 变量 | 效果 |
 |------|------|
@@ -278,7 +278,7 @@ MiMoCode 打包了以下内置技能：
 
 外部扫描不匹配 `skills/` 下的点目录段。
 
-前两个选项会将对应技能从 Agent 可用技能列表中完全移除——不会出现在上下文中，也无法被调用。`MIMOCODE_DISABLE_SLASH_SKILLS` 仅影响 TUI 自动补全，Skill 对 Agent 仍然可用。
+`MIMOCODE_DISABLE_BUILTIN_SKILLS` 与 `MIMOCODE_DISABLE_OFFICIAL_SKILLS` 会将对应技能从 Agent 可用技能列表中完全移除——不会出现在上下文中，也无法被调用。`MIMOCODE_DISABLE_SLASH_SKILLS` 仅影响 TUI 自动补全，Skill 对 Agent 仍然可用。
 
 </details>
 

@@ -268,7 +268,7 @@ MiMoCode bundles the following builtin skills:
 **Overriding a builtin skill:** Create a skill with the same `name` in your project (`.mimocode/skills/<name>/SKILL.md`) or personal skill directory (`~/.agents/skills/`, or a brand root you opted into such as `~/.claude/skills/`). User skills discovered later in the scan order override builtins with the same name.
 
 <details>
-<summary><strong>Disabling builtin skills via environment variables</strong></summary>
+<summary><strong>Configuring skills via environment variables</strong></summary>
 
 | Variable | Effect |
 |----------|--------|
@@ -287,7 +287,7 @@ MiMoCode bundles the following builtin skills:
 
 External scans never match dotted path segments under `skills/`.
 
-The first two options remove the corresponding skills from the agent's available skill list entirely — they will not appear in context and cannot be invoked. `MIMOCODE_DISABLE_SLASH_SKILLS` affects only TUI autocomplete; the skills remain available to agents.
+`MIMOCODE_DISABLE_BUILTIN_SKILLS` and `MIMOCODE_DISABLE_OFFICIAL_SKILLS` remove the corresponding skills from the agent's available skill list entirely — they will not appear in context and cannot be invoked. `MIMOCODE_DISABLE_SLASH_SKILLS` affects only TUI autocomplete; the skills remain available to agents.
 
 </details>
 
