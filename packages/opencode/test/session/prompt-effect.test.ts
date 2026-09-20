@@ -5411,6 +5411,110 @@ describe("trailing-user resume integration", () => {
     15_000,
   )
 
+  // [C001] Handshake timeout must withdraw THIS execution — no late model call after failure return.
+  it.live(
+    "[C001] admission timeout interrupts owned work: release after failure must not LATE_EXEC",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: "c001-timeout-no-late-exec",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user2 } = yield* seedTail(chat.id, dir, { withCompletedTool: false })
+          const barrier = resumeRaceBarrier()
+          ResumeTestHooks.beforeAdmissionRecheck = barrier.hook
+          yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
+          // Hang longer than the 5s handshake bound so the waiter times out first.
+          const exit = yield* Effect.exit(
+            prompt.resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            }),
+          )
+          // resumeBackground returns via timeout BEFORE we can release the barrier.
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            const err = Cause.squash(exit.cause)
+            expect(err).toBeInstanceOf(NotFoundError)
+            expect(namedErrorMessage(err)).toContain("Resume admission did not complete")
+          }
+          // Now release the stuck admission work — it must NOT proceed to LLM.
+          barrier.release()
+          yield* Effect.sleep("400 millis")
+          expect(yield* llm.calls).toBe(0)
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // No late execution artifact after the failed handshake return.
+          expect(
+            after.some((m) =>
+              m.parts.some((p) => p.type === "text" && (p.text ?? "").includes("LATE_EXEC")),
+            ),
+          ).toBe(false)
+          expect(after.filter((m) => m.info.role === "assistant")).toHaveLength(0)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    20_000,
+  )
+
+  // [C003] Later empty assistant after admission must not be deleted by pre-cleanup (strict path has none).
+  it.live(
+    "[C003] after-admission later empty assistant is preserved (no pre-clean manufacture tail)",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm, dir }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const chat = yield* sessions.create({
+            title: "c003-after-admission-window",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const { user2 } = yield* seedTail(chat.id, dir, {})
+          const barrier = resumeRaceBarrier()
+          ResumeTestHooks.afterAdmissionBeforeCleanup = barrier.hook
+          yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
+          const fiber = yield* prompt
+            .resumeBackground({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            })
+            .pipe(Effect.forkChild)
+          yield* Effect.promise(() => barrier.reached)
+          // Inject later empty completed assistant in the admission→cleanup window.
+          const later = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "assistant",
+            parentID: user2.id,
+            sessionID: chat.id,
+            mode: "build",
+            agent: "build",
+            path: { cwd: dir, root: dir },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            time: { created: Date.now(), completed: Date.now() },
+            finish: "stop",
+          } as Parameters<typeof sessions.updateMessage>[0])
+          const laterId = later.id
+          barrier.release()
+          yield* Fiber.join(fiber).pipe(Effect.timeout("5 seconds"), Effect.exit)
+          yield* Effect.sleep("200 millis")
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // Later assistant must survive — strict tail then rejects or step0 refuses; never silent delete+exec.
+          expect(after.some((m) => m.info.id === laterId)).toBe(true)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    15_000,
+  )
+
   it.live(
     "[R003] first assistant parents to planned user even if a newer user is written mid-turn",
     () =>

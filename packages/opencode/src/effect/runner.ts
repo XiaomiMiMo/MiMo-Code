@@ -7,6 +7,13 @@ export interface Runner<A, E = never, B = never> {
   /** [R003] Start work only if idle; busy → fail B. Never join an existing run. */
   readonly ensureExclusive: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
   readonly start: (work: Effect.Effect<A, E>) => Effect.Effect<void, B>
+  /**
+   * [C001] Start work and return a cancel bound to THIS run id only —
+   * a later replacement run is never interrupted.
+   */
+  readonly startOwned: (
+    work: Effect.Effect<A, E>,
+  ) => Effect.Effect<{ readonly runId: number; readonly interruptOwned: Effect.Effect<void> }, B>
   readonly startShell: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
   readonly cancel: Effect.Effect<void>
 }
@@ -300,6 +307,37 @@ export const make = <A, E = never, B = never>(
       }),
     ).pipe(Effect.flatten)
 
+  const interruptOwned = (runId: number, fiber: Fiber.Fiber<A, E>) =>
+    SynchronizedRef.modify(ref, (st) => {
+      // Only interrupt the run we started — never a replacement after finishRun.
+      if (st._tag === "Running" && st.run.id === runId) {
+        return [
+          Fiber.interrupt(fiber).pipe(Effect.asVoid, Effect.ignore),
+          { _tag: "Idle" } as const,
+        ] as const
+      }
+      return [Effect.void, st] as const
+    }).pipe(Effect.flatten)
+
+  const startOwned = (
+    work: Effect.Effect<A, E>,
+  ): Effect.Effect<{ readonly runId: number; readonly interruptOwned: Effect.Effect<void> }, B> =>
+    SynchronizedRef.modifyEffect(
+      ref,
+      Effect.fnUntraced(function* (st) {
+        if (st._tag !== "Idle") {
+          return [busyFailure<{ runId: number; interruptOwned: Effect.Effect<void> }>(), st] as const
+        }
+        const done = yield* Deferred.make<A, E | Cancelled>()
+        const run = yield* startRun(work, done)
+        const owned = {
+          runId: run.id,
+          interruptOwned: interruptOwned(run.id, run.fiber),
+        }
+        return [Effect.succeed(owned), { _tag: "Running", run } as const] as const
+      }),
+    ).pipe(Effect.flatten)
+
   const cancel = SynchronizedRef.modify(ref, (st) => {
     switch (st._tag) {
       case "Idle":
@@ -356,6 +394,7 @@ export const make = <A, E = never, B = never>(
     ensureRunning,
     ensureExclusive,
     start,
+    startOwned,
     startShell,
     cancel,
   }

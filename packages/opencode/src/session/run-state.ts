@@ -10,6 +10,13 @@ import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan
 export interface Interface {
   readonly assertNotBusy: (sessionID: SessionID, agentID?: string) => Effect.Effect<void, Session.BusyError>
   readonly start: (sessionID: SessionID, agentID: string, onInterrupt: Effect.Effect<MessageV2.WithParts>, work: Effect.Effect<MessageV2.WithParts>) => Effect.Effect<void, Session.BusyError>
+  /** [C001] Start and return cancel bound to this run id only. */
+  readonly startOwned: (
+    sessionID: SessionID,
+    agentID: string,
+    onInterrupt: Effect.Effect<MessageV2.WithParts>,
+    work: Effect.Effect<MessageV2.WithParts>,
+  ) => Effect.Effect<{ readonly runId: number; readonly interruptOwned: Effect.Effect<void> }, Session.BusyError>
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly cancelActor: (sessionID: SessionID, agentID: string) => Effect.Effect<void>
   readonly ensureRunning: (
@@ -139,6 +146,16 @@ export const layer = Layer.effect(
       return
     })
 
+    const startOwned: Interface["startOwned"] = Effect.fn("SessionRunState.startOwned")(function* (
+      sessionID: SessionID,
+      agentID: string,
+      onInterrupt: Effect.Effect<MessageV2.WithParts>,
+      work: Effect.Effect<MessageV2.WithParts>,
+    ) {
+      const active = yield* runner(sessionID, agentID, onInterrupt)
+      return yield* active.startOwned(withOrphanSweep(sessionID, agentID, work))
+    })
+
     // Process-group kill: session abort cancels EVERY runner under this session
     // (main + actor/subagent slices). Orchestrator is unrelated.
     //
@@ -211,7 +228,7 @@ export const layer = Layer.effect(
       return yield* (yield* runner(sessionID, "main", onInterrupt)).startShell(work)
     })
 
-    return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, ensureExclusive, start, startShell })
+    return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, ensureExclusive, start, startOwned, startShell })
   }),
 )
 

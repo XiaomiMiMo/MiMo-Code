@@ -6354,12 +6354,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
               // Admission granted — tell the waiting HTTP/sync caller before runLoop.
               yield* Deferred.succeed(admission, void 0)
-              // Clear empty residue under parent (including error shells); otherwise lastAssistant
-              // may still be an empty shell and classify would block re-dispatch.
-              // Only runs after admission succeeded — never on stale reject.
-              // [C003] Force cleanup runs only after successful runLoop return so a later
-              // step-0 strict reject cannot delete a subsequent empty assistant it did not create.
-              const result = yield* Effect.gen(function* () {
+              // [C003] Test seam: after handshake, before any cleanup read.
+              const afterAdmission = ResumeTestHooks.afterAdmissionBeforeCleanup
+              if (afterAdmission) yield* afterAdmission()
+              // [C003] strict trailing-user must NOT pre-clean: deleting a later
+              // empty assistant would manufacture a legal tail after admission.
+              // Empty-shell user-resume still clears residue under parent so
+              // lastAssistant is not a dirty shell blocking re-dispatch.
+              if (!strictTail) {
                 yield* cleanupEmptyResidueAssistants({
                   sessionID: input.sessionID,
                   agentID: input.agentID,
@@ -6367,21 +6369,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   sessionBusy: false,
                   preserveError: false,
                 })
-                return yield* runLoop(
-                  input.sessionID,
-                  input.agentID,
-                  input.task_id,
-                  input.titleLocale,
-                  false,
-                  undefined,
-                  input.model,
-                  true,
-                  // user-resume re-runs from the parent user message — trusted user source.
-                  "user",
-                  plan.parentMessageID,
-                  strictTail,
-                )
-              })
+              }
+              // [C003] Force cleanup runs only after successful runLoop return so a later
+              // step-0 strict reject cannot delete a subsequent empty assistant it did not create.
+              const result = yield* runLoop(
+                input.sessionID,
+                input.agentID,
+                input.task_id,
+                input.titleLocale,
+                false,
+                undefined,
+                input.model,
+                true,
+                // user-resume re-runs from the parent user message — trusted user source.
+                "user",
+                plan.parentMessageID,
+                strictTail,
+              )
               yield* cleanupEmptyResidueAssistants({
                 sessionID: input.sessionID,
                 agentID: input.agentID,
@@ -6469,26 +6473,35 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (input.mode === "ensure") {
         return yield* state.ensureExclusive(input.sessionID, input.agentID, resumeInterrupt, work)
       }
-      yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
-      // [C001] Trailing-user resumeUser HTTP awaits the admission handshake
-      // (202 = plan + exclusive occupy + re-check). Assistant resume / cascade
-      // stay fire-and-forget after start() like main (D16f-HTTP). Bound the
-      // trailing-user wait so cancel-before-handshake cannot hang the caller;
-      // typed admission rejects still surface unchanged.
+      // [C001] Trailing-user resumeUser: wait for admission handshake, and on
+      // timeout interrupt THIS run only (never a replacement). Assistant resume /
+      // cascade stay fire-and-forget after start() (D16f-HTTP).
       if (plan.action === "user-resume" && plan.strictTail === true) {
+        const owned = yield* state.startOwned(input.sessionID, input.agentID, resumeInterrupt, work)
         const handshake = yield* Deferred.await(admission).pipe(
           Effect.timeout("5 seconds"),
           Effect.exit,
         )
         if (Exit.isFailure(handshake)) {
           const err = Cause.squash(handshake.cause)
-          const tag = (err as { _tag?: string } | null)?._tag
-          if (tag === "TimeoutException") {
+          const tag = (err as { _tag?: string; name?: string } | null)?._tag ?? (err as { name?: string } | null)?.name
+          // Effect 4 timeout is TimeoutError (older docs said TimeoutException).
+          if (tag === "TimeoutError" || tag === "TimeoutException") {
+            // Withdraw execution ownership before reporting not-admitted —
+            // otherwise the caller sees failure while work still runs (late exec).
+            yield* owned.interruptOwned
+            yield* Deferred.done(
+              admission,
+              Exit.fail(new NotFoundError({ message: "Resume admission did not complete" })),
+            ).pipe(Effect.asVoid, Effect.ignore)
             return yield* Effect.fail(new NotFoundError({ message: "Resume admission did not complete" }))
           }
+          yield* owned.interruptOwned
           return yield* Effect.failCause(handshake.cause as Cause.Cause<never>)
         }
+        return
       }
+      yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
     })
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
