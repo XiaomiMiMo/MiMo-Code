@@ -6,15 +6,13 @@ branch: feat/turn-queue
 commits: 30e55a4e58c56044bea4dc9551a24395ef47e961..HEAD
 diagrams:
   authoritative: turn-queue-rev3.svg
-  historical: [turn-queue-arch.svg, turn-queue-delta.svg]
 ---
 
 # Turn Queue
 
 ## Diagrams
 
-- **Authoritative:** `turn-queue-rev3.svg` (approved rev3 target architecture).
-- `turn-queue-arch.svg` / `turn-queue-delta.svg` are historical design-process drafts; do not treat them as contract. Intent kinds in the contract are only `prompt|resume|wake|shell` (no `system`).
+- **Authoritative:** `turn-queue-rev3.svg` (approved rev3 target architecture). Intent kinds in the contract are only `prompt|resume|wake|shell` (no `system`).
 
 ## Report
 
