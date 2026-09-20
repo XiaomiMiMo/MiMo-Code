@@ -6520,6 +6520,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
      * Resolve a resume target when the client omits assistant/user IDs.
      * Recovery already returns only the tail incomplete assistant and/or trailing user,
      * so the last candidate is the one the user just clicked Resume on.
+     * Returns the full candidate so callers skip a second recovery() read (TOCTOU).
      */
     const resolveLatestRecoveryTarget = Effect.fn("SessionPrompt.resolveLatestRecoveryTarget")(function* (input: {
       sessionID: SessionID
@@ -6537,30 +6538,35 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           new NotFoundError({ message: "No resumable recovery candidate found for session " + input.sessionID }),
         )
       }
-      if (latest.kind === "assistant") return { assistantMessageID: latest.assistantMessageID }
-      return { userMessageID: latest.userMessageID }
+      return latest
     })
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
       yield* state.assertNotBusy(input.sessionID, input.agentID)
-      const target = input.userMessageID || input.assistantMessageID
-        ? { assistantMessageID: input.assistantMessageID, userMessageID: input.userMessageID }
-        : yield* resolveLatestRecoveryTarget({ sessionID: input.sessionID, agentID: input.agentID })
+      // Single recovery() read: resolveLatest returns the full candidate; explicit IDs
+      // look it up in the same call. Avoids double-read TOCTOU (R003).
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
-      const candidate = candidates.find((item) =>
-        target.userMessageID
-          ? item.kind === "parent-user" && item.userMessageID === target.userMessageID
-          : item.kind === "assistant" && item.assistantMessageID === target.assistantMessageID,
-      )
+      const candidate = input.userMessageID || input.assistantMessageID
+        ? candidates.find((item) =>
+            input.userMessageID
+              ? item.kind === "parent-user" && item.userMessageID === input.userMessageID
+              : item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+          )
+        : candidates.at(-1)
       if (candidate === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
-            message: target.userMessageID
-              ? "No resumable trailing user found for message " + target.userMessageID
-              : "No resumable interrupted turn found for assistant message " + target.assistantMessageID,
+            message: input.userMessageID
+              ? "No resumable trailing user found for message " + input.userMessageID
+              : input.assistantMessageID
+                ? "No resumable interrupted turn found for assistant message " + input.assistantMessageID
+                : "No resumable recovery candidate found for session " + input.sessionID,
           }),
         )
       }
+      const target = candidate.kind === "assistant"
+        ? { assistantMessageID: candidate.assistantMessageID }
+        : { userMessageID: candidate.userMessageID }
       const agentID = input.agentID ?? "main"
       // Validate model override before abandon: getModel failure must not stamp the old message first.
       if (input.model) {
@@ -6598,28 +6604,30 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const resumeBackground = Effect.fn("SessionPrompt.resumeBackground")(function* (input: ResumeTurnInput) {
-      const target = input.userMessageID || input.assistantMessageID
-        ? { assistantMessageID: input.assistantMessageID, userMessageID: input.userMessageID }
-        : yield* resolveLatestRecoveryTarget({
-            sessionID: input.sessionID,
-            agentID: input.agentID,
-            allowBusy: true,
-          })
+      // Single recovery() read (R003): resolveLatest returns the full candidate; explicit IDs
+      // look it up in the same call. Avoids double-read TOCTOU.
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID, allowBusy: true })
-      const candidate = candidates.find((item) =>
-        target.userMessageID
-          ? item.kind === "parent-user" && item.userMessageID === target.userMessageID
-          : item.kind === "assistant" && item.assistantMessageID === target.assistantMessageID,
-      )
+      const candidate = input.userMessageID || input.assistantMessageID
+        ? candidates.find((item) =>
+            input.userMessageID
+              ? item.kind === "parent-user" && item.userMessageID === input.userMessageID
+              : item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+          )
+        : candidates.at(-1)
       if (candidate === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
-            message: target.userMessageID
-              ? "No resumable trailing user found for message " + target.userMessageID
-              : "No resumable interrupted turn found for assistant message " + target.assistantMessageID,
+            message: input.userMessageID
+              ? "No resumable trailing user found for message " + input.userMessageID
+              : input.assistantMessageID
+                ? "No resumable interrupted turn found for assistant message " + input.assistantMessageID
+                : "No resumable recovery candidate found for session " + input.sessionID,
           }),
         )
       }
+      const target = candidate.kind === "assistant"
+        ? { assistantMessageID: candidate.assistantMessageID }
+        : { userMessageID: candidate.userMessageID }
       const agentID = input.agentID ?? "main"
       if (input.model) {
         yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
