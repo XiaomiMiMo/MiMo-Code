@@ -61,24 +61,26 @@ it.live("[TP-MCU-R7-21][TP-MCU-R10-20] cold-init host switch during A initialize
       oauth: false as const,
       enabled: true,
     })
+    // Snapshot identity is bound with the config object at init start. A host
+    // switch during A's initialize must reject A (stale revision) and leave B
+    // as the only live client (R009/R013).
     HostMcp.set({ example: cfg("old") })
     yield* provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const mcp = yield* MCP.Service
-        // Cold InstanceState: first tools() blocks inside create(A) initialize.
         const cold = yield* mcp.tools().pipe(Effect.forkChild)
         yield* Effect.promise(() => initStarted)
         HostMcp.set({ example: cfg("new") })
         releaseInit()
         yield* Fiber.join(cold)
 
-        // After cold init settles, the live client must be B — A's late initialize
-        // must not remain the published connection.
         expect(Object.keys(yield* mcp.tools())).toEqual(["example_new"])
         expect(newInits).toBeGreaterThan(0)
         const client = (yield* mcp.clients()).example!
         expect(client).toBeTruthy()
         expect(client.transport).toBeDefined()
+        // status/connected must be backed by a live client (R013).
+        expect((yield* mcp.status()).example?.status).toBe("connected")
         const tool = (yield* mcp.tools()).example_new
         expect(tool).toBeDefined()
       }),

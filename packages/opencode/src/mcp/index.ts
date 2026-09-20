@@ -800,7 +800,12 @@ export const layer = Layer.effect(
     const state = yield* InstanceState.make<State>(
       Effect.fn("MCP.state")(function* () {
         const cfg = yield* cfgSvc.get()
+        // Snapshot config and per-name revisions in one sync block so identity
+        // always pairs the same generation with the same config object (R009).
         const host = HostMcp.get()
+        const hostRevisions = new Map(
+          Object.keys(host).map((name) => [name, HostMcp.revisionOf(name)] as const),
+        )
         const config = { ...cfg.mcp, ...host }
         const s: State = {
           host: Object.fromEntries(Object.entries(host).map(([key, value]) => [key, JSON.stringify(value)])),
@@ -826,16 +831,14 @@ export const layer = Layer.effect(
                 return
               }
 
-              // Bind identity at the create boundary (R006/R009). A host switch
-              // during initialize must not leave a stale client in the registry.
               const fromHost = key in host
-              const hostRevision = fromHost ? HostMcp.revisionOf(key) : undefined
+              const hostRevision = hostRevisions.get(key)
               const result = yield* create(key, mcp, { fromHost, hostRevision }).pipe(Effect.catch(() => Effect.void))
               if (!result) return
 
-              s.status[key] = result.status
-              if (key in host && result.status.status === "failed") s.hostRetryAt[key] = Date.now() + 5000
               if (result.mcpClient) {
+                // Status is written only on successful admit/commit (R013).
+                // Pre-writing connected would survive a reject-stale discard.
                 yield* storeClient(
                   s,
                   key,
@@ -845,7 +848,11 @@ export const layer = Layer.effect(
                   hostEffectiveSampling(mcp, fromHost),
                   { fromHost, hostRevision },
                 )
+                return
               }
+
+              s.status[key] = result.status
+              if (fromHost && result.status.status === "failed") s.hostRetryAt[key] = Date.now() + 5000
             }),
           { concurrency: "unbounded" },
         )
