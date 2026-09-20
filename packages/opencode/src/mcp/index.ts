@@ -325,6 +325,27 @@ type PendingOAuthAttempt = {
 }
 const pendingOAuthTransports = new Map<string, PendingOAuthAttempt>()
 
+/**
+ * Publish a pending OAuth attempt only when it still matches the live host
+ * generation. A current host attempt always replaces a stale one; a stale late
+ * Unauthorized never registers over (or into) a slot reserved for the live host.
+ */
+function publishPendingOAuthAttempt(
+  key: string,
+  attempt: PendingOAuthAttempt,
+): void {
+  const currentRev = HostMcp.revisionOf(key)
+  if (attempt.fromHost && attempt.hostRevision != null) {
+    if (attempt.hostRevision !== currentRev) return
+    pendingOAuthTransports.set(key, attempt)
+    return
+  }
+  const existing = pendingOAuthTransports.get(key)
+  const existingIsCurrentHost =
+    !!existing?.fromHost && existing.hostRevision != null && existing.hostRevision === currentRev
+  if (!existingIsCurrentHost) pendingOAuthTransports.set(key, attempt)
+}
+
 type TransportWithAuth = StreamableHTTPClientTransport | SSEClientTransport
 
 // Prompt cache types
@@ -580,14 +601,13 @@ export const layer = Layer.effect(
                   })
                   .pipe(Effect.ignore, Effect.as(undefined))
               } else {
-                // Late Unauthorized from a superseded create must not overwrite a newer attempt.
-                if (!pendingOAuthTransports.has(key)) {
-                  pendingOAuthTransports.set(key, {
-                    transport,
-                    hostRevision: hostRevisionAtCreate,
-                    fromHost: fromHostAtCreate,
-                  })
-                }
+                // Generation-aware publish (R007): current host attempts replace
+                // stale pending; stale late Unauthorized cannot register.
+                publishPendingOAuthAttempt(key, {
+                  transport,
+                  hostRevision: hostRevisionAtCreate,
+                  fromHost: fromHostAtCreate,
+                })
                 lastStatus = { status: "needs_auth" as const }
                 return bus
                   .publish(TuiEvent.ToastShow, {
@@ -1284,7 +1304,8 @@ export const layer = Layer.effect(
       }).pipe(
         Effect.catch((error) => {
           if (error instanceof UnauthorizedError && capturedUrl) {
-            pendingOAuthTransports.set(mcpName, {
+            // Same identity-bound publish as connectRemote (R007).
+            publishPendingOAuthAttempt(mcpName, {
               transport,
               hostRevision: hostRevisionAtStart,
               fromHost: resolved.hostOwned,
