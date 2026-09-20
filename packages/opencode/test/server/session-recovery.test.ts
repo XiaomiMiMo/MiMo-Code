@@ -336,6 +336,7 @@ describe("trailing user recovery target", () => {
     })
   })
 
+  // [TP-SR-R21-10] resumeUser 202=完成准入；缺失目标 404（非 false 202）。
   test("POST /resume with userMessageID validates trailing user", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({
@@ -376,7 +377,7 @@ describe("trailing user recovery target", () => {
     expect(result.missing).toBe(404)
   })
 
-  // [C001] HTTP path must return reject (404) when admission re-check fails — not 202.
+  // [TP-SR-R21-10][C001] admission 失败必须 404，不得 false 202（resumeUser 准入契约）。
   test("POST /resume returns 404 when admission re-check sees a later user (not false 202)", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({

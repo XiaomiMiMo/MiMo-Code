@@ -4760,6 +4760,7 @@ describe("trailing-user resume integration", () => {
     )
   }
 
+  // [TP-SR-R21-10] busy 时拒绝 resume 且不写旧消息；idle 后 trailing-user resume 仍可完成（并发/互斥）。
   it.live("busy session rejects resume; after idle trailing-user resume works", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm, dir }) {
@@ -5171,6 +5172,7 @@ describe("trailing-user resume integration", () => {
     15_000,
   )
 
+  // [TP-SR-R21-10] 同 session 并发 resume 只有一个获得 Runner；拒绝方 BusyError 不 join。
   it.live(
     "[R003] ensure-mode resume is exclusive: concurrent call gets BusyError, does not join",
     () =>

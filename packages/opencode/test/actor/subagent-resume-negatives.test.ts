@@ -382,6 +382,7 @@ describe("subagent resume recovery negatives", () => {
   }, 90_000)
 
   // [TP-RUN-R12-33] C02: Stop between main acceptance and cascade uses the acceptance epoch.
+  // [TP-SR-R21-10] assistant/cascade 202=异步受理；Stop 后 main 已受理不再派发 child（互不清扫/不重复启动）。
   test("stop after main start barrier prevents child resume", async () => {
     await using tmp = await tmpdir({ git: true })
     const accepted = await Effect.runPromise(Deferred.make<void>())
