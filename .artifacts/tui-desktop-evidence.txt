@@ -1,0 +1,16 @@
+=== TUI prompt → turn_receipt ===
+id                          state    outcome          time_created 
+--------------------------  -------  ---------------  -------------
+01M2ZV2SYKA5XZJYMJFRBS6V4W  settled  assistant_error  1789922469843
+01M2ZTP8Q6K57NFC22QGRD733J  settled  assistant_error  1789922058982
+
+=== GET receipt ===
+{"id":"01M2ZV2SYKA5XZJYMJFRBS6V4W","lane":{"sessionID":"ses_ffe5f404e9862ffem1VvC5Th5B","agentID":"main"},"state":"settled","intent":{"kind":"prompt","messageID":"msg_g001a0bfb167ab001j9jICIbUd"},"epoch":0,"consumed":true,"suspended":false,"outcome":"assistant_error","messageId":"msg_g001a0bfb16817001RR5niOAsk","error":"[object Object]","time":{"created":1789922469843,"updated":1789922471488}}
+HTTP 200
+
+=== TUI worktree ===
+  ┃                                                                                         █       hello from turn-queue demo
+  ┃  hello from turn-queue demo                                                             █       ses_ffe5f404e9862ffem1VvC5Th5B
+     ▣  Build · MiMo-V2.5-Pro                                                   ↻ /recover  █       turn-queue/packages/opencode
+  ┃                                                                                                 turn-queue/packages/opencode:feat/
+  ┃  Build · MiMo-V2.5-Pro Xiaomi «never-ask»                                  [ 🎙  Voice ]         turn-queue
