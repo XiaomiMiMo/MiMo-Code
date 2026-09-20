@@ -1,6 +1,6 @@
 ---
 feature: skill-external-root-defaults
-status: designed
+status: in-progress
 updated: 2026-09-20
 branch: feat/skill-external-root-defaults
 commits: c17d021c..c17d021c # filled at delivery
@@ -158,13 +158,13 @@ compatibility (existing skill-path-compat contract).
 
 ## Tasks
 
-- [ ] T1: External skill scans use non-dot glob matching — acceptance: with a
+- [x] T1: External skill scans use non-dot glob matching — acceptance: with a
   fixture `~/.codex/skills/.system/x/SKILL.md` and
   `~/.codex/skills/user-skill/SKILL.md` plus
   `MIMOCODE_ENABLE_CODEX_SKILLS=true`, discovery lists only `user-skill`;
   `~/.claude/skills/.trash/y/SKILL.md` is likewise invisible when claude is
   enabled. (covers: S2.1)
-- [ ] T2: Flip engine external-root defaults and replace env gates —
+- [x] T2: Flip engine external-root defaults and replace env gates —
   acceptance: default discovery includes `.agents` and excludes
   `.claude`/`.codex`/`.opencode`; each `MIMOCODE_ENABLE_*_SKILLS` opts in only
   its root; `MIMOCODE_DISABLE_AGENTS_SKILLS` drops agents; setting
@@ -172,17 +172,17 @@ compatibility (existing skill-path-compat contract).
   does not change the predicate; `MIMOCODE_MIMO_ONLY` /
   `MIMOCODE_DISABLE_CLAUDE_CODE` do not affect skill roots. (covers: S2.2;
   S2.3; depends: T1)
-- [ ] T3: Update engine skill tests and env hygiene — acceptance:
+- [x] T3: Update engine skill tests and env hygiene — acceptance:
   `test/skill` covers default surface, each opt-in, agents disable, dotted-dir
   negative, deprecated-env no-op, and existing brand-discovery cases pass with
   `ENABLE_*` set where they expect brand roots. (covers: S2.1; S2.2; S2.3;
   depends: T2)
-- [ ] T4: Align Desktop `engineSkillScanEnvFromCompat` and related unit tests —
+- [x] T4: Align Desktop `engineSkillScanEnvFromCompat` and related unit tests —
   acceptance: default prefs inject `{}`; open brand injects only its
   `MIMOCODE_ENABLE_*_SKILLS`; all-off injects only
   `MIMOCODE_DISABLE_AGENTS_SKILLS`; no injected env is a Deprecated key; unit
   matrix matches S2.4. (covers: S2.4; depends: T2)
-- [ ] T5: Document Active/Deprecated env split and migration — acceptance:
+- [x] T5: Document Active/Deprecated env split and migration — acceptance:
   README and mimocode-docs list only the four Active keys as controls, mark
   the Deprecated set ignored, and state default load surface = mimocode +
   agents with brand roots opt-in. (covers: S2.5; depends: T2)
