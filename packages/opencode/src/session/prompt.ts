@@ -6573,7 +6573,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const resumeActorBackground = Effect.fn("SessionPrompt.resumeActorBackground")(function* (input: ResumeTurnInput) {
       const agentID = input.agentID ?? "main"
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID, allowBusy: true })
-      const candidate = candidates.find((item) => item.assistantMessageID === input.assistantMessageID)
+      const candidate = candidates.find(
+        (item) => item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+      )
       if (candidate === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
@@ -6608,7 +6610,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // Re-validate after exclusive acquire: a concurrent send may have
             // completed a new turn while we waited for this slot.
             const still = yield* recovery({ sessionID: input.sessionID, agentID, allowBusy: true })
-            if (!still.some((c) => c.assistantMessageID === input.assistantMessageID)) {
+            if (
+              !still.some((c) => c.kind === "assistant" && c.assistantMessageID === input.assistantMessageID)
+            ) {
               return yield* Effect.fail(
                 new NotFoundError({
                   message: "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
@@ -6749,6 +6753,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           continue
         }
         const latest = candidates[candidates.length - 1]
+        if (latest.kind !== "assistant") {
+          outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "no-recovery-candidate" })
+          continue
+        }
         const admitted = yield* Deferred.make<void>()
         const fiber = yield* resumeActorBackground({
           sessionID,
