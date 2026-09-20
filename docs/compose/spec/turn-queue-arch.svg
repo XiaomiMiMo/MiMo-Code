@@ -33,7 +33,6 @@
 
   <line x1="110" y1="96" x2="110" y2="120" stroke="#334155" stroke-width="1" marker-end="url(#arr)"/>
   <line x1="270" y1="96" x2="270" y2="120" stroke="#334155" stroke-width="1" marker-end="url(#arr)"/>
-  <line x1="430" y1="96" x4="430" y2="120" stroke="#334155" stroke-width="1" marker-end="url(#arr)"/>
   <line x1="430" y1="96" x2="430" y2="120" stroke="#334155" stroke-width="1" marker-end="url(#arr)"/>
   <line x1="590" y1="96" x2="590" y2="120" stroke="#334155" stroke-width="1" marker-end="url(#arr)"/>
 
