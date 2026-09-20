@@ -64,4 +64,9 @@ export function isCoalescable(intent: Intent): intent is WakeIntent {
   return intent.kind === "wake"
 }
 
+/** inputRevision bumps only for user-facing steer (prompt). Wake/shell never steer. */
+export function bumpsInputRevision(intent: Intent): boolean {
+  return intent.kind === "prompt"
+}
+
 export const DEFAULT_AGENT = "main"

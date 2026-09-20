@@ -22,6 +22,7 @@ import * as Session from "./session"
 import { Agent } from "../agent/agent"
 import { decideAskRouting, hasActorTool, resolveInvalidOutputPolicy } from "@/agent/config"
 import { makeTerminalNotifier } from "@/actor/notification"
+import { turnQueueRef } from "@/turn-queue"
 import { ActorExecution } from "@/actor/execution"
 import { parseReturnHeader } from "@/actor/return-header"
 import { runTurn } from "@/actor/turn"
@@ -3446,6 +3447,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const previous = eligibleTitle ? yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" }) : []
         const message = yield* createUserMessage(input)
         yield* sessions.touch(input.sessionID)
+        // TurnQueue: durable admit for user-facing prompts (T5). spawn/hook
+        // slices are scheduled by the actor system, not the user mailbox.
+        const tq = turnQueueRef.current
+        let promptReceiptId: string | undefined
+        if (tq && (input.source ?? "user") === "user" && (input.agentID ?? "main") === "main") {
+          const receipt = yield* tq
+            .admit({
+              lane: { sessionID: input.sessionID, agentID: "main" },
+              intent: { kind: "prompt", messageID: message.info.id },
+            })
+            .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+          promptReceiptId = receipt?.id
+        }
         const permissions: Permission.Ruleset = []
         for (const [t, enabled] of Object.entries(input.tools ?? {})) {
           permissions.push({ permission: t, action: enabled ? "allow" : "deny", pattern: "*" })
@@ -3465,7 +3479,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // turn entirely. Running loop() here would produce a spurious assistant
         // response with no user turn.
         if (message.parts.length === 0) return message
-        return yield* loop({
+        const final = yield* loop({
           sessionID: input.sessionID,
           agentID: input.agentID ?? "main",
           task_id: input.task_id,
@@ -3475,6 +3489,25 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           source: input.source ?? "user",
           deferInbox: (input.source ?? "user") === "hook" && input.agentID !== undefined && input.agentID !== "main",
         })
+        // Settle the durable prompt receipt after the turn (best-effort).
+        if (tq && promptReceiptId) {
+          const failed = final.info.role === "assistant" && !!final.info.error
+          yield* tq
+            .ack(
+              { sessionID: input.sessionID, agentID: input.agentID ?? "main" },
+              message.info.id,
+              [
+                {
+                  receiptId: promptReceiptId,
+                  outcome: failed ? "assistant_error" : "success",
+                  messageId: final.info.role === "assistant" ? final.info.id : undefined,
+                  error: failed && final.info.role === "assistant" ? String(final.info.error) : undefined,
+                },
+              ],
+            )
+            .pipe(Effect.catchCause(() => Effect.void))
+        }
+        return final
       },
     )
 

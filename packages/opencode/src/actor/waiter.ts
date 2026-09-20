@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Layer } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer } from "effect"
 import { Bus } from "@/bus"
 import { ActorRegistry } from "@/actor/registry"
 import type { Actor } from "@/actor/schema"
@@ -6,9 +6,10 @@ import { Session } from "@/session"
 import type { SessionID, MessageID } from "@/session/schema"
 import { ActorStatusChanged } from "@/actor/events"
 import { parseReturnHeader, type ReturnStatus } from "@/actor/return-header"
+import { turnQueueRef } from "@/turn-queue"
 
 export interface WaitResult {
-  status: Actor["status"] | "timeout" | "unknown"
+  status: Actor["status"] | "timeout" | "unknown" | "interrupted"
   actor_id: string
   description?: string
   agent?: string
@@ -120,36 +121,62 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
       if (isWaitResolving(entry)) return yield* snapshot(input.sessionID, input.actor_id, entry)
 
       const resolved = yield* Deferred.make<WaitResult>()
+      const interrupted = yield* Deferred.make<WaitResult>()
       const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS
+      const tq = turnQueueRef.current
+      // Snapshot main-lane inputRevision so a later user admit steers this wait.
+      const lane = { sessionID: input.sessionID, agentID: "main" as const }
+      let afterRev = 0
+      if (tq) {
+        afterRev = yield* tq.observeInput(lane, -1).pipe(Effect.catchCause(() => Effect.succeed(0)))
+      }
+
+      const steerFiber = tq
+        ? yield* tq
+            .observeInput(lane, afterRev)
+            .pipe(
+              Effect.map(() => ({
+                status: "interrupted" as const,
+                actor_id: input.actor_id,
+                description: entry.description,
+                agent: entry.agent,
+                background: entry.background,
+                turnCount: entry.turnCount,
+                lastTurnTime: entry.lastTurnTime,
+              })),
+              Effect.tap((r) => Effect.sync(() => Deferred.doneUnsafe(interrupted, Effect.succeed(r)))),
+              Effect.catchCause(() => Effect.void),
+              Effect.forkChild,
+            )
+        : undefined
 
       return yield* Effect.acquireUseRelease(
-        bus.subscribeCallback(ActorStatusChanged, (evt) => {
-          if (evt.properties.actorID !== input.actor_id) return
-          if (evt.properties.sessionID !== input.sessionID) return
-          // ActorStatusChanged carries status + lastOutcome but not lifecycle.
-          // Re-read the row to get lifecycle (the missing predicate input).
-          Effect.runFork(
-            Effect.gen(function* () {
-              const fresh = yield* reg.get(input.sessionID, input.actor_id)
-              if (!fresh) return
-              if (!isWaitResolving(fresh)) return
-              const snap = yield* snapshot(input.sessionID, input.actor_id, fresh)
-              Deferred.doneUnsafe(resolved, Effect.succeed(snap))
-            }).pipe(
-              Effect.catchCause((cause) => Effect.logError(`waiter rehydrate failed: ${cause}`)),
-              Effect.provide(context),
-            ),
-          )
+        Effect.gen(function* () {
+          return yield* bus.subscribeCallback(ActorStatusChanged, (evt) => {
+            if (evt.properties.actorID !== input.actor_id) return
+            if (evt.properties.sessionID !== input.sessionID) return
+            Effect.runFork(
+              Effect.gen(function* () {
+                const fresh = yield* reg.get(input.sessionID, input.actor_id)
+                if (!fresh) return
+                if (!isWaitResolving(fresh)) return
+                const snap = yield* snapshot(input.sessionID, input.actor_id, fresh)
+                Deferred.doneUnsafe(resolved, Effect.succeed(snap))
+              }).pipe(
+                Effect.catchCause((cause) => Effect.logError(`waiter rehydrate failed: ${cause}`)),
+                Effect.provide(context),
+              ),
+            )
+          })
         }),
         () =>
           Effect.gen(function* () {
-            // Re-check after subscribing — the row could have flipped between
-            // the initial get() above and the bus.subscribeCallback bind.
             const recheck = yield* reg.get(input.sessionID, input.actor_id)
             if (recheck && isWaitResolving(recheck)) {
               return yield* snapshot(input.sessionID, input.actor_id, recheck)
             }
             const raced = yield* Deferred.await(resolved).pipe(
+              Effect.raceFirst(Deferred.await(interrupted)),
               Effect.timeout(timeoutMs),
               Effect.catchTag("TimeoutError", () => Effect.succeed(null)),
             )
@@ -160,7 +187,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
             }
             return raced
           }),
-        (unsub) => Effect.sync(() => unsub()),
+        (unsub) =>
+          Effect.sync(() => {
+            unsub()
+            if (steerFiber) void steerFiber.pipe(Fiber.interrupt)
+          }),
       )
     })
 

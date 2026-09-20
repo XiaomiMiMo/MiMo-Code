@@ -27,6 +27,8 @@ import { ModelID, ProviderID } from "@/provider/schema"
 import { Provider } from "@/provider"
 import { forkQuery } from "@/tool/session"
 import { spawnRef } from "@/actor/spawn-ref"
+import { turnQueueRef } from "@/turn-queue"
+import { AppRuntime } from "@/effect/app-runtime"
 import { errors } from "../../error"
 import { lazy } from "@/util/lazy"
 import { Bus } from "@/bus"
@@ -518,12 +520,14 @@ export const SessionRoutes = lazy(() =>
           sessionID: SessionID.zod,
         }),
       ),
-      async (c) =>
-        jsonRequest("SessionRoutes.abort", c, function* () {
-          const svc = yield* SessionPrompt.Service
-          yield* svc.cancel(c.req.valid("param").sessionID)
-          return true
-        }),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const epoch = turnQueueRef.current
+          ? await AppRuntime.runPromise(turnQueueRef.current.abortSession(sessionID, "drop")).catch(() => 0)
+          : 0
+        await runRequest("SessionRoutes.abort", c, SessionPrompt.Service.use((svc) => svc.cancel(sessionID)))
+        return c.json({ ok: true, epoch })
+      },
     )
     .post(
       "/:sessionID/share",
@@ -1254,55 +1258,69 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
 
-        // Pre-check: bail with 409 Conflict if the session's main runner is busy
-        // with another request. Without this guard, ensureRunning silently queues
-        // the new work behind the existing runner (which may be a zombie from a
-        // SIGKILL'd previous client), causing the new client to hang for the
-        // duration of the old runner's retry envelope. Caller's recovery path:
-        // POST /:sessionID/abort to free the runner, then retry this POST.
-        await runRequest(
+        // Busy main: persist + admit (noReply) and return 202+receipt instead of 409.
+        const busy = await runRequest(
           "SessionRoutes.prompt.assertNotBusy",
           c,
-          SessionRunState.Service.use((svc) => svc.assertNotBusy(sessionID)),
+          SessionRunState.Service.use((svc) =>
+            svc
+              .assertNotBusy(sessionID)
+              .pipe(
+                Effect.as(false as const),
+                Effect.catch((e) => (e instanceof Session.BusyError ? Effect.succeed(true as const) : Effect.fail(e))),
+              ),
+          ),
         )
+        if (busy) {
+          const body = c.req.valid("json")
+          const queued = await runRequest(
+            "SessionRoutes.prompt.queue",
+            c,
+            SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID, noReply: true })),
+          )
+          const tq = turnQueueRef.current
+          const receipt = tq
+            ? await AppRuntime.runPromise(
+                tq.admit({
+                  lane: { sessionID, agentID: "main" },
+                  intent: { kind: "prompt", messageID: queued.info.id },
+                }),
+              ).catch(() => undefined)
+            : undefined
+          // If the runner went idle in the window, kick a turn so the queued
+          // message is not stranded (TOCTOU from the approved spec).
+          const stillBusy = await runRequest(
+            "SessionRoutes.prompt.queue.recheck",
+            c,
+            SessionRunState.Service.use((svc) =>
+              svc
+                .assertNotBusy(sessionID)
+                .pipe(
+                  Effect.as(false as const),
+                  Effect.catch((e) => (e instanceof Session.BusyError ? Effect.succeed(true as const) : Effect.fail(e))),
+                ),
+            ),
+          )
+          if (!stillBusy) {
+            void runRequest("SessionRoutes.prompt.queue.wake", c, SessionPrompt.Service.use((svc) =>
+              svc.loop({ sessionID }),
+            )).catch((error) => log.error("session queue wake failed", { sessionID, error }))
+          }
+          c.status(202)
+          return c.json({
+            info: queued.info,
+            parts: queued.parts,
+            ...(receipt ? { receiptId: receipt.id } : {}),
+          })
+        }
 
         c.status(200)
         c.header("Content-Type", "application/json")
         return stream(c, async (stream) => {
           const body = c.req.valid("json")
-          // If the HTTP client gives up (TUI exits, driver kills its `mimo run`
-          // client on its own per-turn timeout, network drop), we have to drive
-          // the server-side runner to Idle ourselves. Otherwise the prompt
-          // fiber keeps running with no consumer, and any next POST attaches
-          // to the same dead Deferred via SessionRunState.ensureRunning's
-          // `Running` branch — every subsequent turn then hangs waiting on a
-          // result that will never arrive. SessionPrompt.cancel interrupts
-          // the fiber, which lets the runner transition Running -> Idle
-          // through Runner.cancel, freeing the next POST to start a fresh run.
+          // Disconnect only detaches this stream. Admitted work lives in the
+          // Controller/Runner scope — do NOT session.cancel (turn-queue spec).
           const signal = c.req.raw.signal
-          const onClientDisconnect = () => {
-            void runRequest(
-              "SessionRoutes.prompt.disconnect",
-              c,
-              SessionPrompt.Service.use((svc) => svc.cancel(sessionID)),
-            ).catch(() => {})
-          }
-          if (signal.aborted) {
-            onClientDisconnect()
-            return
-          }
-          signal.addEventListener("abort", onClientDisconnect, { once: true })
-          // Keep the response alive while the turn is in flight. A turn can sit
-          // silent for a long time — most notably while the `question` tool
-          // blocks on an un-timed Deferred waiting for a human reply (the Bun
-          // server itself never times out: adapter.bun.ts idleTimeout:0). A
-          // client with its own request timeout (e.g. the external `mimo run`
-          // driver's per-turn budget) would otherwise see a dead connection and
-          // abort with "error sending request for url". Periodic whitespace
-          // resets the client's idle timer; whitespace is JSON-insignificant,
-          // so the trailing JSON.stringify(msg) still parses as the whole body
-          // (clients JSON.parse the full body, which tolerates leading
-          // whitespace). Mirrors the 10s SSE heartbeat in event.ts/global.ts.
           const heartbeat = setInterval(() => {
             void stream.write(" ")
           }, promptHeartbeatIntervalMs())
@@ -1312,15 +1330,10 @@ export const SessionRoutes = lazy(() =>
               c,
               SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })),
             )
-            // Safety invariant: no await/yield between this write and the
-            // clearInterval below (reached synchronously via finally) — else the
-            // interval could fire and append a stray space AFTER the JSON,
-            // breaking the "JSON is the whole body" contract. Leading spaces are
-            // JSON-insignificant; a trailing one would not be.
             void stream.write(JSON.stringify(msg))
           } finally {
             clearInterval(heartbeat)
-            signal.removeEventListener("abort", onClientDisconnect)
+            void signal
           }
         })
       },
@@ -1363,6 +1376,38 @@ export const SessionRoutes = lazy(() =>
         })
 
         return c.body(null, 204)
+      },
+    )
+    .get(
+      "/:sessionID/receipt/:receiptId",
+      describeRoute({
+        summary: "Get turn receipt",
+        description: "Durable receipt for an admitted prompt/resume/wake. Source of truth after HTTP 202.",
+        operationId: "session.receipt",
+        responses: {
+          200: {
+            description: "Receipt",
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+          receiptId: z.string().min(1),
+        }),
+      ),
+      async (c) => {
+        const receiptId = c.req.valid("param").receiptId
+        const tq = turnQueueRef.current
+        if (!tq) return c.json({ error: "turn queue unavailable" }, 404)
+        try {
+          const receipt = await AppRuntime.runPromise(tq.getReceipt(receiptId))
+          return c.json(receipt)
+        } catch {
+          return c.json({ error: "not found" }, 404)
+        }
       },
     )
     .post(

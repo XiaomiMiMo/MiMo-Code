@@ -17,6 +17,7 @@ import {
   type ReceiptState,
 } from "./schema"
 import { TurnLaneStateTable, TurnReceiptTable, TurnSessionEpochTable } from "./turn-queue.sql"
+import { turnQueueRef } from "./turn-queue-ref"
 
 const log = Log.create({ service: "turn-queue" })
 
@@ -118,8 +119,14 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         const rev = row?.input_revision ?? 0
         const waiters = inputWaiters.get(waiterKey(lane))
         if (waiters) {
-          for (const d of waiters) Deferred.doneUnsafe(d, Effect.succeed(rev))
-          waiters.clear()
+          for (const d of [...waiters]) {
+            waiters.delete(d)
+            // Concurrent admits can race two bumps; skip already-completed waiters.
+            const done = yield* Deferred.isDone(d)
+            if (done) continue
+            Deferred.doneUnsafe(d, Effect.succeed(rev))
+          }
+          if (waiters.size === 0) inputWaiters.delete(waiterKey(lane))
         }
         return rev
       })
@@ -249,7 +256,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       }
 
       const id = yield* insertReceipt(input, epoch, "accepted")
-      yield* bumpRevision(input.lane)
+      // Steer revision is for user input only — wake/shell must not interrupt wait.
+      if (input.intent.kind === "prompt") {
+        yield* bumpRevision(input.lane)
+      }
       const row = yield* loadReceipt(id)
       const receipt = toReceipt(row!)
       yield* publish(receipt)
@@ -466,7 +476,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       )
     })
 
-    return Service.of({
+    const impl: Interface = {
       admit,
       getReceipt,
       listAccepted,
@@ -477,7 +487,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       abortSession,
       getEpoch,
       reconcileOnBoot,
-    })
+    }
+    turnQueueRef.current = impl
+    return Service.of(impl)
   }),
 )
 
