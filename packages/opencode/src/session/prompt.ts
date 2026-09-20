@@ -6585,8 +6585,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const resumeBackground = Effect.fn("SessionPrompt.resumeBackground")(function* (input: ResumeTurnInput) {
-      // Single recovery() read (R003): resolveLatest returns the full candidate; explicit IDs
-      // look it up in the same call. Avoids double-read TOCTOU.
+      // Single recovery() read (R003): no-ID callers take candidates.at(-1);
+      // explicit IDs look it up in the same snapshot. Avoids double-read TOCTOU.
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID, allowBusy: true })
       const candidate = input.userMessageID || input.assistantMessageID
         ? candidates.find((item) =>
