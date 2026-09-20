@@ -337,8 +337,8 @@ describe("trailing user recovery target", () => {
   })
 
   // [TP-SR-R21-02][closed-loop][R004] Desktop Resume only passes sessionID; engine picks latest recovery candidate.
-  // Asserts the *target* is the recovery tail (not just HTTP 202): empty-body resume
-  // must pick the last candidate (parent-user here), not an earlier assistant.
+  // Asserts the *actual plan target* (via ResumeTestHooks.onPlanResolved) matches the recovery tail —
+  // not just HTTP 202, and not a pre-route independent recovery() read.
   test("POST /resume with empty body resumes latest recovery candidate", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({
@@ -356,13 +356,9 @@ describe("trailing user recovery target", () => {
           model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
           time: { created: Date.now() },
         })
-        // Verify recovery() reports parent-user as the tail candidate
-        const candidates = yield* prompt.recovery({ sessionID: session.id, agentID: "main" })
-        expect(candidates.at(-1)).toEqual({
-          kind: "parent-user",
-          userMessageID: user.id,
-          created: user.time.created,
-        })
+        // Capture the plan that /resume actually resolves (R004)
+        let resolvedPlan: { action: string; assistantMessageID?: string; parentMessageID?: string } | undefined
+        ResumeTestHooks.onPlanResolved = (plan) => { resolvedPlan = plan }
         // no recovery candidates → 404
         const empty = yield* sessions.create({ title: "empty-body none" })
         const app = Server.Default().app
@@ -387,12 +383,19 @@ describe("trailing user recovery target", () => {
             method: "POST",
           })),
         )
-        return { ok: ok.status, none: none.status, noBody: noBody.status, latestKind: candidates.at(-1)?.kind, latestId: candidates.at(-1)?.kind === "parent-user" ? candidates.at(-1)!.userMessageID : null }
+        return {
+          ok: ok.status,
+          none: none.status,
+          noBody: noBody.status,
+          planAction: resolvedPlan?.action,
+          planParent: resolvedPlan?.parentMessageID,
+          userParentId: user.id,
+        }
       })),
     })
-    // R004: target selection proven — latest candidate is parent-user with the seeded user id
-    expect(result.latestKind).toBe("parent-user")
-    expect(result.latestId).not.toBeNull()
+    // R004: the plan /resume actually resolved must target the trailing user (parent-user resume)
+    expect(result.planAction).toBe("user-resume")
+    expect(result.planParent).toBe(result.userParentId)
     expect(result.ok).toBe(202)
     expect(result.none).toBe(404)
     // second resume on already-busy session after first 202 → 409

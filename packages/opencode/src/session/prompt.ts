@@ -6516,35 +6516,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
     })
 
-    /**
-     * Resolve a resume target when the client omits assistant/user IDs.
-     * Recovery already returns only the tail incomplete assistant and/or trailing user,
-     * so the last candidate is the one the user just clicked Resume on.
-     * Returns the full candidate so callers skip a second recovery() read (TOCTOU).
-     */
-    const resolveLatestRecoveryTarget = Effect.fn("SessionPrompt.resolveLatestRecoveryTarget")(function* (input: {
-      sessionID: SessionID
-      agentID?: string
-      allowBusy?: boolean
-    }) {
-      const candidates = yield* recovery({
-        sessionID: input.sessionID,
-        agentID: input.agentID,
-        allowBusy: input.allowBusy,
-      })
-      const latest = candidates.at(-1)
-      if (latest === undefined) {
-        return yield* Effect.fail(
-          new NotFoundError({ message: "No resumable recovery candidate found for session " + input.sessionID }),
-        )
-      }
-      return latest
-    })
-
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
       yield* state.assertNotBusy(input.sessionID, input.agentID)
-      // Single recovery() read: resolveLatest returns the full candidate; explicit IDs
-      // look it up in the same call. Avoids double-read TOCTOU (R003).
+      // Single recovery() read (R003): no-ID callers take candidates.at(-1);
+      // explicit IDs look it up in the same snapshot. Avoids double-read TOCTOU.
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
       const candidate = input.userMessageID || input.assistantMessageID
         ? candidates.find((item) =>
@@ -6579,6 +6554,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         userMessageID: target.userMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
+      // [R004] Test seam: expose resolved plan so tests can assert the actual target.
+      ResumeTestHooks.onPlanResolved?.({
+        action: plan.action,
+        ...(plan.action === "tool-resume" ? { assistantMessageID: plan.assistantMessageID } : {}),
+        parentMessageID: plan.parentMessageID,
+      })
       // [C004] Test seam: pause after ALL busy preflights (incl. planResume), before exclusive occupy.
       const beforeOccupy = ResumeTestHooks.beforeExclusiveOccupy
       if (beforeOccupy) yield* beforeOccupy()
@@ -6639,6 +6620,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         userMessageID: target.userMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
+      // [R004] Test seam: expose resolved plan so tests can assert the actual target.
+      ResumeTestHooks.onPlanResolved?.({
+        action: plan.action,
+        ...(plan.action === "tool-resume" ? { assistantMessageID: plan.assistantMessageID } : {}),
+        parentMessageID: plan.parentMessageID,
+      })
       yield* launchResume({
         sessionID: input.sessionID,
         agentID,

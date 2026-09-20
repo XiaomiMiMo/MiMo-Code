@@ -14,10 +14,13 @@ export const ResumeTestHooks = {
   beforeStep0ParentCheck: undefined as undefined | (() => Effect.Effect<void>),
   /** After successful planResume, before launchResume exclusive occupy (ensureExclusive/start). */
   beforeExclusiveOccupy: undefined as undefined | (() => Effect.Effect<void>),
+  /** [R004] After planResume succeeds, receives the resolved plan so tests can assert the actual target. */
+  onPlanResolved: undefined as undefined | ((plan: { action: string; assistantMessageID?: string; parentMessageID?: string }) => void),
   reset() {
     this.beforeAdmissionRecheck = undefined
     this.afterAdmissionBeforeCleanup = undefined
     this.beforeStep0ParentCheck = undefined
     this.beforeExclusiveOccupy = undefined
+    this.onPlanResolved = undefined
   },
 }
