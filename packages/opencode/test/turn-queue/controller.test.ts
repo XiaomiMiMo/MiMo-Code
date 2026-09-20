@@ -180,4 +180,72 @@ describe("TurnQueue controller", () => {
       }),
     ),
   )
+
+  it.live(
+    "second admit for same live messageID returns the same receipt",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionNs.Service
+        const tq = yield* TurnQueue.Service
+        const session = yield* sessions.create({ title: "dup-live" })
+        const lane = { sessionID: session.id, agentID: "main" }
+        const messageID = MessageID.ascending()
+        const a = yield* tq.admit({ lane, intent: { kind: "prompt", messageID } })
+        const b = yield* tq.admit({ lane, intent: { kind: "prompt", messageID } })
+        expect(b.id).toBe(a.id)
+        expect(b.state).toBe("accepted")
+      }),
+    ),
+  )
+
+  it.live(
+    "idempotencyKey=messageID makes busy-path re-admit return the same receipt",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionNs.Service
+        const tq = yield* TurnQueue.Service
+        const session = yield* sessions.create({ title: "idem-msg" })
+        const lane = { sessionID: session.id, agentID: "main" }
+        const messageID = MessageID.ascending()
+        const a = yield* tq.admit({ lane, intent: { kind: "prompt", messageID }, idempotencyKey: messageID })
+        const b = yield* tq.admit({ lane, intent: { kind: "prompt", messageID }, idempotencyKey: messageID })
+        expect(b.id).toBe(a.id)
+      }),
+    ),
+  )
+
+  it.live(
+    "re-admit after cancelled creates a new receipt for the same messageID",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionNs.Service
+        const tq = yield* TurnQueue.Service
+        const session = yield* sessions.create({ title: "re-admit" })
+        const lane = { sessionID: session.id, agentID: "main" }
+        const messageID = MessageID.ascending()
+        const first = yield* tq.admit({ lane, intent: { kind: "prompt", messageID } })
+        yield* tq.abortSession(session.id, "drop")
+        const second = yield* tq.admit({ lane, intent: { kind: "prompt", messageID } })
+        expect(second.id).not.toBe(first.id)
+        expect(second.state).toBe("accepted")
+      }),
+    ),
+  )
+
+  it.live(
+    "observeInput resolves without gap when admit races subscribe",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionNs.Service
+        const tq = yield* TurnQueue.Service
+        const session = yield* sessions.create({ title: "gap" })
+        const lane = { sessionID: session.id, agentID: "main" }
+        // Start observe, then admit immediately (no sleep) to stress check-subscribe-recheck.
+        const fiber = yield* tq.observeInput(lane, 0).pipe(Effect.forkChild)
+        yield* tq.admit({ lane, intent: { kind: "prompt", messageID: MessageID.ascending() } })
+        const rev = yield* Fiber.join(fiber)
+        expect(rev).toBeGreaterThan(0)
+      }),
+    ),
+  )
 })

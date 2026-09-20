@@ -509,7 +509,7 @@ export const SessionRoutes = lazy(() =>
             description: "Aborted session",
             content: {
               "application/json": {
-                schema: resolver(z.boolean()),
+                schema: resolver(z.object({ ok: z.boolean(), epoch: z.number() })),
               },
             },
           },
@@ -522,10 +522,19 @@ export const SessionRoutes = lazy(() =>
           sessionID: SessionID.zod,
         }),
       ),
+      validator(
+        "json",
+        z
+          .object({
+            queuedPolicy: z.enum(["drop", "keep-suspended"]).optional(),
+          })
+          .optional(),
+      ),
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
+        const policy = c.req.valid("json")?.queuedPolicy ?? "drop"
         const epoch = turnQueueRef.current
-          ? await AppRuntime.runPromise(turnQueueRef.current.abortSession(sessionID, "drop")).catch(() => 0)
+          ? await AppRuntime.runPromise(turnQueueRef.current.abortSession(sessionID, policy)).catch(() => 0)
           : 0
         await runRequest("SessionRoutes.abort", c, SessionPrompt.Service.use((svc) => svc.cancel(sessionID)))
         return c.json({ ok: true, epoch })
@@ -1298,14 +1307,17 @@ export const SessionRoutes = lazy(() =>
             c,
             SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID, noReply: true })),
           )
+          // prompt() already admitted with idempotencyKey=messageID. Re-admit
+          // with the same key only looks up that receipt — never a second live row.
           const tq = turnQueueRef.current
           const receipt = tq
             ? await AppRuntime.runPromise(
                 tq.admit({
                   lane: { sessionID, agentID: "main" },
                   intent: { kind: "prompt", messageID: queued.info.id },
+                  idempotencyKey: queued.info.id,
                 }),
-              ).catch(() => undefined)
+              )
             : undefined
           // If the runner went idle in the window, kick a turn so the queued
           // message is not stranded (TOCTOU from the approved spec).
@@ -1420,11 +1432,13 @@ export const SessionRoutes = lazy(() =>
         }),
       ),
       async (c) => {
+        const sessionID = c.req.valid("param").sessionID
         const receiptId = c.req.valid("param").receiptId
         const tq = turnQueueRef.current
         if (!tq) return c.json({ error: "turn queue unavailable" }, 404)
         try {
           const receipt = await AppRuntime.runPromise(tq.getReceipt(receiptId))
+          if (receipt.lane.sessionID !== sessionID) return c.json({ error: "not found" }, 404)
           return c.json(receipt)
         } catch {
           return c.json({ error: "not found" }, 404)

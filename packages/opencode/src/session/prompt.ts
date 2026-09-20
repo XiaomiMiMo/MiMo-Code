@@ -3462,13 +3462,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const tq = turnQueueRef.current
         let promptReceiptId: string | undefined
         if (tq && (input.source ?? "user") === "user" && (input.agentID ?? "main") === "main") {
-          const receipt = yield* tq
-            .admit({
-              lane: { sessionID: input.sessionID, agentID: "main" },
-              intent: { kind: "prompt", messageID: message.info.id },
-            })
-            .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-          promptReceiptId = receipt?.id
+          const receipt = yield* tq.admit({
+            lane: { sessionID: input.sessionID, agentID: "main" },
+            intent: { kind: "prompt", messageID: message.info.id },
+            // Stable per-message key so a second admit (HTTP route) cannot
+            // insert a second live receipt for the same user message.
+            idempotencyKey: message.info.id,
+          })
+          promptReceiptId = receipt.id
         }
         const permissions: Permission.Ruleset = []
         for (const [t, enabled] of Object.entries(input.tools ?? {})) {

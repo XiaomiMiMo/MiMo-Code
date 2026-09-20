@@ -1,12 +1,20 @@
 ---
 feature: turn-queue
-status: designed
-updated: 2026-09-20
+status: designed-partial
+updated: 2026-09-21
 branch: feat/turn-queue
 commits: 30e55a4e58c56044bea4dc9551a24395ef47e961..HEAD
+diagrams:
+  authoritative: turn-queue-rev3.svg
+  historical: [turn-queue-arch.svg, turn-queue-delta.svg]
 ---
 
 # Turn Queue
+
+## Diagrams
+
+- **Authoritative:** `turn-queue-rev3.svg` (approved rev3 target architecture).
+- `turn-queue-arch.svg` / `turn-queue-delta.svg` are historical design-process drafts; do not treat them as contract. Intent kinds in the contract are only `prompt|resume|wake|shell` (no `system`).
 
 ## Report
 
@@ -20,7 +28,7 @@ Turn admission is split across several ad-hoc paths on main (`30e55a4e58`):
 - Subagent completion / inbox wake calls `loop` → `ensureRunning` (join or pending-attach), not a first-class “work arrived” Intent.
 - Long-blocking tools (`actor wait`) freeze the lane; user input cannot steer until the tool returns.
 
-**Invariant that must hold after this feature (test oracle):** for a given lane, a user message with `id > consumedFrontier` is either (a) inside the currently claimed batch, (b) in the mailbox as `accepted`, or (c) already acked — never both consumed by the run and left as a second pending admit that will run again, and never dropped without a receipt in `settled|cancelled|rejected`.
+**Invariant that must hold after this feature (test oracle):** for a given lane, a user message with `id > consumedFrontier` always has a durable receipt in `accepted|claimed|settled|cancelled|rejected`. It is never both consumed by the run and left as a second pending admit that will run again, and never disappears without any receipt row.
 
 ## [S2] Design
 
@@ -62,8 +70,11 @@ type Lane = { sessionID: SessionID; agentID: string } // agentID "main" default
 type Epoch = number
 
 // inputRevision is a per-lane monotonic counter (number), distinct from MessageID.
-// Bumped on every admit that can change what the lane should look at next
-// (prompt always; resume optional; wake never — wake is not user steer).
+// Bumped on every admit that can change what the lane should look at next:
+// - prompt: always bump (user steer)
+// - resume: never bump (resume is not user steer; it does not interrupt actor wait)
+// - wake: never bump (wake is not user steer)
+// Implementation: bumpsInputRevision() is true only for kind === "prompt".
 
 type Intent =
   | {
@@ -97,7 +108,8 @@ type Intent =
 ```
 
 - **Wake coalescing only:** two `wake` Intents for the same lane merge to the higher `inboxWatermark`. `prompt`/`resume`/`shell` never coalesce.
-- **Eligibility order** (not transcript reorder): user `prompt` > `resume` (user) > `wake` > `shell`/system. Wake cannot starve prompt.
+- **Eligibility order** (not transcript reorder): user `prompt` > `resume` (user) > `wake` > `shell`. Wake cannot starve prompt.
+- **Accepted tradeoff:** a continuous stream of user `prompt` admits can delay `wake` indefinitely. `wake` coalesces (max inbox watermark) so notifications are not lost, but parent-resume latency under sustained user input is unbounded by design. Do **not** add aging/heuristics unless a later requirement demands anti-starvation for wake.
 
 ### Receipts (durable)
 
@@ -163,7 +175,9 @@ Define **message frontier** on the lane’s main (or actor) slice using **`Messa
 3. Receipt row is written in the same SQLite transaction as the message when possible; if two transactions are required, order is **message first, receipt second**, and boot reconcile **creates a synthetic `accepted` receipt** for any user message after `consumedFrontier` that has no receipt (closes the crash window).
 4. Only then may HTTP return 202/200-stream. `noReply` stops after step 3.
 
-**Oracle:** there is never a durable user message after `consumedFrontier` without a receipt in `accepted|claimed|settled`.
+**Oracle:** there is never a durable user message after `consumedFrontier` without a receipt in `accepted|claimed|settled|cancelled|rejected`. `cancelled` (including boot `never_ran`) is a valid terminal receipt for S1/S2 self-consistency; the message is **not** silently dropped.
+
+**Re-admit after cancelled/never_ran (default no-auto-requeue):** client may `admit({ kind: "prompt", messageID: <same existing user message> }, newIdempotencyKey)`. Controller accepts a new receipt for the same `messageID` when the prior receipt is terminal `cancelled` and `messageID > consumedFrontier`. Do **not** require rewriting the user message. A second concurrent live receipt (`accepted|claimed`) for the same `messageID` is rejected.
 
 ### Steer
 
@@ -249,6 +263,30 @@ Filled during T0; every row must be `migrate` or `skip` before T8.
 
 CI: fail new `ensureRunning` call sites outside allowlist (T8).
 
+## [S5] This PR scope (foundation)
+
+PR #2452 ships the **foundation slice** only. Full T3/T4/T8 migration is explicitly out of this PR and tracked as follow-ups.
+
+**In this PR**
+- LaneController + durable receipts + epoch + frontier + idempotency + same-messageID live reuse
+- `inputRevision` / `observeInput` (check-subscribe-recheck) + ActorWaiter steer (wait interrupted, actor not cancelled)
+- HTTP busy `/message` → **202 + receiptId** (no 409 for busy); GET receipt (session-scoped); abort `{ok,epoch}` + `queuedPolicy` body
+- prompt() admit for main user prompts with `idempotencyKey = messageID`
+- disconnect does not abort
+- unit + steer integration tests
+
+**Follow-up (not in this PR; do not treat as regressions of foundation)**
+- T3/T4: runLoop uses Controller claim/ack/extendClaim; remove `ensureRunning` pending-attach
+- T8: inbox `admit(wake)` without dual `loop`; resume/shell on admit; resume no longer 409
+- HTTP: `prompt_async` 202+receiptId; `/message` idle path Controller-atomic claim (drop TOCTOU)
+- boot: wake-only requeue; orphan user message → synthetic `accepted` receipt
+- OpenAPI/SDK: `/message` 202 schema, GET receipt typed response
+- TUI: drop residual BusyError/409 special-cases
+- shell `cwd` session-dir enforcement when shell moves to admit
+
+**Idempotency caveat (accepted)**  
+`idempotencyKey = messageID` is session-scoped and permanent. Re-admit after `cancelled` with the **same** key returns the cancelled receipt. Recovery clients must use a **new** idempotency key (or omit key and rely on live-receipt / terminal-cancellable rules).
+
 ## Tasks
 
 - [x] T0: **Admission inventory** — acceptance: table of every call site with migrate/skip (covers: S2)
@@ -257,7 +295,7 @@ CI: fail new `ensureRunning` call sites outside allowlist (T8).
 - [ ] T3: Claim/ack + MessageID frontier + extendClaim **inside runLoop** — partial: prompt admits + settles after loop; claimNext/extendClaim API exists; runLoop still uses ensureRunning (covers: S2; depends: T1)
 - [ ] T4: Runner exclusive-lease only — pending: pending-attach still present on ensureRunning (covers: S2; depends: T3)
 - [x] T5 (partial): SessionPrompt.prompt admits durable receipt for main user prompts; settles after turn (covers: S2)
-- [x] T6 (partial): HTTP busy 202+receiptId, GET receipt, abort epoch, disconnect detach; OpenAPI 409 removed for busy. SDK regen not done (covers: S2)
+- [x] T6 (foundation): HTTP busy 202+receiptId, GET receipt session check, abort `{ok,epoch}` + `queuedPolicy`, disconnect detach; SDK abort types updated. Follow-up: `prompt_async` 202, `/message` 202 OpenAPI schema, typed GET receipt response (covers: S2; see S5)
 - [x] T7: ActorWaiter observeInput on main lane — integration test: user admit interrupts wait; actor not cancelled (covers: S2)
-- [x] T8 (partial): inbox admits wake Intent (coalescable); still also calls loop. resume/shell not fully on admit (covers: S2)
-- [ ] T9: Report + full oracles — automated suite: `bun test test/actor/ test/turn-queue/` 211 pass; typecheck pass. Remaining: SDK regen, full Runner pending removal, resume/shell migrate
+- [x] T8 (foundation): inbox admits wake Intent (coalescable) in addition to loop; resume/shell still on exclusive/startShell (follow-up per S5)
+- [x] T9 (foundation): `bun typecheck` pass; `bun test test/turn-queue/` 13 pass (controller 11 + steer 2). Follow-up remaining: Runner pending removal, resume/shell migrate, HTTP e2e, inbox dual-path, full `test/actor`

@@ -215,6 +215,29 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         if (existing) return toReceipt(existing)
       }
 
+      // Same messageID must not get a second live receipt (design re-admit rule).
+      if (input.intent.kind === "prompt") {
+        const messageId = input.intent.messageID
+        const live = yield* Effect.sync(() =>
+          Database.use((db) =>
+            db
+              .select()
+              .from(TurnReceiptTable)
+              .where(
+                and(
+                  eq(TurnReceiptTable.session_id, input.lane.sessionID),
+                  eq(TurnReceiptTable.agent_id, input.lane.agentID),
+                  sql`json_extract(${TurnReceiptTable.intent}, '$.kind') = 'prompt'`,
+                  sql`json_extract(${TurnReceiptTable.intent}, '$.messageID') = ${messageId}`,
+                  inArray(TurnReceiptTable.state, ["accepted", "claimed"]),
+                ),
+              )
+              .get(),
+          ),
+        )
+        if (live) return toReceipt(live)
+      }
+
       // Wake coalesce: merge into an existing accepted wake on the same lane.
       if (isCoalescable(input.intent)) {
         const accepted = yield* Effect.sync(() =>
@@ -403,7 +426,15 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         set = new Set()
         inputWaiters.set(key, set)
       }
+      // Check-subscribe-recheck: close the gap between load and subscribe so a
+      // concurrent bumpRevision cannot be missed (spec: no gap).
       set.add(deferred)
+      const current2 = yield* loadLane(lane)
+      const rev2 = current2?.input_revision ?? 0
+      if (rev2 > afterRevision) {
+        set.delete(deferred)
+        return rev2
+      }
       return yield* Deferred.await(deferred).pipe(
         Effect.ensuring(Effect.sync(() => set?.delete(deferred))),
       )
