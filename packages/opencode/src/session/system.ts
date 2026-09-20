@@ -181,6 +181,11 @@ export const layer = Layer.effect(
 
         return [
           "Skills available in this session:",
+          ...(list.some((item) => item.name === "browser-use")
+            ? [
+                "For browser interaction, load the browser-use skill and use Browser Use CLI by default. Follow an explicit user request for a different browser tool. For public information that needs no browser interaction, keep using webfetch or websearch.",
+              ]
+            : []),
           // the agents seem to ingest the information about skills a bit better if we present a more verbose
           // version of them here and a less verbose version in tool description, rather than vice versa.
           Skill.fmt(list, { verbose: true }),

@@ -233,6 +233,7 @@ MiMoCode 打包了以下内置技能：
 | 技能 | 说明 |
 |------|------|
 | `arxiv` | 搜索、阅读、引用和分析 arXiv 论文 |
+| `browser-use` | 默认通过 Browser Use CLI 完成浏览器导航、表单填写、抓取、截图和 UI 验证 |
 | `claude-code` | 将编码、测试、审查和 Git 任务委派给 Claude Code CLI |
 | `codex` | 在无头自动化、CI、容器和远程环境中运行及排查 Codex CLI |
 | `compose-next` | 推荐的 spec→ship 功能交付工作流；仅在用户明确授意时调用 |
@@ -246,6 +247,7 @@ MiMoCode 打包了以下内置技能：
 | `mimocode-docs` | MiMoCode 功能、命令、Provider 和配置的自文档参考 |
 | `modern-python-toolchain` | 使用 uv、Ruff 和 Pyright 配置现代 Python 项目 |
 | `pdf-official` | 生成、读取、填充和转换 PDF 文件 |
+| `playwright` | 仅在明确请求时使用 Playwright CLI 自动化 |
 | `pptx-official` | 制作和操作 PowerPoint (.pptx) 幻灯片 |
 | `product-design` | 通过专项工作流探索、审查、实现和验证产品及 UX 设计 |
 | `research-paper-writing` | 撰写和打磨学术论文（ML/CV/NLP 风格）|
@@ -255,6 +257,8 @@ MiMoCode 打包了以下内置技能：
 | `xlsx-official` | 构建、清洗和转换电子表格 (.xlsx/.csv) |
 
 `claude-code` 和 `codex` 仅在系统分别安装了 `claude` 和 `codex` 可执行文件时提供。其他技能也可能需要其说明中列出的任务专用工具。
+
+**浏览器交互：** MiMoCode 内置[官方 Browser Use CLI 技能](https://github.com/browser-use/browser-use/tree/main/skills/browser-use)，并默认使用它完成浏览器交互。运行 `uv tool install --python 3.12 --upgrade browser-use` 安装 CLI，再运行 `browser-use --doctor` 检查 Chrome 连接。内置技能包含安装和故障恢复说明；本地浏览器控制无需 MCP 服务器或额外的 LLM API 密钥。无需浏览器交互的公开信息仍使用 `webfetch` / `websearch`，明确请求时也可使用 `/playwright`。
 
 **覆盖内置技能：** 在项目（`.mimocode/skills/<name>/SKILL.md`）或个人技能目录（`~/.claude/skills/`、`~/.opencode/skills/` 等）中创建同名技能即可。扫描顺序中后发现的用户技能会覆盖同名的内置技能。
 

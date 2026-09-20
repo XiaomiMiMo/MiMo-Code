@@ -1,0 +1,6 @@
+This skill is adapted from the official Browser Use CLI skill, which derives from Browser Harness.
+
+Source: https://github.com/browser-use/browser-use/blob/d8110c5ff87ccba887aaa726cdb780f2f84bef8d/browser_use/skills/browser-use/SKILL.md
+Upstream license: MIT (see LICENSE.txt).
+
+MiMoCode changes: default browser routing in the description and a setup section for MiMoCode. The remaining upstream instructions are unchanged.
