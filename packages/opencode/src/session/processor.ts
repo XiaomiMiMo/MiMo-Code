@@ -71,6 +71,24 @@ export type Result = "overflow" | "stop" | "continue" | "text-repeat"
 export type Event = LLM.Event
 
 /**
+ * Codex-style auto-resume gate: after tools have fully completed, a retryable
+ * transport failure should continue the outer step (tool results stay in
+ * history) instead of stamping a terminal error. Replaying this stream is
+ * unsafe; the next sampling call is not.
+ */
+export function shouldAutoResumeAfterTools(input: {
+  retrySafe: boolean
+  decision: { retryable: boolean }
+  toolParts: readonly { state: { status: string } }[]
+}): boolean {
+  if (input.retrySafe) return false
+  if (!input.decision.retryable) return false
+  const hasCompleted = input.toolParts.some((p) => p.state.status === "completed")
+  const hasInFlight = input.toolParts.some((p) => p.state.status === "running" || p.state.status === "pending")
+  return hasCompleted && !hasInFlight
+}
+
+/**
  * A proposed tool call captured from a candidate stream (max mode), before
  * any execution. `input` is the parsed tool arguments.
  */
@@ -904,7 +922,48 @@ export const layer: Layer.Layer<
                   }),
               }),
             ),
-            Effect.catch(halt),
+            Effect.catch((e) =>
+              Effect.gen(function* () {
+                // Codex-style auto-resume: after tools have fully completed, a
+                // retryable transport failure (timeout / disconnect / 5xx) must NOT
+                // stamp a terminal ErrorCard. Replaying this stream is unsafe
+                // (tools already ran), but the outer runLoop can start the next
+                // step from session history that already carries tool results —
+                // equivalent to an automatic Resume of the next sampling call.
+                if (!ctx.retrySafe) {
+                  const decision = SessionRetry.decide(parse(e), "stream", "live-step")
+                  const parts = MessageV2.parts(ctx.assistantMessage.id)
+                  const toolParts = parts.filter((p) => p.type === "tool")
+                  if (shouldAutoResumeAfterTools({ retrySafe: ctx.retrySafe, decision, toolParts })) {
+                    slog.info("auto-resume after tools", {
+                      kind: decision.kind,
+                      message: decision.message,
+                      tools: toolParts.length,
+                    })
+                    if (isMain) {
+                      yield* status
+                        .setRetry(ctx.sessionID, {
+                          type: "retry",
+                          attempt: 1,
+                          phaseAttempt: 1,
+                          message: decision.message,
+                          next: Date.now(),
+                          phase: "stream",
+                          scope: "live-step",
+                        })
+                        .pipe(Effect.ignore)
+                    }
+                    // Keep tool parts; mark the step as tool-calls so classify
+                    // continues. Do NOT write assistant.error (that is terminal).
+                    ctx.assistantMessage.finish = "tool-calls"
+                    ctx.assistantMessage.error = undefined
+                    yield* session.updateMessage(ctx.assistantMessage)
+                    return
+                  }
+                }
+                yield* halt(e)
+              }),
+            ),
             Effect.ensuring(cleanup()),
           )
 

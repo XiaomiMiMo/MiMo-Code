@@ -1155,9 +1155,11 @@ export const SessionRoutes = lazy(() =>
         modelProviderID: z.string().optional(),
         modelID: z.string().optional(),
       })),
+      // Body is optional: empty/{} = resume latest recovery candidate (desktop closed loop).
+      // userMessageID still accepted for explicit trailing-user targeting (TUI / cascade).
       validator("json", z.object({
-        userMessageID: MessageID.zod,
-      })),
+        userMessageID: MessageID.zod.optional(),
+      }).optional()),
       async (c) => {
         const params = c.req.valid("param")
         const query = c.req.valid("query")
@@ -1170,42 +1172,58 @@ export const SessionRoutes = lazy(() =>
           c,
           SessionRunState.Service.use((svc) => svc.assertNotBusy(params.sessionID, query.agentID)),
         )
-        await runRequest(
-          "SessionRoutes.resumeUser.validate",
-          c,
-          SessionPrompt.Service.use((svc) =>
-            svc.recovery({ sessionID: params.sessionID, agentID: query.agentID }).pipe(
-              Effect.flatMap((candidates) =>
-                candidates.some(
-                  (candidate) => candidate.kind === "parent-user" && candidate.userMessageID === body.userMessageID,
-                )
-                  ? Effect.void
-                  : Effect.fail(
-                      new NotFoundError({
-                        message: "No resumable trailing user found for message " + body.userMessageID,
-                      }),
-                    ),
+        // Explicit userMessageID → validate it is still the trailing user.
+        // Omitted → resolveLatestRecoveryTarget picks the tail candidate (404 if none).
+        if (body?.userMessageID) {
+          await runRequest(
+            "SessionRoutes.resumeUser.validate",
+            c,
+            SessionPrompt.Service.use((svc) =>
+              svc.recovery({ sessionID: params.sessionID, agentID: query.agentID }).pipe(
+                Effect.flatMap((candidates) =>
+                  candidates.some(
+                    (candidate) => candidate.kind === "parent-user" && candidate.userMessageID === body.userMessageID,
+                  )
+                    ? Effect.void
+                    : Effect.fail(
+                        new NotFoundError({
+                          message: "No resumable trailing user found for message " + body.userMessageID,
+                        }),
+                      ),
+                ),
               ),
             ),
-          ),
-        )
+          )
+        }
         // [TP-SR-R21-10] 202 = admission complete (plan + exclusive start), not fire-and-forget.
+        // Main agent also cascades subagent recovery (same as /turn/:id/resume).
         const admitted = await runRequest(
           "SessionRoutes.resumeUser",
           c,
-          SessionPrompt.Service.use((svc) => svc.resumeBackground({
-            sessionID: params.sessionID,
-            userMessageID: body.userMessageID,
-            agentID: query.agentID,
-            task_id: query.task_id,
-            titleLocale: query.titleLocale,
-            ...(query.modelProviderID && query.modelID ? { model: { providerID: query.modelProviderID, modelID: query.modelID } } : {}),
-          })),
+          SessionPrompt.Service.use((svc) =>
+            (query.agentID === undefined || query.agentID === "main")
+              ? svc.resumeMainCascading({
+                  sessionID: params.sessionID,
+                  ...(body?.userMessageID ? { userMessageID: body.userMessageID } : {}),
+                  agentID: query.agentID,
+                  task_id: query.task_id,
+                  titleLocale: query.titleLocale,
+                  ...(query.modelProviderID && query.modelID ? { model: { providerID: query.modelProviderID, modelID: query.modelID } } : {}),
+                })
+              : svc.resumeBackground({
+                  sessionID: params.sessionID,
+                  ...(body?.userMessageID ? { userMessageID: body.userMessageID } : {}),
+                  agentID: query.agentID,
+                  task_id: query.task_id,
+                  titleLocale: query.titleLocale,
+                  ...(query.modelProviderID && query.modelID ? { model: { providerID: query.modelProviderID, modelID: query.modelID } } : {}),
+                }),
+          ),
         ).then(() => ({ ok: true as const }))
           .catch((error: unknown) => ({ ok: false as const, error }))
         if (!admitted.ok) {
           const error = admitted.error
-          log.error("session resume user failed", { sessionID: params.sessionID, error })
+          log.error("session resume failed", { sessionID: params.sessionID, error })
           if (error instanceof Session.BusyError) {
             return c.json({ data: { name: "BusyError", data: { message: error.message } } }, 409)
           }

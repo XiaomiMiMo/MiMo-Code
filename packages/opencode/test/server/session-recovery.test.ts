@@ -336,6 +336,56 @@ describe("trailing user recovery target", () => {
     })
   })
 
+  // [TP-SR-R21-02][closed-loop] Desktop Resume only passes sessionID; engine picks latest recovery candidate.
+  test("POST /resume with empty body resumes latest recovery candidate", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const result = await Instance.provide({
+      directory: tmp.path,
+      fn: async () => AppRuntime.runPromise(Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        // trailing user only → latest is parent-user
+        const session = yield* sessions.create({ title: "empty-body user" })
+        yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() },
+        })
+        // no recovery candidates → 404
+        const empty = yield* sessions.create({ title: "empty-body none" })
+        const app = Server.Default().app
+        const query = `?directory=${encodeURIComponent(tmp.path)}`
+        const ok = yield* Effect.promise(() =>
+          Promise.resolve(app.request(`/session/${session.id}/resume${query}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          })),
+        )
+        const none = yield* Effect.promise(() =>
+          Promise.resolve(app.request(`/session/${empty.id}/resume${query}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          })),
+        )
+        // also accept no body at all
+        const noBody = yield* Effect.promise(() =>
+          Promise.resolve(app.request(`/session/${session.id}/resume${query}`, {
+            method: "POST",
+          })),
+        )
+        return { ok: ok.status, none: none.status, noBody: noBody.status }
+      })),
+    })
+    expect(result.ok).toBe(202)
+    expect(result.none).toBe(404)
+    // second resume on already-busy session after first 202 → 409
+    expect(result.noBody === 202 || result.noBody === 409).toBe(true)
+  })
+
   // [TP-SR-R21-10] resumeUser 202=完成准入；缺失目标 404（非 false 202）。
   test("POST /resume with userMessageID validates trailing user", async () => {
     await using tmp = await tmpdir({ git: true })

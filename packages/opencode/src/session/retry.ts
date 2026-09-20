@@ -354,6 +354,15 @@ export function decide(
   if (signals.code === "stream_read_error" || signals.type === "upstream_error")
     return retry("stream", "stream", signals.message || "Upstream stream read failed")
   if (ProviderError.isRetryableNetworkError(error)) return retry("network")
+  // fromError(ETIMEDOUT) → APIError("Request timed out")：cause 链可能在 JSON 往返后丢失，
+  // 此时 isRetryableNetworkError 认不出，会掉进 unknown(8 次/15min) 甚至 terminal。
+  // provider 超时必须 persist：按 message / metadata.code 钉回 network。
+  if (
+    MessageV2.APIError.isInstance(error) &&
+    error.data.metadata?.code === "ETIMEDOUT"
+  )
+    return retry("network", phase, error.data.message)
+  if (/\brequest timed out\b/i.test(message) || /\betimedout\b/i.test(message)) return retry("network", phase, message)
   if (message === SSE_TIMEOUT_MESSAGE) return retry("stream", "stream", message)
   if (
     signals.type === "too_many_requests" ||

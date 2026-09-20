@@ -6516,20 +6516,48 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
     })
 
+    /**
+     * Resolve a resume target when the client omits assistant/user IDs.
+     * Recovery already returns only the tail incomplete assistant and/or trailing user,
+     * so the last candidate is the one the user just clicked Resume on.
+     */
+    const resolveLatestRecoveryTarget = Effect.fn("SessionPrompt.resolveLatestRecoveryTarget")(function* (input: {
+      sessionID: SessionID
+      agentID?: string
+      allowBusy?: boolean
+    }) {
+      const candidates = yield* recovery({
+        sessionID: input.sessionID,
+        agentID: input.agentID,
+        allowBusy: input.allowBusy,
+      })
+      const latest = candidates.at(-1)
+      if (latest === undefined) {
+        return yield* Effect.fail(
+          new NotFoundError({ message: "No resumable recovery candidate found for session " + input.sessionID }),
+        )
+      }
+      if (latest.kind === "assistant") return { assistantMessageID: latest.assistantMessageID }
+      return { userMessageID: latest.userMessageID }
+    })
+
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
       yield* state.assertNotBusy(input.sessionID, input.agentID)
+      const target = input.userMessageID || input.assistantMessageID
+        ? { assistantMessageID: input.assistantMessageID, userMessageID: input.userMessageID }
+        : yield* resolveLatestRecoveryTarget({ sessionID: input.sessionID, agentID: input.agentID })
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
       const candidate = candidates.find((item) =>
-        input.userMessageID
-          ? item.kind === "parent-user" && item.userMessageID === input.userMessageID
-          : item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+        target.userMessageID
+          ? item.kind === "parent-user" && item.userMessageID === target.userMessageID
+          : item.kind === "assistant" && item.assistantMessageID === target.assistantMessageID,
       )
       if (candidate === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
-            message: input.userMessageID
-              ? "No resumable trailing user found for message " + input.userMessageID
-              : "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
+            message: target.userMessageID
+              ? "No resumable trailing user found for message " + target.userMessageID
+              : "No resumable interrupted turn found for assistant message " + target.assistantMessageID,
           }),
         )
       }
@@ -6541,8 +6569,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const plan = yield* planResume({
         sessionID: input.sessionID,
         agentID,
-        assistantMessageID: input.assistantMessageID,
-        userMessageID: input.userMessageID,
+        assistantMessageID: target.assistantMessageID,
+        userMessageID: target.userMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
       // [C004] Test seam: pause after ALL busy preflights (incl. planResume), before exclusive occupy.
@@ -6560,9 +6588,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (launched === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
-            message: input.userMessageID
-              ? "Resume did not produce an assistant result for user " + input.userMessageID
-              : "Resume did not produce an assistant result for " + input.assistantMessageID,
+            message: target.userMessageID
+              ? "Resume did not produce an assistant result for user " + target.userMessageID
+              : "Resume did not produce an assistant result for " + target.assistantMessageID,
           }),
         )
       }
@@ -6570,18 +6598,25 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const resumeBackground = Effect.fn("SessionPrompt.resumeBackground")(function* (input: ResumeTurnInput) {
+      const target = input.userMessageID || input.assistantMessageID
+        ? { assistantMessageID: input.assistantMessageID, userMessageID: input.userMessageID }
+        : yield* resolveLatestRecoveryTarget({
+            sessionID: input.sessionID,
+            agentID: input.agentID,
+            allowBusy: true,
+          })
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID, allowBusy: true })
       const candidate = candidates.find((item) =>
-        input.userMessageID
-          ? item.kind === "parent-user" && item.userMessageID === input.userMessageID
-          : item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+        target.userMessageID
+          ? item.kind === "parent-user" && item.userMessageID === target.userMessageID
+          : item.kind === "assistant" && item.assistantMessageID === target.assistantMessageID,
       )
       if (candidate === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
-            message: input.userMessageID
-              ? "No resumable trailing user found for message " + input.userMessageID
-              : "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
+            message: target.userMessageID
+              ? "No resumable trailing user found for message " + target.userMessageID
+              : "No resumable interrupted turn found for assistant message " + target.assistantMessageID,
           }),
         )
       }
@@ -6592,8 +6627,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const plan = yield* planResume({
         sessionID: input.sessionID,
         agentID,
-        assistantMessageID: input.assistantMessageID,
-        userMessageID: input.userMessageID,
+        assistantMessageID: target.assistantMessageID,
+        userMessageID: target.userMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
       yield* launchResume({
