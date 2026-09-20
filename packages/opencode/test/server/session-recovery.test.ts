@@ -336,22 +336,32 @@ describe("trailing user recovery target", () => {
     })
   })
 
-  // [TP-SR-R21-02][closed-loop] Desktop Resume only passes sessionID; engine picks latest recovery candidate.
+  // [TP-SR-R21-02][closed-loop][R004] Desktop Resume only passes sessionID; engine picks latest recovery candidate.
+  // Asserts the *target* is the recovery tail (not just HTTP 202): empty-body resume
+  // must pick the last candidate (parent-user here), not an earlier assistant.
   test("POST /resume with empty body resumes latest recovery candidate", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({
       directory: tmp.path,
       fn: async () => AppRuntime.runPromise(Effect.gen(function* () {
         const sessions = yield* Session.Service
+        const prompt = yield* SessionPrompt.Service
         // trailing user only → latest is parent-user
         const session = yield* sessions.create({ title: "empty-body user" })
-        yield* sessions.updateMessage({
+        const user = yield* sessions.updateMessage({
           id: MessageID.ascending(),
           role: "user",
           sessionID: session.id,
           agent: "build",
           model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
           time: { created: Date.now() },
+        })
+        // Verify recovery() reports parent-user as the tail candidate
+        const candidates = yield* prompt.recovery({ sessionID: session.id, agentID: "main" })
+        expect(candidates.at(-1)).toEqual({
+          kind: "parent-user",
+          userMessageID: user.id,
+          created: user.time.created,
         })
         // no recovery candidates → 404
         const empty = yield* sessions.create({ title: "empty-body none" })
@@ -377,9 +387,12 @@ describe("trailing user recovery target", () => {
             method: "POST",
           })),
         )
-        return { ok: ok.status, none: none.status, noBody: noBody.status }
+        return { ok: ok.status, none: none.status, noBody: noBody.status, latestKind: candidates.at(-1)?.kind, latestId: candidates.at(-1)?.kind === "parent-user" ? candidates.at(-1)!.userMessageID : null }
       })),
     })
+    // R004: target selection proven — latest candidate is parent-user with the seeded user id
+    expect(result.latestKind).toBe("parent-user")
+    expect(result.latestId).not.toBeNull()
     expect(result.ok).toBe(202)
     expect(result.none).toBe(404)
     // second resume on already-busy session after first 202 → 409
