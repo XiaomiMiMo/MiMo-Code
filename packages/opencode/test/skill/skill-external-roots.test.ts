@@ -75,7 +75,7 @@ const withHome = <A, E, R>(home: string, self: Effect.Effect<A, E, R>) =>
   )
 
 describe("skill external root defaults", () => {
-  it.live("default surface is empty without brand opt-in", () =>
+  it.live("no brand root is loaded without opt-in", () =>
     provideTmpdirInstance(
       (dir) =>
         Effect.gen(function* () {
@@ -130,6 +130,22 @@ describe("skill external root defaults", () => {
             const skill = yield* Skill.Service
             const names = (yield* skill.all()).map((s) => s.name)
             expect(names).toEqual(["user-skill"])
+          }),
+        ),
+      { git: true },
+    ),
+  )
+
+  it.live("MIMOCODE_ENABLE_OPENCODE_SKILLS loads user skills", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        withEnvFor(
+          { MIMOCODE_ENABLE_OPENCODE_SKILLS: "true" },
+          Effect.gen(function* () {
+            yield* Effect.promise(() => writeSkill(dir, ".opencode/skills/user-skill", "user-skill", "user"))
+
+            const skill = yield* Skill.Service
+            expect((yield* skill.all()).map((s) => s.name)).toEqual(["user-skill"])
           }),
         ),
       { git: true },

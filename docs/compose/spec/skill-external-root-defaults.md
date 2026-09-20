@@ -66,9 +66,10 @@ leak; non-dotted).
 Enabling Codex compatibility loads user skills under `~/.codex/skills/<name>/`
 only; `.system` remains invisible because of S2.1.
 
-### S2.3 Env contract (Active vs Deprecated)
+### S2.3 Env contract (Active only in shipped docs)
 
-**Active** — the only user-facing external-root controls:
+User-facing controls are **only** these four envs. Shipped comments, README, and
+mimocode-docs describe live behavior only — they do not list retired key names.
 
 | Env | Default | Meaning |
 | --- | --- | --- |
@@ -77,21 +78,10 @@ only; `.system` remains invisible because of S2.1.
 | `MIMOCODE_ENABLE_CODEX_SKILLS` | unset = off | Opt in `.codex/skills` |
 | `MIMOCODE_ENABLE_OPENCODE_SKILLS` | unset = off | Opt in `.opencode/skills` |
 
-**Deprecated** — ignored for skill-root selection (may `log.warn` once):
-
-| Env | Former meaning | Replacement |
-| --- | --- | --- |
-| `MIMOCODE_DISABLE_EXTERNAL_SKILLS` | master gate on all external roots | none (no master gate); use `MIMOCODE_DISABLE_AGENTS_SKILLS` to drop the only default-on external root |
-| `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS` | force-off `.claude` | leave `MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS` unset |
-| `MIMOCODE_DISABLE_CODEX_SKILLS` | force-off `.codex` | leave `MIMOCODE_ENABLE_CODEX_SKILLS` unset |
-| `MIMOCODE_DISABLE_OPENCODE_SKILLS` | force-off `.opencode` | leave `MIMOCODE_ENABLE_OPENCODE_SKILLS` unset |
-
-**Not skill-root controls** (fork-era OpenCode Claude-compat / MiMo-only shell;
-skill selection must not read them):
-
-- `MIMOCODE_DISABLE_CLAUDE_CODE` / `MIMOCODE_MIMO_ONLY`
-- `MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT` / `_MCP` / `_COMMANDS`
-- `MIMOCODE_DISABLE_PROVIDER_ENV` (still coupled to `MIMO_ONLY` outside this feature)
+`MIMOCODE_DISABLE_EXTERNAL_SKILLS` and brand `MIMOCODE_DISABLE_*_SKILLS` keys
+are no longer part of the skill-root surface (changelog / PR description only).
+`MIMOCODE_MIMO_ONLY` / `MIMOCODE_DISABLE_CLAUDE_CODE` still govern Claude
+prompt inheritance and provider env detection; they are not skill-root controls.
 
 Predicate (sole source of truth for `EXTERNAL_DIRS` filtering):
 
@@ -102,10 +92,33 @@ scan .codex     ⇔  ENABLE_CODEX_SKILLS
 scan .opencode  ⇔  ENABLE_OPENCODE_SKILLS
 ```
 
-Implementation note: `Flag` may expose derived booleans for
-`skill/index.ts` call sites; those derived keys are **not** documented envs.
+Implementation note: `Flag` exposes lazy getters for the four keys above.
 Remove the outer `if (!Flag.MIMOCODE_DISABLE_EXTERNAL_SKILLS)` guard around
-external discovery.
+external discovery. `MIMOCODE_SKILL_PATTERN` keeps accepting `skill` and
+`skills` under `.mimocode/` for compatibility; shipped prompts may mention
+either — do not treat path spelling as this feature's contract.
+
+### S2.3b Same-name clash order (layered, last non-bundled wins)
+
+`add()` lets a later non-bundled match overwrite an earlier one; bundled never
+overwrites non-bundled. Discovery is **layered by scope**, not a single flat
+authority chain:
+
+1. builtin bundle → compose bundle
+2. **home** brand roots in `EXTERNAL_DIRS` order
+   `[.claude, .codex, .opencode, .agents]` (agents last → wins among home brands)
+3. **project** brand roots via `fsys.up` (targets in the same order per ancestor;
+   parent ancestors load after nearer dirs)
+4. `.mimocode` / config skill dirs
+5. `skills.paths`, then `skills.urls`
+
+Consequences (accepted):
+
+- Within one scope, `.agents` beats brand copies of the same name.
+- A **project** brand skill can still beat a **home** `.agents` skill (more
+  specific scope). Do not claim a total order `agents > all brands` across
+  scopes.
+- `.mimocode` and explicit `skills.paths`/`urls` beat every external root.
 
 ### S2.4 Desktop alignment (`mimo-desktop`)
 
@@ -138,12 +151,11 @@ compatibility (existing skill-path-compat contract).
 
 ### S2.5 Docs
 
-- `README*.md` env tables: Active table only; Deprecated table listed as
-  ignored.
-- `mimocode-docs` `reference/config.md`: same split; state that `.mimocode`
-  and `agents` are the default load surface and brand roots are opt-in.
-- Note migration for TUI/CLI users who relied on unset-env scanning of
-  `~/.claude` or `~/.codex`.
+- `README*.md` env tables and `mimocode-docs` `reference/config.md`: **Active
+  keys only** plus the non-dot scan rule and default load surface. Do not list
+  retired key names in shipped docs (PR / changelog only).
+- State migration for TUI/CLI users who relied on unset-env scanning of
+  `~/.claude` or `~/.codex` (in the PR body; optional one-line README note).
 
 ## [S3] Out of Scope
 
@@ -172,17 +184,17 @@ compatibility (existing skill-path-compat contract).
   does not change the predicate; `MIMOCODE_MIMO_ONLY` /
   `MIMOCODE_DISABLE_CLAUDE_CODE` do not affect skill roots. (covers: S2.2;
   S2.3; depends: T1)
-- [x] T3: Update engine skill tests and env hygiene — acceptance:
-  `test/skill` covers default surface, each opt-in, agents disable, dotted-dir
-  negative, deprecated-env no-op, and existing brand-discovery cases pass with
-  `ENABLE_*` set where they expect brand roots. (covers: S2.1; S2.2; S2.3;
-  depends: T2)
+- [x] T3: Update engine skill tests and env hygiene — acceptance: `test/skill`
+  covers default surface (no brand without opt-in), each opt-in including
+  `ENABLE_OPENCODE_SKILLS`, agents disable, dotted-dir negative, and existing
+  brand-discovery cases pass with `ENABLE_*` set where they expect brand roots.
+  (covers: S2.1; S2.2; S2.3; depends: T2)
 - [x] T4: Align Desktop `engineSkillScanEnvFromCompat` and related unit tests —
   acceptance: default prefs inject `{}`; open brand injects only its
   `MIMOCODE_ENABLE_*_SKILLS`; all-off injects only
-  `MIMOCODE_DISABLE_AGENTS_SKILLS`; no injected env is a Deprecated key; unit
-  matrix matches S2.4. (covers: S2.4; depends: T2)
-- [x] T5: Document Active/Deprecated env split and migration — acceptance:
-  README and mimocode-docs list only the four Active keys as controls, mark
-  the Deprecated set ignored, and state default load surface = mimocode +
-  agents with brand roots opt-in. (covers: S2.5; depends: T2)
+  `MIMOCODE_DISABLE_AGENTS_SKILLS`; injected keys are exactly the four Active
+  keys; unit matrix matches S2.4. (covers: S2.4; depends: T2)
+- [x] T5: Document Active env surface — acceptance: README and mimocode-docs
+  list only the four Active keys as controls, state default load surface =
+  mimocode + agents with brand roots opt-in, and do not list retired key names
+  in shipped docs. (covers: S2.5; depends: T2)
