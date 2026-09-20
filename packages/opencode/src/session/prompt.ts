@@ -6472,10 +6472,22 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
       // [C001] Trailing-user resumeUser HTTP awaits the admission handshake
       // (202 = plan + exclusive occupy + re-check). Assistant resume / cascade
-      // stay fire-and-forget after start() like main — awaiting here deadlocks
-      // when work is cancelled before the handshake (subagent-resume-negatives).
+      // stay fire-and-forget after start() like main (D16f-HTTP). Bound the
+      // trailing-user wait so cancel-before-handshake cannot hang the caller;
+      // typed admission rejects still surface unchanged.
       if (plan.action === "user-resume" && plan.strictTail === true) {
-        yield* Deferred.await(admission)
+        const handshake = yield* Deferred.await(admission).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.exit,
+        )
+        if (Exit.isFailure(handshake)) {
+          const err = Cause.squash(handshake.cause)
+          const tag = (err as { _tag?: string } | null)?._tag
+          if (tag === "TimeoutException") {
+            return yield* Effect.fail(new NotFoundError({ message: "Resume admission did not complete" }))
+          }
+          return yield* Effect.failCause(handshake.cause as Cause.Cause<never>)
+        }
       }
     })
 

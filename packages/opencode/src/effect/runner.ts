@@ -92,6 +92,13 @@ export const make = <A, E = never, B = never>(
         Effect.onExit((exit) => finishRun(id, done, exit)),
         Effect.forkIn(scope),
       )
+      // If this fiber is interrupted before `work` ever starts, onExit/ensuring
+      // on the effect do not run — settle `done` from the fiber exit so waiters
+      // (ensureExclusive / admission) cannot hang.
+      yield* Fiber.await(fiber).pipe(
+        Effect.flatMap((exit) => complete(done, exit)),
+        Effect.forkIn(scope),
+      )
       return { id, done, fiber } satisfies RunHandle<A, E>
     })
 
