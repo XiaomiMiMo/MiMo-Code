@@ -8,7 +8,16 @@ import { withEnv } from "../lib/env"
 import path from "path"
 import fs from "fs/promises"
 
-withEnv({ MIMOCODE_DISABLE_COMPOSE_SKILLS: "true", MIMOCODE_DISABLE_BUILTIN_SKILLS: "true" })
+// Compose/builtin off for a tiny skill universe. Brand roots opt-in so the
+// existing .claude/.codex discovery cases stay meaningful; default-surface and
+// dotted-dir negatives live in skill-external-roots.test.ts.
+withEnv({
+  MIMOCODE_DISABLE_COMPOSE_SKILLS: "true",
+  MIMOCODE_DISABLE_BUILTIN_SKILLS: "true",
+  MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS: "true",
+  MIMOCODE_ENABLE_CODEX_SKILLS: "true",
+  MIMOCODE_ENABLE_OPENCODE_SKILLS: "true",
+})
 
 const node = CrossSpawnSpawner.defaultLayer
 

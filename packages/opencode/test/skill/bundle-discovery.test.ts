@@ -9,7 +9,10 @@ import { testEffect } from "../lib/effect"
 import { withEnv } from "../lib/env"
 
 withEnv({
-  MIMOCODE_DISABLE_EXTERNAL_SKILLS: "true",
+  MIMOCODE_DISABLE_AGENTS_SKILLS: "true",
+  MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS: undefined,
+  MIMOCODE_ENABLE_CODEX_SKILLS: undefined,
+  MIMOCODE_ENABLE_OPENCODE_SKILLS: undefined,
   MIMOCODE_DISABLE_BUILTIN_SKILLS: undefined,
   MIMOCODE_DISABLE_COMPOSE_SKILLS: undefined,
 })

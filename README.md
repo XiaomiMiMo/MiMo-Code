@@ -265,7 +265,7 @@ MiMoCode bundles the following builtin skills:
 
 `claude-code` and `codex` are exposed only when the `claude` and `codex` executables, respectively, are installed. Other skills may still require task-specific tools described in their instructions.
 
-**Overriding a builtin skill:** Create a skill with the same `name` in your project (`.mimocode/skills/<name>/SKILL.md`) or personal skill directory (`~/.claude/skills/`, `~/.opencode/skills/`, etc.). User skills discovered later in the scan order override builtins with the same name.
+**Overriding a builtin skill:** Create a skill with the same `name` in your project (`.mimocode/skills/<name>/SKILL.md`) or personal skill directory (`~/.agents/skills/`, or a brand root you opted into such as `~/.claude/skills/`). User skills discovered later in the scan order override builtins with the same name.
 
 <details>
 <summary><strong>Disabling builtin skills via environment variables</strong></summary>
@@ -275,6 +275,17 @@ MiMoCode bundles the following builtin skills:
 | `MIMOCODE_DISABLE_BUILTIN_SKILLS=true` | Disable all builtin skills |
 | `MIMOCODE_DISABLE_OFFICIAL_SKILLS=true` | Disable only the office/media skills: `docx-official`, `pdf-official`, `pptx-official`, `xlsx-official`, `html-to-video-pipeline` |
 | `MIMOCODE_DISABLE_SLASH_SKILLS=true` | Hide skills from TUI `/` autocomplete without disabling them |
+
+**External skill roots** (default surface is `.mimocode` + open-standard `.agents`):
+
+| Env | Default | Effect |
+| --- | --- | --- |
+| `MIMOCODE_DISABLE_AGENTS_SKILLS=true` | unset = on | Turn off `~/.agents/skills` and project `.agents/skills` |
+| `MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS=true` | unset = off | Opt in `.claude/skills` |
+| `MIMOCODE_ENABLE_CODEX_SKILLS=true` | unset = off | Opt in `.codex/skills` (user skills only; Codex `skills/.system` is never loaded) |
+| `MIMOCODE_ENABLE_OPENCODE_SKILLS=true` | unset = off | Opt in `.opencode/skills` |
+
+Deprecated and ignored: `MIMOCODE_DISABLE_EXTERNAL_SKILLS`, `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS`, `MIMOCODE_DISABLE_CODEX_SKILLS`, `MIMOCODE_DISABLE_OPENCODE_SKILLS`. External scans never match dotted path segments under `skills/`.
 
 The first two options remove the corresponding skills from the agent's available skill list entirely — they will not appear in context and cannot be invoked. `MIMOCODE_DISABLE_SLASH_SKILLS` affects only TUI autocomplete; the skills remain available to agents.
 

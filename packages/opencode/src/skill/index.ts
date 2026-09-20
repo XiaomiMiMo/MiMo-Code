@@ -26,6 +26,17 @@ const MIMOCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
 const SKILL_PATTERN = "**/SKILL.md"
 const BUILTIN_SKILL_PATTERN = "skills/*/SKILL.md"
 
+// Brand roots are opt-in except the open-standard .agents root. No master
+// external-skills gate; see docs/compose/spec/skill-external-root-defaults.md.
+const externalSkillDirs = () =>
+  EXTERNAL_DIRS.filter((dir) => {
+    if (dir === ".claude") return Flag.MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS
+    if (dir === ".agents") return !Flag.MIMOCODE_DISABLE_AGENTS_SKILLS
+    if (dir === ".codex") return Flag.MIMOCODE_ENABLE_CODEX_SKILLS
+    if (dir === ".opencode") return Flag.MIMOCODE_ENABLE_OPENCODE_SKILLS
+    return true
+  })
+
 export const Info = z.object({
   name: z.string(),
   description: z.string(),
@@ -213,20 +224,12 @@ const discoverStableSkills = Effect.fnUntraced(function* (
     }
   }
 
-  if (!Flag.MIMOCODE_DISABLE_EXTERNAL_SKILLS) {
-    const externalDirs = EXTERNAL_DIRS.filter((dir) => {
-      if (dir === ".claude" && Flag.MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS) return false
-      if (dir === ".agents" && Flag.MIMOCODE_DISABLE_AGENTS_SKILLS) return false
-      if (dir === ".codex" && Flag.MIMOCODE_DISABLE_CODEX_SKILLS) return false
-      if (dir === ".opencode" && Flag.MIMOCODE_DISABLE_OPENCODE_SKILLS) return false
-      return true
-    })
-
-    for (const dir of externalDirs) {
-      const root = path.join(Global.Path.home, dir)
-      if (!(yield* fsys.isDir(root))) continue
-      yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { dot: true, scope: "global" })
-    }
+  // Non-dot matching: host-private namespaces (Codex skills/.system, Claude
+  // skills/.trash) must never enter the catalog.
+  for (const dir of externalSkillDirs()) {
+    const root = path.join(Global.Path.home, dir)
+    if (!(yield* fsys.isDir(root))) continue
+    yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { scope: "global" })
   }
 
   return {
@@ -247,22 +250,12 @@ const discoverSkills = Effect.fnUntraced(function* (
   const state: ScanState = { matches: new Set(stable.matches), dirs: new Set(stable.dirs) }
   const bundledRoots = [...stable.bundledRoots]
 
-  if (!Flag.MIMOCODE_DISABLE_EXTERNAL_SKILLS) {
-    const externalDirs = EXTERNAL_DIRS.filter((dir) => {
-      if (dir === ".claude" && Flag.MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS) return false
-      if (dir === ".agents" && Flag.MIMOCODE_DISABLE_AGENTS_SKILLS) return false
-      if (dir === ".codex" && Flag.MIMOCODE_DISABLE_CODEX_SKILLS) return false
-      if (dir === ".opencode" && Flag.MIMOCODE_DISABLE_OPENCODE_SKILLS) return false
-      return true
-    })
+  const upDirs = yield* fsys
+    .up({ targets: externalSkillDirs(), start: directory, stop: worktree })
+    .pipe(Effect.catch(() => Effect.succeed([] as string[])))
 
-    const upDirs = yield* fsys
-      .up({ targets: externalDirs, start: directory, stop: worktree })
-      .pipe(Effect.catch(() => Effect.succeed([] as string[])))
-
-    for (const root of upDirs) {
-      yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { dot: true, scope: "project" })
-    }
+  for (const root of upDirs) {
+    yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { scope: "project" })
   }
 
   const configDirs = yield* config.directories()
