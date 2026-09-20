@@ -307,15 +307,33 @@ export const make = <A, E = never, B = never>(
       }),
     ).pipe(Effect.flatten)
 
-  const interruptOwned = (runId: number, fiber: Fiber.Fiber<A, E>) =>
+  /**
+   * [C001] Cancel only the run with this id, reusing the Cancelling lifecycle:
+   * stay non-Idle until finalizers finish; settle pending waiters like `cancel`.
+   */
+  const interruptOwned = (runId: number) =>
     SynchronizedRef.modify(ref, (st) => {
-      // Only interrupt the run we started — never a replacement after finishRun.
       if (st._tag === "Running" && st.run.id === runId) {
         return [
-          Fiber.interrupt(fiber).pipe(Effect.asVoid, Effect.ignore),
-          { _tag: "Idle" } as const,
+          Effect.gen(function* () {
+            if (st.run.pending) yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
+            // Interrupt WAITS for the fiber, including ensuring/finalizers.
+            // State stays Cancelling until finishRun (RL-ORPHAN-D01).
+            yield* Fiber.interrupt(st.run.fiber)
+            yield* SynchronizedRef.modify(ref, (s) => {
+              if (s._tag === "Cancelling" && s.run.id === runId) {
+                return [idle, { _tag: "Idle" }] as const
+              }
+              return [Effect.void, s] as const
+            }).pipe(Effect.flatten)
+          }),
+          { _tag: "Cancelling", run: st.run } as const,
         ] as const
       }
+      if (st._tag === "Cancelling" && st.run.id === runId) {
+        return [Fiber.await(st.run.fiber).pipe(Effect.asVoid, Effect.ignore), st] as const
+      }
+      // Wrong owner (replacement already took over) — do not touch.
       return [Effect.void, st] as const
     }).pipe(Effect.flatten)
 
@@ -332,7 +350,7 @@ export const make = <A, E = never, B = never>(
         const run = yield* startRun(work, done)
         const owned = {
           runId: run.id,
-          interruptOwned: interruptOwned(run.id, run.fiber),
+          interruptOwned: interruptOwned(run.id),
         }
         return [Effect.succeed(owned), { _tag: "Running", run } as const] as const
       }),
