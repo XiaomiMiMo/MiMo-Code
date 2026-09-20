@@ -6437,6 +6437,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 "hook",
               )
             }).pipe(
+              // Complete the HTTP/sync waiter BEFORE other finalizers — an interrupt
+              // during cleanup/abandon must not leave Deferred.await(admission) hanging.
+              Effect.ensuring(
+                Deferred.done(
+                  admission,
+                  Exit.fail(
+                    new NotFoundError({ message: "Resume admission did not complete" }),
+                  ),
+                ).pipe(Effect.asVoid, Effect.ignore),
+              ),
               Effect.ensuring(
                 abandonRecoveredAssistant({
                   sessionID: input.sessionID,
@@ -6452,14 +6462,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ),
                 ),
               ),
-              Effect.ensuring(
-                Deferred.done(
-                  admission,
-                  Exit.fail(
-                    new NotFoundError({ message: "Resume admission did not complete" }),
-                  ),
-                ).pipe(Effect.asVoid, Effect.ignore),
-              ),
             )
 
       // [R003] Exclusive admission: never join an unrelated run (ensureRunning would).
@@ -6468,8 +6470,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return yield* state.ensureExclusive(input.sessionID, input.agentID, resumeInterrupt, work)
       }
       yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
-      // [C001] Propagate admission re-check outcome to the HTTP caller before 202.
-      yield* Deferred.await(admission)
+      // [C001] Trailing-user resumeUser HTTP awaits the admission handshake
+      // (202 = plan + exclusive occupy + re-check). Assistant resume / cascade
+      // stay fire-and-forget after start() like main — awaiting here deadlocks
+      // when work is cancelled before the handshake (subagent-resume-negatives).
+      if (plan.action === "user-resume" && plan.strictTail === true) {
+        yield* Deferred.await(admission)
+      }
     })
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
