@@ -92,6 +92,19 @@ export type EventInboxArrived = {
   }
 }
 
+export type EventSessionReceiptUpdated = {
+  type: "session.receipt.updated"
+  properties: {
+    sessionID: string
+    receiptId: string
+    agentID: string
+    state: "accepted" | "claimed" | "settled" | "cancelled" | "rejected"
+    outcome?: "success" | "assistant_error" | "interrupted" | "never_ran"
+    messageId?: string
+    epoch: number
+  }
+}
+
 export type EventTaskCreated = {
   type: "task.created"
   properties: {
@@ -1624,6 +1637,7 @@ export type GlobalEvent = {
     | EventActorStalled
     | EventWriterCachePerf
     | EventInboxArrived
+    | EventSessionReceiptUpdated
     | EventTaskCreated
     | EventTaskUpdated
     | EventTuiPromptAppend
@@ -3240,6 +3254,7 @@ export type Event =
   | EventActorStalled
   | EventWriterCachePerf
   | EventInboxArrived
+  | EventSessionReceiptUpdated
   | EventTaskCreated
   | EventTaskUpdated
   | EventTuiPromptAppend
@@ -5626,6 +5641,91 @@ export type SessionResumeUserResponses = {
   202: unknown
 }
 
+export type SessionResumeData = {
+  body?: never
+  path: {
+    sessionID: string
+    assistantMessageID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+    agentID?: string
+    task_id?: string
+    titleLocale?: string
+    modelProviderID?: string
+    modelID?: string
+  }
+  url: "/session/{sessionID}/turn/{assistantMessageID}/resume"
+}
+
+export type SessionResumeErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict — session resource is busy
+   */
+  409: ConflictError
+}
+
+export type SessionResumeError = SessionResumeErrors[keyof SessionResumeErrors]
+
+export type SessionResumeResponses = {
+  /**
+   * Resume accepted
+   */
+  202: unknown
+}
+
+export type SessionResumeUserData = {
+  body?: {
+    userMessageID: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+    agentID?: string
+    task_id?: string
+    titleLocale?: string
+    modelProviderID?: string
+    modelID?: string
+  }
+  url: "/session/{sessionID}/resume"
+}
+
+export type SessionResumeUserErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict — session resource is busy
+   */
+  409: ConflictError
+}
+
+export type SessionResumeUserError = SessionResumeUserErrors[keyof SessionResumeUserErrors]
+
+export type SessionResumeUserResponses = {
+  /**
+   * Resume accepted
+   */
+  202: unknown
+}
+
 export type SessionPromptAsyncData = {
   body?: {
     messageID?: string
@@ -5703,6 +5803,39 @@ export type SessionPromptAsyncResponses = {
 }
 
 export type SessionPromptAsyncResponse = SessionPromptAsyncResponses[keyof SessionPromptAsyncResponses]
+
+export type SessionReceiptData = {
+  body?: never
+  path: {
+    sessionID: string
+    receiptId: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/receipt/{receiptId}"
+}
+
+export type SessionReceiptErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionReceiptError = SessionReceiptErrors[keyof SessionReceiptErrors]
+
+export type SessionReceiptResponses = {
+  /**
+   * Receipt
+   */
+  200: unknown
+}
 
 export type SessionCommandData = {
   body?: {
