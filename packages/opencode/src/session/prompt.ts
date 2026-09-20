@@ -2097,7 +2097,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
               yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
               const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.tryPromise({
-                try: () => execute(mcpBeforeOutput.args, opts),
+                try: () => execute(mcpBeforeOutput.args, {
+                  ...opts,
+                  experimental_context: {
+                    onMcpToolProgress: (meta: Record<string, unknown>) => run.promise(
+                      input.processor.updateToolCall(opts.toolCallId, (part) => {
+                        if (part.state.status !== "running") return part
+                        return { ...part, state: { ...part.state, metadata: {
+                          ...part.state.metadata, mcp: { _meta: meta },
+                        } } }
+                      }),
+                    ),
+                  },
+                }),
                 catch: (error) => error,
               }).pipe(Effect.catch((error) => Effect.gen(function* () {
                 // Catch SDK execution failures here, before direct/exec paths persist

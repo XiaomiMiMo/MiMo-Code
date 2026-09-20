@@ -1,3 +1,4 @@
+import { toolPresentationProgress } from "./tool-progress"
 import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
 import { childProcessEnv } from "@/util/child-process-env"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
@@ -380,19 +381,25 @@ function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number
       // Recorded before the call so a `sampling/createMessage` arriving WHILE
       // this call is in flight can address its approval prompt at this session.
       if (context) McpSampling.setActiveSession(client, SessionID.make(context.sessionId))
-      return client.callTool(
-        {
-          name: mcpTool.name,
-          arguments: (args || {}) as Record<string, unknown>,
-          ...metadata,
-        },
-        CallToolResultSchema,
-        {
-          resetTimeoutOnProgress: true,
-          signal: options.abortSignal,
-          timeout,
-        },
-      )
+      const progress = toolPresentationProgress(options.experimental_context)
+      try {
+        return await client.callTool(
+          {
+            name: mcpTool.name,
+            arguments: (args || {}) as Record<string, unknown>,
+            ...metadata,
+          },
+          CallToolResultSchema,
+          {
+            resetTimeoutOnProgress: true,
+            onprogress: progress.update,
+            signal: options.abortSignal,
+            timeout,
+          },
+        )
+      } finally {
+        await progress.drain()
+      }
     },
   })
 }
