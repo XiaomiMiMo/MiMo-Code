@@ -1,0 +1,26 @@
+# Live evidence (mimo-dev / sft-iter-4000)
+
+## Model
+mimo-dev/mimo-v2.6-pro-sft-iter-4000
+API probe: OK
+serve XDG: /tmp/tq-demo (model field set)
+
+## Desktop — Playwright
+- tool: playwright-cli (open/snapshot/fill/click/screenshot)
+- url: http://127.0.0.1:5173/<b64 packages/opencode>/session/ses_ffe5f403f07faffe9MbTk7eJ5P
+- session: ses_ffe5f403f07faffe9MbTk7eJ5P
+- prompt: turn-queue live proof: reply with exactly OK-sft4000
+- UI model chip: mimo-v2.6-pro-sft-iter-4000
+- reply: OK-sft4000 (Build · mimo-v2.6-pro-sft-iter-4000 · 27s)
+- screenshot: desktop-sft4000-ok.png
+- turn_receipt: 01M2ZW1Y3MT52BBXBEEX8K1C66 state=settled outcome=success consumed=1 epoch=0
+
+## TUI — Computer Use (@mimo/sky → iTerm2)
+- launched via CU type_text + yolo confirm (Down/Return)
+- path: worktree packages/opencode, branch feat/turn-queue
+- screenshot: tui-cu-sft4000-attempt.png (/models palette open, still showing MiMo-V2.5-Pro)
+- blocker: recovery_exhausted before model confirm / prompt send
+- status: TUI process running; sft4000 switch NOT completed on TUI surface
+
+## DB tables present
+turn_receipt / turn_lane_state / turn_session_epoch
