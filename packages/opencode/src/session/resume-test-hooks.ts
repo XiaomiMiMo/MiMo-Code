@@ -1,0 +1,17 @@
+import { Effect } from "effect"
+
+/**
+ * Deterministic race seams for trailing-user resume tests.
+ * Production leaves these undefined (no-ops). Tests install barriers to stop
+ * work after runner occupy and before admission re-check / step-0 parent lock.
+ */
+export const ResumeTestHooks = {
+  /** After runner occupy (start/ensureExclusive), before user-resume admission re-check. */
+  beforeAdmissionRecheck: undefined as undefined | (() => Effect.Effect<void>),
+  /** After inbox.drain on step-0, before parent-tail lock checks. */
+  beforeStep0ParentCheck: undefined as undefined | (() => Effect.Effect<void>),
+  reset() {
+    this.beforeAdmissionRecheck = undefined
+    this.beforeStep0ParentCheck = undefined
+  },
+}

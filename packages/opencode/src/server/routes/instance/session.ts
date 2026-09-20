@@ -1210,7 +1210,8 @@ export const SessionRoutes = lazy(() =>
             return c.json({ data: { name: "BusyError", data: { message: error.message } } }, 409)
           }
           if (error instanceof NotFoundError) {
-            return c.json({ data: { name: "NotFoundError", data: { message: error.message } } }, 404)
+            // NamedError.message is the tag; the human reason lives in data.message.
+            return c.json({ data: { name: "NotFoundError", data: { message: error.data.message } } }, 404)
           }
           return c.json(
             { data: { name: "UnknownError", data: { message: error instanceof Error ? error.message : String(error) } } },

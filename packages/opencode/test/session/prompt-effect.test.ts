@@ -6,6 +6,7 @@ import { afterEach, describe, expect } from "bun:test"
 import { dynamicTool, jsonSchema, type Tool as AITool } from "ai"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { ResumeTestHooks } from "../../src/session/resume-test-hooks"
 import path from "path"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
@@ -91,12 +92,50 @@ const mcpRef = {
   modelID: ModelID.make("gpt-5-test"),
 }
 
+function namedErrorMessage(err: unknown): string {
+  const data = (err as { data?: { message?: string } }).data
+  return String(data?.message ?? (err as { message?: string }).message ?? err)
+}
+
 function defer<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   const promise = new Promise<T>((done) => {
     resolve = done
   })
   return { promise, resolve }
+}
+
+/** [C001/C004] Barrier: work hits ResumeTestHooks seam, test injects, then releases. */
+function resumeRaceBarrier() {
+  let markReached!: () => void
+  const reached = new Promise<void>((done) => {
+    markReached = done
+  })
+  let release!: () => void
+  const released = new Promise<void>((done) => {
+    release = done
+  })
+  return {
+    reached,
+    release,
+    hook: () =>
+      Effect.sync(() => markReached()).pipe(Effect.flatMap(() => Effect.promise(() => released))),
+  }
+}
+
+/** Full message+parts fingerprint for zero-side-effect assertions (not just IDs). */
+function messagePartSnapshot(msgs: Array<{ info: { id: string; role: string }; parts: Array<Record<string, unknown>> }>) {
+  return msgs.map((m) => ({
+    id: m.info.id,
+    role: m.info.role,
+    parts: m.parts.map((p) => ({
+      id: p.id,
+      type: p.type,
+      callID: p.callID,
+      text: p.text,
+      tool: p.tool,
+    })),
+  }))
 }
 
 function withSh<A, E, R>(fx: () => Effect.Effect<A, E, R>) {
@@ -4957,40 +4996,39 @@ describe("trailing-user resume integration", () => {
           const { user2 } = yield* seedTail(chat.id, dir, {})
           const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
           const toolsBefore = before.flatMap((m) => m.parts).filter((p) => p.type === "tool")
-          // Barrier: work() starts with Effect.yieldNow; inject newer user in that window.
-          const injector = yield* Effect.gen(function* () {
-            yield* Effect.yieldNow
-            yield* Effect.yieldNow
-            const newer = yield* sessions.updateMessage({
-              id: MessageID.ascending(),
-              role: "user",
-              sessionID: chat.id,
-              agent: "build",
-              model: ref,
-              time: { created: Date.now() + 9 },
-            })
-            yield* sessions.updatePart({
-              id: PartID.ascending(),
-              messageID: newer.id,
-              sessionID: chat.id,
-              type: "text",
-              text: "newer in admission window",
-            })
-            return newer
-          }).pipe(Effect.forkChild)
-          const resumeExit = yield* Effect.exit(
-            prompt.resumeBackground({
+          // [C004] Deterministic plan→occupy→recheck window via shared seam.
+          const barrier = resumeRaceBarrier()
+          ResumeTestHooks.beforeAdmissionRecheck = barrier.hook
+          yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
+          const fiber = yield* prompt
+            .resumeBackground({
               sessionID: chat.id,
               userMessageID: user2.id,
               agentID: "main",
               model: ref,
-            }),
-          )
-          const newer = yield* Fiber.join(injector)
-          yield* Effect.sleep("300 millis")
+            })
+            .pipe(Effect.forkChild)
+          yield* Effect.promise(() => barrier.reached)
+          const newer = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user",
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            time: { created: Date.now() + 9 },
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: newer.id,
+            sessionID: chat.id,
+            type: "text",
+            text: "newer in admission window",
+          })
+          barrier.release()
+          const resumeExit = yield* Effect.exit(Fiber.join(fiber).pipe(Effect.timeout("5 seconds")))
+          yield* Effect.sleep("200 millis")
           const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
           const toolsAfter = after.flatMap((m) => m.parts).filter((p) => p.type === "tool")
-          // Either plan/admission rejected, or (if injector lost the race) resume used user2 only.
           const assistantsFromUser2 = after.filter(
             (m) => m.info.role === "assistant" && "parentID" in m.info && m.info.parentID === user2.id,
           )
@@ -4998,19 +5036,20 @@ describe("trailing-user resume integration", () => {
             (m) => m.info.role === "assistant" && "parentID" in m.info && m.info.parentID === newer.id,
           )
           expect(assistantsFromNewer).toHaveLength(0)
+          expect(Exit.isFailure(resumeExit)).toBe(true)
           if (Exit.isFailure(resumeExit)) {
+            const err = Cause.squash(resumeExit.cause)
+            expect(namedErrorMessage(err)).toContain("stale at runner admission")
             expect(assistantsFromUser2.filter((m) => m.parts.some((p) => p.type === "text"))).toHaveLength(0)
-            // [R003] Zero side effects: full message set preserved (no silent deletes/rewrites).
-            expect(after.map((m) => m.info.id)).toEqual([...before.map((m) => m.info.id), newer.id].sort())
-            expect(toolsAfter.map((p) => (p as { callID?: string }).callID)).toEqual(
-              toolsBefore.map((p) => (p as { callID?: string }).callID),
-            )
           }
-          // tools preserved
+          // [C004] Full message+parts comparison, not just IDs/callIDs.
+          expect(messagePartSnapshot(after.filter((m) => m.info.id !== newer.id))).toEqual(
+            messagePartSnapshot(before),
+          )
           expect(toolsAfter.map((p) => (p as { callID?: string }).callID)).toEqual(
             toolsBefore.map((p) => (p as { callID?: string }).callID),
           )
-          expect(yield* llm.calls).toBeLessThanOrEqual(1)
+          expect(yield* llm.calls).toBe(0)
         }),
         { git: true, config: providerCfg },
       ),
@@ -5102,7 +5141,7 @@ describe("trailing-user resume integration", () => {
           expect(Exit.isFailure(exit)).toBe(true)
           const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
           // …but must NOT force-delete that assistant (zero side effects on stale reject).
-          expect(after.map((m) => m.info.id)).toEqual(before.map((m) => m.info.id))
+          expect(messagePartSnapshot(after)).toEqual(messagePartSnapshot(before))
           expect(after.some((m) => m.info.id === emptyId)).toBe(true)
           expect(yield* llm.calls).toBe(0)
         }),
@@ -5195,19 +5234,21 @@ describe("trailing-user resume integration", () => {
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
           })
           const { user2 } = yield* seedTail(chat.id, dir, {})
-          // Hold the model so runLoop is past admission and we can insert an empty assistant
-          // before step-0 tail check (inbox.drain / hook window). Use a gate release after inject.
-          const release = defer<void>()
-          yield* Effect.addFinalizer(() => Effect.sync(() => release.resolve()))
-          yield* llm.hold("C003_SHOULD_NOT_RUN", release.promise)
+          const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // [C003/C004] Deterministic stop after inbox.drain, before step-0 parent-tail lock.
+          const barrier = resumeRaceBarrier()
+          ResumeTestHooks.beforeStep0ParentCheck = barrier.hook
+          yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
+          // ensure mode waits for full work so the step-0 reject surfaces on the caller.
           const fiber = yield* prompt
-            .resumeBackground({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
+            .resume({
+              sessionID: chat.id,
+              userMessageID: user2.id,
+              agentID: "main",
+              model: ref,
+            })
             .pipe(Effect.forkChild)
-          yield* llm.wait(1)
-          // Too late for first admission if work already passed it; for step-0 we need inject
-          // before parent lock. After llm.wait work is already in runLoop — inject empty assistant
-          // then release; step0 may have passed. Instead write empty assistant and expect either
-          // reject or if already running the assistant is not force-deleted on failure paths.
+          yield* Effect.promise(() => barrier.reached)
           const emptyId = MessageID.ascending()
           yield* sessions.updateMessage({
             id: emptyId,
@@ -5224,20 +5265,33 @@ describe("trailing-user resume integration", () => {
             time: { created: Date.now() + 30, completed: Date.now() + 30 },
             finish: "stop",
           } as Parameters<typeof sessions.updateMessage>[0])
-          release.resolve(undefined)
-          yield* Fiber.join(fiber).pipe(Effect.timeout("5 seconds"), Effect.exit)
-          yield* Effect.sleep("200 millis")
-          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
-          // Invariant: a later empty assistant that this run did not create must survive
-          // even if the turn fails (C003 — no parent-scope force delete on reject).
-          // If the run succeeded before inject, the empty sibling may be cleaned as residue —
-          // only assert when the resume did not produce a completed answer (reject/fail path).
-          const produced = after.some(
-            (m) => m.info.role === "assistant" && m.parts.some((p) => p.type === "text"),
-          )
-          if (!produced) {
-            expect(after.some((m) => m.info.id === emptyId)).toBe(true)
+          const emptyPartId = PartID.ascending()
+          yield* sessions.updatePart({
+            id: emptyPartId,
+            messageID: emptyId,
+            sessionID: chat.id,
+            type: "text",
+            text: "",
+          })
+          barrier.release()
+          const exit = yield* Effect.exit(Fiber.join(fiber).pipe(Effect.timeout("5 seconds")))
+          // C003: target reject is the step-0 strict-tail throw, and it surfaces.
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            expect(String(Cause.squash(exit.cause))).toContain("no longer the slice tail")
           }
+          const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // C003 contract: step-0 strict reject must not force-delete the later empty assistant.
+          expect(after.some((m) => m.info.id === emptyId)).toBe(true)
+          // Full message+parts snapshot: originals untouched.
+          expect(messagePartSnapshot(after.filter((m) => m.info.id !== emptyId))).toEqual(
+            messagePartSnapshot(before),
+          )
+          const empty = after.find((m) => m.info.id === emptyId)
+          expect(empty?.parts.map((p) => p.id)).toEqual([emptyPartId])
+          expect(empty?.parts.map((p) => (p as { text?: string }).text)).toEqual([""])
+          // No model call on the step-0 reject path.
+          expect(yield* llm.calls).toBe(0)
         }),
         { git: true, config: providerCfg },
       ),
@@ -5257,44 +5311,52 @@ describe("trailing-user resume integration", () => {
           })
           const { user2 } = yield* seedTail(chat.id, dir, {})
           const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
-          // Target work() starts with Effect.yieldNow then re-reads tail. Inject a later user
-          // in that window so plan can pass while admission re-check must fail — and that
-          // failure must surface on resumeBackground (C001: no 202 without admission).
-          const injector = yield* Effect.gen(function* () {
-            yield* Effect.yieldNow
-            const newer = yield* sessions.updateMessage({
-              id: MessageID.ascending(),
-              role: "user",
-              sessionID: chat.id,
-              agent: "build",
-              model: ref,
-              time: { created: Date.now() + 9 },
-            })
-            yield* sessions.updatePart({
-              id: PartID.ascending(),
-              messageID: newer.id,
-              sessionID: chat.id,
-              type: "text",
-              text: "newer in C001 window",
-            })
-            return newer
-          }).pipe(Effect.forkChild)
-          const exit = yield* Effect.exit(
-            prompt.resumeBackground({
+          // [C001/C004] Deterministic stop after runner occupy, before admission re-check.
+          const barrier = resumeRaceBarrier()
+          ResumeTestHooks.beforeAdmissionRecheck = barrier.hook
+          yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
+          const fiber = yield* prompt
+            .resumeBackground({
               sessionID: chat.id,
               userMessageID: user2.id,
               agentID: "main",
               model: ref,
-            }),
-          )
-          yield* Fiber.join(injector)
+            })
+            .pipe(Effect.forkChild)
+          yield* Effect.promise(() => barrier.reached)
+          const newer = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user",
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            time: { created: Date.now() + 9 },
+          })
+          const newerPartId = PartID.ascending()
+          yield* sessions.updatePart({
+            id: newerPartId,
+            messageID: newer.id,
+            sessionID: chat.id,
+            type: "text",
+            text: "newer in C001 window",
+          })
+          barrier.release()
+          const exit = yield* Effect.exit(Fiber.join(fiber).pipe(Effect.timeout("5 seconds")))
           // C001 contract: admission rejection is a typed failure on the caller, not void success.
           expect(Exit.isFailure(exit)).toBe(true)
           if (Exit.isFailure(exit)) {
-            expect(Cause.squash(exit.cause)).toBeInstanceOf(NotFoundError)
+            const err = Cause.squash(exit.cause)
+            expect(err).toBeInstanceOf(NotFoundError)
+            // Must be the INNER admission re-check, not outer recovery/plan NotFound.
+            expect(namedErrorMessage(err)).toContain("stale at runner admission")
           }
           yield* Effect.sleep("200 millis")
           const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+          // Zero side effects: originals fully preserved; injected user stays.
+          expect(messagePartSnapshot(after.filter((m) => m.info.id !== newer.id))).toEqual(
+            messagePartSnapshot(before),
+          )
+          expect(after.some((m) => m.info.id === newer.id)).toBe(true)
           expect(after.filter((m) => m.info.role === "assistant")).toHaveLength(
             before.filter((m) => m.info.role === "assistant").length,
           )

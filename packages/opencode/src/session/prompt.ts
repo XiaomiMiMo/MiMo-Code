@@ -150,6 +150,7 @@ import { InstanceState } from "@/effect"
 import { Instance } from "@/project/instance"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
 import { SessionRunState } from "./run-state"
+import { ResumeTestHooks } from "./resume-test-hooks"
 import { Goal } from "./goal"
 import { TaskRegistry } from "@/task/registry"
 import { EffectBridge } from "@/effect"
@@ -4478,6 +4479,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
           if (!deferInbox) yield* inbox.drain(sessionID, agentID ?? "main").pipe(Effect.ignore)
           yield* slog.info("loop", { step })
+          // [C003/C004] Test seam: stop after inbox drain, before step-0 parent lock.
+          const beforeStep0 = step === 0 ? ResumeTestHooks.beforeStep0ParentCheck : undefined
+          if (beforeStep0) yield* beforeStep0()
 
           // F37: filter by agentID so subagent slices stay isolated from the
           // main agent's slice within the same session. Without this, an actor
@@ -6311,6 +6315,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // stale reject has zero side effects (finalizer must not delete later messages).
             Effect.gen(function* () {
               yield* Effect.yieldNow
+              // [C001/C004] Test seam: stop after occupy, before admission re-check.
+              const beforeAdmission = ResumeTestHooks.beforeAdmissionRecheck
+              if (beforeAdmission) yield* beforeAdmission()
               const tailMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
               const parentIdx = tailMsgs.findIndex(
                 (m) => m.info.role === "user" && m.info.id === plan.parentMessageID,

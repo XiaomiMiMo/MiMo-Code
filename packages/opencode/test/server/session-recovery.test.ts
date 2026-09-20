@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Fiber } from "effect"
 import { createOpencodeClient } from "@mimo-ai/sdk/v2"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
-import { MessageID } from "../../src/session/schema"
+import { ResumeTestHooks } from "../../src/session/resume-test-hooks"
+import { MessageID, PartID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Log } from "../../src/util"
 import { Bus } from "../../src/bus"
@@ -373,6 +374,76 @@ describe("trailing user recovery target", () => {
     })
     expect(result.ok).toBe(202)
     expect(result.missing).toBe(404)
+  })
+
+  // [C001] HTTP path must return reject (404) when admission re-check fails — not 202.
+  test("POST /resume returns 404 when admission re-check sees a later user (not false 202)", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const result = await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        AppRuntime.runPromise(
+          Effect.gen(function* () {
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({ title: "c001-http-admission" })
+            const user = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: session.id,
+              agent: "build",
+              model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+              time: { created: Date.now() },
+            })
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: user.id,
+              sessionID: session.id,
+              type: "text",
+              text: "trailing",
+            })
+            let markReached!: () => void
+            const reached = new Promise<void>((done) => {
+              markReached = done
+            })
+            let release!: () => void
+            const released = new Promise<void>((done) => {
+              release = done
+            })
+            ResumeTestHooks.beforeAdmissionRecheck = () =>
+              Effect.sync(() => markReached()).pipe(Effect.flatMap(() => Effect.promise(() => released)))
+            const app = Server.Default().app
+            const query = `?directory=${encodeURIComponent(tmp.path)}`
+            const fiber = yield* Effect.promise(() =>
+              Promise.resolve(
+                app.request(`/session/${session.id}/resume${query}`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ userMessageID: user.id }),
+                }),
+              ),
+            ).pipe(Effect.forkChild)
+            yield* Effect.promise(() => reached)
+            yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: session.id,
+              agent: "build",
+              model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+              time: { created: Date.now() + 5 },
+            })
+            release()
+            const response = yield* Fiber.join(fiber)
+            const body = (yield* Effect.promise(() => response.json())) as {
+              data?: { name?: string; data?: { message?: string } }
+            }
+            ResumeTestHooks.reset()
+            return { status: response.status, name: body?.data?.name, message: body?.data?.data?.message ?? "" }
+          }),
+        ),
+    })
+    expect(result.status).toBe(404)
+    expect(result.name).toBe("NotFoundError")
+    expect(result.message).toContain("stale at runner admission")
   })
 })
 

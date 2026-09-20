@@ -21,6 +21,10 @@ import type {
   VcsInfo,
 } from "@mimo-ai/sdk/v2"
 import { createStore, produce, reconcile } from "solid-js/store"
+import {
+  shouldClearRecoveryActiveOnError,
+  shouldClearRecoveryActiveOnIdle,
+} from "../routes/session/recover-flow"
 import { mergeSessionTitle } from "../util/session-title"
 import { useProject } from "@tui/context/project"
 import { useEvent } from "@tui/context/event"
@@ -551,7 +555,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
         case "session.status": {
           setStore("session_status", event.properties.sessionID, nextSessionStatus(event.properties.status))
-          if (event.properties.status.type === "idle") {
+          if (shouldClearRecoveryActiveOnIdle(event.properties.status)) {
             setStore("session_recovery_active", event.properties.sessionID, undefined)
             refreshRecovery(event.properties.sessionID)
           }
@@ -562,8 +566,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           // Mid-turn errors must not wipe a live recovery badge.
           const errSid = event.properties.sessionID
           if (!errSid) break
-          const errStatus = store.session_status[errSid]?.type
-          if (errStatus === undefined || errStatus === "idle") {
+          if (shouldClearRecoveryActiveOnError(store.session_status[errSid])) {
             setStore("session_recovery_active", errSid, undefined)
           }
           break
