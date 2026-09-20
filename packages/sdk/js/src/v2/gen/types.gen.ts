@@ -156,6 +156,19 @@ export type EventInboxArrived = {
   }
 }
 
+export type EventSessionReceiptUpdated = {
+  type: "session.receipt.updated"
+  properties: {
+    sessionID: string
+    receiptId: string
+    agentID: string
+    state: "accepted" | "claimed" | "settled" | "cancelled" | "rejected"
+    outcome?: "success" | "assistant_error" | "interrupted" | "never_ran"
+    messageId?: string
+    epoch: number
+  }
+}
+
 export type EventTaskCreated = {
   type: "task.created"
   properties: {
@@ -980,12 +993,18 @@ export type OutputFormatJsonSchema = {
 
 export type OutputFormat = OutputFormatText | OutputFormatJsonSchema
 
-export type Provenance = {
+export type HookProvenance = {
   hookPhase: "pre" | "post"
   hookIteration: number
   pluginNames: Array<string>
   hookIDs: Array<string>
 }
+
+export type MachineProvenance = {
+  machine: string
+}
+
+export type Provenance = HookProvenance | MachineProvenance
 
 export type UserMessage = {
   id: string
@@ -1620,6 +1639,7 @@ export type GlobalEvent = {
     | EventActorStalled
     | EventWriterCachePerf
     | EventInboxArrived
+    | EventSessionReceiptUpdated
     | EventTaskCreated
     | EventTaskUpdated
     | EventMetricsModelCall
@@ -2719,15 +2739,6 @@ export type Config = {
      */
     cc_index?: boolean
   }
-  /**
-   * Trajectory (conversation history) FTS index configuration.
-   */
-  history?: {
-    /**
-     * Which part kinds the history FTS index should cover. Defaults to text (user/assistant) + tool input + tool errors. Add 'reasoning' or 'tool_output' to grow recall at the cost of database size. Note: enabling 'tool_output' reclassifies completed tools from kind='tool_input' to kind='tool_output' (input remains searchable in the body, but kind:['tool_input'] filter will then only match pending/error tools).
-     */
-    kinds?: Array<"user_text" | "assistant_text" | "tool_input" | "tool_error" | "reasoning" | "tool_output">
-  }
   dream?: {
     /**
      * Auto-trigger dream memory consolidation on new session start. Default: false.
@@ -2816,6 +2827,15 @@ export type Config = {
        * Max assistant messages cropped from the trailing streak (default 64).
        */
       max_span?: number
+    }
+    /**
+     * Turn-end uncommitted-changes soft hint (experimental).
+     */
+    uncommitted_hint?: {
+      /**
+       * After a completed user-source main turn, if the session workspace has uncommitted git changes, inject a soft hint (may repeat on later dirty user turns; hook turns never re-inject; does not force a commit). Default off.
+       */
+      enabled?: boolean
     }
     /**
      * Timeout in milliseconds for model context protocol (MCP) requests
@@ -3251,6 +3271,7 @@ export type Event =
   | EventActorStalled
   | EventWriterCachePerf
   | EventInboxArrived
+  | EventSessionReceiptUpdated
   | EventTaskCreated
   | EventTaskUpdated
   | EventMetricsModelCall
@@ -5547,49 +5568,6 @@ export type SessionRecoveryResponses = {
 
 export type SessionRecoveryResponse = SessionRecoveryResponses[keyof SessionRecoveryResponses]
 
-export type SessionResumeUserData = {
-  body: {
-    userMessageID: string
-  }
-  path: {
-    sessionID: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-    agentID?: string
-    task_id?: string
-    titleLocale?: string
-    modelProviderID?: string
-    modelID?: string
-  }
-  url: "/session/{sessionID}/resume"
-}
-
-export type SessionResumeUserErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
-   * Conflict — session resource is busy
-   */
-  409: ConflictError
-}
-
-export type SessionResumeUserError = SessionResumeUserErrors[keyof SessionResumeUserErrors]
-
-export type SessionResumeUserResponses = {
-  /**
-   * Resume accepted
-   */
-  202: unknown
-}
-
 export type SessionResumeData = {
   body?: never
   path: {
@@ -5626,6 +5604,49 @@ export type SessionResumeErrors = {
 export type SessionResumeError = SessionResumeErrors[keyof SessionResumeErrors]
 
 export type SessionResumeResponses = {
+  /**
+   * Resume accepted
+   */
+  202: unknown
+}
+
+export type SessionResumeUserData = {
+  body?: {
+    userMessageID: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+    agentID?: string
+    task_id?: string
+    titleLocale?: string
+    modelProviderID?: string
+    modelID?: string
+  }
+  url: "/session/{sessionID}/resume"
+}
+
+export type SessionResumeUserErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict — session resource is busy
+   */
+  409: ConflictError
+}
+
+export type SessionResumeUserError = SessionResumeUserErrors[keyof SessionResumeUserErrors]
+
+export type SessionResumeUserResponses = {
   /**
    * Resume accepted
    */
@@ -5710,11 +5731,46 @@ export type SessionPromptAsyncResponses = {
 
 export type SessionPromptAsyncResponse = SessionPromptAsyncResponses[keyof SessionPromptAsyncResponses]
 
+export type SessionReceiptData = {
+  body?: never
+  path: {
+    sessionID: string
+    receiptId: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/receipt/{receiptId}"
+}
+
+export type SessionReceiptErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionReceiptError = SessionReceiptErrors[keyof SessionReceiptErrors]
+
+export type SessionReceiptResponses = {
+  /**
+   * Receipt
+   */
+  200: unknown
+}
+
 export type SessionCommandData = {
   body?: {
     messageID?: string
     agent?: string
     model?: string
+    source?: "user" | "spawn" | "hook"
+    provenance?: Provenance
     arguments: string
     command: string
     /**

@@ -170,12 +170,14 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionReceiptErrors,
+  SessionReceiptResponses,
   SessionRecoveryErrors,
   SessionRecoveryResponses,
-  SessionResumeUserResponses,
-  SessionResumeUserErrors,
   SessionResumeErrors,
   SessionResumeResponses,
+  SessionResumeUserErrors,
+  SessionResumeUserResponses,
   SessionRevertErrors,
   SessionRevertResponses,
   SessionShareErrors,
@@ -2616,7 +2618,7 @@ export class Session2 extends HeyApiClient {
   /**
    * List interrupted turn recovery candidates
    *
-   * Return the latest incomplete assistant turn that can be resumed without creating a user message.
+   * Return resumable targets: incomplete assistant turns and/or a trailing parent user (D16f).
    */
   public recovery<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2699,7 +2701,6 @@ export class Session2 extends HeyApiClient {
   public resumeUser<ThrowOnError extends boolean = false>(
     parameters: {
       sessionID: string
-      userMessageID: string
       directory?: string
       workspace?: string
       agentID?: string
@@ -2707,6 +2708,7 @@ export class Session2 extends HeyApiClient {
       titleLocale?: string
       modelProviderID?: string
       modelID?: string
+      userMessageID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2732,6 +2734,11 @@ export class Session2 extends HeyApiClient {
       url: "/session/{sessionID}/resume",
       ...options,
       ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 
@@ -2812,6 +2819,40 @@ export class Session2 extends HeyApiClient {
   }
 
   /**
+   * Get turn receipt
+   *
+   * Durable receipt for an admitted prompt/resume/wake. Source of truth after HTTP 202.
+   */
+  public receipt<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      receiptId: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "receiptId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionReceiptResponses, SessionReceiptErrors, ThrowOnError>({
+      url: "/session/{sessionID}/receipt/{receiptId}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Send command
    *
    * Send a new command to a session for execution by the AI assistant.
@@ -2824,6 +2865,8 @@ export class Session2 extends HeyApiClient {
       messageID?: string
       agent?: string
       model?: string
+      source?: "user" | "spawn" | "hook"
+      provenance?: Provenance
       arguments?: string
       command?: string
       titleLocale?: string
@@ -2869,6 +2912,8 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "messageID" },
             { in: "body", key: "agent" },
             { in: "body", key: "model" },
+            { in: "body", key: "source" },
+            { in: "body", key: "provenance" },
             { in: "body", key: "arguments" },
             { in: "body", key: "command" },
             { in: "body", key: "titleLocale" },
