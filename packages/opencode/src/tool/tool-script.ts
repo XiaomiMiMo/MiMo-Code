@@ -843,6 +843,14 @@ export const ToolScriptTool = Tool.define(
                       toolCallId: subCtx.callID,
                       messages: [],
                       abortSignal: ctx.abort,
+                      experimental_context: {
+                        onMcpToolProgress: (meta: Record<string, unknown>) =>
+                          bridge.promise(
+                            subCtx.metadata({
+                              metadata: { mcp: { _meta: meta } },
+                            }),
+                          ),
+                      },
                     }),
                   ),
                 catch: (err) => (err instanceof Error ? err : new Error(String(err))),
@@ -895,7 +903,10 @@ export const ToolScriptTool = Tool.define(
                       input: subPart.state.input,
                       title: result.title,
                       output: result.output,
-                      metadata: metadataRecord(result.metadata),
+                      // Preserve metadata received while the nested tool was
+                      // running (for example MCP presentation progress) when
+                      // the terminal result does not repeat it.
+                      metadata: metadataRecord({ ...subPart.state.metadata, ...result.metadata }),
                       ...(result.providerOutput !== undefined ? { providerOutput: result.providerOutput } : {}),
                       ...(result.providerMetadata ? { providerMetadata: result.providerMetadata } : {}),
                       time: { start, end: Date.now() },

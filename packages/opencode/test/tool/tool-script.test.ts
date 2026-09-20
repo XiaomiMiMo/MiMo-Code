@@ -1008,7 +1008,7 @@ describe("exec MCP dispatch", () => {
   // Mimics the SessionPrompt-wrapped MCP execute: resolves with the normalized
   // {output, metadata, attachments} shape (permission/hooks/truncation already
   // applied by the wrapper), rejects on tool failure.
-  function fakeMcpTool(execute: (args: any) => Promise<any>) {
+  function fakeMcpTool(execute: (args: any, options?: any) => Promise<any>) {
     return {
       description: "fake mcp tool",
       inputSchema: z.object({}),
@@ -1098,6 +1098,27 @@ describe("exec MCP dispatch", () => {
     )
     expect(result.metadata.status).toBe("completed")
     expect(result.output).toContain("caught: srv_fail: server exploded")
+  })
+
+  test("MCP progress updates the nested exec subpart", async () => {
+    const mcp = {
+      srv_progress: fakeMcpTool(async (_args: any, options: any) => {
+        await options.experimental_context.onMcpToolProgress({
+          "mimo/toolSurface": { kind: "browserUse", browserId: "iab" },
+        })
+        return { output: "done", metadata: {}, attachments: [] }
+      }),
+    }
+    const result = await runToolScript(
+      `const r = await tools.srv_progress({}); return r.output`,
+      [],
+      undefined,
+      { mcp },
+    )
+    const subparts = result.metadata.sub_parts as ExecSubPartSnapshot[]
+    expect(subparts[0]?.state.metadata).toEqual({
+      mcp: { _meta: { "mimo/toolSurface": { kind: "browserUse", browserId: "iab" } } },
+    })
   })
 
   test("builtin id wins on collision with an MCP tool", async () => {
