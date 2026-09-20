@@ -20,7 +20,10 @@ import { extractComposeBundle } from "./compose/extract"
 import { extractBuiltinBundle, OFFICIAL_SKILL_NAMES } from "./builtin/extract"
 
 const log = Log.create({ service: "skill" })
-const EXTERNAL_DIRS = [".claude", ".agents", ".codex", ".opencode"]
+// Scan order is load order: later roots win same-name collisions against earlier
+// non-bundled skills. Open-standard .agents sits last among brand roots;
+// .mimocode config dirs load after these.
+const EXTERNAL_DIRS = [".claude", ".codex", ".opencode", ".agents"]
 const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
 const MIMOCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
 const SKILL_PATTERN = "**/SKILL.md"
@@ -30,8 +33,8 @@ const BUILTIN_SKILL_PATTERN = "skills/*/SKILL.md"
 // MIMOCODE_DISABLE_AGENTS_SKILLS is set.
 const externalSkillDirs = () =>
   EXTERNAL_DIRS.filter((dir) => {
-    if (dir === ".claude") return Flag.MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS
     if (dir === ".agents") return !Flag.MIMOCODE_DISABLE_AGENTS_SKILLS
+    if (dir === ".claude") return Flag.MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS
     if (dir === ".codex") return Flag.MIMOCODE_ENABLE_CODEX_SKILLS
     if (dir === ".opencode") return Flag.MIMOCODE_ENABLE_OPENCODE_SKILLS
     return true

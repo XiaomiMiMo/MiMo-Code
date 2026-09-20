@@ -40,7 +40,7 @@ This skill is loaded from the global home directory.
   )
 }
 
-async function createSkill(root: string, source: ".claude" | ".agents", name: string, description: string) {
+async function createSkill(root: string, source: ".claude" | ".agents" | ".codex", name: string, description: string) {
   await Bun.write(
     path.join(root, source, "skills", name, "SKILL.md"),
     `---
@@ -324,6 +324,7 @@ description: A skill in the .claude/skills directory.
             Promise.all([
               createSkill(tmp.path, ".claude", "duplicate-global", "Claude copy"),
               createSkill(tmp.path, ".agents", "duplicate-global", "Agents copy"),
+              createSkill(tmp.path, ".codex", "duplicate-global", "Codex copy"),
             ]),
           )
           const skill = yield* Skill.Service
