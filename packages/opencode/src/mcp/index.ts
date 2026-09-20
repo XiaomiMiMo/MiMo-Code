@@ -800,7 +800,6 @@ export const layer = Layer.effect(
     const state = yield* InstanceState.make<State>(
       Effect.fn("MCP.state")(function* () {
         const cfg = yield* cfgSvc.get()
-        const bridge = yield* EffectBridge.make()
         const host = HostMcp.get()
         const config = { ...cfg.mcp, ...host }
         const s: State = {
@@ -827,15 +826,25 @@ export const layer = Layer.effect(
                 return
               }
 
-              const result = yield* create(key, mcp).pipe(Effect.catch(() => Effect.void))
+              // Bind identity at the create boundary (R006/R009). A host switch
+              // during initialize must not leave a stale client in the registry.
+              const fromHost = key in host
+              const hostRevision = fromHost ? HostMcp.revisionOf(key) : undefined
+              const result = yield* create(key, mcp, { fromHost, hostRevision }).pipe(Effect.catch(() => Effect.void))
               if (!result) return
 
               s.status[key] = result.status
               if (key in host && result.status.status === "failed") s.hostRetryAt[key] = Date.now() + 5000
               if (result.mcpClient) {
-                s.clients[key] = result.mcpClient
-                s.defs[key] = result.defs!
-                watch(s, key, result.mcpClient, bridge, mcp.timeout, hostEffectiveSampling(mcp, key in host))
+                yield* storeClient(
+                  s,
+                  key,
+                  result.mcpClient,
+                  result.defs!,
+                  mcp.timeout,
+                  hostEffectiveSampling(mcp, fromHost),
+                  { fromHost, hostRevision },
+                )
               }
             }),
           { concurrency: "unbounded" },
@@ -976,13 +985,16 @@ export const layer = Layer.effect(
       const discardAttempt = (fallback: Status) =>
         releaseMcpClient(client).pipe(Effect.as(s.status[name] ?? fallback))
 
+      // reject-stale means a newer generation owns the name. Report that live
+      // status when present; never fabricate "connected" if none is stored.
+      const staleFallback: Status = { status: "disabled" }
       const first = admit()
       if (first !== "ok") {
-        return yield* discardAttempt(first === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
+        return yield* discardAttempt(first === "reject-stale" ? staleFallback : ({ status: "disabled" } as Status))
       }
       const second = admit()
       if (second !== "ok") {
-        return yield* discardAttempt(second === "reject-stale" ? ({ status: "connected" } as Status) : ({ status: "disabled" } as Status))
+        return yield* discardAttempt(second === "reject-stale" ? staleFallback : ({ status: "disabled" } as Status))
       }
       // Commit first, then release the previous client (R002). Closing previous
       // before commit can leave a dead registry entry if admission is refused.
