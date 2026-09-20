@@ -256,7 +256,7 @@ MiMoCode 打包了以下内置技能：
 
 `claude-code` 和 `codex` 仅在系统分别安装了 `claude` 和 `codex` 可执行文件时提供。其他技能也可能需要其说明中列出的任务专用工具。
 
-**覆盖内置技能：** 在项目（`.mimocode/skills/<name>/SKILL.md`）或个人技能目录（`~/.claude/skills/`、`~/.opencode/skills/` 等）中创建同名技能即可。扫描顺序中后发现的用户技能会覆盖同名的内置技能。
+**覆盖内置技能：** 在项目（`.mimocode/skills/<name>/SKILL.md`）或个人（例如 `~/.config/mimocode/skills/<name>/SKILL.md`）的 MiMoCode 技能目录下创建同名技能即可。开放标准的项目 `.agents/skills/` 与 `~/.agents/skills/` 同样会被发现。扫描顺序中后发现的用户技能会覆盖同名的内置技能。
 
 <details>
 <summary><strong>通过环境变量配置技能</strong></summary>
