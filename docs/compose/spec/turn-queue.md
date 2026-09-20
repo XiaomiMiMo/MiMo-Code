@@ -230,9 +230,28 @@ OpenAPI models 200/202/204 + Receipt schema; `packages/sdk/js` regen in the same
 - Changing message/part storage schema beyond receipt tables.
 - Perfect zero-strand under crash without receipt persistence (persistence is in scope; exotic distributed crashes are not).
 
+## [S4] T0 Admission inventory (living table)
+
+Filled during T0; every row must be `migrate` or `skip` before T8.
+
+| Call site | API | Decision |
+|---|---|---|
+| `session/prompt.ts` loop main path | `ensureRunning` | migrate → Controller claim |
+| `session/prompt.ts` loop notifyParent path | `ensureRunning` | migrate → Controller |
+| `session/prompt.ts` shell | `startShell` | migrate → admit(shell) or lease+epoch |
+| `session/prompt.ts` resume ensure | `ensureExclusive` | migrate → admit(resume) |
+| `session/prompt.ts` resume owned | `startOwned` | migrate → admit(resume) |
+| `session/prompt.ts` resume start | `start` | migrate → admit(resume) |
+| `inbox/inbox.ts` wake | `loop` → ensureRunning | migrate → admit(wake) |
+| `server/.../session.ts` | assertNotBusy / prompt routes | migrate → admit + receipt |
+| `session/revert.ts` | assertNotBusy only | keep (not turn admission) |
+| `actor/spawn.ts` | SessionRunState (cancel/status) | skip (cancel path) |
+
+CI: fail new `ensureRunning` call sites outside allowlist (T8).
+
 ## Tasks
 
-- [ ] T0: **Admission inventory** — acceptance: table of every `ensureRunning|ensureExclusive|startOwned|startShell|SessionRunState.start|SessionPrompt.loop` call site under `packages/opencode/src` with migrate/skip; include command/init/summarize/shell classification; CI lint blocks new turn-work `ensureRunning` (covers: S2)
+- [x] T0: **Admission inventory** — acceptance: table of every `ensureRunning|ensureExclusive|startOwned|startShell|SessionRunState.start|SessionPrompt.loop` call site under `packages/opencode/src` with migrate/skip; include command/init/summarize/shell classification; CI lint blocks new turn-work `ensureRunning` (covers: S2)
 - [ ] T1: LaneController + Mailbox + durable Receipt + epoch + frontier + idempotency (per-session unique) — acceptance: admit/claim/settle/cancel/reject unit tests; restart reloads epoch + `accepted|claimed`; old-epoch never claimed; wake coalesces; prompt never coalesces (covers: S2; depends: T0)
 - [ ] T2: inputRevision + observeInput atomic check-and-subscribe — acceptance: no missed pre-subscribe bump; level-triggered resolve (covers: S2; depends: T1)
 - [ ] T3: Claim/ack + MessageID frontier + extendClaim in runLoop — acceptance: full batch settle; partial error `never_ran`; mid-turn extendClaim; crash between message persist and admit → boot synthetic receipt (covers: S2; depends: T1)
