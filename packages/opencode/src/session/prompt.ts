@@ -6469,7 +6469,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
       yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
       // [C001] Propagate admission re-check outcome to the HTTP caller before 202.
-      yield* Deferred.await(admission)
+      // Bound the wait so cancel-before-handshake cannot hang the caller; typed
+      // admission rejects still surface unchanged.
+      const handshake = yield* Deferred.await(admission).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.exit,
+      )
+      if (Exit.isFailure(handshake)) {
+        const err = Cause.squash(handshake.cause)
+        const tag = (err as { _tag?: string } | null)?._tag
+        if (tag === "TimeoutException") {
+          return yield* Effect.fail(new NotFoundError({ message: "Resume admission did not complete" }))
+        }
+        return yield* Effect.failCause(handshake.cause as Cause.Cause<never>)
+      }
     })
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
