@@ -58,6 +58,14 @@ export type DialogSelectRef<T> = {
   filtered: DialogSelectOption<T>[]
 }
 
+export function dialogSelectSurfaceBackground(theme: {
+  backgroundPanel: RGBA
+  backgroundMenu: RGBA
+}): RGBA | undefined {
+  if (theme.backgroundPanel.a !== 0) return undefined
+  return theme.backgroundMenu
+}
+
 export function DialogSelect<T>(props: DialogSelectProps<T>) {
   const dialog = useDialog()
   const { theme } = useTheme()
@@ -253,7 +261,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   const right = createMemo(() => keybinds().filter((item) => item.side === "right"))
 
   return (
-    <box gap={1} paddingBottom={1}>
+    <box gap={1} paddingBottom={1} backgroundColor={dialogSelectSurfaceBackground(theme)}>
       <box paddingLeft={4} paddingRight={4}>
         <box flexDirection="row" justifyContent="space-between">
           <text fg={theme.text} attributes={TextAttributes.BOLD}>
