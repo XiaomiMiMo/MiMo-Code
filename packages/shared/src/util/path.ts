@@ -9,12 +9,15 @@ export function getDirectory(path: string | undefined) {
   if (!path) return ""
   const trimmed = path.replace(/[/\\]+$/, "")
   const parts = trimmed.split(/[/\\]/)
+  if (parts.length <= 1) return ""
   return parts.slice(0, parts.length - 1).join("/") + "/"
 }
 
 export function getFileExtension(path: string | undefined) {
   if (!path) return ""
-  const parts = path.split(".")
+  const filename = getFilename(path)
+  const parts = filename.split(".")
+  if (parts.length <= 1 || !parts[0]) return ""
   return parts[parts.length - 1]
 }
 
