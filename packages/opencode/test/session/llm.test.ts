@@ -16,6 +16,8 @@ import type { Agent } from "../../src/agent/agent"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { AppRuntime } from "../../src/effect/app-runtime"
+import { Bus } from "../../src/bus"
+import { Session } from "../../src/session"
 
 async function getModel(providerID: ProviderID, modelID: ModelID) {
   return AppRuntime.runPromise(
@@ -868,6 +870,10 @@ describe("session.llm.stream", () => {
                   baseURL: `${server.url.origin}/v1`,
                   headerTimeout: 25,
                 },
+                // Exercise header-timeout recovery without the production five-second backoff.
+                retry: {
+                  network: { mode: "bounded", maxRetries: 1, initialDelayMs: 10, maxDelayMs: 10, jitterRatio: 0 },
+                },
               },
             },
           }),
@@ -894,7 +900,10 @@ describe("session.llm.stream", () => {
           agent: agent.name,
           model: { providerID: ProviderID.openai, modelID: resolved.id },
         } satisfies MessageV2.User
-        const started = Date.now()
+        const retries: Array<{ kind: string; phase: string; nextDelayMs: number }> = []
+        const unsubscribe = Bus.subscribe(Session.Event.RetryAttempt, (event) => {
+          if (event.properties.sessionID === sessionID) retries.push(event.properties)
+        })
         const events = await llm.runPromise((svc) =>
           svc
             .stream({
@@ -907,9 +916,9 @@ describe("session.llm.stream", () => {
               tools: {},
             })
             .pipe(Stream.runCollect),
-        )
+        ).finally(unsubscribe)
 
-        expect(Date.now() - started).toBeLessThan(3_000)
+        expect(retries).toEqual([expect.objectContaining({ kind: "network", phase: "request", nextDelayMs: 10 })])
         expect(Array.from(events).some((event) => event.type === "error")).toBe(false)
         expect((await first.promise).url.pathname.endsWith("/responses")).toBe(true)
         expect((await second.promise).url.pathname.endsWith("/responses")).toBe(true)
