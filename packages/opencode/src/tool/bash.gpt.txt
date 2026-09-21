@@ -42,7 +42,7 @@ Git safety protocol:
 - Do not commit files likely to contain secrets. Warn the user if they explicitly request that.
 
 When asked to commit:
-1. Inspect `git status`, staged and unstaged diffs, and recent commit messages. Independent inspection commands should run in parallel.
+1. Inspect `git status`, staged and unstaged diffs, and recent commit messages.
 2. Review all staged changes and draft a concise message that describes why the change exists.
 3. Stage only relevant files, create the commit, then run `git status` after the commit completes to verify it.
 4. If a hook fails, fix the problem and create a new commit.

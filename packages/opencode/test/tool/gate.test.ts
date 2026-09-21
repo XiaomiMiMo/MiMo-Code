@@ -197,6 +197,24 @@ describe("tool.gate", () => {
     gate.leave(token)
   })
 
+  test("actor/exec/workflow bypass the gate so nested tools do not deadlock", async () => {
+    const gate = ToolGate.for(key())
+    const held = await gate.enter("bash", "b1")
+    const actorToken = await gate.enter("actor", "actor-run")
+    const execToken = await gate.enter("exec", "exec-1")
+    const workflowToken = await gate.enter("workflow", "wf-1")
+    // Nested tools still queue behind the outer bash barrier.
+    const nested = gate.enter("read", "child-read")
+    await expectPending(nested)
+    expect(gate.runningCount).toBe(1)
+    gate.leave(actorToken)
+    gate.leave(execToken)
+    gate.leave(workflowToken)
+    gate.leave(held)
+    const nestedToken = await nested
+    gate.leave(nestedToken)
+  })
+
   test("toolResource resolves edit/write paths and ignores other tools", () => {
     const file = path.join("/tmp/example", "x.ts")
     expect(toolResource("edit", { file_path: file })).toBe(toolResource("write", { file_path: file }))
@@ -204,7 +222,7 @@ describe("tool.gate", () => {
     expect(toolResource("edit", {})).toBeUndefined()
   })
 
-  test("gates are isolated per worktree directory", async () => {
+  test("gates are isolated per Instance.directory", async () => {
     const a = ToolGate.for(key())
     const b = ToolGate.for(key())
     expect(a).not.toBe(b)

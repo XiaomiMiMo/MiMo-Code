@@ -1,18 +1,27 @@
 /**
- * Worktree-scoped FIFO admission gate for tool execution.
+ * FIFO admission gate for tool execution, keyed by Instance.directory.
  *
- * AI SDK starts each tool-call execute as soon as that call's arguments are
- * complete. This gate restores a predictable admission order:
+ * Concurrent tool-call executes can interleave badly (e.g. edit racing a
+ * git commit in the same step). This gate restores a predictable admission
+ * order:
  *
  * - read/grep/glob may run concurrently with each other
  * - edit/write may run concurrently when their realpath keys differ
- * - every other tool (apply_patch, bash, task, MCP, …) is barrier-class
+ * - apply_patch, bash, task, MCP, and other tools are barrier-class
+ * - actor/exec/workflow bypass the queue (they nest more tool calls)
  */
 
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 
 export const PARALLEL_READONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob"])
 export const PATH_WRITE_TOOLS: ReadonlySet<string> = new Set(["edit", "write"])
+
+/**
+ * Orchestrators that nest further tool execution (actor.run/wait, exec scripts,
+ * workflow). Holding the gate across a nested wait deadlocks children that
+ * share the same Instance.directory — these tools must not queue.
+ */
+export const GATE_BYPASS_TOOLS: ReadonlySet<string> = new Set(["actor", "exec", "workflow"])
 
 export type GateRequest = {
   readonly id: string
@@ -62,9 +71,10 @@ class WorktreeGate {
    * the running slot so the gate cannot wedge.
    */
   enter(tool: string, callID: string, options?: EnterOptions): Promise<string> {
+    this.seq += 1
+    const token = `${callID}#${this.seq}`
+    if (GATE_BYPASS_TOOLS.has(tool)) return Promise.resolve(token)
     return new Promise<string>((resolve, reject) => {
-      this.seq += 1
-      const token = `${callID}#${this.seq}`
       const signal = options?.signal
       let settled = false
 

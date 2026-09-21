@@ -3,55 +3,50 @@ feature: tool-fifo-gate
 status: delivered
 updated: 2026-09-20
 branch: feat/tool-fifo-gate
-commits: 1592084b..HEAD
+commits: 1592084b..daa909dc
 ---
 
-# Tool FIFO Gate (Worktree)
+# Tool FIFO Gate
 
 ## Report
 
-**What was built** — A worktree-scoped FIFO admission gate in front of tool
-`execute` (local + MCP). Concurrent: `read`/`grep`/`glob` with each other, and
-`edit`/`write` when realpath keys differ. `apply_patch`, `bash`, `task`, and
-all other tools are barrier-class (serial, including vs themselves). Gate uses
-unique admission tokens, AbortSignal dequeue on interrupt, and
-`Effect.acquireUseRelease` so leave always runs. Model-facing system/tool
-prompts no longer teach cross-tool parallel/serial rules — runtime owns that.
+**What was built** — A FIFO admission gate in front of tool `execute`
+(local + MCP), keyed by `Instance.directory`. Concurrent: `read`/`grep`/`glob`
+with each other, and `edit`/`write` when realpath keys differ. `apply_patch`,
+`bash`, `task`, and all other tools are barrier-class (serial, including vs
+themselves). `actor`/`exec`/`workflow` bypass the queue so nested tool calls
+are not blocked by the parent. Enter uses unique tokens and AbortSignal
+dequeue; leave runs via `Effect.acquireUseRelease`. Model-facing prompts no
+longer teach cross-tool parallel/serial rules — runtime owns that.
 
 **Verification** — From `packages/opencode`:
-- `bun test test/tool/gate.test.ts test/agent/agent.test.ts` — PASS (68 tests)
+- `bun test test/tool/gate.test.ts test/agent/agent.test.ts` — PASS
 - `bun typecheck` — PASS
 
 **Journey log**
-- First wiring used `acquireRelease`+`flatMap` inside `run.promise` — Effect 4
-  needs ambient Scope; `acquireUseRelease` is the Scope-safe form.
+- `acquireRelease` + `flatMap` inside `run.promise` needs ambient Scope;
+  `acquireUseRelease` is the Scope-safe form.
 - `enter` must mint unique tokens (`callID#seq`); `"?"` fallback collides.
-- Abort while queued must dequeue, or a later tryAdmit orphans a waiter in
-  `running` and wedges the worktree.
-- Expanded V1 mid-flight: edit/write path isolation is cheap once `compatible`
-  takes an optional `resource`; apply_patch stays serial (multi-file).
-- Prompt guidance is not a substitute for the gate — remove the restriction
-  from model-facing text rather than document the scheduler.
+- Abort while queued must dequeue the waiter’s own token or the gate wedges.
+- `actor`/`exec`/`workflow` must not hold the gate across nested waits.
+- Do not describe the gate as “worktree-scoped”; it is keyed by
+  `Instance.directory`. Compose worktrees are only where the branch lives.
 
 ## [S1] Problem
 
-AI SDK `streamText` starts each tool `execute` as soon as that tool-call’s
-arguments are complete (fire-and-forget), without waiting for the rest of the
-step. High-TPS serving therefore runs co-emitted tools concurrently. Order-
-sensitive pairs such as `edit` + `bash(git push)` have no happens-before:
-push can miss the edit, or commit a half-written file. Low-TPS training often
-serializes the same pair by accident, so policies learn “same-step multi-call
-is fine” that is unsafe at serve time.
+Multiple tool calls in one assistant step can execute concurrently. When a
+file `edit` races a `git commit`/`git push` in the same step, the commit can
+miss the edit entirely, and commit/push may run in the wrong order relative
+to each other or to the file write.
 
 ## [S2] Design
 
-A worktree-scoped FIFO admission gate sits in front of tool execution.
+A FIFO admission gate sits in front of tool execution.
 
 ### Gate key
 
-One gate instance per worktree, keyed by `Instance.directory` (same notion of
-worktree used elsewhere in the engine). Subagents and sessions sharing a
-worktree share one gate.
+One gate instance per `Instance.directory`. Sessions that share that
+directory share one gate.
 
 ### V1 compatibility predicate
 
@@ -66,68 +61,63 @@ compatible(a, b) ⇔
 ```
 
 `resource` for `edit`/`write` is `AppFileSystem.resolve(file_path)` (realpath
-when the path exists). Missing `file_path` or failed classification → treat
-the call as barrier-class (incompatible with everyone). Hardlinks are ignored
-(residual risk accepted).
+when the path exists). Missing `file_path` → barrier-class. Hardlinks are
+ignored (residual risk accepted).
 
-Barrier-class (incompatible with the whole running set, including themselves):
-`apply_patch` (multi-file), `bash`, `task`, `actor`, MCP tools, `exec`, and
-any other tool. `apply_patch` stays serial on purpose: one call can mutate
-many paths, so path isolation does not apply.
+Barrier-class: `apply_patch` (multi-file), `bash`, `task`, MCP tools, and any
+other tool not in the two parallel classes.
+
+**Gate bypass (orchestrators):** `actor`, `exec`, and `workflow` do not queue.
+They nest further tool execution (`actor.run`/`wait`, `exec` scripts); holding
+the gate across that wait deadlocks children that share the same
+`Instance.directory`. Nested leaf tools still enter the gate themselves.
 
 ### Queue / running protocol
 
 ```text
 enter(tool, callID, {signal, resource}) → Promise<token>:
-  token = `${callID}#${seq}`   # unique even if callID collides
+  token = `${callID}#${seq}`
+  if tool ∈ {actor, exec, workflow}: return token   # bypass
   push waiter to FIFO queue
   tryAdmit()
-  abort before admit → dequeue + reject
+  abort before admit → dequeue this waiter + reject
   abort after admit → leave(token)
 
 tryAdmit():
   while queue non-empty:
     head = queue[0]
-    if any running request r with ¬compatible(head, r): break
+    if any running r with ¬compatible(head, r): break
     queue.shift()
-    running.add(head)          # bookkeeping BEFORE resolve
+    running.add(head)          # before resolve
     resolve(head)
 
 leave(token):
-  if still queued → splice + tryAdmit
-  else running.delete(token) + tryAdmit
+  if still queued → splice that waiter only, tryAdmit
+  else running.delete(token), tryAdmit
 ```
 
-- Strict FIFO head-of-line: a queued `bash` blocks later `read` until bash
-  has been admitted and finished — barrier order equals emission order.
+- FIFO head-of-line: a queued `bash` blocks later calls until it finishes.
 - `leave` must run on success, tool error, permission deny, abort, and
   timeout via `Effect.acquireUseRelease`.
-- Admission is synchronous; concurrent `enter` callers queue in arrival order
-  (≈ model tool-call emission order under AI SDK’s sequential stream
-  transform).
 
 ### Integration
 
-In `session/prompt.ts`, every registry/MCP `execute` wrapper:
+In `session/prompt.ts`, registry and MCP `execute` wrappers:
 
 1. `ToolGate.for(Instance.directory).enter(toolId, toolCallId, { signal, resource })`
    via `Effect.tryPromise` (AbortSignal dequeues on interrupt).
-2. `Effect.acquireUseRelease(enter, body, leave)` — Scope-safe release on
-   success, error, deny, abort, and timeout (not bare `acquireRelease` +
-   `flatMap`, which needs an ambient Scope `run.promise` does not provide).
-3. `edit`/`write` pass `toolResource(tool, args)` (realpath of `file_path`).
+2. `Effect.acquireUseRelease(enter, body, leave)`.
+3. `edit`/`write` pass `toolResource(tool, args)`.
 
-No provider or AI SDK changes. Max-mode `replay` is already sequential and
-need not call the gate.
+No provider or AI SDK changes. Max-mode `replay` is already sequential.
 
 ### Error / lifecycle
 
-- `enter` rejects only when its AbortSignal fires before admission; the waiter
-  is dequeued so the gate cannot wedge.
-- After `enter` resolves, `leave` must run (Effect `acquireUseRelease`).
-- Double-`leave` is idempotent (delete on missing id is a no-op).
-- Gate map grows one entry per worktree; dispose may clear the key but is not
-  required for correctness.
+- `enter` rejects only when AbortSignal fires before admission; that waiter is
+  dequeued.
+- After `enter` resolves, `leave` must run (`acquireUseRelease`).
+- Double-`leave` is idempotent.
+- One gate entry per `Instance.directory` for the process lifetime.
 
 ### Prompt contract
 
@@ -137,29 +127,28 @@ Shell-internal sequencing advice (`&&` in one `bash`) remains valid.
 
 ## [S3] Out of Scope
 
-### Follow-up (target form — not in this delivery)
-
 | Class | Status |
 |---|---|
 | `read` / `grep` / `glob` | **Delivered** — parallel with each other |
 | `edit` / `write` | **Delivered** — parallel when realpath keys differ |
-| `apply_patch` | Serial (multi-file; path isolation does not apply) |
-| `bash` / other mutate / unknown | Serial (has parallel benefit but needs resource analysis later) |
-| `task` / fast local state | Serial (safe but no meaningful win) |
+| `apply_patch` | Serial (multi-file) |
+| `bash` / other mutate / unknown | Serial |
+| `task` | Serial (no meaningful win to parallelize) |
+| `actor` / `exec` / `workflow` | Gate bypass (nested tools still gated) |
 
 Possible later follow-ups: bash AST → readonly path resources; hardlink-aware
-inode keys; training harness sharing the same gate.
+inode keys.
 
 ### Also out of scope here
 
 - Provider stream reordering
-- RL / training harness wiring
-- Cross-process or cross-machine locking
+- Cross-process locking
+- Changing AI SDK execution semantics
 
 ## Tasks
 
-- [x] T1: Add `packages/opencode/src/tool/gate.ts` FIFO gate — acceptance: unit tests cover readonly∥readonly, edit/write path isolation, apply_patch/bash serial, FIFO head-of-line, abort-while-queued, unique tokens (covers: S2)
-- [x] T2: Wire gate into `session/prompt.ts` local + MCP execute wrappers — acceptance: enter/leave via acquireUseRelease+tryPromise; edit/write pass realpath resource (covers: S2)
-- [x] T3: Export gate from `tool/index.ts` if needed by tests — acceptance: tests import from a stable path (covers: S2)
-- [x] T4: Run `bun test` for gate tests and `bun typecheck` in `packages/opencode` — acceptance: commands exit 0 (covers: S2)
-- [x] T5: Remove model-facing parallel/serial teaching from default/subagent/bash prompts — acceptance: agent tests assert absence of those rules (covers: S2)
+- [x] T1: Add `packages/opencode/src/tool/gate.ts` FIFO gate — acceptance: unit tests cover readonly∥readonly, edit/write path isolation, barrier serial, FIFO HOL, abort, unique tokens, orchestrator bypass (covers: S2)
+- [x] T2: Wire gate into `session/prompt.ts` local + MCP execute — acceptance: acquireUseRelease + tryPromise; edit/write pass realpath resource (covers: S2)
+- [x] T3: Export gate from `tool/index.ts` — acceptance: tests import a stable path (covers: S2)
+- [x] T4: `bun test` gate + agent prompt tests and `bun typecheck` — acceptance: commands exit 0 (covers: S2)
+- [x] T5: Remove model-facing parallel/serial teaching from prompts — acceptance: agent tests assert absence (covers: S2)
