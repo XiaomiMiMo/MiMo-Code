@@ -7,6 +7,17 @@ import { injectScheduledPrompt } from "./prompt"
 import { SessionStatus } from "./status"
 import { SessionCompaction } from "./compaction"
 import { Bus } from "@/bus"
+/**
+ * Fires must land in the session that created the job, not whichever session
+ * happened to mount the process-wide scheduler first. Falls back to the
+ * mounting session for legacy tasks without an owner.
+ */
+export const fireTargetSessionId = (
+  task: Pick<CronTask, "createdBySessionId">,
+  fallback: SessionID,
+): SessionID => (task.createdBySessionId ? SessionID.make(task.createdBySessionId) : fallback)
+
+
 import { SessionID } from "./schema"
 import { Flag } from "@/flag/flag"
 import { Log } from "@/util"
@@ -234,7 +245,7 @@ export const layer = Layer.effect(
                   const firedAtISO = new Date().toISOString().replace(/\.\d{3}Z$/, "Z")
                   const value = `[cron fire @ ${firedAtISO}] ${resolved}`
                   yield* injectScheduledPrompt({
-                    sessionID,
+                    sessionID: fireTargetSessionId(task, sessionID),
                     value,
                     origin: {
                       kind: "cron",
