@@ -35,27 +35,57 @@ export const Logo = (props: { class?: string }) => {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 234 42"
+      viewBox="0 0 888 248"
       fill="none"
       classList={{ [props.class ?? ""]: !!props.class }}
     >
-      <g>
-        <path d="M18 30H6V18H18V30Z" fill="var(--icon-weak-base)" />
-        <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="var(--icon-base)" />
-        <path d="M48 30H36V18H48V30Z" fill="var(--icon-weak-base)" />
-        <path d="M36 30H48V12H36V30ZM54 36H36V42H30V6H54V36Z" fill="var(--icon-base)" />
-        <path d="M84 24V30H66V24H84Z" fill="var(--icon-weak-base)" />
-        <path d="M84 24H66V30H84V36H60V6H84V24ZM66 18H78V12H66V18Z" fill="var(--icon-base)" />
-        <path d="M108 36H96V18H108V36Z" fill="var(--icon-weak-base)" />
-        <path d="M108 12H96V36H90V6H108V12ZM114 36H108V12H114V36Z" fill="var(--icon-base)" />
-        <path d="M144 30H126V18H144V30Z" fill="var(--icon-weak-base)" />
-        <path d="M144 12H126V30H144V36H120V6H144V12Z" fill="var(--icon-strong-base)" />
-        <path d="M168 30H156V18H168V30Z" fill="var(--icon-weak-base)" />
-        <path d="M168 12H156V30H168V12ZM174 36H150V6H174V36Z" fill="var(--icon-strong-base)" />
-        <path d="M198 30H186V18H198V30Z" fill="var(--icon-weak-base)" />
-        <path d="M198 12H186V30H198V12ZM204 36H180V6H198V0H204V36Z" fill="var(--icon-strong-base)" />
-        <path d="M234 24V30H216V24H234Z" fill="var(--icon-weak-base)" />
-        <path d="M216 12V18H228V12H216ZM234 24H216V30H234V36H210V6H234V24Z" fill="var(--icon-strong-base)" />
+      {/* Xiaomi label */}
+      <text x="700" y="69" fill="#a9a9a9" font-family="monospace" font-size="28" font-weight="800" letter-spacing="1">Xiaomi</text>
+
+      {/* MIMO */}
+      <g fill="#ff7a3d">
+        {/* M */}
+        <rect x="138" y="115" width="18" height="93" />
+        <rect x="155" y="115" width="18" height="18" />
+        <rect x="172" y="133" width="17" height="37" />
+        <rect x="189" y="115" width="18" height="18" />
+        <rect x="206" y="115" width="18" height="93" />
+        {/* I */}
+        <rect x="240" y="115" width="18" height="93" />
+        {/* M */}
+        <rect x="274" y="115" width="18" height="93" />
+        <rect x="291" y="115" width="18" height="18" />
+        <rect x="308" y="133" width="17" height="37" />
+        <rect x="325" y="115" width="18" height="18" />
+        <rect x="342" y="115" width="18" height="93" />
+        {/* O */}
+        <rect x="376" y="115" width="68" height="18" />
+        <rect x="376" y="115" width="18" height="93" />
+        <rect x="426" y="115" width="18" height="93" />
+        <rect x="376" y="190" width="68" height="18" />
+      </g>
+
+      {/* CODE */}
+      <g fill="#a9a9a9">
+        {/* C */}
+        <rect x="495" y="115" width="52" height="18" />
+        <rect x="495" y="115" width="18" height="93" />
+        <rect x="495" y="190" width="52" height="18" />
+        {/* O */}
+        <rect x="563" y="115" width="68" height="18" />
+        <rect x="563" y="115" width="18" height="93" />
+        <rect x="613" y="115" width="18" height="93" />
+        <rect x="563" y="190" width="68" height="18" />
+        {/* D */}
+        <rect x="648" y="115" width="51" height="18" />
+        <rect x="648" y="115" width="18" height="93" />
+        <rect x="699" y="133" width="18" height="57" />
+        <rect x="648" y="190" width="51" height="18" />
+        {/* E */}
+        <rect x="733" y="115" width="68" height="18" />
+        <rect x="733" y="115" width="18" height="93" />
+        <rect x="733" y="151" width="51" height="18" />
+        <rect x="733" y="190" width="68" height="18" />
       </g>
     </svg>
   )
