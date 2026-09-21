@@ -23,6 +23,8 @@ export const dict = {
 
   "command.sidebar.toggle": "สลับแถบข้าง",
   "command.project.open": "เปิดโปรเจกต์",
+  "command.project.previous": "โปรเจกต์ก่อนหน้า",
+  "command.project.next": "โปรเจกต์ถัดไป",
   "command.provider.connect": "เชื่อมต่อผู้ให้บริการ",
   "command.server.switch": "สลับเซิร์ฟเวอร์",
   "command.settings.open": "เปิดการตั้งค่า",
@@ -235,6 +237,8 @@ export const dict = {
   "prompt.mode.shell": "เชลล์",
   "prompt.mode.normal": "พรอมต์",
   "prompt.mode.shell.exit": "กด esc เพื่อออก",
+  "session.child.promptDisabled": "เซสชันตัวแทนย่อยไม่สามารถรับคำสั่งได้",
+  "session.child.backToParent": "กลับไปยังเซสชันหลัก",
 
   "prompt.example.1": "แก้ไข TODO ในโค้ดเบส",
   "prompt.example.2": "เทคโนโลยีของโปรเจกต์นี้คืออะไร?",
@@ -505,6 +509,8 @@ export const dict = {
   "session.review.noVcs": "ไม่ตรวจพบระบบควบคุมเวอร์ชัน Git การเปลี่ยนแปลงจะไม่แสดง",
   "session.review.noSnapshot": "การติดตามสแนปชอตถูกปิดใช้งานในการกำหนดค่า ดังนั้นการเปลี่ยนแปลงเซสชันจึงไม่พร้อมใช้งาน",
   "session.review.noChanges": "ไม่มีการเปลี่ยนแปลง",
+  "session.review.noUncommittedChanges": "ยังไม่มีการเปลี่ยนแปลงที่ยังไม่ได้คอมมิต",
+  "session.review.noBranchChanges": "ยังไม่มีการเปลี่ยนแปลงในสาขา",
 
   "session.files.selectToOpen": "เลือกไฟล์เพื่อเปิด",
   "session.files.empty": "ไม่มีไฟล์",
@@ -604,6 +610,8 @@ export const dict = {
   "sidebar.project.recentSessions": "เซสชันล่าสุด",
   "sidebar.project.viewAllSessions": "ดูเซสชันทั้งหมด",
   "sidebar.project.clearNotifications": "ล้างการแจ้งเตือน",
+  "sidebar.empty.title": "ไม่มีโปรเจกต์ที่เปิดอยู่",
+  "sidebar.empty.description": "เปิดโปรเจกต์เพื่อเริ่มต้น",
 
   "app.name.desktop": "OpenCode Desktop",
 
@@ -616,6 +624,7 @@ export const dict = {
   "settings.desktop.wsl.description": "เรียกใช้เซิร์ฟเวอร์ OpenCode ภายใน WSL บน Windows",
 
   "settings.general.section.appearance": "รูปลักษณ์",
+  "settings.general.section.advanced": "ขั้นสูง",
   "settings.general.section.notifications": "การแจ้งเตือนระบบ",
   "settings.general.section.updates": "การอัปเดต",
   "settings.general.section.sounds": "เสียงเอฟเฟกต์",
@@ -640,6 +649,16 @@ export const dict = {
   "settings.general.row.followup.description": "เลือกว่าจะให้พร้อมท์ติดตามผลทำงานทันทีหรือรอในคิว",
   "settings.general.row.followup.option.queue": "คิว",
   "settings.general.row.followup.option.steer": "นำทาง",
+  "settings.general.row.showFileTree.title": "ต้นไม้ไฟล์",
+  "settings.general.row.showFileTree.description": "แสดงปุ่มสลับต้นไม้ไฟล์ในแถบด้านข้าง",
+  "settings.general.row.showNavigation.title": "ตัวควบคุมการนำทาง",
+  "settings.general.row.showNavigation.description": "แสดงปุ่มนำทางย้อนกลับและไปข้างหน้า",
+  "settings.general.row.showSearch.title": "จานคำสั่ง",
+  "settings.general.row.showSearch.description": "แสดงปุ่มค้นหาและจานคำสั่ง",
+  "settings.general.row.showStatus.title": "สถานะเซิร์ฟเวอร์",
+  "settings.general.row.showStatus.description": "แสดงปุ่มสถานะเซิร์ฟเวอร์",
+  "settings.general.row.showTerminal.title": "เทอร์มินัล",
+  "settings.general.row.showTerminal.description": "แสดงปุ่มเทอร์มินัล",
   "settings.general.row.reasoningSummaries.title": "แสดงสรุปการใช้เหตุผล",
   "settings.general.row.reasoningSummaries.description": "แสดงสรุปการใช้เหตุผลของโมเดลในไทม์ไลน์",
   "settings.general.row.shellToolPartsExpanded.title": "ขยายส่วนเครื่องมือ shell",
