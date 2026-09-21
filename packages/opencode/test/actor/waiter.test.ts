@@ -1,3 +1,4 @@
+import { ActorExecution } from "../../src/actor/execution"
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Bus } from "../../src/bus"
@@ -291,6 +292,8 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
           yield* registry.updateStatus(parent.id, "child", { status: "running" })
           let reads = 0
           const waiter = yield* Effect.gen(function* () {
+            const executions = yield* ActorExecution.Service
+            yield* executions.reserve(parent.id, "child")
             return yield* ActorWaiter.Service
           }).pipe(
             Effect.provide(Layer.fresh(ActorWaiter.layer)),
@@ -373,6 +376,8 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
             lifecycle: "ephemeral",
           })
           yield* registry.updateStatus(parent.id, "explore-2", { status: "running" })
+          const executions = yield* ActorExecution.Service
+          const execution = yield* executions.reserve(parent.id, "explore-2")
 
           yield* Effect.forkChild(
             Effect.gen(function* () {
@@ -390,6 +395,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
 
           expect(snap.status).toBe("idle")
           expect(snap.lastOutcome).toBe(lastOutcome)
+          yield* executions.release(execution)
           expect(snap.result).toBe(lastOutcome === "success" ? "result from slow path" : undefined)
           expect(snap.error).toBe(lastOutcome === "failure" ? "execution failed" : undefined)
         }),

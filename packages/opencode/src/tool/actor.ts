@@ -625,9 +625,10 @@ export const ActorTool = Tool.define(
         if (op.action ==="status") {
           const found = yield* findActor(op.actor_id)
           if (!found) return unknownResponse("status", op.actor_id)
-          const entry = found.entry
+          const entry = yield* waiter.status(found.entry)
           const snapshot = {
             status: entry.status,
+            executionActive: entry.executionActive,
             actor_id: entry.actorID,
             description: entry.description,
             agent: entry.agent,

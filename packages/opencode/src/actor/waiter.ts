@@ -1,5 +1,7 @@
 import { Context, Deferred, Effect, Layer } from "effect"
 import { Bus } from "@/bus"
+import { ActorExecution } from "@/actor/execution"
+import { SessionRunState } from "@/session/run-state"
 import { ActorRegistry } from "@/actor/registry"
 import type { Actor } from "@/actor/schema"
 import { Session } from "@/session"
@@ -10,6 +12,7 @@ import { parseReturnHeader, type ReturnStatus } from "@/actor/return-header"
 export interface WaitResult {
   status: Actor["status"] | "timeout" | "unknown"
   actor_id: string
+  executionActive?: boolean
   description?: string
   agent?: string
   background?: boolean
@@ -41,18 +44,36 @@ function isWaitResolving(entry: Pick<Actor, "status" | "lastOutcome" | "lifecycl
 }
 
 export interface Interface {
+  readonly status: (entry: Actor) => Effect.Effect<Actor & { executionActive: boolean }>
   readonly wait: (input: { sessionID: SessionID; actor_id: string; timeout_ms?: number }) => Effect.Effect<WaitResult>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ActorWaiter") {}
 
-export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Service | Session.Service> = Layer.effect(
+export const layer: Layer.Layer<
+  Service | ActorExecution.Service,
+  never,
+  Bus.Service | ActorRegistry.Service | Session.Service
+> = Layer.effect(
   Service,
   Effect.gen(function* () {
+    const executions = yield* ActorExecution.Service
+    const runs = yield* SessionRunState.Service
     const reg = yield* ActorRegistry.Service
     const bus = yield* Bus.Service
     const sessions = yield* Session.Service
     const context = yield* Effect.context()
+
+    // Execution belongs to this runtime. Persisted pending/running rows survive
+    // process exit and cannot prove that work is still executing here.
+    const status = Effect.fn("ActorWaiter.status")(function* (entry: Actor) {
+      const executionActive =
+        !!(yield* executions.current(entry.sessionID, entry.actorID)) ||
+        (yield* runs
+          .assertNotBusy(entry.sessionID, entry.actorID)
+          .pipe(Effect.match({ onFailure: () => true, onSuccess: () => false })))
+      return { ...entry, status: executionActive ? ("running" as const) : ("idle" as const), executionActive }
+    })
 
     // Pull the most recent assistant text + structured object from the actor's
     // slice. Used as result body when the actor reaches idle/success on
@@ -117,6 +138,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
       // Fast path: registry already in a wait-resolving state.
       const entry = yield* reg.get(input.sessionID, input.actor_id)
       if (!entry) return { status: "unknown" as const, actor_id: input.actor_id }
+      const current = yield* status(entry)
+      if (!current.executionActive && entry.status !== "idle") {
+        return { ...(yield* snapshot(input.sessionID, input.actor_id, current)), executionActive: false }
+      }
       if (isWaitResolving(entry)) return yield* snapshot(input.sessionID, input.actor_id, entry)
 
       const resolved = yield* Deferred.make<WaitResult>()
@@ -164,9 +189,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
       )
     })
 
-    return Service.of({ wait })
+    return Service.of({ wait, status })
   }),
-)
+).pipe(Layer.provideMerge(ActorExecution.layer), Layer.provide(SessionRunState.defaultLayer))
 
 export const defaultLayer = layer.pipe(
   Layer.provide(Bus.defaultLayer),

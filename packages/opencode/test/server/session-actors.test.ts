@@ -1,3 +1,5 @@
+import { ActorTool } from "../../src/tool/actor"
+import { MessageID } from "../../src/session/schema"
 import { afterEach, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { ActorExecution } from "../../src/actor/execution"
@@ -53,7 +55,28 @@ test("actor list reports runtime execution without rewriting persisted claims or
                   }[]
                 >,
             )
-            return actors.find((actor) => actor.actorID === actorID)!
+            const expected = actors.find((actor) => actor.actorID === actorID)!
+            const tool = yield* ActorTool
+            const def = yield* tool.init()
+            const responseForModel = yield* def.execute(
+              { operation: { action: "status", actor_id: actorID } },
+              {
+                sessionID: session.id,
+                messageID: MessageID.ascending(),
+                agent: "build",
+                abort: new AbortController().signal,
+                extra: {},
+                messages: [],
+                metadata: () => Effect.void,
+                ask: () => Effect.void,
+              },
+            )
+            expect(JSON.parse(responseForModel.output)).toMatchObject({
+              actor_id: actorID,
+              status: expected.status,
+              executionActive: expected.executionActive,
+            })
+            return expected
           })
           expect(yield* read).toMatchObject({ status: "idle", executionActive: false })
           expect((yield* registry.get(session.id, actorID))?.status).toBe("running")

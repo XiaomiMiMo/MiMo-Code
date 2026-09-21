@@ -1,3 +1,4 @@
+import { ActorExecution } from "../../src/actor/execution"
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
@@ -173,6 +174,8 @@ describe("actor tool — wait action", () => {
           lifecycle: "ephemeral",
         })
 
+        const executions = yield* ActorExecution.Service
+        const execution = yield* executions.reserve(chat.id, actorID)
         const tool = yield* ActorTool
         const def = yield* tool.init()
         const start = Date.now()
@@ -181,6 +184,7 @@ describe("actor tool — wait action", () => {
           ctxFor(chat.id),
         )
         const elapsed = Date.now() - start
+        yield* executions.release(execution)
 
         const snap = parseOutput(result.output)
         expect(snap.status).toBe("timeout")

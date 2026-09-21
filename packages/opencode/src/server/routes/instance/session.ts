@@ -19,7 +19,7 @@ import { Snapshot } from "@/snapshot"
 import { Command } from "@/command"
 import { Log } from "@/util"
 import { ActorRegistry } from "@/actor/registry"
-import { ActorExecution } from "@/actor/execution"
+import { ActorWaiter } from "@/actor/waiter"
 import { TaskRegistry } from "@/task/registry"
 import { Task } from "@/task/schema"
 import { Permission } from "@/permission"
@@ -1625,25 +1625,11 @@ export const SessionRoutes = lazy(() =>
           c,
           Effect.gen(function* () {
             const reg = yield* ActorRegistry.Service
-            const executions = yield* ActorExecution.Service
-            const runs = yield* SessionRunState.Service
+            const waiter = yield* ActorWaiter.Service
             const session = yield* Session.Service
             yield* session.get(sessionID)
             const actors = yield* reg.listBySession(sessionID)
-            return yield* Effect.forEach(actors, (actor) =>
-              Effect.gen(function* () {
-                const executionActive = !!(yield* executions.current(sessionID, actor.actorID)) || (yield* runs
-                  .assertNotBusy(sessionID, actor.actorID)
-                  .pipe(Effect.match({ onFailure: () => true, onSuccess: () => false })))
-                // Database status survives process exit. Reading history must not
-                // claim it is executing here or mutate another process's rows.
-                return {
-                  ...actor,
-                  status: executionActive ? ("running" as const) : ("idle" as const),
-                  executionActive,
-                }
-              }),
-            )
+            return yield* Effect.forEach(actors, waiter.status)
           }),
         )
         return c.json(actors)
