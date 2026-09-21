@@ -24,15 +24,13 @@ export const InstanceBootstrap = Effect.gen(function* () {
   yield* Config.Service.use((svc) => svc.get())
   // Plugin can mutate config so it has to be initialized before anything else.
   yield* Plugin.Service.use((svc) => svc.init())
-  // Per-directory reclaim: ActorRegistry layer is process-shared and does not
-  // rebuild when a new directory enters. Question orphans for this directory
-  // must be settled here. SessionStatus for a freshly entered directory is
-  // empty at bootstrap; directory scoping is the liveness boundary.
+  // Keep startup independent of transcript size. Only actor metadata is
+  // reclaimed here; orphan tools are handled when their session runs.
   yield* Effect.sync(() => {
-    sweepAbandonedZombies({ directory: Instance.directory })
+    sweepAbandonedZombies()
   }).pipe(
     Effect.catch((err: unknown) =>
-      Effect.sync(() => Log.Default.warn("abandon question sweep failed", { error: String(err) })),
+      Effect.sync(() => Log.Default.warn("abandoned actor sweep failed", { error: String(err) })),
     ),
   )
   yield* Effect.all(
