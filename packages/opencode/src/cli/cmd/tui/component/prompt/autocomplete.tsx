@@ -531,7 +531,7 @@ export function Autocomplete(props: {
   }
 
   function show(mode: "@" | "$" | "/") {
-    command.keybinds(false)
+    if (!store.visible) command.keybinds(false)
     setStore({
       visible: mode,
       index: props.input().cursorOffset,
@@ -539,9 +539,16 @@ export function Autocomplete(props: {
   }
 
   function hide() {
-    command.keybinds(true)
+    if (store.visible) command.keybinds(true)
     setStore("visible", false)
   }
+
+  // Clean up on unmount: if autocomplete was visible when the component is
+  // removed (e.g. session switch), decrement the suspend counter so keybinds
+  // don't stay permanently blocked.
+  onCleanup(() => {
+    if (store.visible) command.keybinds(true)
+  })
 
   function clearTriggerRange() {
     if (store.visible !== "/") return
