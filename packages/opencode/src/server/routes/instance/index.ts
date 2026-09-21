@@ -32,6 +32,12 @@ import { SyncRoutes } from "./sync"
 import { InstanceMiddleware } from "./middleware"
 import { jsonRequest } from "./trace"
 
+export function agentListItem(agent: Agent.Info): Agent.Info {
+  const result = { ...agent }
+  delete result.prompt
+  return result
+}
+
 export const InstanceRoutes = (upgrade: UpgradeWebSocket): Hono => {
   const app = new Hono()
 
@@ -228,7 +234,7 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket): Hono => {
       async (c) =>
         jsonRequest("InstanceRoutes.agent.list", c, function* () {
           const svc = yield* Agent.Service
-          return yield* svc.list()
+          return (yield* svc.list()).map(agentListItem)
         }),
     )
     .get(
