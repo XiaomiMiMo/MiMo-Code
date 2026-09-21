@@ -67,10 +67,18 @@ ignored (residual risk accepted).
 Barrier-class: `apply_patch` (multi-file), `bash`, `task`, MCP tools, and any
 other tool not in the two parallel classes.
 
-**Gate bypass (orchestrators):** `actor`, `exec`, and `workflow` do not queue.
-They nest further tool execution (`actor.run`/`wait`, `exec` scripts); holding
-the gate across that wait deadlocks children that share the same
-`Instance.directory`. Nested leaf tools still enter the gate themselves.
+**Gate surfaces**
+
+| Surface | Gate |
+|---|---|
+| Model-facing local `tool()` execute | Yes — always, except `GATE_BYPASS_TOOLS` |
+| Model-facing MCP `item.execute` | Yes — always, except `GATE_BYPASS_TOOLS` |
+| exec guest builtin (`def.execute` in tool-script) | No — never enters this wrapper |
+| exec guest MCP (`execMcpTools`) | No — same pipeline body, no queue |
+| `actor` / `exec` / `workflow` top-level | Bypass (nesting deadlock) |
+
+MCP does not inspect its caller: two explicit registration surfaces share
+`executeMcpBody`; only the model-facing one wraps `acquireUseRelease`.
 
 ### Queue / running protocol
 

@@ -17,9 +17,10 @@ export const PARALLEL_READONLY_TOOLS: ReadonlySet<string> = new Set(["read", "gr
 export const PATH_WRITE_TOOLS: ReadonlySet<string> = new Set(["edit", "write"])
 
 /**
- * Orchestrators that nest further tool execution (actor.run/wait, exec scripts,
- * workflow). Holding the gate across a nested wait deadlocks children that
- * share the same Instance.directory — these tools must not queue.
+ * Top-level model tool-calls for these tools must not queue: they nest more
+ * tool execution (actor.run/wait, exec scripts, workflow). Holding the gate
+ * across that wait deadlocks children that share the same Instance.directory.
+ * Nested leaf tools still enter the gate on their own model-facing surfaces.
  */
 export const GATE_BYPASS_TOOLS: ReadonlySet<string> = new Set(["actor", "exec", "workflow"])
 
