@@ -2789,6 +2789,124 @@ for (const mode of ["throw", "reject", "short"] as const) {
   }
 }
 
+for (const mode of ["text", "structured", "meta", "legacy", "structured-error", "progress"] as const) {
+  const payload = "诊断😀".repeat(100_000)
+  const result: CallToolResult = {
+    content: [{ type: "text", text: mode === "text" ? payload : "result" }],
+    ...(mode.startsWith("structured") ? { structuredContent: { payload } } : {}),
+    _meta: mode === "meta" ? { payload } : { traceId: "test-trace" },
+    ...(mode === "legacy" ? { metadata: { payload } } : {}),
+    isError: mode === "structured-error",
+  }
+  for (const nested of [false, true]) {
+    const progressReady = defer<void>()
+    const boundedIt = testEffect(
+      makeHttp(
+        mcpLayer(() => ({
+          diagnostic: dynamicTool({
+            description: "Return a large MCP result",
+            inputSchema: jsonSchema({ type: "object", properties: {} }),
+            execute: async (_args, options) => {
+              if (mode === "progress") {
+                await progressReady.promise
+                const context = options.experimental_context as {
+                  onMcpToolProgress: (meta: Record<string, unknown>) => Promise<unknown>
+                }
+                await context.onMcpToolProgress({ "mimo/toolSurface": { payload: payload.slice(0, 100_000) } })
+              }
+              return result
+            },
+          }),
+        })),
+      ),
+    )
+    boundedIt.live(
+      `MCP oversized metadata stays bounded ${mode} ${nested ? "exec" : "direct"}`,
+      () =>
+        provideTmpdirServer(
+          Effect.fnUntraced(function* ({ llm }) {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({
+              title: "Bounded tool results",
+              permission: [{ permission: "*", pattern: "*", action: "allow" }],
+            })
+            const eventSizes: number[] = []
+            const off = Bus.subscribe(MessageV2.Event.PartUpdated, (event) => {
+              if (event.properties.part.sessionID !== session.id || event.properties.part.type !== "tool") return
+              eventSizes.push(Buffer.byteLength(JSON.stringify(event.properties.part)))
+              if (event.properties.part.state.status === "running") progressReady.resolve()
+            })
+            yield* Effect.addFinalizer(() => Effect.sync(off))
+            yield* prompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              model: nested ? mcpRef : ref,
+              noReply: true,
+              parts: [{ type: "text", text: "run diagnostic" }],
+            })
+            yield* llm.tool(
+              nested ? "exec" : "diagnostic",
+              nested
+                ? {
+                    code: "const result = await tools.diagnostic({}); return { length: result.structured?.payload.length ?? result.output.length }",
+                  }
+                : {},
+            )
+            yield* llm.text("done")
+            yield* prompt.loop({ sessionID: session.id })
+            const tool = (yield* MessageV2.filterCompactedEffect(session.id))
+              .flatMap((message) => message.parts)
+              .find((part) => part.type === "tool" && part.tool === (nested ? "exec" : "diagnostic"))
+            if (tool?.type !== "tool" || tool.state.status === "pending") throw new Error("missing tool state")
+            const subparts = tool.state.metadata?.sub_parts as
+              | Array<{ tool: string; state: MessageV2.ToolPart["state"] }>
+              | undefined
+            const state = nested ? subparts?.find((part) => part.tool === "diagnostic")?.state : tool.state
+            if (!state || (state.status !== "completed" && state.status !== "error")) throw new Error("missing result")
+            expect(state.status).toBe(result.isError ? "error" : "completed")
+            expect(Buffer.byteLength(JSON.stringify(tool))).toBeLessThan(110 * 1024)
+            expect(eventSizes.length).toBeGreaterThan(0)
+            expect(Math.max(...eventSizes)).toBeLessThan(110 * 1024)
+            expect(Buffer.byteLength(state.status === "error" ? state.error : state.output)).toBeLessThan(55 * 1024)
+            const metadata = state.metadata?.mcp as {
+              isError: boolean
+              structuredContentPath?: string
+              legacyMetadataPath?: string
+              _meta?: { traceId?: string; outputPath?: string }
+            }
+            expect(metadata.isError).toBe(result.isError ?? false)
+            if (mode !== "meta") expect(metadata._meta).toEqual({ traceId: "test-trace" })
+            if (mode !== "text" && mode !== "progress") {
+              const file =
+                mode === "meta"
+                  ? metadata._meta?.outputPath
+                  : mode === "legacy"
+                    ? metadata.legacyMetadataPath
+                    : metadata.structuredContentPath
+              expect(typeof file).toBe("string")
+              const saved = yield* Effect.promise(() => Bun.file(file!).json())
+              expect(saved.payload === payload).toBe(true)
+            }
+            if (mode === "text" || mode.startsWith("structured")) {
+              expect(state.metadata?.truncated).toBe(true)
+              const saved = yield* Effect.promise(() => Bun.file(String(state.metadata?.outputPath)).text())
+              expect(saved.includes(payload)).toBe(true)
+            }
+            if (nested && mode === "structured" && tool.state.status === "completed") {
+              expect(tool.state.output).toContain(`"length": ${payload.length}`)
+            }
+            const followup = JSON.stringify((yield* llm.inputs).at(-1))
+            expect(followup).not.toContain("test-trace")
+            expect(Buffer.byteLength(followup)).toBeLessThan(256 * 1024)
+          }),
+          { git: true, config: providerCfg },
+        ),
+      30_000,
+    )
+  }
+}
+
 mcpIt.live("MCP isError becomes a tool error without losing standard result fields", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {

@@ -109,6 +109,7 @@ import { builtinSkillRoot, matchDocumentSkills } from "@/skill/builtin/extract"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
 import { normalizeToolResult } from "../mcp/tool-result"
+import { persistToolMetadata, STRUCTURED_CONTENT } from "../mcp/tool-metadata"
 import { LSP } from "../lsp"
 import { Flag } from "../flag/flag"
 import { ulid } from "ulid"
@@ -2103,14 +2104,25 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 try: () => execute(mcpBeforeOutput.args, {
                   ...opts,
                   experimental_context: {
-                    onMcpToolProgress: (meta: Record<string, unknown>) => run.promise(
-                      input.processor.updateToolCall(opts.toolCallId, (part) => {
-                        if (part.state.status !== "running") return part
-                        return { ...part, state: { ...part.state, metadata: {
-                          ...part.state.metadata, mcp: { _meta: meta },
-                        } } }
-                      }),
-                    ),
+                    onMcpToolProgress: (meta: Record<string, unknown>) =>
+                      run.promise(
+                        Effect.gen(function* () {
+                          const metadata = yield* persistToolMetadata({ _meta: meta }, truncate)
+                          return yield* input.processor.updateToolCall(opts.toolCallId, (part) => {
+                            if (part.state.status !== "running") return part
+                            return {
+                              ...part,
+                              state: {
+                                ...part.state,
+                                metadata: {
+                                  ...part.state.metadata,
+                                  mcp: metadata,
+                                },
+                              },
+                            }
+                          })
+                        }),
+                      ),
                   },
                 }),
                 catch: (error) => error,
@@ -2146,6 +2158,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               )
               const metadata = {
                 ...normalized.metadata,
+                mcp: yield* persistToolMetadata(normalized.metadata.mcp, truncate),
                 truncated: truncated.truncated,
                 ...(truncated.truncated && { outputPath: truncated.outputPath }),
               }
@@ -2186,6 +2199,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 metadata,
                 output: truncated.content,
                 attachments,
+                [STRUCTURED_CONTENT]: normalized.structuredContent,
               }
               if (opts.abortSignal?.aborted) {
                 yield* input.processor.completeToolCall(opts.toolCallId, output)
