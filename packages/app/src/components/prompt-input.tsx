@@ -53,6 +53,7 @@ import { PromptContextItems } from "./prompt-input/context-items"
 import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
+import { numpadInputText } from "./prompt-input/numpad"
 import { ImagePreview } from "@mimo-ai/ui/image-preview"
 import { useQueries, useQuery } from "@tanstack/solid-query"
 import { loadAgentsQuery, loadProvidersQuery } from "@/context/global-sync/bootstrap"
@@ -1108,6 +1109,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       event.preventDefault()
       if (store.mode !== "normal") return
       pick()
+      return
+    }
+
+    const numpadText = numpadInputText(event)
+    if (numpadText) {
+      event.preventDefault()
+      addPart({ type: "text", content: numpadText, start: 0, end: 0 })
       return
     }
 
