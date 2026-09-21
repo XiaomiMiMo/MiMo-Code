@@ -63,11 +63,10 @@ export function recoverErrorMessage(error: unknown): { message: string; variant:
   return { message, variant: isBusyToken(message) ? "busy" : "error" }
 }
 
-/** TUI /recover entry: pick candidate, dispatch resume, map 202/reject/busy. */
+/** TUI /recover entry: pick candidate, dispatch resume, map 202/reject. */
 export async function runSessionRecover(deps: RecoverDeps): Promise<RecoverOutcome> {
-  if (deps.status?.type === "busy" || deps.status?.type === "retry") {
-    return { type: "busy" }
-  }
+  // C-09: busy no longer blocks recover — resume admits into the Controller
+  // mailbox (202) instead of 409. Do not treat status.busy as a hard stop.
   let list: RecoverCandidate[]
   try {
     list = await deps.listCandidates()

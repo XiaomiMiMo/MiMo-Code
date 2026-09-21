@@ -191,7 +191,8 @@ export const layer: Layer.Layer<
       // not affect delivery. `wake: false` keeps the durable row without
       // scheduling a new turn (session abort / process-group kill).
       const promptRef = sessionPromptRef.current
-      // Durable wake Intent (turn-queue) — coalescable mailbox entry.
+      // Durable wake Intent (turn-queue). Wake dispatch is promptRef.loop —
+      // no Controller kick (that would race the explicit loop and steal the turn).
       const tq = turnQueueRef.current
       if (tq && input.wake !== false) {
         yield* tq
@@ -212,20 +213,14 @@ export const layer: Layer.Layer<
           .loop({
             sessionID: input.receiverSessionID,
             agentID: input.receiverActorID,
-            // Woken turns notify their parent on completion. The spawn turn goes
-            // through SessionPrompt.prompt (no flag) so forkWork.notify remains
-            // the sole notifier for turn 1 — no double-notify.
             notifyParentOnComplete: true,
             inboxWake: true,
-            // Inbox wakes are internal machine scheduling (actor notifications / queued
-            // actor traffic). They must NOT be labeled user — real user turns enter via
-            // prompt()/Desktop/TUI/HTTP/command which default source to "user".
             source: "spawn",
+            // Force-run: wake dispatch is the inbox's job. requireClaim would
+            // no-op when coalesce returns an already-claimed/settled receipt.
           })
           .pipe(Effect.ignore, Effect.forkIn(scope))
       } else {
-        // Test fixtures / renderer-only paths can run without SessionPrompt.
-        // Row is durable; will be drained on next runLoop iteration.
         log.warn("inbox.send: sessionPromptRef.current undefined — wake skipped", {
           receiverActorID: input.receiverActorID,
         })

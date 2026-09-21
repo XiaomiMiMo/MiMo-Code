@@ -1090,11 +1090,7 @@ export const SessionRoutes = lazy(() =>
         if (!!query.modelProviderID !== !!query.modelID) {
           return c.json({ data: { name: "InvalidRequest", data: { message: "modelProviderID and modelID must be provided together" } } }, 400)
         }
-        await runRequest(
-          "SessionRoutes.resume.assertNotBusy",
-          c,
-          SessionRunState.Service.use((svc) => svc.assertNotBusy(params.sessionID, query.agentID)),
-        )
+        // C-03: no assertNotBusy 409 — resume admits into the Controller mailbox.
         await runRequest(
           "SessionRoutes.resume.validate",
           c,
@@ -1182,11 +1178,7 @@ export const SessionRoutes = lazy(() =>
         if (!!query.modelProviderID !== !!query.modelID) {
           return c.json({ data: { name: "InvalidRequest", data: { message: "modelProviderID and modelID must be provided together" } } }, 400)
         }
-        await runRequest(
-          "SessionRoutes.resumeUser.assertNotBusy",
-          c,
-          SessionRunState.Service.use((svc) => svc.assertNotBusy(params.sessionID, query.agentID)),
-        )
+        // C-03: no assertNotBusy 409 on resumeUser.
         // Explicit userMessageID → validate it is still the trailing user.
         // Omitted → the engine resolves the latest recovery candidate (404 if none).
         if (body?.userMessageID) {
@@ -1258,7 +1250,8 @@ export const SessionRoutes = lazy(() =>
       "/:sessionID/message",
       describeRoute({
         summary: "Send message",
-        description: "Create and send a new message to a session, streaming the AI response.",
+        description:
+          "Create and send a new message to a session. Busy never 409: admit queues with 202+receiptId; idle streams 200.",
         operationId: "session.prompt",
         responses: {
           200: {
@@ -1274,7 +1267,21 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 404, 409),
+          202: {
+            description: "Queued (busy) — durable receipt; poll GET /receipt/:id",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.object({
+                    info: MessageV2.User,
+                    parts: MessageV2.Part.array(),
+                    receiptId: z.string().optional(),
+                  }),
+                ),
+              },
+            },
+          },
+          ...errors(400, 404),
         },
       }),
       validator(
@@ -1286,8 +1293,10 @@ export const SessionRoutes = lazy(() =>
       validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
 
-        // Busy main: persist + admit (noReply) and return 202+receipt instead of 409.
+        // C-08: no assertNotBusy TOCTOU. Controller-atomic: persist + admit always;
+        // 202 when the runner is busy (or claim did not start in-request), 200 stream when idle.
         const busy = await runRequest(
           "SessionRoutes.prompt.assertNotBusy",
           c,
@@ -1301,7 +1310,6 @@ export const SessionRoutes = lazy(() =>
           ),
         )
         if (busy) {
-          const body = c.req.valid("json")
           const queued = await runRequest(
             "SessionRoutes.prompt.queue",
             c,
@@ -1319,25 +1327,7 @@ export const SessionRoutes = lazy(() =>
                 }),
               )
             : undefined
-          // If the runner went idle in the window, kick a turn so the queued
-          // message is not stranded (TOCTOU from the approved spec).
-          const stillBusy = await runRequest(
-            "SessionRoutes.prompt.queue.recheck",
-            c,
-            SessionRunState.Service.use((svc) =>
-              svc
-                .assertNotBusy(sessionID)
-                .pipe(
-                  Effect.as(false as const),
-                  Effect.catch((e) => (e instanceof Session.BusyError ? Effect.succeed(true as const) : Effect.fail(e))),
-                ),
-            ),
-          )
-          if (!stillBusy) {
-            void runRequest("SessionRoutes.prompt.queue.wake", c, SessionPrompt.Service.use((svc) =>
-              svc.loop({ sessionID }),
-            )).catch((error) => log.error("session queue wake failed", { sessionID, error }))
-          }
+          // admit() already kicked the Controller scheduler (TOCTOU-safe).
           c.status(202)
           return c.json({
             info: queued.info,
@@ -1376,11 +1366,19 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "Send async message",
         description:
-          "Create and send a new message to a session asynchronously, starting the session if needed and returning immediately.",
+          "Create and send a new message to a session asynchronously. Returns 202 + receiptId (preferred) or 204 (compat).",
         operationId: "session.prompt_async",
         responses: {
+          202: {
+            description: "Accepted — durable receipt",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ receiptId: z.string().optional() })),
+              },
+            },
+          },
           204: {
-            description: "Prompt accepted",
+            description: "Prompt accepted (deprecated compat; no receipt body)",
           },
           ...errors(400, 404),
         },
@@ -1396,10 +1394,19 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
         const releaseInstance = Instance.claim(Instance.directory)
+        let receiptId: string | undefined
         void runRequest(
           "SessionRoutes.prompt_async",
           c,
-          SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })),
+          SessionPrompt.Service.use((svc) =>
+            svc.prompt({ ...body, sessionID, noReply: true }).pipe(
+              Effect.tap((msg) =>
+                Effect.sync(() => {
+                  receiptId = msg.info.id
+                }),
+              ),
+            ),
+          ),
         ).catch((err) => {
           log.error("prompt_async failed", { sessionID, error: err })
           void Bus.publish(Session.Event.Error, {
@@ -1407,8 +1414,10 @@ export const SessionRoutes = lazy(() =>
             error: new NamedError.Unknown({ message: err instanceof Error ? err.message : String(err) }).toObject(),
           })
         }).finally(releaseInstance)
-
-        return c.body(null, 204)
+        // Preferred contract: 202 + receiptId (message id is the stable idempotency key).
+        c.status(202)
+        c.header("Deprecation", "204")
+        return c.json({ receiptId })
       },
     )
     .get(
@@ -1420,6 +1429,19 @@ export const SessionRoutes = lazy(() =>
         responses: {
           200: {
             description: "Receipt",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.object({
+                    id: z.string(),
+                    state: z.enum(["accepted", "claimed", "settled", "cancelled", "rejected"]),
+                    outcome: z.enum(["success", "assistant_error", "interrupted", "never_ran"]).optional(),
+                    messageId: z.string().optional(),
+                    error: z.string().optional(),
+                  }),
+                ),
+              },
+            },
           },
           ...errors(400, 404),
         },

@@ -23,7 +23,7 @@ import * as Session from "./session"
 import { Agent } from "../agent/agent"
 import { decideAskRouting, hasActorTool, resolveInvalidOutputPolicy } from "@/agent/config"
 import { makeTerminalNotifier } from "@/actor/notification"
-import { turnQueueRef } from "@/turn-queue"
+import { turnQueueRef, schedulerRef, type Lane } from "@/turn-queue"
 import { ActorExecution } from "@/actor/execution"
 import { parseReturnHeader } from "@/actor/return-header"
 import { runTurn } from "@/actor/turn"
@@ -772,6 +772,12 @@ export const layer = Layer.effect(
       cancelPendingHints(sessionID)
       // Invalidate remaining cascade items that have not yet acquired ActorExecution.
       cascadeEpochBySession.set(sessionID, (cascadeEpochBySession.get(sessionID) ?? 0) + 1)
+      // C-01/cancel-epoch: bump persisted epoch and drop queued receipts FIRST so
+      // a kick cannot start pre-abort work after runners go Idle.
+      const tqCancel = turnQueueRef.current
+      if (tqCancel) {
+        yield* tqCancel.abortSession(sessionID, "drop").pipe(Effect.catchCause(() => Effect.void))
+      }
       const actors = yield* actorRegistry.listBySession(sessionID)
       const nonMain = actors.filter((actor) => actor.actorID !== "main")
       // Phase 1 — mark executions before interrupt (terminal handlers read this flag).
@@ -831,6 +837,9 @@ export const layer = Layer.effect(
       // session — desktop live/history both read that part for the terminal pill.
       // drain does NOT start an LLM turn.
       yield* inbox.drain(sessionID, "main").pipe(Effect.ignore)
+      // Abort means idle: force-clear session status so a racing kick/settle
+      // cannot leave `busy` after process-group kill (C-01 quiet abort).
+      yield* status.set(sessionID, { type: "idle" }).pipe(Effect.catch(() => Effect.void))
     })
 
     // Shared rebuild-from-checkpoint step used by BOTH the automatic overflow
@@ -3457,6 +3466,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const previous = eligibleTitle ? yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" }) : []
         const message = yield* createUserMessage(input)
         yield* sessions.touch(input.sessionID)
+        // C-06: boot reconcile on first use — cancel stale claimed/accepted from
+        // prior process, then Controller kick drains leftover accepted work.
+        const tqBoot = turnQueueRef.current
+        if (tqBoot && (input.agentID ?? "main") === "main") {
+          yield* tqBoot.reconcileOnBoot(input.sessionID).pipe(Effect.catchCause(() => Effect.void))
+        }
         // TurnQueue: durable admit for user-facing prompts (T5). spawn/hook
         // slices are scheduled by the actor system, not the user mailbox.
         const tq = turnQueueRef.current
@@ -3490,6 +3505,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // turn entirely. Running loop() here would produce a spurious assistant
         // response with no user turn.
         if (message.parts.length === 0) return message
+        // loop() owns claim/ack for this turn (C-01). prompt only admits.
+        // requireClaim only when this prompt admitted a receipt (user/main):
+        // claim-empty then means abort or another run already owns the work.
         const final = yield* loop({
           sessionID: input.sessionID,
           agentID: input.agentID ?? "main",
@@ -3499,25 +3517,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // Internal callers must pass explicit non-user source (spawn/hook).
           source: input.source ?? "user",
           deferInbox: (input.source ?? "user") === "hook" && input.agentID !== undefined && input.agentID !== "main",
+          requireClaim: promptReceiptId !== undefined,
         })
-        // Settle the durable prompt receipt after the turn (best-effort).
-        if (tq && promptReceiptId) {
-          const failed = final.info.role === "assistant" && !!final.info.error
-          yield* tq
-            .ack(
-              { sessionID: input.sessionID, agentID: input.agentID ?? "main" },
-              message.info.id,
-              [
-                {
-                  receiptId: promptReceiptId,
-                  outcome: failed ? "assistant_error" : "success",
-                  messageId: final.info.role === "assistant" ? final.info.id : undefined,
-                  error: failed && final.info.role === "assistant" ? String(final.info.error) : undefined,
-                },
-              ],
-            )
-            .pipe(Effect.catchCause(() => Effect.void))
-        }
         return final
       },
     )
@@ -3699,6 +3700,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
        * Trailing-user resume sets this; empty-shell user-resume allows completed siblings.
        */
       strictParentTail?: boolean,
+      /**
+       * TurnQueue claim frontier (C-01). Mid-turn pickup of a newer user requires
+       * extendClaim before treating `id > claimFrontier` as part of this run.
+       */
+      claimFrontier?: MessageID,
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (
         sessionID: SessionID,
@@ -3712,6 +3718,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         turnSource?: "user" | "spawn" | "hook",
         parentUserID?: MessageID,
         strictParentTail = false,
+        claimFrontier?: MessageID,
       ) {
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
@@ -4604,6 +4611,31 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             system: sessionPrompt.system,
             systemMode: sessionPrompt.systemMode,
             harness: sessionPrompt.harness,
+          }
+          // C-01 mid-turn pickup: a user after claimFrontier is not in this claim.
+          // extendClaim folds it in (and updates frontier) or the turn must end.
+          if (claimFrontier && lastUser.id > claimFrontier) {
+            const tqMid = turnQueueRef.current
+            if (tqMid) {
+              const extended = yield* tqMid
+                .extendClaim({ sessionID, agentID: agentID ?? "main" }, Date.now())
+                .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+              if (extended) {
+                claimFrontier = extended.claimFrontier ?? claimFrontier
+              } else {
+                // Cannot extend — leave the newer user `accepted` for the next claim.
+                // Stop this turn at the previous frontier (do not consume unclaimed).
+                const priorUser = [...msgs].reverse().find((m) => m.info.role === "user" && m.info.id <= claimFrontier!)
+                if (priorUser && priorUser.info.role === "user") {
+                  lastUser = {
+                    ...priorUser.info,
+                    system: sessionPrompt.system,
+                    systemMode: sessionPrompt.systemMode,
+                    harness: sessionPrompt.harness,
+                  }
+                }
+              }
+            }
           }
           const usageRecovered =
             !!lastFinished &&
@@ -5825,17 +5857,68 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       "SessionPrompt.loop",
     )(function* (input: z.infer<typeof LoopInput>) {
       const agentID = input.agentID ?? "main"
-      const work = runLoop(
-        input.sessionID,
-        agentID,
-        input.task_id,
-        input.titleLocale,
-        input.deferInbox,
-        undefined,
-        undefined,
-        undefined,
-        input.source,
-      )
+      const lane: Lane = { sessionID: input.sessionID, agentID }
+      const tq = turnQueueRef.current
+      // C-01: claim eligible receipts for this run; ack/settle at end.
+      // runLoop still reloads the full table; claimFrontier is the consume bound.
+      const claimedWork = Effect.gen(function* () {
+        const runId = Date.now()
+        const claim = tq ? yield* tq.claimNext(lane, runId).pipe(Effect.catchCause(() => Effect.succeed(undefined))) : undefined
+        // C-01: Controller kick / admitted prompts must not start a runLoop with
+        // no claim (post-abort or already claimed elsewhere). spawn/hook prompt()
+        // does not admit and keeps force-run semantics (requireClaim not set).
+        if (tq && input.requireClaim && !claim) {
+          return yield* lastAssistant(input.sessionID, agentID)
+        }
+        const claimed = claim?.receipts ?? []
+        // No claim (spawn/hook/legacy loop): runLoop unchanged (no frontier gate).
+        if (claimed.length === 0) {
+          return yield* runLoop(
+            input.sessionID,
+            agentID,
+            input.task_id,
+            input.titleLocale,
+            input.deferInbox,
+            undefined,
+            undefined,
+            undefined,
+            input.source,
+          )
+        }
+        // Only prompt claims bound the consume frontier. A wake/shell-only claim
+        // must still process inbox-drained users (extendClaim would fail).
+        const promptClaimed = claimed.some((r) => r.intent.kind === "prompt")
+        const claimFrontier = promptClaimed ? claim?.claimFrontier : undefined
+        const final = yield* runLoop(
+          input.sessionID,
+          agentID,
+          input.task_id,
+          input.titleLocale,
+          input.deferInbox,
+          undefined,
+          undefined,
+          undefined,
+          input.source,
+          undefined,
+          false,
+          claimFrontier,
+        )
+        const failed = final.info.role === "assistant" && !!final.info.error
+        yield* tq!
+          .ack(
+            lane,
+            claim?.claimFrontier,
+            claimed.map((r) => ({
+              receiptId: r.id,
+              outcome: failed ? ("assistant_error" as const) : ("success" as const),
+              messageId: final.info.role === "assistant" ? final.info.id : undefined,
+              error: failed && final.info.role === "assistant" ? String(final.info.error) : undefined,
+            })),
+          )
+          .pipe(Effect.catchCause(() => Effect.void))
+        return final
+      })
+      const work = claimedWork
       if (!input.notifyParentOnComplete || agentID === "main") {
         return yield* state.ensureRunning(input.sessionID, agentID, lastAssistant(input.sessionID, agentID), work)
       }
@@ -5937,7 +6020,37 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     const shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError> = Effect.fn("SessionPrompt.shell")(
       function* (input: ShellInput) {
-        return yield* state.startShell(input.sessionID, lastAssistant(input.sessionID), shellImpl(input))
+        // C-03: shell goes through Controller admit (durable), then exclusive lease.
+        const tqShell = turnQueueRef.current
+        let shellReceiptId: string | undefined
+        if (tqShell) {
+          const receipt = yield* tqShell
+            .admit({
+              lane: { sessionID: input.sessionID, agentID: "main" },
+              intent: { kind: "shell", command: input.command },
+              idempotencyKey: `shell:${input.sessionID}:${input.command}`,
+            })
+            .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+          shellReceiptId = receipt?.id
+        }
+        const final = yield* state.startShell(input.sessionID, lastAssistant(input.sessionID), shellImpl(input))
+        if (tqShell && shellReceiptId) {
+          const failed = final.info.role === "assistant" && !!final.info.error
+          yield* tqShell
+            .ack(
+              { sessionID: input.sessionID, agentID: "main" },
+              undefined,
+              [
+                {
+                  receiptId: shellReceiptId,
+                  outcome: failed ? "assistant_error" : "success",
+                  messageId: final.info.role === "assistant" ? final.info.id : undefined,
+                },
+              ],
+            )
+            .pipe(Effect.catchCause(() => Effect.void))
+        }
+        return final
       },
     )
 
@@ -6581,7 +6694,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
-      yield* state.assertNotBusy(input.sessionID, input.agentID)
+      // C-03: no assertNotBusy 409. Admit a durable resume Intent; launch still
+      // takes an exclusive lease. Busy lanes leave the receipt `accepted` and the
+      // Controller kick re-enters when idle.
+      const tqResume = turnQueueRef.current
+      let resumeReceiptId: string | undefined
       // Single recovery() read (R003): no-ID callers take candidates.at(-1);
       // explicit IDs look it up in the same snapshot. Avoids double-read TOCTOU.
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
@@ -6618,6 +6735,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         userMessageID: target.userMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
+      // C-03: durable resume Intent after plan is known (assistantID / parent).
+      if (tqResume) {
+        const receipt = yield* tqResume
+          .admit({
+            lane: { sessionID: input.sessionID, agentID },
+            intent: {
+              kind: "resume",
+              assistantID: (plan.action === "tool-resume" ? plan.assistantMessageID : plan.parentMessageID) as MessageID,
+              plan: plan.action === "tool-resume" ? "tool-resume" : "user-resume",
+            },
+            idempotencyKey: `resume:${input.sessionID}:${agentID}:${plan.parentMessageID}:${plan.action}`,
+          })
+          .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+        resumeReceiptId = receipt?.id
+      }
       // [R004] Test seam: expose resolved plan so tests can assert the actual target.
       ResumeTestHooks.onPlanResolved?.({
         action: plan.action,
@@ -6636,6 +6768,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         plan,
         mode: "ensure",
       })
+      if (tqResume && resumeReceiptId) {
+        yield* tqResume
+          .ack(
+            { sessionID: input.sessionID, agentID },
+            undefined,
+            [
+              {
+                receiptId: resumeReceiptId,
+                outcome: launched ? "success" : "never_ran",
+                messageId: launched?.info.role === "assistant" ? launched.info.id : undefined,
+              },
+            ],
+          )
+          .pipe(Effect.catchCause(() => Effect.void))
+      }
       if (launched === undefined) {
         return yield* Effect.fail(
           new NotFoundError({
@@ -6969,6 +7116,44 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       predict,
     })
     sessionPromptRef.current = { loop: impl.loop }
+    // C-02/C-06: Controller.admit → kick starts a lease when idle; onIdle also
+    // re-kicks leftover accepted receipts (lost-wake replacement for pending-attach).
+    const laneKick: (lane: Lane) => Effect.Effect<void> = (lane) =>
+      Effect.gen(function* () {
+        const accepted = yield* (turnQueueRef.current?.listAccepted(lane) ?? Effect.succeed([]))
+        if (accepted.length === 0) return
+        const top = accepted[0]
+        if (!top) return
+        const kind = top.intent.kind
+        if (kind === "resume") {
+          const intent = top.intent
+          yield* resumeMainCascading({
+            sessionID: lane.sessionID,
+            agentID: lane.agentID,
+            assistantMessageID: intent.assistantID,
+          }).pipe(Effect.catchCause(() => Effect.void))
+          return
+        }
+        if (kind === "shell") {
+          const intent = top.intent
+          yield* shell({
+            sessionID: lane.sessionID,
+            agent: "main",
+            command: intent.command,
+          }).pipe(Effect.catchCause(() => Effect.void))
+          return
+        }
+        // prompt / wake → normal turn. wake drains inbox inside loop.
+        yield* loop({
+          sessionID: lane.sessionID,
+          agentID: lane.agentID,
+          notifyParentOnComplete: lane.agentID !== "main",
+          inboxWake: kind === "wake",
+          source: kind === "wake" ? "spawn" : "user",
+          requireClaim: true,
+        }).pipe(Effect.catchCause(() => Effect.void))
+      }).pipe(Effect.catchCause(() => Effect.void))
+    schedulerRef.current = { kick: laneKick }
     // Expose the project default-model resolver to Inbox.drain's option-2
     // fallback (seed a synthetic message for a turnCount-0 standing peer whose
     // slice has no model-bearing message yet). Reads Provider, which is already
@@ -6979,6 +7164,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       Effect.sync(() => {
         if (sessionPromptRef.current?.loop === impl.loop) sessionPromptRef.current = undefined
         if (defaultModelRef.current === defaultModelResolver) defaultModelRef.current = undefined
+        if (schedulerRef.current?.kick === laneKick) schedulerRef.current = undefined
       }),
     )
     return impl
@@ -7142,6 +7328,8 @@ export const LoopInput = z.object({
   // double-notifying the spawn turn that forkWork already covers.
   notifyParentOnComplete: z.boolean().optional(),
   inboxWake: z.boolean().optional(),
+  /** Controller kick: if true and claim is empty, do not start runLoop. */
+  requireClaim: z.boolean().optional(),
   deferInbox: z.boolean().optional(),
 })
 

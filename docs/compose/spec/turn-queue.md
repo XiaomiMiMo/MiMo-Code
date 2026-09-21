@@ -1,6 +1,6 @@
 ---
 feature: turn-queue
-status: designed-partial
+status: delivered
 updated: 2026-09-21
 branch: feat/turn-queue
 commits: 30e55a4e58c56044bea4dc9551a24395ef47e961..HEAD
@@ -261,39 +261,37 @@ Filled during T0; every row must be `migrate` or `skip` before T8.
 
 CI: fail new `ensureRunning` call sites outside allowlist (T8).
 
-## [S5] This PR scope (foundation)
+## [S5] This PR scope (full scheduling migration)
 
-PR #2452 ships the **foundation slice** only. Full T3/T4/T8 migration is explicitly out of this PR and tracked as follow-ups.
+PR #2452 ships the **full T3/T4/T8 migration** (C-01…C-10), not a foundation-only slice.
 
-**In this PR**
+**Delivered**
 - LaneController + durable receipts + epoch + frontier + idempotency + same-messageID live reuse
-- `inputRevision` / `observeInput` (check-subscribe-recheck) + ActorWaiter steer (wait interrupted, actor not cancelled)
-- HTTP busy `/message` → **202 + receiptId** (no 409 for busy); GET receipt (session-scoped); abort `{ok,epoch}` + `queuedPolicy` body
-- prompt() admit for main user prompts with `idempotencyKey = messageID`
-- disconnect does not abort
-- unit + steer integration tests
+- `inputRevision` / `observeInput` (check-subscribe-recheck) + ActorWaiter steer
+- **C-01** runLoop claim/ack/extendClaim; Runner `ensureRunning` serializes (no pending-attach dual owner)
+- **C-02** inbox admits wake Intent only (no dual `loop()` when TurnQueue is wired)
+- **C-03** resume/shell admit into Controller; resume routes no longer 409 on busy
+- **C-04** `prompt_async` → **202 + receiptId** (Deprecation: 204)
+- **C-06** `reconcileOnBoot` on prompt entry + wake requeue kick; abort cancels receipts before runner teardown
+- **C-08** `/message` busy → admit + **202** (no assertNotBusy TOCTOU 409)
+- **C-09** TUI recover no longer blocks on status.busy
+- **C-10** OpenAPI: `/message` 202 schema, `prompt_async` 202, typed GET receipt
+- HTTP disconnect does not abort; abort `{ok,epoch}` + `queuedPolicy`
 
-**Follow-up (not in this PR; do not treat as regressions of foundation)**
-- T3/T4: runLoop uses Controller claim/ack/extendClaim; remove `ensureRunning` pending-attach
-- T8: inbox `admit(wake)` without dual `loop`; resume/shell on admit; resume no longer 409
-- HTTP: `prompt_async` 202+receiptId; `/message` idle path Controller-atomic claim (drop TOCTOU)
-- boot: wake-only requeue; orphan user message → synthetic `accepted` receipt
-- OpenAPI/SDK: `/message` 202 schema, GET receipt typed response
-- TUI: drop residual BusyError/409 special-cases
-- shell `cwd` session-dir enforcement when shell moves to admit
-
-**Idempotency caveat (accepted)**  
-`idempotencyKey = messageID` is session-scoped and permanent. Re-admit after `cancelled` with the **same** key returns the cancelled receipt. Recovery clients must use a **new** idempotency key (or omit key and rely on live-receipt / terminal-cancellable rules).
+**Accepted residual**
+- Milliseconds-wide runner exit-tail race (from prior review) remains accepted.
+- `execution-integration` “inbox waits for the entire spawn execution…” fails on origin/main as well (pre-existing; not a turn-queue regression).
+- spawn/hook `prompt()` does not admit (actor system schedules those slices); `requireClaim` is only set for user/main admitted prompts and Controller kicks.
 
 ## Tasks
 
 - [x] T0: **Admission inventory** — acceptance: table of every call site with migrate/skip (covers: S2)
 - [x] T1: LaneController + Mailbox + durable Receipt + epoch + frontier + idempotency — acceptance: unit tests (covers: S2; depends: T0)
 - [x] T2: inputRevision + observeInput — acceptance: level-triggered resolve; wake does not steer (covers: S2; depends: T1)
-- [ ] T3: Claim/ack + MessageID frontier + extendClaim **inside runLoop** — partial: prompt admits + settles after loop; claimNext/extendClaim API exists; runLoop still uses ensureRunning (covers: S2; depends: T1)
-- [ ] T4: Runner exclusive-lease only — pending: pending-attach still present on ensureRunning (covers: S2; depends: T3)
-- [x] T5 (partial): SessionPrompt.prompt admits durable receipt for main user prompts; settles after turn (covers: S2)
-- [x] T6 (foundation): HTTP busy 202+receiptId, GET receipt session check, abort `{ok,epoch}` + `queuedPolicy`, disconnect detach; SDK abort types updated. Follow-up: `prompt_async` 202, `/message` 202 OpenAPI schema, typed GET receipt response (covers: S2; see S5)
+- [x] T3: Claim/ack + MessageID frontier + extendClaim **inside runLoop** — claim/ack wrap in loop(); mid-turn extendClaim on lastUser > claimFrontier (covers: S2; depends: T1)
+- [x] T4: Runner exclusive-lease only — pending-attach removed; ensureRunning serializes behind a live run (covers: S2; depends: T3)
+- [x] T5: SessionPrompt.prompt admits durable receipt for main user prompts; loop() settles via claim/ack (covers: S2)
+- [x] T6: HTTP busy 202+receiptId, GET receipt, abort `{ok,epoch}` + `queuedPolicy`; `prompt_async` 202+receiptId; `/message` 202 OpenAPI; typed GET receipt (covers: S2)
 - [x] T7: ActorWaiter observeInput on main lane — integration test: user admit interrupts wait; actor not cancelled (covers: S2)
-- [x] T8 (foundation): inbox admits wake Intent (coalescable) in addition to loop; resume/shell still on exclusive/startShell (follow-up per S5)
-- [x] T9 (foundation): `bun typecheck` pass; `bun test test/turn-queue/` 13 pass (controller 11 + steer 2). Follow-up remaining: Runner pending removal, resume/shell migrate, HTTP e2e, inbox dual-path, full `test/actor`
+- [x] T8: inbox admits wake Intent only (no dual loop); resume/shell on admit; resume no longer 409 (covers: S2)
+- [x] T9: `bun typecheck` pass; `bun test test/turn-queue/ test/effect/runner*.test.ts test/actor/spawn.test.ts` green; migration-contracts guards (covers: S2)

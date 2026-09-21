@@ -2223,6 +2223,7 @@ export class Session2 extends HeyApiClient {
       sessionID: string
       directory?: string
       workspace?: string
+      queuedPolicy?: "drop" | "keep-suspended"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2234,6 +2235,7 @@ export class Session2 extends HeyApiClient {
             { in: "path", key: "sessionID" },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "body", key: "queuedPolicy" },
           ],
         },
       ],
@@ -2242,6 +2244,11 @@ export class Session2 extends HeyApiClient {
       url: "/session/{sessionID}/abort",
       ...options,
       ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 
@@ -2470,7 +2477,7 @@ export class Session2 extends HeyApiClient {
   /**
    * Send message
    *
-   * Create and send a new message to a session, streaming the AI response.
+   * Create and send a new message to a session. Busy never 409: admit queues with 202+receiptId; idle streams 200.
    */
   public prompt<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2745,7 +2752,7 @@ export class Session2 extends HeyApiClient {
   /**
    * Send async message
    *
-   * Create and send a new message to a session asynchronously, starting the session if needed and returning immediately.
+   * Create and send a new message to a session asynchronously. Returns 202 + receiptId (preferred) or 204 (compat).
    */
   public promptAsync<ThrowOnError extends boolean = false>(
     parameters: {

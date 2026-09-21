@@ -5349,10 +5349,6 @@ export type SessionPromptErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict — session resource is busy
-   */
-  409: ConflictError
 }
 
 export type SessionPromptError = SessionPromptErrors[keyof SessionPromptErrors]
@@ -5364,6 +5360,14 @@ export type SessionPromptResponses = {
   200: {
     info: AssistantMessage
     parts: Array<Part>
+  }
+  /**
+   * Queued (busy) — durable receipt; poll GET /receipt/:id
+   */
+  202: {
+    info: UserMessage
+    parts: Array<Part>
+    receiptId?: string
   }
 }
 
@@ -5646,91 +5650,6 @@ export type SessionResumeUserResponses = {
   202: unknown
 }
 
-export type SessionResumeData = {
-  body?: never
-  path: {
-    sessionID: string
-    assistantMessageID: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-    agentID?: string
-    task_id?: string
-    titleLocale?: string
-    modelProviderID?: string
-    modelID?: string
-  }
-  url: "/session/{sessionID}/turn/{assistantMessageID}/resume"
-}
-
-export type SessionResumeErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
-   * Conflict — session resource is busy
-   */
-  409: ConflictError
-}
-
-export type SessionResumeError = SessionResumeErrors[keyof SessionResumeErrors]
-
-export type SessionResumeResponses = {
-  /**
-   * Resume accepted
-   */
-  202: unknown
-}
-
-export type SessionResumeUserData = {
-  body?: {
-    userMessageID: string
-  }
-  path: {
-    sessionID: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-    agentID?: string
-    task_id?: string
-    titleLocale?: string
-    modelProviderID?: string
-    modelID?: string
-  }
-  url: "/session/{sessionID}/resume"
-}
-
-export type SessionResumeUserErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-  /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
-   * Conflict — session resource is busy
-   */
-  409: ConflictError
-}
-
-export type SessionResumeUserError = SessionResumeUserErrors[keyof SessionResumeUserErrors]
-
-export type SessionResumeUserResponses = {
-  /**
-   * Resume accepted
-   */
-  202: unknown
-}
-
 export type SessionPromptAsyncData = {
   body?: {
     messageID?: string
@@ -5802,7 +5721,13 @@ export type SessionPromptAsyncError = SessionPromptAsyncErrors[keyof SessionProm
 
 export type SessionPromptAsyncResponses = {
   /**
-   * Prompt accepted
+   * Accepted — durable receipt
+   */
+  202: {
+    receiptId?: string
+  }
+  /**
+   * Prompt accepted (deprecated compat; no receipt body)
    */
   204: void
 }
@@ -5839,8 +5764,16 @@ export type SessionReceiptResponses = {
   /**
    * Receipt
    */
-  200: unknown
+  200: {
+    id: string
+    state: "accepted" | "claimed" | "settled" | "cancelled" | "rejected"
+    outcome?: "success" | "assistant_error" | "interrupted" | "never_ran"
+    messageId?: string
+    error?: string
+  }
 }
+
+export type SessionReceiptResponse = SessionReceiptResponses[keyof SessionReceiptResponses]
 
 export type SessionCommandData = {
   body?: {

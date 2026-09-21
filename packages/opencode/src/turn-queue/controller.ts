@@ -18,6 +18,7 @@ import {
 } from "./schema"
 import { TurnLaneStateTable, TurnReceiptTable, TurnSessionEpochTable } from "./turn-queue.sql"
 import { turnQueueRef } from "./turn-queue-ref"
+import { schedulerRef } from "./scheduler"
 
 const log = Log.create({ service: "turn-queue" })
 
@@ -194,6 +195,14 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       return toReceipt(row)
     })
 
+    /** Fire-and-forget schedule: Controller owns receipts; kick only starts a lease when idle. */
+    const maybeKick = (lane: Lane) =>
+      Effect.sync(() => {
+        const sched = schedulerRef.current
+        if (!sched) return
+        void Effect.runPromise(sched.kick(lane)).catch(() => undefined)
+      })
+
     const admit = Effect.fn("TurnQueue.admit")(function* (input: AdmitInput) {
       const epoch = yield* getEpoch(input.lane.sessionID)
 
@@ -212,7 +221,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
               .get(),
           ),
         )
-        if (existing) return toReceipt(existing)
+        if (existing) {
+          yield* maybeKick(input.lane)
+          return toReceipt(existing)
+        }
       }
 
       // Same messageID must not get a second live receipt (design re-admit rule).
@@ -235,7 +247,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
               .get(),
           ),
         )
-        if (live) return toReceipt(live)
+        if (live) {
+          yield* maybeKick(input.lane)
+          return toReceipt(live)
+        }
       }
 
       // Wake coalesce: merge into an existing accepted wake on the same lane.
@@ -274,6 +289,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             ),
           )
           const row = yield* loadReceipt(wake.id)
+          yield* maybeKick(input.lane)
           return toReceipt(row!)
         }
       }
@@ -286,6 +302,12 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       const row = yield* loadReceipt(id)
       const receipt = toReceipt(row!)
       yield* publish(receipt)
+      // Kick only for kinds that do not self-dispatch (resume/shell).
+      // prompt() calls loop() itself; inbox wake calls loop(requireClaim).
+      // Avoiding double-kick closes the claim race that steals the turn.
+      if (input.intent.kind === "resume" || input.intent.kind === "shell") {
+        yield* maybeKick(input.lane)
+      }
       return receipt
     })
 
@@ -505,6 +527,33 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             .run(),
         ),
       )
+      // Wake-only requeue: accepted wake receipts that survived the epoch fence
+      // still need a lease. Kick each lane that has accepted work.
+      const lanes = yield* Effect.sync(() =>
+        Database.use((db) =>
+          db
+            .select({
+              session_id: TurnReceiptTable.session_id,
+              agent_id: TurnReceiptTable.agent_id,
+            })
+            .from(TurnReceiptTable)
+            .where(
+              and(
+                eq(TurnReceiptTable.session_id, sessionID),
+                eq(TurnReceiptTable.state, "accepted"),
+                eq(TurnReceiptTable.suspended, false),
+              ),
+            )
+            .all(),
+        ),
+      )
+      const seen = new Set<string>()
+      for (const row of lanes) {
+        const key = `${row.session_id}:${row.agent_id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        yield* maybeKick({ sessionID: row.session_id, agentID: row.agent_id })
+      }
     })
 
     const impl: Interface = {
