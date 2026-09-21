@@ -387,6 +387,12 @@ test("merges keybind overrides across precedence layers", async () => {
   expect(config.keybinds?.theme_list).toBe("ctrl+k")
 })
 
+test("defaults paste to common terminal paste shortcuts", async () => {
+  await using tmp = await tmpdir({ outsideGit: true })
+  const config = await getTuiConfig(tmp.path)
+  expect(config.keybinds?.input_paste?.split(",")).toContain("ctrl+shift+v")
+})
+
 wintest("defaults Ctrl+Z to input undo on Windows", async () => {
   await using tmp = await tmpdir({ outsideGit: true })
   const config = await getTuiConfig(tmp.path)
