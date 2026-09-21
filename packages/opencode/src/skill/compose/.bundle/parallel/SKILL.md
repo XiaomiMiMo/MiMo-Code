@@ -9,9 +9,9 @@ description: Use when facing 2+ independent tasks that can be worked on without 
 
 You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
 
-When you have multiple unrelated failures (different test files, different subsystems, different bugs), investigating them sequentially wastes time. Each investigation is independent and can happen in parallel.
+When unrelated failures need separate investigations, independent assignments may run in parallel. Choose concurrency based on the work needed and the risk of interference.
 
-**Core principle:** Dispatch one agent per independent problem domain. Let them work concurrently.
+**Core principle:** Give each delegated investigation a distinct scope. Use only the agents needed to cover the confirmed problem domains.
 
 ## When to Use
 
@@ -51,9 +51,9 @@ Each agent gets:
 
 ### 3. Dispatch in Parallel
 
-Send one concurrent tool call per independent problem domain, all in the same turn. Use whichever subagent-dispatch tool is advertised in your tool list, following the syntax in that tool's own description (do not invent fields).
+Dispatch the investigations that are needed. Independent assignments may run concurrently, but they do not need to be launched in the same turn. Use whichever subagent-dispatch tool is advertised in your tool list, following the syntax in that tool's own description (do not invent fields).
 
-Conceptual shape (example with three domains; use as many as you have):
+Conceptual shape (three distinct investigations shown for illustration, not a target agent count):
 - agent → "Fix agent-tool-abort.test.ts failures"
 - agent → "Fix batch-completion-behavior.test.ts failures"
 - agent → "Fix tool-approval-race-conditions.test.ts failures"

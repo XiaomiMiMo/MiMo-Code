@@ -21,7 +21,7 @@ Your ONLY task — research this single angle, nothing else:
 {ANGLE}
 
 Rules:
-1. Run up to {QUERY_BUDGET} web searches. Start with 2-3 differently-phrased queries in parallel; refine based on what comes back. Prefer primary sources (official docs, papers, original announcements) over aggregators and SEO farms.
+1. Run up to {QUERY_BUDGET} web searches. Start with a focused query and refine based on the results. Independent queries may run together when each addresses a known information need. Prefer primary sources (official docs, papers, original announcements) over aggregators and SEO farms.
 2. WebFetch the 3-6 most promising results to read actual content. Do not cite a page you did not fetch.
 3. Judge each source: official/primary > reputable media/peer-reviewed > forums/blogs > content farms. Discard low-quality sources rather than citing them.
 4. Extract findings as information-dense claims: include exact entities, numbers, dates, versions. One claim per finding.

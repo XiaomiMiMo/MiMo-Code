@@ -51,7 +51,7 @@ List angles in `brief.md` under `## Angles`. For deep mode or contested topics, 
 
 ## Phase 3 — Parallel research
 
-Spawn one sub-agent per angle **in a single message** (parallel). Build each prompt from the locked template in [reference/subagent-prompt.md](reference/subagent-prompt.md) — reproduce it verbatim, replacing only the `{variables}`. Each sub-agent:
+Assign a focused sub-agent to each research angle that needs separate investigation. Independent assignments may run concurrently when useful; they do not need to be dispatched in one message. Build each prompt from the locked template in [reference/subagent-prompt.md](reference/subagent-prompt.md) — reproduce it verbatim, replacing only the `{variables}`. Each sub-agent:
 
 - researches ONE angle only, using WebSearch/WebFetch and the free endpoints in [reference/sources.md](reference/sources.md)
 - writes structured findings to `findings/F<n>.md` (claim / quote / URL / date / confidence per item)
