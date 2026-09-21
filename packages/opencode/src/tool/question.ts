@@ -44,14 +44,11 @@ export const QuestionTool = Tool.define<typeof parameters, Metadata, Question.Se
             }
           }
 
-          const answers = yield* question.ask(
-            {
-              sessionID: ctx.sessionID,
-              questions: params.questions,
-              tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
-            },
-            ctx.abort,
-          )
+          const answers = yield* question.ask({
+            sessionID: ctx.sessionID,
+            questions: params.questions,
+            tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+          })
 
           const formatted = params.questions
             .map((q, i) => `"${q.question}"="${answers[i]?.length ? answers[i].join(", ") : "Unanswered"}"`)

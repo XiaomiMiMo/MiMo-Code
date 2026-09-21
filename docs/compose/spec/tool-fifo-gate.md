@@ -18,20 +18,19 @@ semantics for guest calls.
 
 There is no directory registry, filesystem resource identity, hook snapshot,
 or orchestration bypass list. Queued cancellation removes the waiter; admitted
-calls release after execution and cleanup. Question/plan cancellation reaches
-the actual wait and dismisses the UI request.
+calls release after execution and cleanup. This gate does not change the
+cancellation behavior of existing tool implementations.
 
-**Verification** — 229 distinct relevant tests passed from `packages/opencode`:
-37 gate/session cases, 160 tool/agent/question/GPT cases, and 32 filtered
-MCP/exec/Codex/GPT session cases. New integration coverage includes two agents in
-one session and two sessions in one directory, a custom tool waiting for peer
-work, top-level exec ordering with internal `Promise.all`, and cancellation of a
-write queued behind a question in the same batch. Package typecheck passed and
-changed-file oxlint reported zero errors. Independent review of the complete PR
-under the corrected scope passed spec compliance, correctness, and codebase
-consistency with no actionable findings. The final integration in `prompt.ts`
-is 12 added and 5 removed lines against the PR base; the existing edit mutex and
-plugin implementation remain unchanged. Full-range `git diff --check` passed.
+**Verification** — 227 distinct relevant tests passed from `packages/opencode`:
+35 gate/session cases, 160 tool/agent/question/GPT cases, and 32 filtered
+MCP/exec/Codex/GPT session cases. After restoring the original question/plan
+implementation, the 21 affected cancellation and question/plan tests were rerun
+and passed. Other verified scheduling code is unchanged. Package typecheck
+passed; changed-file lint reported zero errors; full-range diff checks passed.
+The cancellation regression explicitly releases the old question after stop,
+waits for its original gate to drain, then verifies the queued write never ran.
+Independent review of the complete corrected scope and this reduction passed
+spec compliance, correctness, and consistency with no remaining findings.
 
 ## [S1] Problem
 
@@ -56,7 +55,8 @@ No global map or directory/agent-name key is involved in batch scheduling.
 The pre-existing `edit` mutex remains unchanged: its module-level map uses
 `AppFileSystem.resolve(filePath)` and therefore still coordinates edits to the
 same resolved path across agents. This PR neither removes that behavior nor
-adds new cross-agent filesystem protection.
+adds new cross-agent filesystem protection. Question/plan cancellation cleanup
+is also outside this PR: the `ask` interface and its callers remain unchanged.
 
 ```text
 agent A, assistant step → gate A → its model-facing calls
@@ -114,9 +114,10 @@ release, await admission in the interruptible use phase, check the abort signal
 before starting the body, and release after the body and cleanup exit. Persisting
 a failed tool status alone does not prove that execution or cleanup ended.
 
-`question` and `plan_exit` pass cancellation to the question service. It rejects
-the actual wait, removes the pending question, and publishes `question.rejected`.
-Cancelling a batch must not later execute a queued write.
+Cancelling a batch must remove queued calls so they cannot execute later, even
+if an already-running tool completes after the model turn has stopped. Existing
+question/plan waiting and UI cleanup behavior is unchanged; the next assistant
+step owns a different gate and is not held by a previous step's unfinished tool.
 
 ### Integration and prompts
 
@@ -194,7 +195,6 @@ or predict how hooks will rewrite them.
 - [x] T4: Verify supported paths — acceptance: relevant tests, package typecheck and lint finish successfully (covers: S2, S3)
 - [x] T5: Remove ordinary prompt scheduling instructions — acceptance: prompt tests pass and the live checkpoint writer follows the same contract (covers: S2)
 - [x] T6: Simplify to read/search parallelism only — acceptance: edit/write serialize without resource keys or hook snapshots (covers: S2)
-- [x] T7: Propagate cancellation to question waits — acceptance: question and plan_exit finish with error, dismiss the UI request and release the gate (covers: S2)
 - [x] T8: Preserve the previous design and decision rationale — acceptance: S4 records reproduced corner cases and the performance tradeoff (covers: S4)
 - [x] T9: Scope each gate to one agent's assistant step — acceptance: same-session actors and same-directory sessions complete independently while a custom caller waits (covers: S1, S2)
 - [x] T10: Remove all top-level bypasses — acceptance: actor/exec/workflow/session obey the same serial rule, while exec guest calls retain script-owned concurrency (covers: S2)

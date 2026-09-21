@@ -1,4 +1,4 @@
-import { expect } from "bun:test"
+import { expect, spyOn } from "bun:test"
 import path from "node:path"
 import { Deferred, Effect, Fiber, Layer } from "effect"
 import { SessionPrompt } from "../../src/session/prompt"
@@ -6,6 +6,7 @@ import { Session } from "../../src/session"
 import { Bus } from "../../src/bus"
 import { Question } from "../../src/question"
 import { MessageV2 } from "../../src/session/message-v2"
+import { ToolGate } from "../../src/tool/gate"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -50,6 +51,9 @@ it.live(
             const session = yield* sessions.create({ title: "Cancellation" })
             const bus = yield* Bus.Service
             const questions = yield* Question.Service
+            // Observe actual release without replacing the gate implementation.
+            const leaving = spyOn(ToolGate.prototype, "leave")
+            yield* Effect.addFinalizer(() => Effect.sync(() => leaving.mockRestore()))
             const asked = yield* Deferred.make<void>()
             const queued = yield* Deferred.make<void>()
             const unsubscribeAsked = yield* bus.subscribeCallback(Question.Event.Asked, (event) => {
@@ -68,6 +72,15 @@ it.live(
             })
             yield* Effect.addFinalizer(() => Effect.sync(unsubscribeAsked))
             yield* Effect.addFinalizer(() => Effect.sync(unsubscribeQueued))
+            yield* Effect.addFinalizer(() =>
+              questions
+                .list()
+                .pipe(
+                  Effect.flatMap((pending) =>
+                    Effect.forEach(pending, (question) => questions.reject(question.id), { discard: true }),
+                  ),
+                ),
+            )
             yield* Effect.addFinalizer(() => prompt.cancel(session.id))
             const running = yield* prompt
               .prompt({
@@ -83,7 +96,17 @@ it.live(
             yield* prompt.cancel(session.id)
             const result = yield* Fiber.join(running)
             expect(result.info.role === "assistant" && result.info.error?.name).toBe("MessageAbortedError")
-            expect(yield* questions.list()).toHaveLength(0)
+            // Base question cancellation is unchanged. End its outstanding wait
+            // explicitly, then let the old batch drain before checking for writes.
+            yield* Effect.forEach(yield* questions.list(), (question) => questions.reject(question.id), { discard: true })
+            yield* Effect.promise(async () => {
+              while (true) {
+                const index = leaving.mock.calls.findIndex(([token]) => token.startsWith("ask-user#"))
+                const gate = leaving.mock.contexts[index]
+                if (gate instanceof ToolGate && gate.runningCount === 0 && gate.queuedCount === 0) return
+                await Bun.sleep(10)
+              }
+            }).pipe(Effect.timeout("1 second"))
             expect(yield* Effect.promise(() => Bun.file(path.join(dir, "cancelled.txt")).exists())).toBe(false)
             const tools = (yield* sessions.messages({ sessionID: session.id }))
               .flatMap((message) => message.parts)
