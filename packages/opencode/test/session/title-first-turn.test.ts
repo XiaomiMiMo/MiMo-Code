@@ -239,7 +239,8 @@ test("fallback commits before detached lite request; duplicate receipt and later
         const historyReads = spyOn(service, "messages")
         try {
           await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: same.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "Later task" }] })))
-          expect(historyReads.mock.calls.filter(([query]) => query.agentID === "main")).toHaveLength(0)
+          // Orphan recovery reads main once; an established title must not add another history scan.
+          expect(historyReads.mock.calls.filter(([query]) => query.agentID === "main")).toHaveLength(1)
           expect(await run(Session.Service.use(svc => svc.get(same.id)))).toMatchObject({ title: "Untitled", titleRevision: 1 })
           expect(captured).toHaveLength(6)
         } finally { historyReads.mockRestore() }
