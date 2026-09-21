@@ -8,21 +8,25 @@
  * - read/grep/glob may run concurrently with each other
  * - edit/write may run concurrently when their realpath keys differ
  * - apply_patch, bash, task, MCP, and other tools are barrier-class
- * - actor/exec/workflow bypass the queue (they nest more tool calls)
+ * - actor/exec/workflow/session bypass the queue (they nest or control other calls)
  */
 
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { Effect } from "effect"
+import { lstatSync, realpathSync } from "node:fs"
+import path from "node:path"
 
 export const PARALLEL_READONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob"])
 export const PATH_WRITE_TOOLS: ReadonlySet<string> = new Set(["edit", "write"])
 
 /**
  * Top-level model tool-calls for these tools must not queue: they nest more
- * tool execution (actor.run/wait, exec scripts, workflow). Holding the gate
- * across that wait deadlocks children that share the same Instance.directory.
- * Nested leaf tools still enter the gate on their own model-facing surfaces.
+ * tool execution (actor.run/wait, exec scripts, workflow, session ask/join).
+ * Session approval/cancellation must also remain available while a child runs.
+ * Holding the gate across that wait deadlocks children that share the directory.
+ * Nested model-facing leaf tools enter the gate; exec guest calls remain ungated.
  */
-export const GATE_BYPASS_TOOLS: ReadonlySet<string> = new Set(["actor", "exec", "workflow"])
+export const GATE_BYPASS_TOOLS: ReadonlySet<string> = new Set(["actor", "exec", "workflow", "session"])
 
 export type GateRequest = {
   readonly id: string
@@ -38,14 +42,34 @@ export type EnterOptions = {
 type Waiter = {
   readonly request: GateRequest
   readonly resolve: () => void
+  readonly cancel: () => void
 }
 
 /** realpath key for path-local writes; undefined when not applicable. */
-export function toolResource(tool: string, args: { file_path?: unknown } | undefined): string | undefined {
+export function toolResource(
+  tool: string,
+  args: { file_path?: unknown } | undefined,
+  directory = process.cwd(),
+): string | undefined {
   if (!PATH_WRITE_TOOLS.has(tool)) return undefined
   const filePath = args?.file_path
   if (typeof filePath !== "string" || filePath.length === 0) return undefined
-  return AppFileSystem.resolve(filePath)
+  // New files still need their existing parents canonicalized: alias/new.txt
+  // and real/new.txt may be the same destination before either file exists.
+  const canonical = (target: string): string | undefined => {
+    try {
+      return AppFileSystem.normalizePath(realpathSync(target))
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return undefined
+      // A dangling symlink has an unknown destination; serialize conservatively.
+      if (lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) return undefined
+      const parent = path.dirname(target)
+      if (parent === target) return undefined
+      const resolved = canonical(parent)
+      return resolved ? path.join(resolved, path.basename(target)) : undefined
+    }
+  }
+  return canonical(path.resolve(directory, AppFileSystem.windowsPath(filePath)))
 }
 
 function compatible(a: GateRequest, b: GateRequest): boolean {
@@ -68,26 +92,41 @@ class WorktreeGate {
   /**
    * Queue for admission. Resolves with a unique token (call ids may collide
    * or be absent). When `signal` aborts before admission the waiter is
-   * dequeued and the promise rejects; abort after admission still releases
-   * the running slot so the gate cannot wedge.
+   * dequeued and the promise rejects. Once admitted, only leave releases the
+   * slot, after tool execution and its cleanup have finished.
    */
   enter(tool: string, callID: string, options?: EnterOptions): Promise<string> {
+    return this.enqueue(tool, callID, options).ready
+  }
+
+  run<A, E, R>(tool: string, callID: string, body: Effect.Effect<A, E, R>, options?: EnterOptions) {
+    if (GATE_BYPASS_TOOLS.has(tool)) return body
+    return Effect.acquireUseRelease(
+      // Acquire the token synchronously, so release is installed BEFORE the
+      // interruptible wait. Interrupting immediately after admission cannot
+      // strand a running slot between resolving the promise and using it.
+      Effect.sync(() => this.enqueue(tool, callID, options)),
+      (request) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise({
+            try: () => request.ready,
+            catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+          })
+          // Abort can race the promise continuation after admission.
+          if (options?.signal?.aborted) return yield* Effect.fail(new DOMException("Aborted", "AbortError"))
+          return yield* body
+        }),
+      (request) => Effect.sync(() => this.leave(request.token)),
+    )
+  }
+
+  private enqueue(tool: string, callID: string, options?: EnterOptions) {
     this.seq += 1
     const token = `${callID}#${this.seq}`
-    if (GATE_BYPASS_TOOLS.has(tool)) return Promise.resolve(token)
-    return new Promise<string>((resolve, reject) => {
+    if (GATE_BYPASS_TOOLS.has(tool)) return { token, ready: Promise.resolve(token) }
+    const ready = new Promise<string>((resolve, reject) => {
       const signal = options?.signal
-      let settled = false
-
-      const onAbort = () => {
-        if (settled) {
-          this.leave(token)
-          return
-        }
-        settled = true
-        this.removeQueued(token)
-        reject(new DOMException("Aborted", "AbortError"))
-      }
+      const onAbort = () => this.leave(token)
 
       if (signal?.aborted) {
         reject(new DOMException("Aborted", "AbortError"))
@@ -98,18 +137,20 @@ class WorktreeGate {
       this.queue.push({
         request: { id: token, tool, resource: options?.resource },
         resolve: () => {
-          if (settled) {
-            // Abort raced admission: drop the slot tryAdmit just added.
-            this.running.delete(token)
-            this.tryAdmit()
-            return
-          }
-          settled = true
+          signal?.removeEventListener("abort", onAbort)
           resolve(token)
+        },
+        cancel: () => {
+          signal?.removeEventListener("abort", onAbort)
+          reject(new DOMException("Aborted", "AbortError"))
         },
       })
       this.tryAdmit()
     })
+    // A fiber may be interrupted after registration but before it awaits ready.
+    // The finalizer still cancels that waiter; keep its rejection observed.
+    void ready.catch(() => {})
+    return { token, ready }
   }
 
   leave(token: string): void {
@@ -132,7 +173,7 @@ class WorktreeGate {
   private removeQueued(token: string): boolean {
     const index = this.queue.findIndex((waiter) => waiter.request.id === token)
     if (index < 0) return false
-    this.queue.splice(index, 1)
+    this.queue.splice(index, 1)[0].cancel()
     return true
   }
 

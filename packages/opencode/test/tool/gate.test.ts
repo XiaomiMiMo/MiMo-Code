@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import path from "path"
+import fs from "node:fs/promises"
+import { Deferred, Effect, Fiber, Layer } from "effect"
+import { tmpdir } from "../fixture/fixture"
+import { testEffect } from "../lib/effect"
 import { ToolGate, toolResource, type WorktreeGate } from "../../src/tool/gate"
+
+const it = testEffect(Layer.empty)
 
 let seq = 0
 function key(): string {
@@ -28,6 +34,108 @@ async function expectPending(p: Promise<unknown>): Promise<void> {
 
 afterEach(() => {
   ToolGate.reset()
+})
+
+describe("tool.gate execution", () => {
+  it.live("fiber interruption removes a waiter without waiting for the active tool", () =>
+    Effect.gen(function* () {
+      const gate = ToolGate.for(key())
+      const held = yield* Effect.promise(() => gate.enter("bash", "held"))
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.leave(held)))
+      const fiber = yield* gate.run("write", "queued", Effect.die("cancelled tool ran")).pipe(Effect.forkChild)
+      yield* Effect.yieldNow
+      expect(gate.queuedCount).toBe(1)
+      yield* Fiber.interrupt(fiber).pipe(Effect.timeout("1 second"))
+      expect(gate.queuedCount).toBe(0)
+      expect(gate.runningCount).toBe(1)
+    }),
+  )
+
+  it.live("interruption immediately after admission does not leak the slot", () =>
+    Effect.gen(function* () {
+      const gate = ToolGate.for(key())
+      const held = yield* Effect.promise(() => gate.enter("bash", "held"))
+      const fiber = yield* gate.run("write", "queued", Effect.never).pipe(Effect.forkChild)
+      yield* Effect.yieldNow
+      expect(gate.queuedCount).toBe(1)
+      gate.leave(held)
+      yield* Fiber.interrupt(fiber).pipe(Effect.timeout("1 second"))
+      expect(gate.queuedCount).toBe(0)
+      expect(gate.runningCount).toBe(0)
+    }),
+  )
+
+  it.live("abort immediately after admission prevents the tool body from starting", () =>
+    Effect.gen(function* () {
+      const gate = ToolGate.for(key())
+      const ctrl = new AbortController()
+      const held = yield* Effect.promise(() => gate.enter("bash", "held"))
+      let ran = false
+      const fiber = yield* gate
+        .run(
+          "write",
+          "queued",
+          Effect.sync(() => {
+            ran = true
+          }),
+          { signal: ctrl.signal },
+        )
+        .pipe(Effect.exit, Effect.forkChild)
+      yield* Effect.yieldNow
+      gate.leave(held)
+      ctrl.abort()
+      const exit = yield* Fiber.join(fiber)
+      expect(exit._tag).toBe("Failure")
+      expect(ran).toBe(false)
+      expect(gate.runningCount).toBe(0)
+    }),
+  )
+
+  it.live("interrupted execution retains the slot until cleanup completes", () =>
+    Effect.gen(function* () {
+      const gate = ToolGate.for(key())
+      const started = yield* Deferred.make<void>()
+      const cleaning = yield* Deferred.make<void>()
+      const finish = yield* Deferred.make<void>()
+      const fiber = yield* gate
+        .run(
+          "bash",
+          "active",
+          Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined)
+            yield* Effect.never
+          }).pipe(
+            Effect.ensuring(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(cleaning, undefined)
+                yield* Deferred.await(finish)
+              }),
+            ),
+          ),
+        )
+        .pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      const stopping = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild)
+      yield* Deferred.await(cleaning)
+      const next = gate.enter("write", "next")
+      expect(gate.queuedCount).toBe(1)
+      expect(gate.runningCount).toBe(1)
+      yield* Deferred.succeed(finish, undefined)
+      yield* Fiber.join(stopping)
+      gate.leave(yield* Effect.promise(() => next))
+      expect(gate.runningCount).toBe(0)
+    }),
+  )
+
+  it.live("tool failure releases its slot", () =>
+    Effect.gen(function* () {
+      const gate = ToolGate.for(key())
+      yield* gate.run("bash", "failed", Effect.fail(new Error("tool failed"))).pipe(Effect.exit)
+      expect(gate.runningCount).toBe(0)
+      const next = yield* Effect.promise(() => gate.enter("read", "next"))
+      gate.leave(next)
+    }),
+  )
 })
 
 describe("tool.gate", () => {
@@ -178,7 +286,7 @@ describe("tool.gate", () => {
     await expectPending(queued)
     expect(gate.queuedCount).toBe(1)
     ctrl.abort()
-    await expect(queued).rejects.toThrow()
+    expect(await queued.catch((error: unknown) => error)).toMatchObject({ name: "AbortError" })
     expect(gate.queuedCount).toBe(0)
     expect(gate.runningCount).toBe(1)
     gate.leave(held)
@@ -186,23 +294,40 @@ describe("tool.gate", () => {
     gate.leave(next)
   })
 
-  test("abort after admission releases the running slot", async () => {
+  test("abort after admission holds the slot until execution finishes", async () => {
     const gate = ToolGate.for(key())
     const ctrl = new AbortController()
     const token = await gate.enter("bash", "b1", { signal: ctrl.signal })
     expect(gate.runningCount).toBe(1)
     ctrl.abort()
-    await sleep(5)
-    expect(gate.runningCount).toBe(0)
+    const next = gate.enter("write", "w1")
+    await expectPending(next)
+    expect(gate.runningCount).toBe(1)
     gate.leave(token)
+    gate.leave(await next)
   })
 
-  test("actor/exec/workflow bypass the gate so nested tools do not deadlock", async () => {
+  test("aborting a queued barrier admits compatible calls behind it", async () => {
+    const gate = ToolGate.for(key())
+    const held = await gate.enter("read", "r1")
+    const ctrl = new AbortController()
+    const barrier = gate.enter("bash", "b1", { signal: ctrl.signal })
+    const next = gate.enter("read", "r2")
+    ctrl.abort()
+    expect(await barrier.catch((error: unknown) => error)).toMatchObject({ name: "AbortError" })
+    await sleep(5)
+    expect(gate.runningCount).toBe(2)
+    gate.leave(held)
+    gate.leave(await next)
+  })
+
+  test("actor/exec/workflow/session bypass the gate so nested tools do not deadlock", async () => {
     const gate = ToolGate.for(key())
     const held = await gate.enter("bash", "b1")
     const actorToken = await gate.enter("actor", "actor-run")
     const execToken = await gate.enter("exec", "exec-1")
     const workflowToken = await gate.enter("workflow", "wf-1")
+    const sessionToken = await gate.enter("session", "session-join")
     // Nested tools still queue behind the outer bash barrier.
     const nested = gate.enter("read", "child-read")
     await expectPending(nested)
@@ -210,6 +335,7 @@ describe("tool.gate", () => {
     gate.leave(actorToken)
     gate.leave(execToken)
     gate.leave(workflowToken)
+    gate.leave(sessionToken)
     gate.leave(held)
     const nestedToken = await nested
     gate.leave(nestedToken)
@@ -220,6 +346,28 @@ describe("tool.gate", () => {
     expect(toolResource("edit", { file_path: file })).toBe(toolResource("write", { file_path: file }))
     expect(toolResource("bash", { file_path: file })).toBeUndefined()
     expect(toolResource("edit", {})).toBeUndefined()
+  })
+
+  test("relative and absolute paths in the session directory share a resource", async () => {
+    await using tmp = await tmpdir()
+    const file = path.join(tmp.path, "target.txt")
+    await Bun.write(file, "before")
+    expect(toolResource("edit", { file_path: "target.txt" }, tmp.path)).toBe(
+      toolResource("write", { file_path: file }, tmp.path),
+    )
+  })
+
+  test("new files under a symlinked parent share a resource", async () => {
+    await using tmp = await tmpdir()
+    await fs.mkdir(path.join(tmp.path, "real"))
+    await fs.symlink(
+      path.join(tmp.path, "real"),
+      path.join(tmp.path, "alias"),
+      process.platform === "win32" ? "junction" : "dir",
+    )
+    expect(toolResource("write", { file_path: path.join(tmp.path, "alias", "new.txt") })).toBe(
+      toolResource("write", { file_path: path.join(tmp.path, "real", "new.txt") }),
+    )
   })
 
   test("gates are isolated per Instance.directory", async () => {

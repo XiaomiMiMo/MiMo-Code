@@ -1994,18 +1994,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 // reach this wrapper for builtin tools.
                 if (GATE_BYPASS_TOOLS.has(item.id)) return yield* body
                 const gate = ToolGate.for(Instance.directory)
-                return yield* Effect.acquireUseRelease(
-                  Effect.tryPromise({
-                    try: (signal) =>
-                      gate.enter(item.id, callID, {
-                        signal,
-                        resource: toolResource(item.id, args as { file_path?: unknown }),
-                      }),
-                    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-                  }),
-                  () => body,
-                  (token) => Effect.sync(() => gate.leave(token)),
-                )
+                return yield* gate.run(item.id, callID, body, {
+                  signal: options.abortSignal,
+                  resource: toolResource(item.id, args as { file_path?: unknown }, Instance.directory),
+                })
               }),
             )
           },
@@ -2222,18 +2214,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               if (GATE_BYPASS_TOOLS.has(key)) return yield* body
               const callID = opts?.toolCallId ?? "?"
               const gate = ToolGate.for(Instance.directory)
-              return yield* Effect.acquireUseRelease(
-                Effect.tryPromise({
-                  try: (signal) =>
-                    gate.enter(key, callID, {
-                      signal,
-                      resource: toolResource(key, args as { file_path?: unknown }),
-                    }),
-                  catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-                }),
-                () => body,
-                (token) => Effect.sync(() => gate.leave(token)),
-              )
+              return yield* gate.run(key, callID, body, { signal: opts.abortSignal })
             }),
           )
         item.execute = (args, opts) => executeMcp(args, opts, true)
