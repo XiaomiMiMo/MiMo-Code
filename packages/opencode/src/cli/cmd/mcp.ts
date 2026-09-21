@@ -42,6 +42,33 @@ function getAuthStatusText(status: MCP.AuthStatus): string {
   }
 }
 
+export function mcpDebugAuthLines(authStatus: MCP.AuthStatus, entry?: McpAuth.Entry) {
+  return [
+    `Auth status: ${getAuthStatusIcon(authStatus)} ${getAuthStatusText(authStatus)}`,
+    ...(!entry?.tokens
+      ? []
+      : [
+          `  Access token: present`,
+          ...(entry.tokens.expiresAt
+            ? [
+                `  Expires: ${new Date(entry.tokens.expiresAt * 1000).toISOString()} ${
+                  entry.tokens.expiresAt < Date.now() / 1000 ? "(EXPIRED)" : ""
+                }`,
+              ]
+            : []),
+          ...(entry.tokens.refreshToken ? [`  Refresh token: present`] : []),
+        ]),
+    ...(!entry?.clientInfo
+      ? []
+      : [
+          `  Client ID: ${entry.clientInfo.clientId}`,
+          ...(entry.clientInfo.clientSecretExpiresAt
+            ? [`  Client secret expires: ${new Date(entry.clientInfo.clientSecretExpiresAt * 1000).toISOString()}`]
+            : []),
+        ]),
+  ]
+}
+
 type McpEntry = NonNullable<Config.Info["mcp"]>[string]
 
 type McpConfigured = ConfigMCP.Info
@@ -675,26 +702,7 @@ export const McpDebugCommand = cmd({
             }
           }),
         )
-        prompts.log.info(`Auth status: ${getAuthStatusIcon(authStatus)} ${getAuthStatusText(authStatus)}`)
-
-        if (entry?.tokens) {
-          prompts.log.info(`  Access token: ${entry.tokens.accessToken.substring(0, 20)}...`)
-          if (entry.tokens.expiresAt) {
-            const expiresDate = new Date(entry.tokens.expiresAt * 1000)
-            const isExpired = entry.tokens.expiresAt < Date.now() / 1000
-            prompts.log.info(`  Expires: ${expiresDate.toISOString()} ${isExpired ? "(EXPIRED)" : ""}`)
-          }
-          if (entry.tokens.refreshToken) {
-            prompts.log.info(`  Refresh token: present`)
-          }
-        }
-        if (entry?.clientInfo) {
-          prompts.log.info(`  Client ID: ${entry.clientInfo.clientId}`)
-          if (entry.clientInfo.clientSecretExpiresAt) {
-            const expiresDate = new Date(entry.clientInfo.clientSecretExpiresAt * 1000)
-            prompts.log.info(`  Client secret expires: ${expiresDate.toISOString()}`)
-          }
-        }
+        mcpDebugAuthLines(authStatus, entry).forEach((line) => prompts.log.info(line))
 
         const spinner = prompts.spinner()
         spinner.start("Testing connection...")
