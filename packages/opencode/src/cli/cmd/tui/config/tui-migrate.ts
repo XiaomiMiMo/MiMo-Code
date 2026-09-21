@@ -20,6 +20,7 @@ const TuiLegacy = z
     scroll_speed: TuiOptions.shape.scroll_speed.catch(undefined),
     scroll_acceleration: TuiOptions.shape.scroll_acceleration.catch(undefined),
     diff_style: TuiOptions.shape.diff_style.catch(undefined),
+    screen_mode: TuiOptions.shape.screen_mode.catch(undefined),
   })
   .strip()
 
@@ -89,6 +90,7 @@ function normalizeTui(data: Record<string, unknown>) {
   if (
     parsed.scroll_speed === undefined &&
     parsed.diff_style === undefined &&
+    parsed.screen_mode === undefined &&
     parsed.scroll_acceleration === undefined
   ) {
     return
