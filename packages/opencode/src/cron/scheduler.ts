@@ -69,6 +69,13 @@ export type ListFilter = {
   session_id?: string
   kind?: "cron" | "loop"
   durable_only?: boolean
+  /**
+   * List jobs from every session, not just the named one. `cron list` scopes
+   * to the caller by default, which hid other sessions' jobs from `get`/
+   * `delete` (which only filter when --session is passed) — `--all` restores
+   * visibility (#2198).
+   */
+  all?: boolean
 }
 
 export type ArmLoopInput = {
@@ -383,7 +390,7 @@ const makeImpl = (): Interface => {
         ...session.map((t) => ({ ...t, durable: false as const })),
       ]
       return all.filter((t) => {
-        if (filter.session_id && t.createdBySessionId !== filter.session_id) return false
+        if (!filter.all && filter.session_id && t.createdBySessionId !== filter.session_id) return false
         if (filter.kind === "loop" && t.kind !== "loop") return false
         if (filter.kind === "cron" && t.kind === "loop") return false
         if (filter.durable_only && t.durable !== true) return false

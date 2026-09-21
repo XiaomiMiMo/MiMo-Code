@@ -98,3 +98,19 @@ test("writeCronTasks drops tasks with malformed cron", async () => {
   expect(back.map((t) => t.id)).toEqual(["g1"])
   rmSync(dir, { recursive: true, force: true })
 })
+
+// #2198: the scheduler singleton's onFire closes over the first mounter's
+// session, so fires must be routed by the task's creator, falling back to the
+// mounting session only when the task predates creator tracking.
+test("fireTargetSessionId prefers the task creator over the mounting session", async () => {
+  const { fireTargetSessionId } = await import("@/cron/cron-task")
+  const created = {
+    id: "t1",
+    cron: "*/10 * * * *",
+    prompt: "hi",
+    createdAt: 1,
+    createdBySessionId: "ses_b",
+  }
+  expect(fireTargetSessionId(created, "ses_a")).toBe("ses_b")
+  expect(fireTargetSessionId({ ...created, createdBySessionId: undefined }, "ses_a")).toBe("ses_a")
+})
