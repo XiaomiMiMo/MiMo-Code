@@ -55,13 +55,13 @@ const cases = [
     error: "Invalid arguments for the edit tool",
     runs: false,
   },
-  {
-    title: "invalid read arguments allow the following bash",
-    first: { name: "read", args: { file_path: 123 } },
+  ...["read", "grep", "glob"].map((name) => ({
+    title: `invalid ${name} arguments cancel the following bash`,
+    first: { name, args: name === "read" ? { file_path: 123 } : { pattern: 123 } },
     next: bash,
-    error: "Invalid arguments for the read tool",
-    runs: true,
-  },
+    error: `Invalid arguments for the ${name} tool`,
+    runs: false,
+  })),
   {
     title: "a nonzero bash exit cancels the following write",
     first: { name: "bash", args: { command: "printf original-failure; exit 7", description: "Fail locally" } },

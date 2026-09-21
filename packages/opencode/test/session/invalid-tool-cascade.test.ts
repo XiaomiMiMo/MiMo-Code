@@ -1,6 +1,7 @@
 import path from "node:path"
 import { expect } from "bun:test"
 import { Deferred, Effect, Fiber, Layer } from "effect"
+import { ActorRegistry } from "../../src/actor/registry"
 import { Bus } from "../../src/bus"
 import type { Config } from "../../src/config"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -11,7 +12,14 @@ import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { startScriptedLLMServer, textStopResponse, toolCallsResponse } from "../lib/scripted-llm-server"
 
-const it = testEffect(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer, CrossSpawnSpawner.defaultLayer))
+const it = testEffect(
+  Layer.mergeAll(
+    SessionPrompt.defaultLayer,
+    Session.defaultLayer,
+    CrossSpawnSpawner.defaultLayer,
+    ActorRegistry.defaultLayer,
+  ),
+)
 const cancelled = "Tool call cancelled because an earlier tool call in this response failed."
 
 const calls = [
@@ -26,11 +34,22 @@ for (const entry of [
   ...["1", "true"].map((disable) => ({ ...calls[1], disable, flooding: undefined, prefix: false })),
   { ...calls[1], disable: undefined, flooding: "1", prefix: false },
   { ...calls[1], disable: undefined, flooding: undefined, prefix: true },
+  { ...calls[1], disable: undefined, flooding: undefined, prefix: false, whitelist: true },
+  { name: "read", args: { file_path: 123 }, disable: undefined, flooding: undefined, prefix: false, whitelist: true },
+  {
+    name: "read",
+    args: { file_path: 123 },
+    disable: undefined,
+    flooding: undefined,
+    prefix: false,
+    whitelist: true,
+    deny: true,
+  },
 ])
   it.live(
     entry.disable
       ? `cascade opt-out ${entry.disable} preserves the invalid ${entry.name} result and executes the following write`
-      : `invalid ${entry.name} cancels later calls${entry.flooding ? " with flooding protection disabled" : ""}${entry.prefix ? " and preserves earlier successful writes" : ""}`,
+      : `invalid ${entry.name} handles later calls${"whitelist" in entry ? " with an actor whitelist" : ""}${"deny" in entry ? " excluding read" : ""}${entry.flooding ? " with flooding protection disabled" : ""}${entry.prefix ? " and preserves earlier successful writes" : ""}`,
     () =>
       Effect.gen(function* () {
         const previous = {
@@ -79,24 +98,46 @@ for (const entry of [
               const sessions = yield* Session.Service
               const prompt = yield* SessionPrompt.Service
               const session = yield* sessions.create({ title: "Invalid tool cascade" })
+              if ("whitelist" in entry) {
+                const registry = yield* ActorRegistry.Service
+                yield* registry.register({
+                  sessionID: session.id,
+                  actorID: "test-actor",
+                  mode: "peer",
+                  agent: "build",
+                  description: "Whitelisted actor",
+                  contextMode: "none",
+                  tools: "deny" in entry ? ["write"] : ["read", "write"],
+                  background: false,
+                  lifecycle: "persistent",
+                })
+              }
               const result = yield* prompt.prompt({
                 sessionID: session.id,
+                agentID: "whitelist" in entry ? "test-actor" : undefined,
                 agent: "build",
                 harness: "default",
                 parts: [{ type: "text", text: "Run the requested tools and recover from errors" }],
               })
-              const tools = (yield* sessions.messages({ sessionID: session.id }))
+              const tools = (yield* sessions.messages({
+                sessionID: session.id,
+                agentID: "whitelist" in entry ? "test-actor" : undefined,
+              }))
                 .flatMap((message) => message.parts)
                 .filter((part) => part.type === "tool")
               expect(tools).toHaveLength(entry.prefix ? 3 : 2)
               const bad = tools.find((part) => part.callID === "bad-name")!
-              expect(bad.tool).toBe("invalid")
-              expect(bad.state.input.tool).toBe(entry.name)
-              expect(bad.state.status).toBe("error")
-              expect(bad.state.status === "error" && bad.state.error).toContain(entry.name)
-              expect(bad.state.status === "error" && bad.state.error).toMatch(
-                /unknown|unavailable|invalid|not available/i,
-              )
+              expect(bad.tool).toBe(entry.name === "read" ? "read" : "invalid")
+              if (entry.name !== "read") expect(bad.state.input.tool).toBe(entry.name)
+              expect(bad.state.status).toBe("deny" in entry ? "completed" : "error")
+              const failure =
+                bad.state.status === "error"
+                  ? bad.state.error
+                  : bad.state.status === "completed"
+                    ? bad.state.output
+                    : ""
+              expect(failure).toContain(entry.name)
+              expect(failure).toMatch("deny" in entry ? /whitelist/ : /unknown|unavailable|invalid|not available/i)
               expect(yield* Effect.promise(() => Bun.file(path.join(dir, "original-marker.txt")).exists())).toBe(false)
               expect(yield* Effect.promise(() => Bun.file(path.join(dir, "tail-marker.txt")).exists())).toBe(
                 Boolean(entry.disable),

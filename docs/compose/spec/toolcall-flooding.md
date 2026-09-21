@@ -75,17 +75,21 @@ failed tool's slot. All queued and subsequently arriving calls in that batch,
 including reads, are cancelled with natural English:
 `Tool call cancelled because an earlier tool call in this response failed.`
 The original failed call retains its original error/output, including a bash
-result's exit code. A read/search failure does not poison the gate; earlier completed tools are not rolled back.
-The next assistant step starts with a clean gate and receives the original
-failure plus the cancelled-call observations through ordinary continuation.
+result's exit code. Execution failure of a valid read/search call does not poison
+the gate; earlier completed tools are not rolled back.
+The injected StructuredOutput tool also enters this gate before capturing the final
+answer, so a cancelled call cannot terminate the turn. The next assistant step
+starts with a clean gate and receives the original failure plus the cancelled-call
+observations through ordinary continuation.
 
 Failures include thrown execution/cleanup errors, MCP error results, invalid
 calls routed through the existing invalid-tool handler, permission/hook
 rejections, bash nonzero exit statuses, and failed workflow run results. Use
-structured failure signals, not heuristics over output text. Invalid read/search arguments retain their original
-tool classification. User/session interruption follows existing cancellation
-semantics. Exec guest calls retain script-owned control flow; a failed top-level
-exec is subject to cascade like every other exclusive tool.
+structured failure signals, not heuristics over output text. Every invalid call
+triggers cascade, including malformed arguments to lowercase read/search tools.
+Validate read/search arguments before gate admission so an invalid call is exclusive and cannot admit its suffix concurrently. User/session
+interruption follows existing cancellation semantics. Exec guest calls retain
+script-owned control flow; a failed top-level exec is subject to cascade like every other exclusive tool.
 
 The cascade is recorded before draining the queue, so edit failure cannot admit
 a queued bash command. Closed gates also reject calls registered later while
@@ -104,8 +108,11 @@ The existing compatibility helper requires exact tool-name matches and repairs
 only parameters; it does not lowercase names. Unlisted names such as `Bash`,
 `Grep`, `Read`, and `Write` use the existing invalid-tool fallback. That fallback
 now produces an actual failed tool result, not a successful text observation.
-Classify its cascade using the original requested name: invalid `Read` is not
-in the lowercase read/search exemption, while invalid arguments to `read` are.
+Invalid names and invalid arguments always trigger cascade, including lowercase
+`read`, `grep`, and `glob` calls with malformed arguments. Only execution failures
+of valid read/search calls are exempt. The internal invalid handler bypasses an
+actor's execution whitelist because it only reports errors; actual tools still
+require whitelist admission.
 
 Preserve all calls and results in the conversation: earlier successful results,
 the original failure, and every subsequent call with its cascade cancellation
@@ -118,7 +125,7 @@ allows subsequent tools to execute, while invalid calls still report failure.
 - [ ] T1: Add request-local generation barrier and opt-out flag — acceptance: 16 calls execute only after generation finishes; call 17 cancels without client tool side effects; disabled mode streams as before (covers: S2).
 - [ ] T2: Persist cancellation and recover the model step — acceptance: all observed calls have the exact aborted result and the next request contains the reminder and resumes successfully (covers: S2).
 - [ ] T3: Verify boundaries and compatibility — acceptance: partial calls, transport failure, user cancellation, independent requests, FIFO scheduling, focused tests and package typecheck pass; independent review completes (covers: S2, S3).
-- [ ] T4: Add default-on failure cascade at gate release — acceptance: exclusive-tool failure cancels queued and late-arriving calls before their bodies run; read/search failure and unrelated gates remain runnable; the opt-out restores admission (covers: S4).
+- [ ] T4: Add default-on failure cascade at gate release — acceptance: exclusive-tool failure cancels queued and late-arriving calls, including StructuredOutput, before their bodies run; valid read/search execution failures and unrelated gates remain runnable; the opt-out restores admission (covers: S4).
 - [ ] T5: Verify cascade through real session execution — acceptance: edit failure prevents a subsequent bash side effect; bash nonzero, invalid calls and hook/MCP failures follow the failure contract; successful and exempt read/search batches still run (covers: S4).
-- [ ] T6: Handle invalid calls through natural cascade — acceptance: uppercase tool names produce failed invalid results, following calls remain in context as cancelled observations, successful prefix results remain intact, provider usage/cached tokens survive, and the cascade opt-out lets following tools execute (covers: S5).
+- [ ] T6: Handle invalid calls through natural cascade — acceptance: invalid names and arguments (including whitelisted read/search calls) trigger cascade and report their original errors, following calls remain in context as cancelled observations, successful prefix results remain intact, provider usage/cached tokens survive, and the cascade opt-out lets following tools execute (covers: S5).
 - [ ] T7: Verify the four feature combinations — acceptance: default with both DISABLE variables unset, each protection alone, and both disabled all handle a 17-call batch followed by a failing small batch correctly; flags remain independent and gates reset each step (covers: S2, S4, S5).
