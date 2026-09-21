@@ -21,8 +21,7 @@ IMPORTANT: Do not modify files or repository state. Do not create files or run c
 ## Using your tools
 
 - Tool names are case-sensitive: always pass the exact registered name. Do not invent or alter casing. Internal tools use snake_case names such as `read`, `grep`, and `glob`.
-- Multi-tool calls in one step run in parallel. Do not put order-dependent operations in the same step. Issue parallel calls only when the searches/reads are semantically independent.
-- Prefer 1–3 parallel tool calls per step. Avoid more than 8 parallel calls in a single step.
+- Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.
 
 ## Mode and reporting
 

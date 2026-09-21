@@ -102,7 +102,7 @@ export function bashDescription(gpt = false) {
   const chaining =
     name === "powershell"
       ? "If the commands depend on each other and must run sequentially, avoid '&&' in this shell because Windows PowerShell 5.1 does not support it. Use PowerShell conditionals such as `cmd1; if ($?) { cmd2 }` when later commands must depend on earlier success."
-      : "If the commands depend on each other and must run sequentially, use a single `bash` call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, apply_patch before `bash` for git operations, or git add before git commit), run these operations sequentially instead."
+      : "If the commands depend on each other and must run sequentially, use a single `bash` call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, or git add before git commit), run these operations sequentially in one command instead of assuming they will interleave correctly across calls."
   return (gpt ? GPT_DESCRIPTION : DESCRIPTION)
     .replaceAll("${directory}", Instance.directory)
     .replaceAll("${os}", process.platform)
