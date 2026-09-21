@@ -23,6 +23,8 @@ export const dict = {
 
   "command.sidebar.toggle": "Prikaži/sakrij bočnu traku",
   "command.project.open": "Otvori projekat",
+  "command.project.previous": "Prethodni projekat",
+  "command.project.next": "Sljedeći projekat",
   "command.provider.connect": "Poveži provajdera",
   "command.server.switch": "Promijeni server",
   "command.settings.open": "Otvori postavke",
@@ -236,6 +238,8 @@ export const dict = {
   "prompt.mode.shell": "Shell",
   "prompt.mode.normal": "Prompt",
   "prompt.mode.shell.exit": "esc za izlaz",
+  "session.child.promptDisabled": "Sesijama podagenta se ne mogu slati upiti.",
+  "session.child.backToParent": "Nazad na glavnu sesiju.",
 
   "prompt.example.1": "Popravi TODO u bazi koda",
   "prompt.example.2": "Koji je tehnološki stack ovog projekta?",
@@ -510,6 +514,8 @@ export const dict = {
   "session.review.noSnapshot":
     "Praćenje snimaka (snapshot) je onemogućeno u konfiguraciji, pa promjene sesije nisu dostupne",
   "session.review.noChanges": "Nema izmjena",
+  "session.review.noUncommittedChanges": "Još nema neporučenih izmjena",
+  "session.review.noBranchChanges": "Još nema izmjena u grani",
 
   "session.files.selectToOpen": "Odaberi datoteku za otvaranje",
   "session.files.all": "Sve datoteke",
@@ -610,6 +616,8 @@ export const dict = {
   "sidebar.project.recentSessions": "Nedavne sesije",
   "sidebar.project.viewAllSessions": "Prikaži sve sesije",
   "sidebar.project.clearNotifications": "Očisti obavijesti",
+  "sidebar.empty.title": "Nema otvorenih projekata",
+  "sidebar.empty.description": "Otvorite projekat da započnete",
 
   "app.name.desktop": "OpenCode Desktop",
 
@@ -622,6 +630,7 @@ export const dict = {
   "settings.desktop.wsl.description": "Pokreni OpenCode server unutar WSL-a na Windowsu.",
 
   "settings.general.section.appearance": "Izgled",
+  "settings.general.section.advanced": "Napredno",
   "settings.general.section.notifications": "Sistemske obavijesti",
   "settings.general.section.updates": "Ažuriranja",
   "settings.general.section.sounds": "Zvučni efekti",
@@ -646,6 +655,16 @@ export const dict = {
   "settings.general.row.followup.description": "Odaberi da li upiti nadovezivanja usmjeravaju odmah ili čekaju u redu",
   "settings.general.row.followup.option.queue": "Red čekanja",
   "settings.general.row.followup.option.steer": "Usmjeri",
+  "settings.general.row.showFileTree.title": "Stablo datoteka",
+  "settings.general.row.showFileTree.description": "Prikaži prekidač i panel stabla datoteka u desktop sesijama",
+  "settings.general.row.showNavigation.title": "Kontrole navigacije",
+  "settings.general.row.showNavigation.description": "Prikaži dugmad za nazad i naprijed u naslovnoj traci desktopa",
+  "settings.general.row.showSearch.title": "Paleta naredbi",
+  "settings.general.row.showSearch.description": "Prikaži dugme za pretragu i paletu naredbi u naslovnoj traci desktopa",
+  "settings.general.row.showTerminal.title": "Terminal",
+  "settings.general.row.showTerminal.description": "Prikaži dugme terminala u naslovnoj traci desktopa",
+  "settings.general.row.showStatus.title": "Status servera",
+  "settings.general.row.showStatus.description": "Prikaži dugme statusa servera u naslovnoj traci desktopa",
   "settings.general.row.reasoningSummaries.title": "Prikaži sažetke rasuđivanja",
   "settings.general.row.reasoningSummaries.description": "Prikaži sažetke rasuđivanja modela na vremenskoj traci",
 
