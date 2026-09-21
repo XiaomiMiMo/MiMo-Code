@@ -44,7 +44,9 @@ async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
 
   // Belt-and-suspenders: ensure .git/info/exclude lists .mimocode-project-id
   const excludeFile = nodePath.join(mainGit, "info", "exclude")
-  await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true })
+  await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true }).catch((e) => {
+    if (e.code !== "EEXIST") throw e
+  })
   const existing = await nodeFs.readFile(excludeFile, "utf-8").catch(() => "")
   if (!existing.includes(".mimocode-project-id")) {
     await nodeFs.appendFile(excludeFile, "\n.mimocode-project-id\n")
