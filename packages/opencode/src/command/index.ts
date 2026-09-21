@@ -120,6 +120,7 @@ export const layer = Layer.effect(
       commands[Default.REVIEW] = {
         name: Default.REVIEW,
         description: "review changes [commit|branch|pr], defaults to uncommitted",
+        agent: "general",
         source: "command",
         get template() {
           return PROMPT_REVIEW.replace("${path}", ctx.worktree)
