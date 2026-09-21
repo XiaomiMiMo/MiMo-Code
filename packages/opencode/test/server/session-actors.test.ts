@@ -20,8 +20,8 @@ test("actor list reports runtime execution without rewriting persisted claims or
         Effect.gen(function* () {
           const sessions = yield* Session.Service
           const registry = yield* ActorRegistry.Service
-        const executions = yield* ActorExecution.Service
-        const runs = yield* SessionRunState.Service
+          const executions = yield* ActorExecution.Service
+          const runs = yield* SessionRunState.Service
           const session = yield* sessions.create({ title: "actor runtime status" })
           const actorID = "explore-1"
           yield* registry.register({
@@ -64,13 +64,13 @@ test("actor list reports runtime execution without rewriting persisted claims or
           yield* registry.updateStatus(session.id, actorID, { status: "idle", lastOutcome: "success" })
           expect(yield* read).toMatchObject({ status: "running", executionActive: true })
           yield* executions.release(execution)
-        expect(yield* read).toMatchObject({ status: "idle", executionActive: false, lastOutcome: "success" })
-        // Foreground/ordinary loops are owned by SessionRunState, without a
-        // background ActorExecution. They must still be reported as running.
-        const owned = yield* runs.startOwned(session.id, actorID, Effect.interrupt, Effect.never)
-        expect(yield* read).toMatchObject({ status: "running", executionActive: true })
-        yield* owned.interruptOwned
-        expect(yield* read).toMatchObject({ status: "idle", executionActive: false })
+          expect(yield* read).toMatchObject({ status: "idle", executionActive: false, lastOutcome: "success" })
+          // Foreground/ordinary loops are owned by SessionRunState, without a
+          // background ActorExecution. They must still be reported as running.
+          const owned = yield* runs.startOwned(session.id, actorID, Effect.interrupt, Effect.never)
+          expect(yield* read).toMatchObject({ status: "running", executionActive: true })
+          yield* owned.interruptOwned
+          expect(yield* read).toMatchObject({ status: "idle", executionActive: false })
           yield* sessions.remove(session.id)
         }),
       ),
