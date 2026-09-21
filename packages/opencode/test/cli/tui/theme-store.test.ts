@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 
-const { DEFAULT_THEMES, allThemes, addTheme, hasTheme, resolveTheme } = await import(
+const { DEFAULT_THEMES, allThemes, addTheme, hasTheme, resolveTheme, generateSystem } = await import(
   "../../../src/cli/cmd/tui/context/theme"
 )
 
@@ -48,4 +48,27 @@ test("resolveTheme rejects circular color refs", () => {
   item.theme.primary = "one"
 
   expect(() => resolveTheme(item, "dark")).toThrow("Circular color reference")
+})
+
+test("generated system theme uses an opaque terminal background", () => {
+  const theme = resolveTheme(
+    generateSystem(
+      {
+        defaultBackground: "#102030",
+        defaultForeground: "#f0f0f0",
+        cursorColor: "#f0f0f0",
+        mouseForeground: "#f0f0f0",
+        mouseBackground: "#102030",
+        tekForeground: "#f0f0f0",
+        tekBackground: "#102030",
+        highlightBackground: "#203040",
+        highlightForeground: "#ffffff",
+        palette: Array.from({ length: 16 }, () => "#000000"),
+      },
+      "dark",
+    ),
+    "dark",
+  )
+
+  expect(theme.background.a).toBe(1)
 })
