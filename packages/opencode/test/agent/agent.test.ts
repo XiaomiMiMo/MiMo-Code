@@ -14,6 +14,11 @@ import PROMPT_GENERATE_GPT from "../../src/agent/prompt/generate-gpt.txt"
 import PROMPT_EXPLORE from "../../src/agent/prompt/explore.txt"
 import PROMPT_GENERAL from "../../src/agent/prompt/general.txt"
 import PROMPT_DEFAULT from "../../src/session/prompt/default.txt"
+import PROMPT_GLM from "../../src/session/prompt/glm.txt"
+import PROMPT_ANTHROPIC from "../../src/session/prompt/anthropic.txt"
+import TOOL_BASH_TXT from "../../src/tool/bash.txt"
+import TOOL_BASH_GPT_TXT from "../../src/tool/bash.gpt.txt"
+import TOOL_READ_TXT from "../../src/tool/read.txt"
 
 const itTool = testEffect(Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
@@ -68,6 +73,13 @@ test("default system prompt has no Claude Code residual and names real dispatch 
   expect(PROMPT_DEFAULT).toContain("Avoid more than 8 calls")
   expect(PROMPT_DEFAULT).not.toContain("run in parallel")
   expect(PROMPT_DEFAULT).not.toContain("order-dependent")
+  // Runtime FIFO gate owns admission; prompts must not teach cross-tool parallel/serial rules.
+  for (const prompt of [PROMPT_DEFAULT, PROMPT_GENERAL, PROMPT_EXPLORE, PROMPT_GLM, PROMPT_ANTHROPIC, TOOL_BASH_TXT, TOOL_BASH_GPT_TXT, TOOL_READ_TXT]) {
+    expect(prompt).not.toMatch(/run .{0,40}tool calls? in parallel/i)
+    expect(prompt).not.toMatch(/bash .{0,20}(commands? )?in parallel/i)
+    expect(prompt).not.toContain("ALWAYS USE PARALLEL")
+    expect(prompt).not.toContain("order-dependent")
+  }
   expect(PROMPT_DEFAULT).not.toContain("### Plan mode in detail")
   expect(PROMPT_DEFAULT).not.toContain("Desktop Settings")
   expect(PROMPT_DEFAULT).not.toContain("one short line max")
