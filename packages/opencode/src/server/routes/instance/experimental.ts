@@ -400,13 +400,16 @@ export const ExperimentalRoutes = lazy(() =>
             .optional()
             .meta({ description: "Return sessions updated before this timestamp (milliseconds since epoch)" }),
           search: z.string().optional().meta({ description: "Filter sessions by title (case-insensitive)" }),
-          limit: z.coerce.number().optional().meta({ description: "Maximum number of sessions to return" }),
+          limit: z.coerce
+            .number()
+            .optional()
+            .meta({ description: "Maximum number of sessions to return (capped at 500)" }),
           archived: z.coerce.boolean().optional().meta({ description: "Include archived sessions (default false)" }),
         }),
       ),
       async (c) => {
         const query = c.req.valid("query")
-        const limit = query.limit ?? 100
+        const limit = Session.clampListLimit(query.limit)
         const sessions: Session.GlobalInfo[] = []
         for await (const session of Session.listGlobal({
           directory: query.directory,

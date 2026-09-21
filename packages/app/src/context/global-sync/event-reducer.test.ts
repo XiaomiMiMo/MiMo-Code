@@ -356,6 +356,85 @@ describe("applyDirectoryEvent", () => {
     expect(store.part.msg_2).toBeUndefined()
   })
 
+  test("skips message and part events for sessions whose transcript is not loaded", () => {
+    const listed = "ses_listed"
+    const unknown = "ses_unknown"
+    const [store, setStore] = createStore(
+      baseState({
+        session: [rootSession({ id: listed })],
+        message: {},
+        part: {},
+      }),
+    )
+
+    for (const sessionID of [listed, unknown]) {
+      applyDirectoryEvent({
+        event: { type: "message.updated", properties: { info: userMessage("msg_bg", sessionID) } },
+        store,
+        setStore,
+        push() {},
+        directory: "/tmp",
+        loadLsp() {},
+      })
+      applyDirectoryEvent({
+        event: { type: "message.part.updated", properties: { part: textPart("prt_bg", sessionID, "msg_bg") } },
+        store,
+        setStore,
+        push() {},
+        directory: "/tmp",
+        loadLsp() {},
+      })
+    }
+
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: listed, status: { type: "busy" } } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: unknown, status: { type: "busy" } } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    // Transcripts stay out of the store until a fetch/optimistic write seeds them.
+    expect(store.message[listed]).toBeUndefined()
+    expect(store.message[unknown]).toBeUndefined()
+    expect(store.part.msg_bg).toBeUndefined()
+    // Listed sessions still receive cheap sidebar status; unknown ids do not.
+    expect(store.session_status[listed]).toEqual({ type: "busy" })
+    expect(store.session_status[unknown]).toBeUndefined()
+  })
+
+  test("still applies part events for sessions with a loaded transcript", () => {
+    const sessionID = "ses_open"
+    const messageID = "msg_open"
+    const [store, setStore] = createStore(
+      baseState({
+        session: [rootSession({ id: sessionID })],
+        message: { [sessionID]: [userMessage(messageID, sessionID)] },
+        part: {},
+      }),
+    )
+
+    applyDirectoryEvent({
+      event: { type: "message.part.updated", properties: { part: textPart("prt_open", sessionID, messageID) } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    expect(store.part[messageID]?.map((x) => x.id)).toEqual(["prt_open"])
+  })
+
   test("upserts and prunes message parts", () => {
     const sessionID = "ses_1"
     const messageID = "msg_1"

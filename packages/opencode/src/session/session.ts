@@ -1004,6 +1004,16 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Storage.defaultLayer),
 )
 
+/** Hard cap for session list queries — unbounded client limits (e.g. 2000)
+ * force large payload + reconcile work on every refresh. */
+export const MAX_LIST_LIMIT = 500
+
+export function clampListLimit(limit: number | undefined, fallback = 100) {
+  const value = limit ?? fallback
+  if (!Number.isFinite(value) || value < 1) return fallback
+  return Math.min(Math.floor(value), MAX_LIST_LIMIT)
+}
+
 export function* list(input?: {
   directory?: string
   workspaceID?: WorkspaceID
@@ -1033,7 +1043,7 @@ export function* list(input?: {
     conditions.push(like(SessionTable.title, `%${input.search}%`))
   }
 
-  const limit = input?.limit ?? 100
+  const limit = clampListLimit(input?.limit)
 
   const rows = Database.use((db) =>
     db
@@ -1079,7 +1089,7 @@ export function* listGlobal(input?: {
     conditions.push(isNull(SessionTable.time_archived))
   }
 
-  const limit = input?.limit ?? 100
+  const limit = clampListLimit(input?.limit)
 
   const rows = Database.use((db) => {
     const query =
