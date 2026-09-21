@@ -439,7 +439,7 @@ export const ActorTool = Tool.define(
         action: z
           .literal("spawn")
           .describe(
-            "THE DEFAULT for delegation — launches a subagent in the BACKGROUND and returns its actor_id immediately, so you can keep responding to the user while it works. The result arrives as a notification, or collect it with `wait`/`status`.",
+            "THE DEFAULT — launches a subagent in the BACKGROUND and returns its actor_id immediately, so subagents run in PARALLEL and you keep responding to the user. The result arrives as a notification, or collect it with `wait`/`status`.",
           ),
         description: z.string().min(1).describe("A short (3-5 words) description of the task."),
         prompt: z.string().min(1).describe("The task for the agent to perform."),

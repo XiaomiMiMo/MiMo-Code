@@ -88,7 +88,7 @@ Tactics that pay off for paper surveys:
 - Snowball: for the 2–3 most central papers, walk S2's citations/references (see `references/api-cheatsheet.md`). One good snowball beats another keyword sweep.
 - Also WebFetch survey papers' related-work sections and awesome-lists — they surface what keyword search doesn't rank.
 - **Every URL in the eventual report must come from a `papers.json` row or a fetch you actually made.** URLs recalled from memory are hallucinations; do not write them.
-- For extraction across many papers, subagents may handle independent subsets when useful. Give each the fetched text file paths (not summaries) and the field schema from `question.md`; use only the agents needed to cover the papers.
+- For parallel extraction across 10–25 papers, spawn subagents in batches of 3–5, each with the fetched text file paths (not summaries) and the field schema from `question.md`.
 
 ## Judgment
 

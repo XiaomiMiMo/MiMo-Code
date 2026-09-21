@@ -123,7 +123,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
         })
         const exec = gpt.find((tool) => tool.id === "exec")
         expect(exec).toBeDefined()
-        expect(exec?.description).toContain("Independent calls may use `Promise.all` or `Promise.allSettled`")
+        expect(exec?.description).toContain("Run independent calls with `Promise.all` or `Promise.allSettled`")
         expect(exec?.description).toContain("keep dependent operations sequential")
         expect(exec?.description).toContain("do not use `exec` merely to force concurrency")
         expect(exec?.description).toContain("apply_patch(input:")

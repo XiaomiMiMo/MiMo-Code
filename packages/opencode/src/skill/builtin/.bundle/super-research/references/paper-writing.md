@@ -91,7 +91,7 @@ A real paper cited for a claim it doesn't make is worse than an obviously fabric
 3. Judge one of: `SUPPORTS` / `WEAK` (abstract hints but doesn't say so directly) / `WRONG` (abstract does not contain this claim) / `UNKNOWN` (needs full-text fetch — flag for later).
 4. For **load-bearing citations** (a claim the paper's contribution depends on) read more than the abstract — spend the fetch budget there.
 
-Focused subagents may help check long bibliographies when separate investigations are useful. Each subagent gets the sentence + abstract + the citation key — NOT your expectation of the verdict. Fresh eyes prevent confirmation bias.
+Batch this with subagents for long bibliographies. Each subagent gets the sentence + abstract + the citation key — NOT your expectation of the verdict. Fresh eyes prevent confirmation bias.
 
 Append the context verdict to each entry in `citation_audit.json`.
 

@@ -71,7 +71,7 @@ Use ~~CRM as the default account anchor. Use sufficient user-provided/exported a
 - For each selected account, collect primary ~~CRM truth and user-provided context first. Use ~~Knowledge & Files for account plans or notes that explain the active workstream.
 - For Adhoc, or when primary evidence is thin, deepen selectively in this order when relevant: ~~Email, ~~Knowledge & Files, ~~Meeting Transcripts, ~~Internal Messaging, then ~~Calendar.
 - For Monitor, finish the bounded primary pass across the account set before deepening individual accounts. Deepen only accounts with a possible material delta, ambiguity, or high-value risk/opportunity.
-- Independent account lookups may run concurrently when useful, with a practical cap of 10 at a time. Treat a batch timeout or schema error as a call-shape failure, not proof that the source is unavailable; retry failed accounts once by stable account id when available, then mark them unavailable and continue with surviving accounts.
+- Parallelize only independent account lookups, with a practical cap of 10 at a time. Treat a batch timeout or schema error as a call-shape failure, not proof that the source is unavailable; retry failed accounts once by stable account id when available, then mark them unavailable and continue with surviving accounts.
 - Stop when the recent story is supported. If a recency source was checked and found no match, say `checked/no match` when that absence materially affects confidence.
 
 ### 4. Normalize, score, and interpret signals

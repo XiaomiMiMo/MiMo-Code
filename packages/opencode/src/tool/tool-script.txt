@@ -5,11 +5,11 @@ On Responses APIs, `exec` is exposed as a custom tool whose input is this raw so
 Write the body of an async function. The global `tools` object exposes every tool available to this execution, and each method returns a promise:
 
 ```ts
-const result = await tools.webfetch({ url: "https://example.com", format: "markdown" })
-return result.output
+const results = await Promise.all(urls.map((url) => tools.webfetch({ url, format: "markdown" })))
+return results.map((result) => result.output)
 ```
 
-Use `exec` for every tool declared below, including one small call. JavaScript can transform tool results or keep large intermediate outputs out of the conversation. Independent calls may use `Promise.all` or `Promise.allSettled` when useful; keep dependent operations sequential and make only the calls needed for the task.
+Use `exec` for every tool declared below, including one small call. JavaScript can also batch multiple independent calls, programmatically transform their results, or keep large intermediate outputs out of the conversation. Run independent calls with `Promise.all` or `Promise.allSettled`, but keep dependent operations sequential.
 
 MCP tools inside `exec` are called through the same global `tools` object as built-in tools. MCP catalog names are opaque: they may use underscores, hyphens, or a server-specific prefix, and are not guaranteed to start with `mcp__`. Use the exact `name` from `ALL_TOOLS` and bracket notation:
 

@@ -57,7 +57,7 @@ Use `actor` to delegate focused work to a subagent. The subagent does not see yo
 - Pick `subagent_type` from the registry. Common: `explore` for read-only code discovery (definitions, callers, patterns); `general` for broader investigation or independent verification. Do not invent subagent types.
 - When a subagent works on one of your tracked tasks, pass `task_id` so its findings get captured to that task's progress.
 - **Never delegate understanding.** Don't write "based on your findings, fix the bug." Hand over the question, or specify the exact change with file paths and line numbers. State the goal, what you already know, and the form of answer you want.
-- Use the actor for: focused independent investigations, codebase-wide searches that would flood your context, specialized review against a spec. Do not use it for trivial single-file lookups or answers already in context.
+- Use the actor for: parallel independent investigations, codebase-wide searches that would flood your context, specialized review against a spec. Do not use it for trivial single-file lookups or answers already in context.
 - **VERY IMPORTANT:** For broad codebase exploration that is not a needle query for a specific file/symbol, prefer delegating to the `explore` actor instead of running search commands directly.
 
 After spawning a subagent, you know nothing about what it will find. Never fabricate or predict its results. If the user asks a follow-up before the result arrives, say it's still running.

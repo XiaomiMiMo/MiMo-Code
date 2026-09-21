@@ -8,8 +8,9 @@ to_actor_id="main" to report progress, findings, or blockers to the parent.
 JSON calls wrap the action payload inside an `operation` object; `action` is the discriminator field.
 
 **`spawn` is the DEFAULT.** It launches the subagent in the BACKGROUND and returns
-its actor_id immediately, so you can keep responding to the user while it works.
-`run` BLOCKS the entire conversation until the subagent finishes — it is the rare exception, not the normal path.
+its actor_id immediately, so several subagents run in PARALLEL and you keep
+responding to the user while they work. `run` BLOCKS the entire conversation until
+the subagent finishes — it is the rare exception, not the normal path.
 
 Examples:
 {"operation":{"action":"spawn","subagent_type":"explore","description":"Find error recovery","prompt":"<full task>"}}
@@ -24,7 +25,7 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
 ## Operations (the `operation.action` field selects one)
 
 - spawn:  **THE DEFAULT.** Launch a subagent in the BACKGROUND; returns actor_id
-          IMMEDIATELY so your turn stays responsive while it works.
+          IMMEDIATELY so work proceeds in PARALLEL and your turn stays responsive.
           Use it for essentially all delegation: investigation, analysis, review,
           implementation, long searches — anything that takes real time.
           required: subagent_type, description, prompt
@@ -51,9 +52,9 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
 
 ## When to use actor
 
-- **Focused delegation**: `spawn` a subagent for a specific investigation that benefits
-  from separate context. Independent assignments may run in parallel when useful;
-  use only the agents needed for the task.
+- **Parallelize (the normal case)**: `spawn` every independent search/analysis at once so
+  they run concurrently; collect later via notification, or `wait`/`status` when you must
+  synchronize.
 - **Isolate heavy lifting**: `spawn` a subagent for 10+ file reads; you get only the synthesis.
 - **Specialized search**: use `explore` for read-only code discovery (finding definitions, callers).
 - **Custom review**: `general` subagent verifies implementation against spec without bias.
@@ -131,7 +132,7 @@ assistant: I'll spawn an explore subagent in the background to scan parser-relat
 
 <example>
 user: "Audit the type checker: spec compliance, test coverage, and perf hot spots"
-assistant: These checks need distinct evidence, so I'll assign a focused investigation to each.
+assistant: Three independent questions — I'll spawn all three at once so they run in parallel, then collect.
 [actor({"operation":{"action":"spawn","subagent_type":"general","description":"Type checker spec review","prompt":"Read docs/spec.md §3 (Type System), then src/types.ts. Report every §3 requirement not implemented. Don't fix anything."}})]
 [actor({"operation":{"action":"spawn","subagent_type":"general","description":"Type checker coverage gaps","prompt":"Read docs/spec.md §3 and tests/types.test.ts. Report every §3 requirement with no test covering it. Don't fix anything."}})]
 [actor({"operation":{"action":"spawn","subagent_type":"explore","description":"Type checker hot spots","prompt":"Find the hottest loops and repeated allocations in src/types.ts. Report file:line + why it's hot."}})]
