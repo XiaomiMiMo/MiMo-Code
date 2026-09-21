@@ -1,39 +1,74 @@
 import { expect } from "bun:test"
 import path from "node:path"
-import { Effect, Fiber, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer } from "effect"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Session } from "../../src/session"
-import { ToolGate } from "../../src/tool/gate"
+import { Bus } from "../../src/bus"
+import { Question } from "../../src/question"
+import { MessageV2 } from "../../src/session/message-v2"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { startScriptedLLMServer, toolCallResponse } from "../lib/scripted-llm-server"
+import { startScriptedLLMServer, toolCallsResponse } from "../lib/scripted-llm-server"
 
-const it = testEffect(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer, CrossSpawnSpawner.defaultLayer))
+const it = testEffect(
+  Layer.mergeAll(
+    SessionPrompt.defaultLayer,
+    Session.defaultLayer,
+    Question.defaultLayer,
+    Bus.defaultLayer,
+    CrossSpawnSpawner.defaultLayer,
+  ),
+)
 
 it.live(
-  "a cancelled queued write never executes when another session releases the gate",
+  "a cancelled write queued behind a question in the same step never executes",
   () =>
     Effect.gen(function* () {
       const server = startScriptedLLMServer([
         {
-          lines: toolCallResponse({
-            id: "call-write",
-            name: "write",
-            args: JSON.stringify({ file_path: "cancelled.txt", content: "after stop" }),
-          }),
+          lines: toolCallsResponse([
+            {
+              id: "ask-user",
+              name: "question",
+              args: JSON.stringify({ questions: [{ question: "Continue?", header: "Continue", options: [] }] }),
+            },
+            {
+              id: "call-write",
+              name: "write",
+              args: JSON.stringify({ file_path: "cancelled.txt", content: "after stop" }),
+            },
+          ]),
         },
       ])
       yield* Effect.addFinalizer(() => Effect.promise(() => server.stop()))
       yield* provideTmpdirInstance(
         (dir) =>
           Effect.gen(function* () {
-            const gate = ToolGate.for(dir)
-            const held = yield* Effect.promise(() => gate.enter("bash", "other-session"))
-            yield* Effect.addFinalizer(() => Effect.sync(() => gate.leave(held)))
             const sessions = yield* Session.Service
             const prompt = yield* SessionPrompt.Service
             const session = yield* sessions.create({ title: "Cancellation" })
+            const bus = yield* Bus.Service
+            const questions = yield* Question.Service
+            const asked = yield* Deferred.make<void>()
+            const queued = yield* Deferred.make<void>()
+            const unsubscribeAsked = yield* bus.subscribeCallback(Question.Event.Asked, (event) => {
+              if (event.properties.sessionID === session.id) Deferred.doneUnsafe(asked, Effect.void)
+            })
+            const unsubscribeQueued = Bus.subscribe(MessageV2.Event.PartUpdated, (event) => {
+              const part = event.properties.part
+              if (
+                part.sessionID === session.id &&
+                part.type === "tool" &&
+                part.callID === "call-write" &&
+                part.state.status === "running"
+              ) {
+                Deferred.doneUnsafe(queued, Effect.void)
+              }
+            })
+            yield* Effect.addFinalizer(() => Effect.sync(unsubscribeAsked))
+            yield* Effect.addFinalizer(() => Effect.sync(unsubscribeQueued))
+            yield* Effect.addFinalizer(() => prompt.cancel(session.id))
             const running = yield* prompt
               .prompt({
                 sessionID: session.id,
@@ -42,21 +77,19 @@ it.live(
                 parts: [{ type: "text", text: "Write the file" }],
               })
               .pipe(Effect.forkChild)
-            yield* Effect.promise(async () => {
-              const deadline = Date.now() + 10000
-              while (gate.queuedCount === 0 && Date.now() < deadline) await Bun.sleep(10)
-            })
-            expect(gate.queuedCount).toBe(1)
+            yield* Deferred.await(asked).pipe(Effect.timeout("10 seconds"))
+            yield* Deferred.await(queued).pipe(Effect.timeout("10 seconds"))
+            expect(yield* Effect.promise(() => Bun.file(path.join(dir, "cancelled.txt")).exists())).toBe(false)
             yield* prompt.cancel(session.id)
             const result = yield* Fiber.join(running)
             expect(result.info.role === "assistant" && result.info.error?.name).toBe("MessageAbortedError")
-            expect(gate.queuedCount).toBe(0)
-            gate.leave(held)
-            // A later barrier must finish without resurrecting the cancelled write.
-            const next = yield* Effect.promise(() => gate.enter("bash", "after-cancel"))
-            gate.leave(next)
+            expect(yield* questions.list()).toHaveLength(0)
             expect(yield* Effect.promise(() => Bun.file(path.join(dir, "cancelled.txt")).exists())).toBe(false)
-            expect(gate.runningCount).toBe(0)
+            const tools = (yield* sessions.messages({ sessionID: session.id }))
+              .flatMap((message) => message.parts)
+              .filter((part) => part.type === "tool")
+            expect(tools).toHaveLength(2)
+            expect(tools.every((part) => part.state.status === "error")).toBe(true)
           }),
         {
           git: true,
@@ -79,7 +112,7 @@ it.live(
               },
             },
             agent: { build: { model: "test/model" } },
-            permission: { edit: "allow" },
+            permission: { edit: "allow", question: "allow" },
             lsp: false,
             formatter: false,
           },

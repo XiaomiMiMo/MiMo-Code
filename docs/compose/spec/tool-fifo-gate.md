@@ -3,100 +3,94 @@ feature: tool-fifo-gate
 status: delivered
 updated: 2026-09-21
 branch: feat/tool-fifo-gate
-commits: 1592084b..ee5150cc
 ---
 
 # Tool FIFO Gate
 
 ## Report
 
-**What was built** — A FIFO admission gate in front of ordinary model-facing
-local and MCP tool execution, keyed by `Instance.directory`. Only
-`read`/`grep`/`glob` may run together. All other ordinary tools, including
-`edit`/`write`, are exclusive. `actor`/`exec`/`workflow`/`session` bypass the gate
-because they orchestrate or control nested execution. Exec guest tools remain
-ungated; the model chooses `await` or `Promise.all`.
+**What is built** — Each agent's assistant step owns an independent FIFO gate
+for its model-facing tool calls. Only `read`/`grep`/`glob` may overlap. All other
+calls, including `actor`/`exec`/`workflow`/`session`, custom tools, and MCP tools,
+are serial within that batch. Different agents and sessions never share a gate,
+even in the same directory. Exec scripts retain their own `await`/`Promise.all`
+semantics for guest calls.
 
-The gate has no filesystem resource keys or hook snapshots. Cancelling a queued
-call removes its waiter. Admitted calls retain their slot until execution and
-cleanup finish. `question` and `plan_exit` pass cancellation to the underlying
-question wait, dismiss its UI request, and release the gate after cleanup.
+There is no directory registry, filesystem resource identity, hook snapshot,
+or orchestration bypass list. Queued cancellation removes the waiter; admitted
+calls release after execution and cleanup. Question/plan cancellation reaches
+the actual wait and dismisses the UI request.
 
-**Verification** — Run from `packages/opencode`:
-- Gate lifecycle and cancellation tests, plus real-session regressions for
-  stopped writes, cancelled questions/plan approval, hook-rewritten writes,
-  child-session joins, and ungated Codex exec.
-- Existing agent, question/plan, GPT, tool-script, Responses custom-tool, and
-  filtered session MCP/exec/Codex tests.
-- Package `bun typecheck`, changed-file oxlint, and full-range `git diff --check`.
-
-228 distinct relevant tests passed: 194 core/tool/question tests, 2 orchestration
-tests, and 32 filtered MCP/exec/Codex/GPT tests. The first filtered run passed 31
-and hit Bun's default 5-second timeout in the screenshot-resume case; that case
-passed alone in 3.04 seconds using the repository test script's 30-second limit.
-The final gate suite also passed all 30 cases after test-only assertion cleanup.
-Package typecheck passed; changed-file oxlint reported 0 errors (46 existing
-warnings in `session/prompt.ts`); full-range diff whitespace checks passed.
-Independent fresh-eyes review of the complete PR and final simplification passed
-spec compliance, correctness, and codebase consistency with no remaining
-actionable findings. The reviewed code range is recorded above; the final
-documentation-only commit records delivery.
-
-**Journey log**
-- Synchronous token registration followed by interruptible admission is required;
-  asynchronous acquisition inside `acquireUseRelease` makes queued waits
-  uninterruptible. Unique tokens prevent colliding provider call IDs.
-- Abort removes waiting calls only. An admitted command must finish cleanup
-  before another conflicting tool starts.
-- A persisted tool error is not proof that the detached execution fiber ended;
-  cancellation must reach waits such as question/plan approval too.
-- `session` joins/asks must bypass alongside actor/workflow/exec, or the parent
-  can hold the directory gate while waiting for a child that needs it.
-- Path-based write parallelism was removed after review exposed multiple identity
-  and hook edge cases. The earlier design and tradeoff are preserved in S4.
+**Verification** — 229 distinct relevant tests passed from `packages/opencode`:
+37 gate/session cases, 160 tool/agent/question/GPT cases, and 32 filtered
+MCP/exec/Codex/GPT session cases. New integration coverage includes two agents in
+one session and two sessions in one directory, a custom tool waiting for peer
+work, top-level exec ordering with internal `Promise.all`, and cancellation of a
+write queued behind a question in the same batch. Package typecheck passed and
+changed-file oxlint reported zero errors. Independent review of the complete PR
+under the corrected scope passed spec compliance, correctness, and codebase
+consistency with no actionable findings. The final integration in `prompt.ts`
+is 12 added and 5 removed lines against the PR base; the existing edit mutex and
+plugin implementation remain unchanged. Full-range `git diff --check` passed.
 
 ## [S1] Problem
 
-Multiple tool calls in one assistant step can execute concurrently. A file edit
-can race a later `git commit` or `git push`, leaving changes out of the commit or
-running commit/push in the wrong order. Ordinary model-facing calls need a
-predictable execution order without requiring model prompts to teach scheduling.
+A model can emit multiple tool calls in one assistant step even when the calls
+have sequential meaning: edit a file, commit it, then push. Executing these
+calls concurrently can omit changes or push before the commit finishes.
+
+The objective is to preserve this one agent's call order, not to coordinate all
+agents that happen to use the same workspace or to guarantee filesystem safety
+against concurrent actors. Each agent must remain independently runnable.
 
 ## [S2] Design
 
-### Scope and compatibility
+### Ownership and compatibility
 
-One gate per `Instance.directory`; sessions sharing that directory share the
-queue. It is process-local, not a filesystem or cross-process lock.
+`resolveTools` creates a fresh `ToolGate` for one assistant message. Every local,
+custom, and MCP model-facing execute wrapper in that resolved map captures that
+same gate. The next assistant step gets a new gate. A child agent, another actor
+inside the same session, or another session resolves its own tool map and gate.
+No global map or directory/agent-name key is involved in batch scheduling.
+
+The pre-existing `edit` mutex remains unchanged: its module-level map uses
+`AppFileSystem.resolve(filePath)` and therefore still coordinates edits to the
+same resolved path across agents. This PR neither removes that behavior nor
+adds new cross-agent filesystem protection.
+
+```text
+agent A, assistant step → gate A → its model-facing calls
+agent B, assistant step → gate B → its model-facing calls
+```
 
 ```text
 compatible(a, b) ⇔
   a.tool ∈ {read, grep, glob} ∧ b.tool ∈ {read, grep, glob}
 ```
 
-Every other ordinary tool is barrier-class: it cannot overlap another admitted
-call, including a read or a second invocation of itself. Classification depends
-only on the tool name, never on arguments, filesystem paths, or hook presence.
+All remaining tool names are exclusive against other calls in the same batch.
+Classification does not inspect tool arguments, paths, descriptions, skills,
+or custom scheduling declarations.
 
 | Surface | Admission |
 |---|---|
-| Ordinary local `read` / `grep` / `glob` | Parallel with each other |
-| Other model-facing local tools | Exclusive |
-| Model-facing MCP tools | Exclusive |
-| `actor` / `workflow` / `session` | Bypass so nested work/control cannot deadlock |
-| Top-level `exec` and its builtin/MCP guest calls | Bypass; scripts own concurrency |
+| Model-facing `read` / `grep` / `glob` | Parallel with each other in this batch |
+| Other local/custom/MCP calls | FIFO, one at a time in this batch |
+| Top-level `actor` / `exec` / `workflow` / `session` | Same serial rule; no exceptions |
+| Child agents' model-facing calls | Their own independent gates |
+| Exec builtin/MCP guest calls | Script-controlled `await` / `Promise.all` |
 
-`session` must bypass because `ask` and `join` wait for child execution, while
-approval/cancellation operations must remain reachable during that execution.
-Nested ordinary model-facing leaf tools still enter the directory gate.
+A custom `talk_to_session` may wait for agent B while holding agent A's gate:
+B can still execute its own tools. No custom orchestration flag is needed.
+The same applies to a parent's synchronous actor/workflow/session wait. The
+script calls inside `exec` do not reenter the enclosing top-level gate.
 
 ### FIFO and lifecycle
 
 ```text
 enter(tool, callID, {signal}) → Promise<token>:
-  mint unique token (call IDs may collide)
-  bypass tools resolve without occupying a slot
-  otherwise enqueue and tryAdmit()
+  mint a unique token (provider call IDs may collide)
+  enqueue and tryAdmit()
   abort before admission → remove waiter, reject, tryAdmit()
   admission → detach queue abort listener
 
@@ -111,43 +105,56 @@ leave(token):
   tryAdmit()
 ```
 
-A queued barrier prevents later reads from jumping ahead. Double leave is
-idempotent. A cancelled queued barrier permits compatible followers to proceed.
-One gate entry is retained per directory for the process lifetime.
+A queued serial call prevents later reads from jumping ahead. Double leave is
+idempotent. Cancelling a queued serial call permits compatible followers to run.
+The gate lives with its tool-map closures and has no process-wide registry.
 
-`gate.run` uses `Effect.acquireUseRelease`: synchronously register the token,
-install release, await admission in the interruptible use phase, check the
-caller's abort signal before starting the body, and release on every exit.
-An admitted call is removed only after its body and cleanup finish; changing
-its persisted status to failed is insufficient.
+`gate.run` uses `Effect.acquireUseRelease`: register synchronously, install
+release, await admission in the interruptible use phase, check the abort signal
+before starting the body, and release after the body and cleanup exit. Persisting
+a failed tool status alone does not prove that execution or cleanup ended.
 
-The question service receives the caller's AbortSignal from `question` and
-`plan_exit`. Cancellation rejects the actual wait, removes the pending question,
-and publishes `question.rejected`. Integration tests require the persisted tool
-to be in the error state, the UI request to be dismissed, and later gated work
-to proceed.
+`question` and `plan_exit` pass cancellation to the question service. It rejects
+the actual wait, removes the pending question, and publishes `question.rejected`.
+Cancelling a batch must not later execute a queued write.
 
 ### Integration and prompts
 
-Local and MCP model-facing wrappers hold admission across the existing execute
-pipeline, including before/after hooks and permission checks. Hooks keep their
-existing live loading behavior. MCP direct and exec guest surfaces share the
-pipeline body; only the direct surface uses the gate.
+Local and MCP model-facing wrappers hold admission across their existing
+execute pipelines, including hooks and permission checks. Hooks retain their
+live loading behavior. Direct MCP and exec guest surfaces share the pipeline
+body; only the direct model-facing surface uses the batch's gate.
 
 No provider or AI SDK execution changes. Max-mode replay is already sequential.
-Ordinary model/tool prompts omit cross-tool parallel/serial teaching. Advice for
-sequencing shell commands within one `bash` call remains valid.
+Ordinary prompts omit cross-tool parallel/serial teaching. Advice for shell
+commands inside one `bash` call remains valid.
 
 ## [S3] Out of Scope
 
-- Locking exec or changing model-chosen `await` / `Promise.all` behavior.
-- Expanding GPT/Codex tool safety beyond checking for regressions.
-- Cross-process or external-editor coordination, or coordination between distinct
-  `Instance.directory` values.
-- Provider stream reordering, AI SDK semantics, or bash command classification.
-- Restoring parallel write admission in this emergency change.
+- Adding coordination or filesystem exclusion across agents, sessions, assistant
+  steps, processes, or external editors. Existing tool-local locks are preserved.
+- Inferring semantic dependencies, filesystem aliases, or custom tool behavior.
+- Changing concurrency inside exec scripts or workflow execution.
+- Expanding GPT/Codex safety beyond the same top-level scheduling rule and
+  regression checks for guest execution.
+- Provider stream reordering or bash command classification.
 
-## [S4] Previous Design and Why It Was Replaced
+## [S4] Previous Designs and Why They Were Replaced
+
+### Directory-wide scheduling
+
+The previous design stored one gate per `Instance.directory`. This expanded a
+single model batch's ordering requirement into cross-agent exclusion. A custom
+session-chat tool could hold A's gate while waiting for B, but B's read/write
+would need the same gate. The desktop's timeout eventually broke the wait with
+an error. Adding actor/workflow/session bypasses only handled known tool names;
+it could not correct the ownership mistake or account for all custom tools.
+
+The replacement owns the gate in one agent's assistant step. B therefore never
+needs A's gate. All top-level orchestration bypasses are removed, and third-party
+tools need no new scheduling metadata. Different agents remain concurrent.
+
+### Path-based write parallelism
 
 The earlier design also allowed `edit`/`write` to overlap when their canonical
 file resource keys differed. Relative paths used the session directory; existing
@@ -189,3 +196,5 @@ or predict how hooks will rewrite them.
 - [x] T6: Simplify to read/search parallelism only — acceptance: edit/write serialize without resource keys or hook snapshots (covers: S2)
 - [x] T7: Propagate cancellation to question waits — acceptance: question and plan_exit finish with error, dismiss the UI request and release the gate (covers: S2)
 - [x] T8: Preserve the previous design and decision rationale — acceptance: S4 records reproduced corner cases and the performance tradeoff (covers: S4)
+- [x] T9: Scope each gate to one agent's assistant step — acceptance: same-session actors and same-directory sessions complete independently while a custom caller waits (covers: S1, S2)
+- [x] T10: Remove all top-level bypasses — acceptance: actor/exec/workflow/session obey the same serial rule, while exec guest calls retain script-owned concurrency (covers: S2)

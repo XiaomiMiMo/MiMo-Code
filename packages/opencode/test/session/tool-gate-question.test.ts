@@ -5,7 +5,6 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Question } from "../../src/question"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
-import { ToolGate } from "../../src/tool/gate"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { startScriptedLLMServer, toolCallResponse } from "../lib/scripted-llm-server"
@@ -22,7 +21,7 @@ const it = testEffect(
 
 for (const tool of ["question", "plan_exit"] as const) {
   it.live(
-    `session cancellation dismisses an admitted ${tool} and releases its barrier`,
+    `session cancellation dismisses an admitted ${tool} and finishes its tool state`,
     () =>
       Effect.gen(function* () {
         const server = startScriptedLLMServer([
@@ -42,14 +41,13 @@ for (const tool of ["question", "plan_exit"] as const) {
         ])
         yield* Effect.addFinalizer(() => Effect.promise(() => server.stop()))
         yield* provideTmpdirInstance(
-          (dir) =>
+          () =>
             Effect.gen(function* () {
               const prompt = yield* SessionPrompt.Service
               const sessions = yield* Session.Service
               const questions = yield* Question.Service
               const bus = yield* Bus.Service
               const session = yield* sessions.create({ title: "Question cancellation" })
-              const gate = ToolGate.for(dir)
               const asked = yield* Deferred.make<void>()
               const rejected = yield* Deferred.make<void>()
               const unsubscribeAsked = yield* bus.subscribeCallback(Question.Event.Asked, (event) => {
@@ -78,7 +76,6 @@ for (const tool of ["question", "plan_exit"] as const) {
                 })
                 .pipe(Effect.forkChild)
               yield* Deferred.await(asked).pipe(Effect.timeout("10 seconds"))
-              expect(gate.runningCount).toBe(1)
               yield* prompt.cancel(session.id)
               const result = yield* Fiber.join(running)
               expect(result.info.role === "assistant" && result.info.error?.name).toBe("MessageAbortedError")
@@ -89,9 +86,6 @@ for (const tool of ["question", "plan_exit"] as const) {
               ).toMatchObject({ state: { status: "error" } })
               yield* Deferred.await(rejected).pipe(Effect.timeout("1 second"))
               expect(yield* questions.list()).toHaveLength(0)
-              yield* gate.run("read", "next-session", Effect.void).pipe(Effect.timeout("1 second"))
-              expect(gate.runningCount).toBe(0)
-              expect(gate.queuedCount).toBe(0)
             }),
           {
             git: true,

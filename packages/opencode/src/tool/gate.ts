@@ -1,5 +1,5 @@
 /**
- * FIFO admission gate for tool execution, keyed by Instance.directory.
+ * FIFO admission gate for one agent's model-facing tool-call batch.
  *
  * Concurrent tool-call executes can interleave badly (e.g. edit racing a
  * git commit in the same step). This gate restores a predictable admission
@@ -7,21 +7,14 @@
  *
  * - read/grep/glob may run concurrently with each other
  * - every other ordinary tool is barrier-class, including edit/write
- * - actor/exec/workflow/session bypass the queue (they nest or control other calls)
+ *
+ * Each resolved tool map owns a gate; other agents and sessions never share it.
+ * Exec guest calls do not use this model-facing gate.
  */
 
 import { Effect } from "effect"
 
 export const PARALLEL_READONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob"])
-
-/**
- * Top-level model tool-calls for these tools must not queue: they nest more
- * tool execution (actor.run/wait, exec scripts, workflow, session ask/join).
- * Session approval/cancellation must also remain available while a child runs.
- * Holding the gate across that wait deadlocks children that share the directory.
- * Nested model-facing leaf tools enter the gate; exec guest calls remain ungated.
- */
-export const GATE_BYPASS_TOOLS: ReadonlySet<string> = new Set(["actor", "exec", "workflow", "session"])
 
 export type GateRequest = {
   readonly id: string
@@ -42,7 +35,7 @@ function compatible(a: GateRequest, b: GateRequest): boolean {
   return PARALLEL_READONLY_TOOLS.has(a.tool) && PARALLEL_READONLY_TOOLS.has(b.tool)
 }
 
-class WorktreeGate {
+export class ToolGate {
   private readonly queue: Waiter[] = []
   private readonly running = new Map<string, GateRequest>()
   private seq = 0
@@ -58,7 +51,6 @@ class WorktreeGate {
   }
 
   run<A, E, R>(tool: string, callID: string, body: Effect.Effect<A, E, R>, options?: EnterOptions) {
-    if (GATE_BYPASS_TOOLS.has(tool)) return body
     return Effect.acquireUseRelease(
       // Acquire the token synchronously, so release is installed BEFORE the
       // interruptible wait. Interrupting immediately after admission cannot
@@ -81,7 +73,6 @@ class WorktreeGate {
   private enqueue(tool: string, callID: string, options?: EnterOptions) {
     this.seq += 1
     const token = `${callID}#${this.seq}`
-    if (GATE_BYPASS_TOOLS.has(tool)) return { token, ready: Promise.resolve(token) }
     const ready = new Promise<string>((resolve, reject) => {
       const signal = options?.signal
       const onAbort = () => this.leave(token)
@@ -148,24 +139,3 @@ class WorktreeGate {
     }
   }
 }
-
-const gates = new Map<string, WorktreeGate>()
-
-export const ToolGate = {
-  for(directory: string): WorktreeGate {
-    const hit = gates.get(directory)
-    if (hit) return hit
-    const next = new WorktreeGate()
-    gates.set(directory, next)
-    return next
-  },
-  reset(directory?: string): void {
-    if (directory == null) {
-      gates.clear()
-      return
-    }
-    gates.delete(directory)
-  },
-}
-
-export type { WorktreeGate }

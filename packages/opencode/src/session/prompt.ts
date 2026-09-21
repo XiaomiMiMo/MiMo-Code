@@ -147,8 +147,7 @@ import { Process } from "@/util"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Scope, Context } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
-import { Instance } from "@/project/instance"
-import { ToolGate, GATE_BYPASS_TOOLS } from "@/tool/gate"
+import { ToolGate } from "@/tool/gate"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
 import { SessionRunState } from "./run-state"
 import { ResumeTestHooks } from "./resume-test-hooks"
@@ -1745,6 +1744,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       harness?: MessageV2.User["harness"]
     }) {
       using _ = log.time("resolveTools")
+      // One agent's assistant step owns this queue. Other agents and sessions
+      // resolve independent tool maps, even when they use the same directory.
+      const gate = new ToolGate()
       const tools: Record<string, AITool> = {}
       const activeTools = new Set<string>()
       const loadedMcpTools = new Set<string>()
@@ -1899,105 +1901,95 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               Effect.gen(function* () {
                 const startTs = Date.now()
                 const callID = options?.toolCallId ?? "?"
-                const body = Effect.gen(function* () {
-                  log.debug("tool execute start", {
-                    tool: item.id,
-                    callID,
-                    sessionID: input.session.id,
-                  })
-                  const ctx = context(args, options)
-                  if (
-                    whitelist &&
-                    !whitelist.has(item.id) &&
-                    item.id !== MCP_TOOL_SEARCH_ID &&
-                    !(item.id === "exec" && execAllowedByWhitelist)
-                  ) {
-                    const output = rejectionFor(item.id)
-                    log.debug("tool execute rejected", {
-                      tool: item.id,
-                      callID,
-                      durationMs: Date.now() - startTs,
-                    })
-                    yield* input.processor.completeToolCall(options.toolCallId, output)
-                    return output
-                  }
-                  const beforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
-                  yield* plugin.trigger(
-                    "tool.execute.before",
-                    { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
-                    beforeOutput,
-                  )
-                  if (beforeOutput.cancel) {
-                    const cancelOutput = {
-                      title: "Cancelled",
-                      output: beforeOutput.cancelReason || "Tool call cancelled by hook",
-                      metadata: { cancelled: true },
-                    }
-                    yield* bus
-                      .publish(Metrics.ToolCall, {
-                        sessionID: ctx.sessionID,
-                        tool_name: item.id,
-                        input_bytes: Metrics.jsonByteLength(beforeOutput.args),
-                        output_bytes: 0,
-                        tool_call_id: options.toolCallId,
-                        tool_call_status: "cancelled",
-                      })
-                      .pipe(Effect.ignore)
-                    yield* input.processor.completeToolCall(options.toolCallId, cancelOutput)
-                    return cancelOutput
-                  }
-                  const result = yield* item.execute(beforeOutput.args, ctx)
-                  log.debug("tool execute done", {
+                log.debug("tool execute start", {
+                  tool: item.id,
+                  callID,
+                  sessionID: input.session.id,
+                })
+                const ctx = context(args, options)
+                if (
+                  whitelist &&
+                  !whitelist.has(item.id) &&
+                  item.id !== MCP_TOOL_SEARCH_ID &&
+                  !(item.id === "exec" && execAllowedByWhitelist)
+                ) {
+                  const output = rejectionFor(item.id)
+                  log.debug("tool execute rejected", {
                     tool: item.id,
                     callID,
                     durationMs: Date.now() - startTs,
-                    ok: true,
                   })
-                  const output = {
-                    ...result,
-                    attachments: result.attachments?.map((attachment) => ({
-                      ...attachment,
-                      id: PartID.ascending(),
-                      sessionID: ctx.sessionID,
-                      messageID: input.processor.message.id,
-                    })),
-                  }
-                  yield* plugin.trigger(
-                    "tool.execute.after",
-                    { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
-                    output,
-                  )
-                  if (
-                    (item.id === "write" || item.id === "edit") &&
-                    beforeOutput.args?.file_path &&
-                    isExtensionPath(beforeOutput.args.file_path)
-                  ) {
-                    yield* registry.reload().pipe(Effect.tapError((err) => Effect.sync(() => log.warn("extension reload failed", { error: err }))), Effect.ignore)
+                  yield* input.processor.completeToolCall(options.toolCallId, output)
+                  return output
+                }
+                const beforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
+                yield* plugin.trigger(
+                  "tool.execute.before",
+                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
+                  beforeOutput,
+                )
+                if (beforeOutput.cancel) {
+                  const cancelOutput = {
+                    title: "Cancelled",
+                    output: beforeOutput.cancelReason || "Tool call cancelled by hook",
+                    metadata: { cancelled: true },
                   }
                   yield* bus
                     .publish(Metrics.ToolCall, {
                       sessionID: ctx.sessionID,
                       tool_name: item.id,
                       input_bytes: Metrics.jsonByteLength(beforeOutput.args),
-                      output_bytes: Buffer.byteLength(output.output ?? "", "utf8"),
+                      output_bytes: 0,
                       tool_call_id: options.toolCallId,
-                      tool_call_status: "success",
+                      tool_call_status: "cancelled",
                     })
                     .pipe(Effect.ignore)
-                  if (options.abortSignal?.aborted) {
-                    yield* input.processor.completeToolCall(options.toolCallId, output)
-                  }
-                  return output
+                  yield* input.processor.completeToolCall(options.toolCallId, cancelOutput)
+                  return cancelOutput
+                }
+                const result = yield* item.execute(beforeOutput.args, ctx)
+                log.debug("tool execute done", {
+                  tool: item.id,
+                  callID,
+                  durationMs: Date.now() - startTs,
+                  ok: true,
                 })
-                // Model-facing top-level execute: always admit unless this tool
-                // nests further tool calls (deadlock). exec guest scripts never
-                // reach this wrapper for builtin tools.
-                if (GATE_BYPASS_TOOLS.has(item.id)) return yield* body
-                const gate = ToolGate.for(Instance.directory)
-                return yield* gate.run(item.id, callID, body, {
-                  signal: options.abortSignal,
-                })
-              }),
+                const output = {
+                  ...result,
+                  attachments: result.attachments?.map((attachment) => ({
+                    ...attachment,
+                    id: PartID.ascending(),
+                    sessionID: ctx.sessionID,
+                    messageID: input.processor.message.id,
+                  })),
+                }
+                yield* plugin.trigger(
+                  "tool.execute.after",
+                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
+                  output,
+                )
+                if (
+                  (item.id === "write" || item.id === "edit") &&
+                  beforeOutput.args?.file_path &&
+                  isExtensionPath(beforeOutput.args.file_path)
+                ) {
+                  yield* registry.reload().pipe(Effect.tapError((err) => Effect.sync(() => log.warn("extension reload failed", { error: err }))), Effect.ignore)
+                }
+                yield* bus
+                  .publish(Metrics.ToolCall, {
+                    sessionID: ctx.sessionID,
+                    tool_name: item.id,
+                    input_bytes: Metrics.jsonByteLength(beforeOutput.args),
+                    output_bytes: Buffer.byteLength(output.output ?? "", "utf8"),
+                    tool_call_id: options.toolCallId,
+                    tool_call_status: "success",
+                  })
+                  .pipe(Effect.ignore)
+                if (options.abortSignal?.aborted) {
+                  yield* input.processor.completeToolCall(options.toolCallId, output)
+                }
+                return output
+              }).pipe((body) => gate.run(item.id, options?.toolCallId ?? "?", body, { signal: options.abortSignal })),
             )
           },
         })
@@ -2040,188 +2032,177 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         if (searchable && !useMcpToolSearch && input.model.capabilities.toolcall && !useGPTTools) {
           activeTools.add(key)
         }
-        const executeMcpBody = (
+        const executeMcp = (
           args: Parameters<typeof execute>[0],
           opts: Parameters<typeof execute>[1],
-          requireLoaded: boolean,
+          modelFacing: boolean,
         ) =>
-          Effect.gen(function* () {
-            const startTs = Date.now()
-            const callID = opts?.toolCallId ?? "?"
-            log.debug("tool execute start (mcp)", {
-              tool: key,
-              callID,
-              sessionID: input.session.id,
-            })
-            const ctx = context(args, opts)
-            if (!useMcpToolSearch && (!available || !input.model.capabilities.toolcall)) {
-              return yield* Effect.fail(
-                new RecoverableError(`The MCP tool "${key}" is unavailable for this request.`),
-              )
-            }
-            if (requireLoaded && useMcpToolSearch && !loadedMcpTools.has(key)) {
-              return yield* Effect.fail(
-                new RecoverableError(
-                  `The MCP tool "${key}" is not loaded for this request. Call ${MCP_TOOL_SEARCH_ID} first, then retry on the next step.`,
-                ),
-              )
-            }
-            if (whitelist && !whitelist.has(key)) {
-              const rejection = rejectionFor(key)
-              const output = {
-                title: rejection.title,
-                metadata: rejection.metadata,
-                output: rejection.output,
-                attachments: [],
-                content: [{ type: "text" as const, text: rejection.output }],
+          run.promise(
+            Effect.gen(function* () {
+              const startTs = Date.now()
+              const callID = opts?.toolCallId ?? "?"
+              log.debug("tool execute start (mcp)", {
+                tool: key,
+                callID,
+                sessionID: input.session.id,
+              })
+              const ctx = context(args, opts)
+              if (!useMcpToolSearch && (!available || !input.model.capabilities.toolcall)) {
+                return yield* Effect.fail(
+                  new RecoverableError(`The MCP tool "${key}" is unavailable for this request.`),
+                )
               }
-              log.debug("tool execute rejected (mcp)", {
+              if (modelFacing && useMcpToolSearch && !loadedMcpTools.has(key)) {
+                return yield* Effect.fail(
+                  new RecoverableError(
+                    `The MCP tool "${key}" is not loaded for this request. Call ${MCP_TOOL_SEARCH_ID} first, then retry on the next step.`,
+                  ),
+                )
+              }
+              if (whitelist && !whitelist.has(key)) {
+                const rejection = rejectionFor(key)
+                const output = {
+                  title: rejection.title,
+                  metadata: rejection.metadata,
+                  output: rejection.output,
+                  attachments: [],
+                  content: [{ type: "text" as const, text: rejection.output }],
+                }
+                log.debug("tool execute rejected (mcp)", {
+                  tool: key,
+                  callID,
+                  durationMs: Date.now() - startTs,
+                })
+                yield* input.processor.completeToolCall(opts.toolCallId, output)
+                return output
+              }
+              const mcpBeforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
+              yield* plugin.trigger(
+                "tool.execute.before",
+                { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
+                mcpBeforeOutput,
+              )
+              if (mcpBeforeOutput.cancel) {
+                const cancelResult = {
+                  content: [{ type: "text" as const, text: mcpBeforeOutput.cancelReason || "Tool call cancelled by hook" }],
+                }
+                yield* bus
+                  .publish(Metrics.ToolCall, {
+                    sessionID: ctx.sessionID,
+                    tool_name: key,
+                    input_bytes: Metrics.jsonByteLength(mcpBeforeOutput.args),
+                    output_bytes: 0,
+                    tool_call_id: opts.toolCallId,
+                    tool_call_status: "cancelled",
+                  })
+                  .pipe(Effect.ignore)
+                return cancelResult
+              }
+              yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
+              const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.tryPromise({
+                try: () => execute(mcpBeforeOutput.args, {
+                  ...opts,
+                  experimental_context: {
+                    onMcpToolProgress: (meta: Record<string, unknown>) => run.promise(
+                      input.processor.updateToolCall(opts.toolCallId, (part) => {
+                        if (part.state.status !== "running") return part
+                        return { ...part, state: { ...part.state, metadata: {
+                          ...part.state.metadata, mcp: { _meta: meta },
+                        } } }
+                      }),
+                    ),
+                  },
+                }),
+                catch: (error) => error,
+              }).pipe(Effect.catch((error) => Effect.gen(function* () {
+                // Catch SDK execution failures here, before direct/exec paths persist
+                // or forward them. Successful results (including diffs) never enter.
+                if (opts.abortSignal?.aborted) return yield* Effect.fail(error)
+                const truncated = yield* truncate.output(errorMessage(error), { outcome: "error" }, input.agent)
+                if (!truncated.truncated) return yield* Effect.fail(error)
+                return yield* Effect.fail(new ToolResultError(truncated.content, {
+                  truncated: true,
+                  outputPath: truncated.outputPath,
+                }))
+              })))
+              yield* plugin.trigger(
+                "tool.execute.after",
+                { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId, args },
+                result,
+              )
+
+              const normalized = normalizeToolResult(result)
+              log.debug("tool execute done (mcp)", {
                 tool: key,
                 callID,
                 durationMs: Date.now() - startTs,
+                ok: !normalized.isError,
               })
-              yield* input.processor.completeToolCall(opts.toolCallId, output)
-              return output
-            }
-            const mcpBeforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
-            yield* plugin.trigger(
-              "tool.execute.before",
-              { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
-              mcpBeforeOutput,
-            )
-            if (mcpBeforeOutput.cancel) {
-              const cancelResult = {
-                content: [{ type: "text" as const, text: mcpBeforeOutput.cancelReason || "Tool call cancelled by hook" }],
+
+              const truncated = yield* truncate.output(
+                normalized.output,
+                { outcome: normalized.isError ? "error" : "success" },
+                input.agent,
+              )
+              const metadata = {
+                ...normalized.metadata,
+                truncated: truncated.truncated,
+                ...(truncated.truncated && { outputPath: truncated.outputPath }),
               }
+              const attachments = normalized.attachments.map((attachment) => ({
+                type: "file" as const,
+                ...attachment,
+                id: PartID.ascending(),
+                sessionID: ctx.sessionID,
+                messageID: input.processor.message.id,
+              }))
+
+              if (normalized.isError) {
+                return yield* Effect.fail(
+                  new ToolResultError(
+                    truncated.content.trim() || "MCP tool execution failed",
+                    metadata,
+                    attachments,
+                  ),
+                )
+              }
+
               yield* bus
                 .publish(Metrics.ToolCall, {
                   sessionID: ctx.sessionID,
                   tool_name: key,
-                  input_bytes: Metrics.jsonByteLength(mcpBeforeOutput.args),
-                  output_bytes: 0,
+                  input_bytes: Metrics.jsonByteLength(args),
+                  output_bytes: Metrics.jsonByteLength({
+                    content: normalized.content,
+                    structuredContent: normalized.structuredContent,
+                  }),
                   tool_call_id: opts.toolCallId,
-                  tool_call_status: "cancelled",
+                  tool_call_status: "success",
                 })
                 .pipe(Effect.ignore)
-              return cancelResult
-            }
-            yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
-            const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.tryPromise({
-              try: () => execute(mcpBeforeOutput.args, {
-                ...opts,
-                experimental_context: {
-                  onMcpToolProgress: (meta: Record<string, unknown>) => run.promise(
-                    input.processor.updateToolCall(opts.toolCallId, (part) => {
-                      if (part.state.status !== "running") return part
-                      return { ...part, state: { ...part.state, metadata: {
-                        ...part.state.metadata, mcp: { _meta: meta },
-                      } } }
-                    }),
-                  ),
-                },
-              }),
-              catch: (error) => error,
-            }).pipe(Effect.catch((error) => Effect.gen(function* () {
-              // Catch SDK execution failures here, before direct/exec paths persist
-              // or forward them. Successful results (including diffs) never enter.
-              if (opts.abortSignal?.aborted) return yield* Effect.fail(error)
-              const truncated = yield* truncate.output(errorMessage(error), { outcome: "error" }, input.agent)
-              if (!truncated.truncated) return yield* Effect.fail(error)
-              return yield* Effect.fail(new ToolResultError(truncated.content, {
-                truncated: true,
-                outputPath: truncated.outputPath,
-              }))
-            })))
-            yield* plugin.trigger(
-              "tool.execute.after",
-              { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId, args },
-              result,
-            )
 
-            const normalized = normalizeToolResult(result)
-            log.debug("tool execute done (mcp)", {
-              tool: key,
-              callID,
-              durationMs: Date.now() - startTs,
-              ok: !normalized.isError,
-            })
-
-            const truncated = yield* truncate.output(
-              normalized.output,
-              { outcome: normalized.isError ? "error" : "success" },
-              input.agent,
-            )
-            const metadata = {
-              ...normalized.metadata,
-              truncated: truncated.truncated,
-              ...(truncated.truncated && { outputPath: truncated.outputPath }),
-            }
-            const attachments = normalized.attachments.map((attachment) => ({
-              type: "file" as const,
-              ...attachment,
-              id: PartID.ascending(),
-              sessionID: ctx.sessionID,
-              messageID: input.processor.message.id,
-            }))
-
-            if (normalized.isError) {
-              return yield* Effect.fail(
-                new ToolResultError(
-                  truncated.content.trim() || "MCP tool execution failed",
-                  metadata,
-                  attachments,
-                ),
-              )
-            }
-
-            yield* bus
-              .publish(Metrics.ToolCall, {
-                sessionID: ctx.sessionID,
-                tool_name: key,
-                input_bytes: Metrics.jsonByteLength(args),
-                output_bytes: Metrics.jsonByteLength({
-                  content: normalized.content,
-                  structuredContent: normalized.structuredContent,
-                }),
-                tool_call_id: opts.toolCallId,
-                tool_call_status: "success",
-              })
-              .pipe(Effect.ignore)
-
-            const output = {
-              title: "",
-              metadata,
-              output: truncated.content,
-              attachments,
-            }
-            if (opts.abortSignal?.aborted) {
-              yield* input.processor.completeToolCall(opts.toolCallId, output)
-            }
-            return output
-          })
-        // Model-facing MCP execute: FIFO gate. exec guest tools use the same
-        // pipeline below without the gate — the script chooses await vs
-        // Promise.all; MCP never inspects its caller.
-        const executeMcp = (
-          args: Parameters<typeof execute>[0],
-          opts: Parameters<typeof execute>[1],
-          requireLoaded: boolean,
-        ) =>
-          run.promise(
-            Effect.gen(function* () {
-              const body = executeMcpBody(args, opts, requireLoaded)
-              if (GATE_BYPASS_TOOLS.has(key)) return yield* body
-              const callID = opts?.toolCallId ?? "?"
-              const gate = ToolGate.for(Instance.directory)
-              return yield* gate.run(key, callID, body, { signal: opts.abortSignal })
-            }),
+              const output = {
+                title: "",
+                metadata,
+                output: truncated.content,
+                attachments,
+              }
+              if (opts.abortSignal?.aborted) {
+                yield* input.processor.completeToolCall(opts.toolCallId, output)
+              }
+              return output
+            }).pipe((body) =>
+              // Only model-facing calls join this batch. Exec guest calls keep
+              // the same execution pipeline with script-controlled concurrency.
+              modelFacing ? gate.run(key, opts?.toolCallId ?? "?", body, { signal: opts.abortSignal }) : body,
+            ),
           )
         item.execute = (args, opts) => executeMcp(args, opts, true)
         tools[key] = item
         if (searchable && input.model.capabilities.toolcall) {
           execMcpTools[key] = {
             ...item,
-            execute: (args, opts) => run.promise(executeMcpBody(args, opts, false)),
+            execute: (args, opts) => executeMcp(args, opts, false),
           }
         }
       }
