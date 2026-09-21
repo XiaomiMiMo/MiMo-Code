@@ -8,17 +8,31 @@
  * - read/grep/glob may run concurrently with each other
  * - every other ordinary tool is barrier-class, including edit/write
  *
- * Each resolved tool map owns a gate; other agents and sessions never share it.
+ * Each assistant step owns a gate; other agents and sessions never share it.
  * Exec guest calls do not use this model-facing gate.
  */
 
-import { Effect } from "effect"
+import { Cause, Effect, Exit } from "effect"
+import { Flag } from "@/flag/flag"
+import { ToolResultError } from "./result-error"
+
+export const FAIL_CASCADE_MESSAGE = "Tool call cancelled because an earlier tool call in this response failed."
+
+export class FailCascadeError extends ToolResultError {
+  readonly recoverable = true
+
+  constructor() {
+    super(FAIL_CASCADE_MESSAGE, { interrupted: true })
+    this.name = "FailCascadeError"
+  }
+}
 
 export const PARALLEL_READONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob"])
 
 export type GateRequest = {
   readonly id: string
   readonly tool: string
+  readonly callID: string
 }
 
 export type EnterOptions = {
@@ -28,7 +42,7 @@ export type EnterOptions = {
 type Waiter = {
   readonly request: GateRequest
   readonly resolve: () => void
-  readonly cancel: () => void
+  readonly cancel: (error?: Error) => void
 }
 
 function compatible(a: GateRequest, b: GateRequest): boolean {
@@ -39,6 +53,9 @@ export class ToolGate {
   private readonly queue: Waiter[] = []
   private readonly running = new Map<string, GateRequest>()
   private seq = 0
+  private failed = false
+  private readonly cancelled = new Set<string>()
+  private readonly cascade = !Flag.MIMOCODE_DISABLE_FAIL_CASCADE
 
   /**
    * Queue for admission. Resolves with a unique token (call ids may collide
@@ -66,7 +83,17 @@ export class ToolGate {
           if (options?.signal?.aborted) return yield* Effect.fail(new DOMException("Aborted", "AbortError"))
           return yield* body
         }),
-      (request) => Effect.sync(() => this.leave(request.token)),
+      (request, exit) =>
+        Effect.sync(() => {
+          if (
+            Exit.isFailure(exit) &&
+            !Cause.hasInterruptsOnly(exit.cause) &&
+            !options?.signal?.aborted &&
+            this.running.has(request.token)
+          )
+            this.fail(tool)
+          this.leave(request.token)
+        }),
     )
   }
 
@@ -81,17 +108,22 @@ export class ToolGate {
         reject(new DOMException("Aborted", "AbortError"))
         return
       }
+      if (this.failed) {
+        this.cancelled.add(callID)
+        reject(new FailCascadeError())
+        return
+      }
       signal?.addEventListener("abort", onAbort, { once: true })
 
       this.queue.push({
-        request: { id: token, tool },
+        request: { id: token, tool, callID },
         resolve: () => {
           signal?.removeEventListener("abort", onAbort)
           resolve(token)
         },
-        cancel: () => {
+        cancel: (error = new DOMException("Aborted", "AbortError")) => {
           signal?.removeEventListener("abort", onAbort)
-          reject(new DOMException("Aborted", "AbortError"))
+          reject(error)
         },
       })
       this.tryAdmit()
@@ -100,6 +132,20 @@ export class ToolGate {
     // The finalizer still cancels that waiter; keep its rejection observed.
     void ready.catch(() => {})
     return { token, ready }
+  }
+
+  /** Close this batch before releasing the failed tool's slot. */
+  fail(tool: string): void {
+    if (!this.cascade || PARALLEL_READONLY_TOOLS.has(tool) || this.failed) return
+    this.failed = true
+    this.queue.splice(0).forEach((waiter) => {
+      this.cancelled.add(waiter.request.callID)
+      waiter.cancel(new FailCascadeError())
+    })
+  }
+
+  wasCancelled(callID: string): boolean {
+    return this.cancelled.has(callID)
   }
 
   leave(token: string): void {

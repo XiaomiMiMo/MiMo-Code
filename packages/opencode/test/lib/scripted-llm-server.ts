@@ -22,6 +22,8 @@ export interface LLMCapture {
 type ScriptedResponse = {
   /** SSE lines to stream back */
   lines: string[]
+  /** Optional live SSE source for cancellation and generation-barrier tests. */
+  stream?: ReadableStream<Uint8Array>
   /** HTTP status to return (default: 200) */
   status?: number
   beforeReply?: () => Promise<unknown>
@@ -229,7 +231,7 @@ export function startScriptedLLMServer(responses: ScriptedResponse[]): ScriptedL
 
       const lines = response.lines
       const encoder = new TextEncoder()
-      const stream = new ReadableStream<Uint8Array>({
+      const stream = response.stream ?? new ReadableStream<Uint8Array>({
         start(ctrl) {
           for (const line of lines) ctrl.enqueue(encoder.encode(line))
           ctrl.close()

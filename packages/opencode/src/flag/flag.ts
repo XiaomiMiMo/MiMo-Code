@@ -142,6 +142,14 @@ export const Flag = {
   get MIMOCODE_DISABLE_CHECKPOINT() {
     return truthy("MIMOCODE_DISABLE_CHECKPOINT")
   },
+  // Defaults to protection on. Opt out to continue a batch after tool failure.
+  get MIMOCODE_DISABLE_FAIL_CASCADE() {
+    return truthy("MIMOCODE_DISABLE_FAIL_CASCADE")
+  },
+  // Defaults to protection on. Opt out to execute tools while the model streams.
+  get MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT() {
+    return truthy("MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT")
+  },
   MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
   // Default compaction trigger, used when `compaction.max_context` is not set in
   // config. Same grammar as that config field: an absolute token count

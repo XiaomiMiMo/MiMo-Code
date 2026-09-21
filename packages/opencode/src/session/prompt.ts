@@ -147,7 +147,6 @@ import { Process } from "@/util"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Scope, Context } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
-import { ToolGate } from "@/tool/gate"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
 import { SessionRunState } from "./run-state"
 import { ResumeTestHooks } from "./resume-test-hooks"
@@ -1735,7 +1734,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       model: Provider.Model
       session: Session.Info
       tools?: Record<string, boolean>
-      processor: Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall">
+      processor: Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall" | "toolGate">
       bypassAgentCheck: boolean
       messages: MessageV2.WithParts[]
       agentID?: string
@@ -1744,9 +1743,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       harness?: MessageV2.User["harness"]
     }) {
       using _ = log.time("resolveTools")
-      // One agent's assistant step owns this queue. Other agents and sessions
-      // resolve independent tool maps, even when they use the same directory.
-      const gate = new ToolGate()
+      // Share the step's gate with processor cleanup so cancellation reasons
+      // survive an early stream stop, including a rejected permission request.
+      const gate = input.processor.toolGate
       const tools: Record<string, AITool> = {}
       const activeTools = new Set<string>()
       const loadedMcpTools = new Set<string>()
@@ -1914,6 +1913,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   !(item.id === "exec" && execAllowedByWhitelist)
                 ) {
                   const output = rejectionFor(item.id)
+                  gate.fail(item.id)
                   log.debug("tool execute rejected", {
                     tool: item.id,
                     callID,
@@ -1929,6 +1929,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   beforeOutput,
                 )
                 if (beforeOutput.cancel) {
+                  gate.fail(item.id)
                   const cancelOutput = {
                     title: "Cancelled",
                     output: beforeOutput.cancelReason || "Tool call cancelled by hook",
@@ -1968,6 +1969,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
                   output,
                 )
+                // These tools report failures as structured results rather than throwing.
+                if (item.id === "bash" && typeof output.metadata.exit === "number" && output.metadata.exit !== 0) {
+                  gate.fail(item.id)
+                }
+                if (item.id === "workflow" && args.operation === "run" && output.metadata.status === "failed") {
+                  gate.fail(item.id)
+                }
                 if (
                   (item.id === "write" || item.id === "edit") &&
                   beforeOutput.args?.file_path &&
@@ -1989,7 +1997,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   yield* input.processor.completeToolCall(options.toolCallId, output)
                 }
                 return output
-              }).pipe((body) => gate.run(item.id, options?.toolCallId ?? "?", body, { signal: options.abortSignal })),
+              }).pipe((body) =>
+                gate.run(
+                  item.id === "invalid" && typeof args.tool === "string" ? args.tool : item.id,
+                  options?.toolCallId ?? "?",
+                  body,
+                  { signal: options.abortSignal },
+                ),
+              ),
             )
           },
         })
@@ -2061,6 +2076,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
               if (whitelist && !whitelist.has(key)) {
                 const rejection = rejectionFor(key)
+                if (modelFacing) gate.fail(key)
                 const output = {
                   title: rejection.title,
                   metadata: rejection.metadata,
@@ -2083,6 +2099,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 mcpBeforeOutput,
               )
               if (mcpBeforeOutput.cancel) {
+                if (modelFacing) gate.fail(key)
                 const cancelResult = {
                   content: [{ type: "text" as const, text: mcpBeforeOutput.cancelReason || "Tool call cancelled by hook" }],
                 }
