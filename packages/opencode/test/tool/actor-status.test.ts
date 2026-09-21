@@ -48,6 +48,7 @@ const it = testEffect(
 
 interface StatusResponse {
   status: "pending" | "running" | "idle" | "completed" | "failed" | "cancelled" | "unknown"
+  executionState?: string
   actor_id: string
   description?: string
   agent?: string
@@ -76,6 +77,48 @@ function ctxFor(sessionID: SessionID) {
 }
 
 describe("actor tool — status action", () => {
+  for (const [outcome, state] of [
+    ["success", "completed"],
+    ["failure", "failed"],
+    ["cancelled", "cancelled"],
+  ] as const) {
+    it.live(
+      `status and wait distinguish ${state} from an interrupted actor`,
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const registry = yield* ActorRegistry.Service
+          const chat = yield* sessions.create({ title: "Outcome query" })
+          yield* registry.register({
+            sessionID: chat.id,
+            actorID: "explore-1",
+            mode: "subagent",
+            agent: "explore",
+            description: "Outcome fixture",
+            contextMode: "none",
+            background: true,
+            lifecycle: "ephemeral",
+          })
+          yield* registry.updateStatus(chat.id, "explore-1", { status: "idle", lastOutcome: outcome })
+          const tool = yield* ActorTool
+          const def = yield* tool.init()
+          for (const action of ["status", "wait"] as const) {
+            const result = yield* def.execute({ operation: { action, actor_id: "explore-1" } }, ctxFor(chat.id))
+            expect(JSON.parse(result.output)).toMatchObject({ executionState: state, lastOutcome: outcome })
+          }
+          const executions = yield* ActorExecution.Service
+          const execution = yield* executions.reserve(chat.id, "explore-1")
+          const running = yield* def.execute(
+            { operation: { action: "status", actor_id: "explore-1" } },
+            ctxFor(chat.id),
+          )
+          expect(JSON.parse(running.output)).toMatchObject({ executionState: "running", executionActive: true })
+          yield* executions.release(execution)
+        }),
+      ),
+    )
+  }
+
   for (const storedStatus of ["pending", "running"] as const) {
     it.live(
       `restarted ${storedStatus} actor is idle for status and wait without rewriting history`,
@@ -106,6 +149,7 @@ describe("actor tool — status action", () => {
             expect(JSON.parse(result.output)).toMatchObject({
               status: "idle",
               executionActive: false,
+              executionState: "stopped",
               actor_id: "explore-1",
             })
             expect(JSON.parse(result.output).lastOutcome).toBeUndefined()
@@ -207,6 +251,7 @@ describe("actor tool — status action", () => {
         yield* executions.release(execution)
         const snap = parseOutput(result.output)
         expect(snap.status).toBe("running")
+        expect(snap.executionState).toBe("running")
         expect(snap.actor_id).toBe(actorID)
         expect(snap.description).toBe("inspect bug")
         expect(snap.agent).toBe("general")
@@ -254,6 +299,7 @@ describe("actor tool — status action", () => {
         const snap = parseOutput(result.output)
         expect(snap.status).toBe("idle")
         expect(snap.time?.completed).toBeGreaterThan(0)
+        expect(snap.executionState).toBe("completed")
       }),
     ),
   )
@@ -297,6 +343,7 @@ describe("actor tool — status action", () => {
         const snap = parseOutput(result.output)
         expect(snap.status).toBe("idle")
         expect(snap.error).toBe("network unreachable")
+        expect(snap.executionState).toBe("failed")
       }),
     ),
   )

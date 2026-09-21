@@ -629,6 +629,7 @@ export const ActorTool = Tool.define(
           const snapshot = {
             status: entry.status,
             executionActive: entry.executionActive,
+            executionState: entry.executionState,
             actor_id: entry.actorID,
             description: entry.description,
             agent: entry.agent,
@@ -640,7 +641,7 @@ export const ActorTool = Tool.define(
             time: entry.time,
           }
           return {
-            title: `Actor status: ${entry.status}`,
+            title: `Actor status: ${entry.executionState}`,
             output: JSON.stringify(snapshot),
             metadata: { actor_id: entry.actorID, status: entry.status } as Record<string, any>,
           }

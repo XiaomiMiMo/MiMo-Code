@@ -9,10 +9,23 @@ import type { SessionID, MessageID } from "@/session/schema"
 import { ActorStatusChanged } from "@/actor/events"
 import { parseReturnHeader, type ReturnStatus } from "@/actor/return-header"
 
+export type ExecutionState = "running" | "completed" | "failed" | "cancelled" | "stopped"
+
+// A read-only projection, not another persisted lifecycle. Idle only describes
+// scheduling; successful completion must have a recorded outcome.
+function executionState(entry: Actor, active: boolean): ExecutionState {
+  if (active) return "running"
+  if (entry.lastOutcome === "success") return "completed"
+  if (entry.lastOutcome === "failure") return "failed"
+  if (entry.lastOutcome === "cancelled") return "cancelled"
+  return "stopped"
+}
+
 export interface WaitResult {
   status: Actor["status"] | "timeout" | "unknown"
   actor_id: string
   executionActive?: boolean
+  executionState?: ExecutionState
   description?: string
   agent?: string
   background?: boolean
@@ -44,7 +57,7 @@ function isWaitResolving(entry: Pick<Actor, "status" | "lastOutcome" | "lifecycl
 }
 
 export interface Interface {
-  readonly status: (entry: Actor) => Effect.Effect<Actor & { executionActive: boolean }>
+  readonly status: (entry: Actor) => Effect.Effect<Actor & { executionActive: boolean; executionState: ExecutionState }>
   readonly wait: (input: { sessionID: SessionID; actor_id: string; timeout_ms?: number }) => Effect.Effect<WaitResult>
 }
 
@@ -72,7 +85,12 @@ export const layer: Layer.Layer<
         (yield* runs
           .assertNotBusy(entry.sessionID, entry.actorID)
           .pipe(Effect.match({ onFailure: () => true, onSuccess: () => false })))
-      return { ...entry, status: executionActive ? ("running" as const) : ("idle" as const), executionActive }
+      return {
+        ...entry,
+        status: executionActive ? ("running" as const) : ("idle" as const),
+        executionActive,
+        executionState: executionState(entry, executionActive),
+      }
     })
 
     // Pull the most recent assistant text + structured object from the actor's
@@ -113,6 +131,7 @@ export const layer: Layer.Layer<
           : parseReturnHeader(extracted.result)
         return {
           status: entry.status,
+          executionState: executionState(entry, false),
           actor_id: entry.actorID,
           description: entry.description,
           agent: entry.agent,

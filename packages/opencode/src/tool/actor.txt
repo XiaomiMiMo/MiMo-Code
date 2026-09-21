@@ -39,10 +39,15 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
           required: subagent_type, description, prompt
           optional: timeout_ms, command
 - status: poll actor state without blocking. required: actor_id.
-          Returns: { status: "pending"|"running"|"idle"|"unknown", actor_id, turnCount, ... }
+          Returns: { status: "pending"|"running"|"idle"|"unknown", executionState, actor_id, turnCount, ... }
+          Use executionState to distinguish running, completed, failed, cancelled, and stopped.
+          "idle" only means not executing; it does NOT mean the task completed.
+          "stopped" means no active execution and no recorded terminal outcome. Partial text or
+          turnCount is not proof of completion. Do not promise a pending completion notification;
+          use send to resume unfinished work when appropriate. Only "completed" confirms success.
 - wait:   block until actor completes (success/failure/cancelled) or timeout (default 10 min).
           required: actor_id. optional: timeout_ms.
-          Returns: { status, actor_id, result?, error? }
+          Returns: { status, executionState?, actor_id, result?, error? }; the same completion rules apply.
 - cancel: stop a running actor (graceful). required: actor_id. Idempotent.
 - send:   deliver message to another actor's inbox, waking it for another turn.
           required: to_actor_id, content.
