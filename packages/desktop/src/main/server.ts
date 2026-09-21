@@ -32,12 +32,12 @@ export function setWslConfig(config: WslConfig) {
 
 export async function spawnLocalServer(hostname: string, port: number, password: string) {
   prepareServerEnv(password)
-  const { Log, Server } = await import("virtual:opencode-server")
+  const { Log, Server } = await import("virtual:mimocode-server")
   await Log.init({ level: "WARN" })
   const listener = await Server.listen({
     port,
     hostname,
-    username: "opencode",
+    username: "mimocode",
     password,
     cors: ["oc://renderer"],
   })
