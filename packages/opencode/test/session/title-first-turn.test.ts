@@ -426,11 +426,15 @@ test("completed user turns do not automatically reconsider the title",  async ()
   } finally { await server.stop(true) }
 }, 30000)
 
-test("ephemeral lite offers only StructuredOutput without reading files or persisting tool messages",  async () => {
-  const captured: { messages: unknown[]; tools: { function: { name: string } }[] }[] = []
+test("ephemeral title supports auto-only tool endpoints without reading files or persisting tool messages",  async () => {
+  const captured: { messages: unknown[]; tools: { function: { name: string } }[]; tool_choice?: string }[] = []
   let resource = ""
   const server = Bun.serve({ port: 0, async fetch(request) {
     captured.push(await request.json())
+    // Some compatible endpoints serialize required calls into content instead of tool_calls.
+    if (captured.at(-1)?.tool_choice === "required") {
+      return new Response(textStopResponse('[{"name":"StructuredOutput","parameters":{"title":"Queue latency analysis"}}]').join(""), { headers: { "content-type": "text/event-stream" } })
+    }
     return new Response(toolCallResponse({ id: "title-fixture", name: "StructuredOutput", args: JSON.stringify({ title: "Queue latency analysis" }) }).join(""), { headers: { "content-type": "text/event-stream" } })
   } })
   try {
@@ -453,6 +457,7 @@ test("ephemeral lite offers only StructuredOutput without reading files or persi
       await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: session.id, noReply: true, model: { providerID: ProviderID.make("fixture"), modelID: ModelID.make("text") }, parts: [{ type: "text", text: `Analyze [notes](${resource})` }, { type: "file", filename: "notes.txt", mime: "text/plain", url: pathToFileURL(resource).href }] })))
       await until(async () => (await run(Session.Service.use(svc => svc.get(session.id)))).titleSource === "generated")
       expect(captured).toHaveLength(1)
+      expect(captured[0].tool_choice).toBe("auto")
       expect(captured[0].tools.map(tool => tool.function.name)).toEqual(["StructuredOutput"])
       expect(JSON.stringify(captured[0].messages)).not.toContain("Queue latency comes from lock contention.")
       expect(await run(Session.Service.use(svc => svc.children(session.id)))).toHaveLength(0)
