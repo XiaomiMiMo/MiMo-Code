@@ -46,6 +46,7 @@ function init() {
   const root = getOwner()
   const [registrations, setRegistrations] = createSignal<Accessor<CommandOption[]>[]>([])
   const [suspendCount, setSuspendCount] = createSignal(0)
+  const [inputSuspendCount, setInputSuspendCount] = createSignal(0)
   const dialog = useDialog()
   const keybind = useKeybind()
   const lang = useLanguage()
@@ -91,16 +92,20 @@ function init() {
         category: lang.t("tui.command.palette.suggested"),
       })),
   )
-  const suspended = () => suspendCount() > 0
+  const suspended = () => suspendCount() > 0 || inputSuspendCount() > 0
+  const fullySuspended = () => suspendCount() > 0
+  const inputSuspended = () => inputSuspendCount() > 0
   const isTextEditingKey = (evt: Parameters<typeof keybind.match>[1]) =>
     Object.keys(keybind.all).some(
       (name) =>
         (name.startsWith("input_") || name === "history_previous" || name === "history_next") &&
         keybind.match(name, evt),
     )
+  const isSuspendedInputKey = (evt: Parameters<typeof keybind.match>[1]) =>
+    evt.name === "tab" || evt.name === "escape"
 
   useKeyboard((evt) => {
-    if (suspended()) return
+    if (fullySuspended()) return
     if (dialog.stack.length > 0) return
     if (evt.defaultPrevented) return
     const textInputFocused = isEditBufferRenderable(renderer.currentFocusedRenderable)
@@ -109,6 +114,7 @@ function init() {
       if (!isEnabled(option)) continue
       if (textEditingKey && !option.keybind?.startsWith("input_")) continue
       if (option.keybind && keybind.match(option.keybind, evt)) {
+        if (inputSuspended() && isSuspendedInputKey(evt)) return
         evt.preventDefault()
         option.onSelect?.(dialog)
         return
@@ -142,10 +148,16 @@ function init() {
         ]
       })
     },
-    keybinds(enabled: boolean) {
-      setSuspendCount((count) => count + (enabled ? -1 : 1))
+    keybinds(enabled: boolean, mode: "all" | "input" = "all") {
+      const update = (count: number) => count + (enabled ? -1 : 1)
+      if (mode === "input") setInputSuspendCount(update)
+      else setSuspendCount(update)
     },
-    suspended,
+    suspended(mode?: "all" | "input") {
+      if (mode === "all") return fullySuspended()
+      if (mode === "input") return inputSuspended()
+      return suspended()
+    },
     show() {
       dialog.replace(() => <DialogCommand options={visibleOptions()} suggestedOptions={suggestedOptions()} />)
     },
@@ -195,7 +207,7 @@ export function CommandProvider(props: ParentProps) {
   const keybind = useKeybind()
 
   useKeyboard((evt) => {
-    if (value.suspended()) return
+    if (value.suspended("all")) return
     if (dialog.stack.length > 0) return
     if (evt.defaultPrevented) return
     if (keybind.match("command_list", evt)) {
