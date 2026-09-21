@@ -1,64 +1,80 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { Instance } from "../../src/project/instance"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
+import { ActorRegistryTable } from "../../src/actor/actor.sql"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { Session } from "../../src/session"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import { MessageID, PartID } from "../../src/session/schema"
-import { MessageTable, PartTable } from "../../src/session/session.sql"
+import { MessageV2 } from "../../src/session/message-v2"
 import { Database, eq } from "../../src/storage"
-import { Layer, ManagedRuntime } from "effect"
+import { Effect, Layer, ManagedRuntime } from "effect"
 import { tmpdir } from "../fixture/fixture"
 import { Log } from "../../src/util"
 
 void Log.init({ print: false })
 
-function seedOrphanQuestion(directory: string, storeKey: string) {
+function seedOrphanQuestion(directory: string) {
   return Instance.provide({
     directory,
     fn: async () => {
       const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
       try {
-        const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
-        const stale = Date.now() - 11 * 60 * 1000
-        const partId = PartID.ascending()
-        Database.use((db) => {
-          const messageId = MessageID.ascending()
-          db.insert(MessageTable)
-            .values({
-              id: messageId,
-              session_id: session.id,
-              agent_id: "main",
-              time_created: stale,
-              time_updated: stale,
-              data: { role: "assistant", time: { created: stale } } as never,
+        return await rt.runPromise(
+          Effect.gen(function* () {
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create()
+            const stale = Date.now() - 11 * 60 * 1000
+            const user = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              role: "user",
+              agent: "build",
+              model: { providerID: ProviderID.make("test"), modelID: ModelID.make("model") },
+              time: { created: stale },
             })
-            .run()
-          db.insert(PartTable)
-            .values({
-              id: partId,
-              message_id: messageId,
-              session_id: session.id,
-              time_created: stale,
-              time_updated: stale,
-              data: {
-                type: "tool",
-                tool: "question",
-                callID: `call_${storeKey}`,
-                state: {
-                  status: "running",
-                  input: {
-                    questions: [{ question: "orphan?", header: "orphan", options: [{ label: "A", description: "" }] }],
-                  },
-                  time: { start: stale },
+            const message = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              role: "assistant",
+              parentID: user.id,
+              agent: "build",
+              mode: "build",
+              modelID: ModelID.make("model"),
+              providerID: ProviderID.make("test"),
+              path: { cwd: directory, root: directory },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              time: { created: stale },
+            })
+            const part = yield* sessions.updatePart({
+              id: PartID.ascending(),
+              sessionID: session.id,
+              messageID: message.id,
+              type: "tool",
+              tool: "question",
+              callID: "call_example",
+              state: {
+                status: "running",
+                input: {
+                  questions: [
+                    { question: "Continue?", header: "Next", options: [{ label: "Yes", description: "Continue" }] },
+                  ],
                 },
-              } as never,
+                time: { start: stale },
+              },
             })
-            .run()
-          ;(globalThis as Record<string, unknown>)[storeKey] = {
-            session: session.id,
-            part: partId,
-          }
-        })
+            // Part writes refresh actor activity; simulate the crash after seeding.
+            Database.use((db) =>
+              db
+                .update(ActorRegistryTable)
+                .set({ status: "running", instance_id: "previous-process", last_activity_time: stale })
+                .where(eq(ActorRegistryTable.session_id, session.id))
+                .run(),
+            )
+            return { session: session.id, message: message.id, part: part.id }
+          }),
+        )
       } finally {
         await rt.dispose()
       }
@@ -66,44 +82,55 @@ function seedOrphanQuestion(directory: string, storeKey: string) {
   })
 }
 
-function partStatus(partId: string) {
-  return Database.use((db) => {
-    const part = db.select().from(PartTable).where(eq(PartTable.id, partId as never)).get()
-    return (part?.data as { state?: { status?: string } })?.state?.status
-  })
+function partStatus(input: Awaited<ReturnType<typeof seedOrphanQuestion>>) {
+  const part = MessageV2.get({ sessionID: input.session, messageID: input.message }).parts.find(
+    (p) => p.id === input.part,
+  )
+  return part?.type === "tool" ? part.state.status : undefined
 }
 
-/**
- * Production entry: Instance.provide + InstanceBootstrap.
- * Seed under A/B, dispose instance cache so init actually runs, then enter A then B
- * on the same AppRuntime — only the entered directory's orphan is reclaimed.
- */
-test("[TP-ABANDON-Q-08] InstanceBootstrap reclaims each directory on enter (A then B)", async () => {
+afterEach(async () => {
+  await Instance.disposeAll()
+})
+
+test("bootstrap settles abandoned actors without reading or reclaiming question history", async () => {
   await using tmpA = await tmpdir({ git: true })
   await using tmpB = await tmpdir({ git: true })
-  await seedOrphanQuestion(tmpA.path, "__bootA")
-  await seedOrphanQuestion(tmpB.path, "__bootB")
-  const a = (globalThis as Record<string, unknown>).__bootA as { part: string }
-  const b = (globalThis as Record<string, unknown>).__bootB as { part: string }
-
-  // Drop instance cache so provide(init) runs bootstrap; keep the shared DB.
+  const a = await seedOrphanQuestion(tmpA.path)
+  const b = await seedOrphanQuestion(tmpB.path)
   await Instance.disposeDirectory(tmpA.path)
   await Instance.disposeDirectory(tmpB.path)
 
-  await Instance.provide({
-    directory: tmpA.path,
-    init: () => AppRuntime.runPromise(InstanceBootstrap),
-    fn: async () => {
-      expect(partStatus(a.part)).toBe("error")
-      expect(partStatus(b.part)).toBe("running")
-    },
+  // Trace the real driver; queries still execute against the real fixture DB.
+  // This catches scans even when all historical questions are already completed.
+  const client = Database.Client().$client
+  const prepare = client.prepare.bind(client)
+  const queries: string[] = []
+  const trace = spyOn(client, "prepare").mockImplementation((...args) => {
+    queries.push(args[0])
+    return prepare(...args)
   })
+  try {
+    for (const directory of [tmpA.path, tmpB.path]) {
+      await Instance.provide({
+        directory,
+        init: () => AppRuntime.runPromise(InstanceBootstrap),
+        fn: async () => {},
+      })
+    }
+  } finally {
+    trace.mockRestore()
+  }
 
-  await Instance.provide({
-    directory: tmpB.path,
-    init: () => AppRuntime.runPromise(InstanceBootstrap),
-    fn: async () => {
-      expect(partStatus(b.part)).toBe("error")
-    },
-  })
+  expect(queries.filter((query) => /\b(?:from|join)\s+["`]?(?:message|part)["`]?\b/i.test(query))).toEqual([])
+  expect(partStatus(a)).toBe("running")
+  expect(partStatus(b)).toBe("running")
+  for (const id of [a.session, b.session]) {
+    const actors = Database.use((db) =>
+      db.select().from(ActorRegistryTable).where(eq(ActorRegistryTable.session_id, id)).all(),
+    )
+    expect(actors).toHaveLength(1)
+    expect(actors[0]?.status).toBe("idle")
+    expect(actors[0]?.last_outcome).toBe("failure")
+  }
 }, 30000)

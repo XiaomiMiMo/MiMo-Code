@@ -4,6 +4,7 @@ import path from "path"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Bus } from "../../src/bus"
 import { Instance } from "../../src/project/instance"
+import { Question } from "../../src/question"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
@@ -23,19 +24,25 @@ const it = testEffect(
   Layer.mergeAll(
     SessionPrompt.defaultLayer,
     Session.defaultLayer,
+    Question.defaultLayer,
     SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer)),
     SessionRunState.layer.pipe(Layer.provide(SessionStatus.defaultLayer)),
     CrossSpawnSpawner.defaultLayer,
   ),
 )
 
-const seedRunningToolPart = (dir: string, sessionID: SessionID, opts?: { completeMessage?: boolean }) =>
+const seedToolPart = (
+  dir: string,
+  sessionID: SessionID,
+  opts?: { completeMessage?: boolean; tool?: "bash" | "question"; status?: "pending" | "running"; agentID?: string },
+) =>
   Effect.gen(function* () {
     const sessions = yield* Session.Service
     const user = yield* sessions.updateMessage({
       id: MessageID.ascending(),
       role: "user" as const,
       sessionID,
+      agentID: opts?.agentID,
       agent: "default",
       model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
       time: { created: Date.now() },
@@ -45,6 +52,7 @@ const seedRunningToolPart = (dir: string, sessionID: SessionID, opts?: { complet
       id: MessageID.ascending(),
       role: "assistant" as const,
       sessionID,
+      agentID: opts?.agentID,
       mode: "default",
       agent: "default",
       path: { cwd: path.resolve(dir), root: path.resolve(dir) },
@@ -55,26 +63,32 @@ const seedRunningToolPart = (dir: string, sessionID: SessionID, opts?: { complet
       parentID: user.id,
       time: opts?.completeMessage ? { created: now, completed: now } : { created: now },
     })
+    const input =
+      opts?.tool === "question"
+        ? {
+            questions: [
+              { question: "Continue?", header: "Next", options: [{ label: "Yes", description: "Continue" }] },
+            ],
+          }
+        : { command: "sleep 100" }
     return yield* sessions.updatePart({
       id: PartID.ascending(),
       messageID: assistant.id,
       sessionID,
       type: "tool" as const,
-      tool: "bash",
+      tool: opts?.tool ?? "bash",
       callID: `call-${assistant.id}`,
-      state: {
-        status: "running" as const,
-        input: { command: "sleep 100" },
-        title: "sleep 100",
-        time: { start: Date.now() },
-      },
+      state:
+        opts?.status === "pending"
+          ? { status: "pending", input, raw: JSON.stringify(input) }
+          : { status: "running", input, title: opts?.tool ?? "bash", time: { start: Date.now() } },
     })
   })
 
 const readPart = (sessionID: SessionID, partID: string) =>
   Effect.gen(function* () {
     const sessions = yield* Session.Service
-    for (const m of yield* sessions.messages({ sessionID })) {
+    for (const m of yield* sessions.messages({ sessionID, agentID: "*" })) {
       const found = m.parts.find((p) => p.id === partID)
       if (found) return found
     }
@@ -92,6 +106,108 @@ const dummyWork = (sessionID: SessionID) =>
     parts: [],
   } as unknown as MessageV2.WithParts)
 
+describe("selected-session question recovery", () => {
+  for (const state of ["pending", "running"] as const) {
+    it.live(`fresh prompt repairs ${state} questions only in the idle selected main slice`, () =>
+      provideTmpdirInstance((dir) =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const prompt = yield* SessionPrompt.Service
+          const questions = yield* Question.Service
+          const runState = yield* SessionRunState.Service
+          const status = yield* SessionStatus.Service
+          const selected = yield* sessions.create({ title: "Selected session" })
+          const cold = yield* sessions.create({ title: "Cold session" })
+          const part = yield* seedToolPart(dir, selected.id, { tool: "question", status: state })
+          const untouched = yield* seedToolPart(dir, cold.id, { tool: "question", status: state })
+          const child = yield* seedToolPart(dir, selected.id, { tool: "question", agentID: "explore-1" })
+          const before = yield* sessions.messages({ sessionID: selected.id, agentID: "*" })
+
+          const interrupted = before.find((m) => m.info.id === part.messageID)?.info
+          if (interrupted?.role !== "assistant") throw new Error("expected interrupted assistant")
+
+          expect(yield* questions.list()).toEqual([])
+          expect(yield* prompt.recovery({ sessionID: selected.id })).toEqual([
+            {
+              kind: "assistant",
+              assistantMessageID: part.messageID,
+              parentMessageID: interrupted.parentID,
+              created: interrupted.time.created,
+            },
+          ])
+          expect(yield* sessions.messages({ sessionID: selected.id, agentID: "*" })).toEqual(before)
+          expect(yield* readPart(cold.id, untouched.id)).toEqual(untouched)
+          expect(yield* questions.list()).toEqual([])
+
+          const started = yield* Deferred.make<void>()
+          yield* runState.start(
+            selected.id,
+            "explore-1",
+            Effect.die("unexpected interruption"),
+            Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+          )
+          yield* Deferred.await(started)
+          expect(yield* status.get(selected.id)).toEqual({ type: "idle" })
+          expect(Exit.isFailure(yield* runState.assertNotBusy(selected.id, "explore-1").pipe(Effect.exit))).toBe(true)
+
+          const submitted = yield* prompt.prompt({
+            sessionID: selected.id,
+            agent: "build",
+            model: { providerID: ProviderID.make("test"), modelID: ModelID.make("model") },
+            noReply: true,
+            parts: [{ type: "text", text: "Continue with a new request" }],
+          })
+
+          expect(submitted.info.role).toBe("user")
+          const repaired = yield* readPart(selected.id, part.id)
+          if (repaired?.type !== "tool" || repaired.state.status !== "error")
+            throw new Error("expected an interrupted question")
+          expect(repaired.state.error).toBe("Tool execution aborted")
+          expect(repaired.state.input).toEqual(part.state.input)
+          expect(repaired.state.metadata?.interrupted).toBe(true)
+          expect(yield* readPart(cold.id, untouched.id)).toEqual(untouched)
+          expect(yield* readPart(selected.id, child.id)).toEqual(child)
+          expect(Exit.isFailure(yield* runState.assertNotBusy(selected.id, "explore-1").pipe(Effect.exit))).toBe(true)
+          expect(yield* questions.list()).toEqual([])
+        }),
+      ),
+    )
+  }
+
+  for (const state of ["busy", "retry"] as const) {
+    it.live(`fresh prompt preserves questions while the selected session is ${state}`, () =>
+      provideTmpdirInstance((dir) =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const prompt = yield* SessionPrompt.Service
+          const status = yield* SessionStatus.Service
+          const session = yield* sessions.create({ title: "Active session" })
+          const running = yield* seedToolPart(dir, session.id, { tool: "question" })
+          const pending = yield* seedToolPart(dir, session.id, { tool: "question", status: "pending" })
+          yield* status.set(
+            session.id,
+            state === "busy"
+              ? { type: "busy" }
+              : { type: "retry", attempt: 1, message: "Retrying", next: Date.now() + 1000 },
+          )
+
+          yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            model: { providerID: ProviderID.make("test"), modelID: ModelID.make("model") },
+            noReply: true,
+            parts: [{ type: "text", text: "Queue another request" }],
+          })
+
+          expect(yield* readPart(session.id, running.id)).toEqual(running)
+          expect(yield* readPart(session.id, pending.id)).toEqual(pending)
+          expect((yield* status.get(session.id)).type).toBe(state)
+        }),
+      ),
+    )
+  }
+})
+
 describe("sweepOrphanToolParts", () => {
   it.live("repairs a tool part orphaned at running when the session is idle", () =>
     provideTmpdirInstance((dir) =>
@@ -99,7 +215,7 @@ describe("sweepOrphanToolParts", () => {
         const sessions = yield* Session.Service
         const svc = yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id)
+        const part = yield* seedToolPart(dir, session.id)
 
         yield* svc.sweepOrphanToolParts(session.id)
 
@@ -122,7 +238,7 @@ describe("sweepOrphanToolParts", () => {
         const status = yield* SessionStatus.Service
         const svc = yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id)
+        const part = yield* seedToolPart(dir, session.id)
 
         yield* status.set(session.id, { type: "busy" })
         yield* svc.sweepOrphanToolParts(session.id)
@@ -141,7 +257,7 @@ describe("sweepOrphanToolParts", () => {
         const status = yield* SessionStatus.Service
         const svc = yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id)
+        const part = yield* seedToolPart(dir, session.id)
 
         yield* status.set(session.id, { type: "retry", attempt: 1, message: "retrying", next: Date.now() + 1000 })
         yield* svc.sweepOrphanToolParts(session.id)
@@ -213,7 +329,7 @@ describe("sweepOrphanToolParts", () => {
         const sessions = yield* Session.Service
         const svc = yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id)
+        const part = yield* seedToolPart(dir, session.id)
         const started = part.state.status === "running" ? part.state.time.start : Date.now()
 
         yield* svc.sweepOrphanToolParts(session.id, { before: started - 1 })
@@ -236,7 +352,7 @@ describe("sweepOrphanToolParts", () => {
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
         // Incomplete — matches field parent msg_g001a0bb2e89bb001WTFuV6NUk
-        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
+        const part = yield* seedToolPart(dir, session.id, { completeMessage: false })
 
         yield* runState.ensureRunning(session.id, "main", Effect.die("no-interrupt"), dummyWork(session.id))
 
@@ -255,7 +371,7 @@ describe("sweepOrphanToolParts", () => {
         const sessions = yield* Session.Service
         const svc = yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
+        const part = yield* seedToolPart(dir, session.id, { completeMessage: false })
 
         // Empty snapshot — nothing owned, nothing rewritten.
         yield* svc.sweepOrphanToolParts(session.id, { ownedMessageIds: new Set() })
@@ -392,7 +508,7 @@ describe("sweepOrphanToolParts", () => {
         const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
+        const part = yield* seedToolPart(dir, session.id, { completeMessage: false })
         yield* status.set(session.id, { type: "busy" })
 
         const order: string[] = []
@@ -433,7 +549,7 @@ describe("sweepOrphanToolParts", () => {
         const runState = yield* SessionRunState.Service
         yield* SessionPrompt.Service
         const session = yield* sessions.create({})
-        const part = yield* seedRunningToolPart(dir, session.id, { completeMessage: false })
+        const part = yield* seedToolPart(dir, session.id, { completeMessage: false })
 
         const order: string[] = []
         const unsubPart = Bus.subscribe(MessageV2.Event.PartUpdated, (ev) => {
