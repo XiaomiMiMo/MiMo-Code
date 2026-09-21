@@ -46,15 +46,28 @@ export function classifyAssistantStep(input: {
   // terminal failures. Without this guard, classify mis-routes errored steps
   // to "continue", runLoop re-enters and gets stranded on permission.ask
   // from the in-flight tool that won't ever resolve. See Spec ③.
-  if (
-    input.parts.some(
-      (part) =>
-        part.type === "tool" &&
-        !part.metadata?.providerExecuted &&
-        part.state.status !== "error",
+  // In-flight client tools (pending/running) must re-loop so their observations
+  // are fed back. COMPLETED tools alone must NOT force continue once the step
+  // already carries a terminal finish + final text — otherwise a finished turn
+  // (tools + summary on one message) classifies as continue forever and the
+  // session never idles. Provider quirk "finish=stop with tool calls" still
+  // re-loops when tools are not yet terminal, or when there is no final text.
+  {
+    const clientTools = input.parts.filter(
+      (part): part is Extract<MessageV2.Part, { type: "tool" }> =>
+        part.type === "tool" && !part.metadata?.providerExecuted,
     )
-  )
-    return { type: "continue" }
+    const inFlight = clientTools.some(
+      (part) => part.state.status === "pending" || part.state.status === "running",
+    )
+    const hasFinalText = input.parts.some(
+      (part) => part.type === "text" && !part.synthetic && !part.ignored && part.text.trim().length > 0,
+    )
+    const terminalFinish = assistant.finish === "stop" || assistant.finish === "other"
+    if (inFlight) return { type: "continue" }
+    if (clientTools.some((part) => part.state.status !== "error") && !(terminalFinish && hasFinalText))
+      return { type: "continue" }
+  }
 
   // 2. Nothing finalized yet.
   if (!assistant.finish) return { type: "continue" }

@@ -811,6 +811,18 @@ describe("retry decision and coordinator budget", () => {
    expect(decide(error)).toMatchObject({ retryable: false, kind: "terminal" })
  })
 
+  test("fromError maps residual stream errors to AbortedError when ctx.aborted", () => {
+    const undici = Object.assign(new Error("request aborted by transport"), {
+      name: "AbortError",
+      code: "UND_ERR_ABORTED",
+    })
+    const parsed = MessageV2.fromError(undici, { providerID, aborted: true })
+    expect(MessageV2.AbortedError.isInstance(parsed)).toBe(true)
+    const timeout = Object.assign(new Error("Request timed out"), { code: "ETIMEDOUT" })
+    const parsed2 = MessageV2.fromError(timeout, { providerID, aborted: true })
+    expect(MessageV2.AbortedError.isInstance(parsed2)).toBe(true)
+  })
+
   test("treats an Undici transport abort as network-transient, not user abort", () => {
     const error = Object.assign(new Error("request aborted by transport"), { name: "AbortError", code: "UND_ERR_ABORTED" })
     expect(decide(error)).toMatchObject({ retryable: true, kind: "network" })

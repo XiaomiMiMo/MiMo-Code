@@ -1334,6 +1334,11 @@ export function fromError(
       return new AbortedError({ message: e.message }, { cause: e }).toObject()
     case ProviderError.isAbortError(e):
       return new AbortedError({ message: errorMessage(e) }, { cause: e }).toObject()
+    // Session-level abort (user stop / cancel): any residual stream error — including
+    // undici UND_ERR_ABORTED which is otherwise transport-retryable — is user abort.
+    // Without this, stop is reclassified as network and auto-resume reopens the turn.
+    case ctx.aborted === true:
+      return new AbortedError({ message: errorMessage(e) || "Aborted" }, { cause: e }).toObject()
     // The AI SDK wraps the real failure in AI_RetryError after exhausting its
     // own maxRetries. Unwrap to the underlying error (.lastError) so the
     // APICallError branch below can extract statusCode/isRetryable/responseBody.

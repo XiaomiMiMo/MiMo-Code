@@ -60,6 +60,15 @@ function toolPart(messageID: string, opts?: { providerExecuted?: boolean }) {
     metadata: opts?.providerExecuted ? { providerExecuted: true } : undefined,
   } as unknown as MessageV2.Part
 }
+function pendingToolPart(messageID: string) {
+  return {
+    ...basePart(messageID),
+    type: "tool",
+    callID: "call-1",
+    tool: "read",
+    state: { status: "pending", input: {}, time: { start: 0 }, metadata: {} },
+  } as unknown as MessageV2.Part
+}
 
 // User "m-1" precedes assistant "m-2" so the stale guard (lastUser.id < assistant.id) is satisfied.
 const lastUser = userInfo("m-1")
@@ -109,15 +118,18 @@ describe("classifyAssistantStep", () => {
     ).toEqual({ type: "think-only" })
   })
 
-  describe("core guarantee: any finish + client tool part => continue", () => {
+  describe("core guarantee: in-flight client tool part => continue", () => {
+    // Pending/running tools must re-loop so their observations are fed back,
+    // even when the step already shows final text (provider may stream text
+    // before tool results settle).
     for (const finish of ["stop", "other", "length", "content-filter"]) {
-      test(`finish=${finish} + client tool part (with non-empty final text) => continue`, () => {
+      test(`finish=${finish} + pending client tool (with non-empty final text) => continue`, () => {
         expect(
           classifyAssistantStep({
             phase: "after-process",
             lastUser,
             assistant: assistantInfo("m-2", { finish }),
-            parts: [textPart("m-2", "looks done but a tool is still pending"), toolPart("m-2")],
+            parts: [textPart("m-2", "looks done but a tool is still pending"), pendingToolPart("m-2")],
           }),
         ).toEqual({ type: "continue" })
       })
@@ -353,6 +365,89 @@ describe("classifyAssistantStep", () => {
       parts: [errPart],
     })
     expect(result).toEqual({ type: "failed", reason: "APIError" })
+  })
+
+  test("[auto-resume after tools] completed tools + finish=stop + final text => final (must not reopen)", () => {
+    const toolPart = {
+      ...basePart("m-2"),
+      type: "tool" as const,
+      callID: "call-1",
+      tool: "write",
+      state: {
+        status: "completed" as const,
+        input: {},
+        output: "ok",
+        time: { start: 1, end: 2 },
+        title: "write",
+        metadata: {},
+      },
+    } as unknown as MessageV2.Part
+    const textPart = {
+      ...basePart("m-2"),
+      type: "text" as const,
+      text: "卡片页已生成，入口是 index.html。",
+    } as unknown as MessageV2.Part
+
+    const result = classifyAssistantStep({
+      phase: "after-process",
+      lastUser,
+      assistant: assistantInfo("m-2", { finish: "stop" }),
+      parts: [toolPart, textPart],
+    })
+    expect(result).toEqual({ type: "final" })
+  })
+
+  test("completed tools without final text still continue (feed tool results back)", () => {
+    const toolPart = {
+      ...basePart("m-2"),
+      type: "tool" as const,
+      callID: "call-1",
+      tool: "write",
+      state: {
+        status: "completed" as const,
+        input: {},
+        output: "ok",
+        time: { start: 1, end: 2 },
+        title: "write",
+        metadata: {},
+      },
+    } as unknown as MessageV2.Part
+
+    const result = classifyAssistantStep({
+      phase: "after-process",
+      lastUser,
+      assistant: assistantInfo("m-2", { finish: "stop" }),
+      parts: [toolPart],
+    })
+    expect(result).toEqual({ type: "continue" })
+  })
+
+  test("pending/running tool with final text still continue (in-flight wins)", () => {
+    const running = {
+      ...basePart("m-2"),
+      type: "tool" as const,
+      callID: "call-1",
+      tool: "write",
+      state: {
+        status: "running" as const,
+        input: {},
+        time: { start: 1 },
+        metadata: {},
+      },
+    } as unknown as MessageV2.Part
+    const textPart = {
+      ...basePart("m-2"),
+      type: "text" as const,
+      text: "partial",
+    } as unknown as MessageV2.Part
+
+    const result = classifyAssistantStep({
+      phase: "after-process",
+      lastUser,
+      assistant: assistantInfo("m-2", { finish: "stop" }),
+      parts: [running, textPart],
+    })
+    expect(result).toEqual({ type: "continue" })
   })
 
   describe("text-form tool call", () => {

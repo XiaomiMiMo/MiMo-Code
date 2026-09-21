@@ -71,6 +71,39 @@ export type Result = "overflow" | "stop" | "continue" | "text-repeat"
 export type Event = LLM.Event
 
 /**
+ * Codex-style auto-resume gate: after tools have fully completed, a retryable
+ * transport failure should continue the outer step (tool results stay in
+ * history) instead of stamping a terminal error. Replaying this stream is
+ * unsafe; the next sampling call is not.
+ */
+export function shouldAutoResumeAfterTools(input: {
+  retrySafe: boolean
+  decision: { retryable: boolean }
+  toolParts: readonly { state: { status: string } }[]
+  /** User/agent abort — never reopen the step. */
+  aborted?: boolean
+  /** Current assistant finish reason (provider). Terminal reasons must not be rewritten. */
+  finish?: string | undefined
+  /** Non-empty user-visible final text already on this assistant message. */
+  hasFinalText?: boolean
+}): boolean {
+  if (input.aborted) return false
+  if (input.retrySafe) return false
+  if (!input.decision.retryable) return false
+  // Already-delivered answer: finish=stop/other (or content-filter/error) is terminal.
+  // Overwriting it to "tool-calls" reopens a finished turn and the runLoop never idles
+  // (classify keeps returning continue on the completed tools). Trailing transport
+  // noise after a good final must leave the answer intact.
+  if (input.finish === "stop" || input.finish === "other") {
+    if (input.hasFinalText) return false
+  }
+  if (input.finish === "content-filter" || input.finish === "error") return false
+  const hasCompleted = input.toolParts.some((p) => p.state.status === "completed")
+  const hasInFlight = input.toolParts.some((p) => p.state.status === "running" || p.state.status === "pending")
+  return hasCompleted && !hasInFlight
+}
+
+/**
  * A proposed tool call captured from a candidate stream (max mode), before
  * any execution. `input` is the parsed tool arguments.
  */
@@ -904,7 +937,81 @@ export const layer: Layer.Layer<
                   }),
               }),
             ),
-            Effect.catch(halt),
+            Effect.catch((e) =>
+              Effect.gen(function* () {
+                // Codex-style auto-resume: after tools have fully completed, a
+                // retryable transport failure (timeout / disconnect / 5xx) must NOT
+                // stamp a terminal ErrorCard. Replaying this stream is unsafe
+                // (tools already ran), but the outer runLoop can start the next
+                // step from session history that already carries tool results —
+                // equivalent to an automatic Resume of the next sampling call.
+                // User abort (cancel / interrupt) is terminal: never auto-resume.
+                if (aborted) {
+                  yield* halt(e)
+                  return
+                }
+                if (!ctx.retrySafe) {
+                  const decision = SessionRetry.decide(parse(e), "stream", "live-step")
+                  const parts = MessageV2.parts(ctx.assistantMessage.id)
+                  const toolParts = parts.filter((p) => p.type === "tool")
+                  const hasFinalText = parts.some(
+                    (p) => p.type === "text" && !p.synthetic && !p.ignored && p.text.trim().length > 0,
+                  )
+                  if (
+                    shouldAutoResumeAfterTools({
+                      retrySafe: ctx.retrySafe,
+                      decision,
+                      toolParts,
+                      aborted,
+                      finish: ctx.assistantMessage.finish,
+                      hasFinalText,
+                    })
+                  ) {
+                    slog.info("auto-resume after tools", {
+                      kind: decision.kind,
+                      message: decision.message,
+                      tools: toolParts.length,
+                    })
+                    if (isMain) {
+                      yield* status
+                        .setRetry(ctx.sessionID, {
+                          type: "retry",
+                          attempt: 1,
+                          phaseAttempt: 1,
+                          message: decision.message,
+                          next: Date.now(),
+                          phase: "stream",
+                          scope: "live-step",
+                        })
+                        .pipe(Effect.ignore)
+                    }
+                    // Keep tool parts; mark the step as tool-calls so classify
+                    // continues. Do NOT write assistant.error (that is terminal).
+                    ctx.assistantMessage.finish = "tool-calls"
+                    ctx.assistantMessage.error = undefined
+                    yield* session.updateMessage(ctx.assistantMessage)
+                    return
+                  }
+                  // Trailing transport failure after a completed answer (finish=stop/other
+                  // + final text): keep the answer, do not stamp an ErrorCard, do not
+                  // reopen. Fall through to a clean "stop" via the tail below.
+                  if (
+                    (ctx.assistantMessage.finish === "stop" || ctx.assistantMessage.finish === "other") &&
+                    hasFinalText
+                  ) {
+                    slog.info("ignore trailing transport error after finished turn", {
+                      kind: decision.kind,
+                      message: decision.message,
+                      finish: ctx.assistantMessage.finish,
+                    })
+                    ctx.assistantMessage.error = undefined
+                    yield* session.updateMessage(ctx.assistantMessage)
+                    return
+                  }
+                }
+                yield* halt(e)
+              }),
+            ),
             Effect.ensuring(cleanup()),
           )
 
