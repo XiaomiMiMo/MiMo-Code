@@ -23,7 +23,6 @@ IMPORTANT: In this GPT tool set, the dedicated `read`, `write`, and `edit` tools
 - Set `interactive: true` only when the command requires direct user interaction, such as a password, confirmation prompt, authentication, or input that cannot be supplied non-interactively. Interactive commands do not time out while waiting for the user.
 - If output exceeds ${maxTokens} tokens (approximate; adjustable per call via the max_output_tokens parameter), the response is truncated and the full output is saved to a file. Inspect that file with `rg`, a targeted line-range command, or the equivalent command for the current shell.
 - Do not add `head`, `tail`, or other output truncation solely to work around tool limits; prefer a query that selects the relevant information.
-- When commands are independent, issue multiple `bash` tool calls in parallel.
 - ${chaining}
 - Use `;` only when commands must be sequential but later commands may run after an earlier failure.
 - Do not use newlines to separate commands; newlines are acceptable inside quoted strings.
@@ -42,7 +41,7 @@ Git safety protocol:
 - Do not commit files likely to contain secrets. Warn the user if they explicitly request that.
 
 When asked to commit:
-1. Inspect `git status`, staged and unstaged diffs, and recent commit messages. Independent inspection commands should run in parallel.
+1. Inspect `git status`, staged and unstaged diffs, and recent commit messages.
 2. Review all staged changes and draft a concise message that describes why the change exists.
 3. Stage only relevant files, create the commit, then run `git status` after the commit completes to verify it.
 4. If a hook fails, fix the problem and create a new commit.
@@ -54,7 +53,7 @@ Do not push unless the user explicitly asks. Never use interactive git flags suc
 Use `gh` through this tool for GitHub issues, pull requests, checks, and releases.
 
 When asked to create a pull request:
-1. In parallel, inspect repository status, staged and unstaged changes, remote tracking state, commits since the base branch, and the full diff from the merge base. The default base branch is `main` unless repository instructions say otherwise.
+1. Inspect repository status, staged and unstaged changes, remote tracking state, commits since the base branch, and the full diff from the merge base. The default base branch is `main` unless repository instructions say otherwise.
 2. Review every commit and change included in the pull request, then draft its title and summary.
 3. Create a branch if needed, push with `-u` if needed, and create the pull request with `gh pr create`. Use a heredoc or equivalent safe multiline mechanism for the body.
 4. Return the pull request URL.

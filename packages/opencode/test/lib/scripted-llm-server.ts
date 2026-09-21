@@ -118,26 +118,20 @@ export function textLengthResponse(text: string): string[] {
 }
 
 /** Build SSE lines for a tool-call response (finish_reason: tool_calls) */
-export function toolCallResponse(params: {
-  id: string
-  name: string
-  args: string
-}): string[] {
+export function toolCallResponse(params: { id: string; name: string; args: string }): string[] {
+  return toolCallsResponse([params])
+}
+
+/** Build one assistant step containing multiple tool calls in emission order. */
+export function toolCallsResponse(calls: { id: string; name: string; args: string }[]): string[] {
   return [
     sseChunk({ role: "assistant" }),
-    sseChunk({
-      tool_calls: [
-        {
-          index: 0,
-          id: params.id,
-          type: "function",
-          function: { name: params.name, arguments: "" },
-        },
-      ],
-    }),
-    sseChunk({
-      tool_calls: [{ index: 0, function: { arguments: params.args } }],
-    }),
+    ...calls.flatMap((call, index) => [
+      sseChunk({
+        tool_calls: [{ index, id: call.id, type: "function", function: { name: call.name, arguments: "" } }],
+      }),
+      sseChunk({ tool_calls: [{ index, function: { arguments: call.args } }] }),
+    ]),
     sseChunk({}, "tool_calls"),
     "data: [DONE]\n\n",
   ]

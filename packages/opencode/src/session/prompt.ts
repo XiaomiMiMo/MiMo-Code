@@ -147,7 +147,7 @@ import { Process } from "@/util"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Scope, Context } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
-import { Instance } from "@/project/instance"
+import { ToolGate } from "@/tool/gate"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
 import { SessionRunState } from "./run-state"
 import { ResumeTestHooks } from "./resume-test-hooks"
@@ -1744,6 +1744,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       harness?: MessageV2.User["harness"]
     }) {
       using _ = log.time("resolveTools")
+      // One agent's assistant step owns this queue. Other agents and sessions
+      // resolve independent tool maps, even when they use the same directory.
+      const gate = new ToolGate()
       const tools: Record<string, AITool> = {}
       const activeTools = new Set<string>()
       const loadedMcpTools = new Set<string>()
@@ -1986,7 +1989,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   yield* input.processor.completeToolCall(options.toolCallId, output)
                 }
                 return output
-              }),
+              }).pipe((body) => gate.run(item.id, options?.toolCallId ?? "?", body, { signal: options.abortSignal })),
             )
           },
         })
@@ -2032,7 +2035,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const executeMcp = (
           args: Parameters<typeof execute>[0],
           opts: Parameters<typeof execute>[1],
-          requireLoaded: boolean,
+          modelFacing: boolean,
         ) =>
           run.promise(
             Effect.gen(function* () {
@@ -2049,7 +2052,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   new RecoverableError(`The MCP tool "${key}" is unavailable for this request.`),
                 )
               }
-              if (requireLoaded && useMcpToolSearch && !loadedMcpTools.has(key)) {
+              if (modelFacing && useMcpToolSearch && !loadedMcpTools.has(key)) {
                 return yield* Effect.fail(
                   new RecoverableError(
                     `The MCP tool "${key}" is not loaded for this request. Call ${MCP_TOOL_SEARCH_ID} first, then retry on the next step.`,
@@ -2176,7 +2179,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* input.processor.completeToolCall(opts.toolCallId, output)
               }
               return output
-            }),
+            }).pipe((body) =>
+              // Only model-facing calls join this batch. Exec guest calls keep
+              // the same execution pipeline with script-controlled concurrency.
+              modelFacing ? gate.run(key, opts?.toolCallId ?? "?", body, { signal: opts.abortSignal }) : body,
+            ),
           )
         item.execute = (args, opts) => executeMcp(args, opts, true)
         tools[key] = item
