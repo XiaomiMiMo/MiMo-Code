@@ -38,7 +38,7 @@ async function stop(child: ReturnType<typeof launch>["child"]) {
   await child.exited
 }
 
-// Desktop tool-step-schema [TP-R14-10].
+// Actor lifecycle [TP-R14-10].
 test("a second real process sharing the database does not terminate a live actor", async () => {
   await using dir = await tmpdir({ git: true })
   const owner = launch("hold", dir.path)
@@ -51,7 +51,8 @@ test("a second real process sharing the database does not terminate a live actor
     expect(result.actor?.status).toBe("running")
     expect(result.actor?.lastOutcome).toBeUndefined()
     expect(result.actor?.lastError).toBeUndefined()
-    expect(result.waited?.status).toBe("timeout")
+    // Wait observes this runtime only; it must not claim or mutate another executor.
+    expect(result.waited?.status).toBe("idle")
     expect(owner.child.exitCode).toBeNull()
     expect(await observer.child.exited).toBe(0)
     owner.child.send("finish")
@@ -59,7 +60,7 @@ test("a second real process sharing the database does not terminate a live actor
   } finally { if (observer) await stop(observer.child); await stop(owner.child) }
 }, 30000)
 
-// Desktop tool-step-schema [TP-R14-10]: current crash boundary, not automatic recovery.
+// Actor lifecycle [TP-R14-10]: current crash boundary, not automatic recovery.
 test("a killed executor remains unconfirmed after restart rather than being guessed failed", async () => {
   await using dir = await tmpdir({ git: true })
   const owner = launch("hold", dir.path)
@@ -73,12 +74,13 @@ test("a killed executor remains unconfirmed after restart rather than being gues
     expect(result.actor?.status).toBe("running")
     expect(result.actor?.lastOutcome).toBeUndefined()
     expect(result.actor?.resultMessageID).toBeUndefined()
-    expect(result.waited?.status).toBe("timeout")
+    // A fresh runtime has no execution to wait for, even while the stored row is unchanged.
+    expect(result.waited?.status).toBe("idle")
     expect(await restarted.child.exited).toBe(0)
   } finally { if (restarted) await stop(restarted.child); await stop(owner.child) }
 }, 30000)
 
-// Desktop tool-step-schema [TP-R14-11].
+// Actor lifecycle [TP-R14-11].
 test("a persisted failure delivery is read by a fresh operating-system process", async () => {
   await using dir = await tmpdir({ git: true })
   const writer = launch("settle", dir.path)
