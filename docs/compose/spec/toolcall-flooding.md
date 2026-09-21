@@ -1,14 +1,78 @@
 ---
 feature: toolcall-flooding
-status: in-progress
+status: delivered
 updated: 2026-09-22
 branch: codex/toolcall-flooding
-commits:
+commits: 47920126..0ffdd318
 ---
 
 # Tool Batch Safety
 
 ## Report
+
+**What was built** — Two independent protections are enabled by default. The
+flooding guard waits for provider finish before releasing client tool calls. A
+17th call cancels the batch without executing its tools, records English
+cancellation results, adds a system reminder repeating the existing guidance to prefer 1–3 calls and
+avoid more than 8, and continues sampling.
+
+Failure cascade cancels the remaining batch after any non-read/search failure
+or any invalid call. Only execution failures of valid `read`, `grep`, and `glob`
+calls are exempt. Invalid read/search arguments use exclusive admission;
+whitelisted actors and the injected StructuredOutput tool obey the same gate.
+Earlier successes and the original failure remain in context. Ordinary failures
+consume the full model stream, preserving usage and cached-token accounting.
+Each `MIMOCODE_DISABLE_*` flag accepts `1` or `true` to disable its own protection.
+
+**Verification** — Dependencies installed with `bun ci`; the lockfile is
+unchanged. All test and typecheck commands ran from `packages/opencode`.
+
+- PASS: the following integrated regression command, 163 tests in 16 files,
+  906 assertions, zero failures:
+
+```sh
+bun test \
+  test/session/toolcall-flooding.test.ts \
+  test/session/toolcall-flooding-stream.test.ts \
+  test/session/tool-fail-cascade.test.ts \
+  test/session/invalid-tool-cascade.test.ts \
+  test/session/tool-safety-flags.test.ts \
+  test/tool/fail-cascade.test.ts test/tool/gate.test.ts \
+  test/session/tool-gate-cancel.test.ts \
+  test/session/tool-gate-hook.test.ts \
+  test/session/tool-gate-orchestration.test.ts \
+  test/session/length-tool-safety.test.ts \
+  test/session/structured-output.test.ts \
+  test/session/llm-retry.test.ts test/session/max-mode.test.ts \
+  test/session/auto-resume-after-tools.test.ts \
+  test/provider/openai-compatible-tool-id.test.ts
+```
+
+- PASS: after sharing invalid classification with hook/whitelist rejection,
+  `bun test test/session/invalid-tool-cascade.test.ts test/session/tool-fail-cascade.test.ts test/session/tool-safety-flags.test.ts`
+  passed 31 tests and 495 assertions. This includes all four flag combinations,
+  with both DISABLE variables genuinely unset for the default case.
+- PASS: `bun typecheck` on the final implementation.
+- PASS: `bunx oxlint --format json` on all changed TypeScript files, zero new
+  diagnostics. PRE-EXISTING `lint-baseline`: 83 warnings on unchanged lines.
+- PASS: `git diff --check` and `git diff --cached --check`.
+- PASS: independent review of `47920126..0ffdd318`, with separate passing
+  conclusions for every acceptance criterion, correctness, and codebase
+  consistency. All verification processes exited before review.
+
+**Journey log**
+
+1. The barrier must release at provider finish. SDK finish-step waits for tool
+   execution and would deadlock a closed execution gate.
+2. Real SDK tests verify streaming restoration when the guard is disabled;
+   the existing OpenAI-compatible adapter independently buffers complete calls.
+3. Ordinary failures and invalid calls retain the full stream and context for
+   usage accounting. Flooding is the only new generation-abort condition.
+4. All invalid calls cascade, including malformed read/search arguments; only
+   execution failure of a valid read/search call is exempt.
+5. Independent review exposed whitelist interception of the invalid handler and
+   ungated StructuredOutput capture. Targeted tests reproduced both defects;
+   fixes and regression tests passed re-review.
 
 ## [S1] Problem
 
@@ -122,10 +186,10 @@ allows subsequent tools to execute, while invalid calls still report failure.
 
 ## Tasks
 
-- [ ] T1: Add request-local generation barrier and opt-out flag — acceptance: 16 calls execute only after generation finishes; call 17 cancels without client tool side effects; disabled mode streams as before (covers: S2).
-- [ ] T2: Persist cancellation and recover the model step — acceptance: all observed calls have the exact aborted result and the next request contains the reminder and resumes successfully (covers: S2).
-- [ ] T3: Verify boundaries and compatibility — acceptance: partial calls, transport failure, user cancellation, independent requests, FIFO scheduling, focused tests and package typecheck pass; independent review completes (covers: S2, S3).
-- [ ] T4: Add default-on failure cascade at gate release — acceptance: exclusive-tool failure cancels queued and late-arriving calls, including StructuredOutput, before their bodies run; valid read/search execution failures and unrelated gates remain runnable; the opt-out restores admission (covers: S4).
-- [ ] T5: Verify cascade through real session execution — acceptance: edit failure prevents a subsequent bash side effect; bash nonzero, invalid calls and hook/MCP failures follow the failure contract; successful and exempt read/search batches still run (covers: S4).
-- [ ] T6: Handle invalid calls through natural cascade — acceptance: invalid names and arguments (including whitelisted read/search calls) trigger cascade and report their original errors, following calls remain in context as cancelled observations, successful prefix results remain intact, provider usage/cached tokens survive, and the cascade opt-out lets following tools execute (covers: S5).
-- [ ] T7: Verify the four feature combinations — acceptance: default with both DISABLE variables unset, each protection alone, and both disabled all handle a 17-call batch followed by a failing small batch correctly; flags remain independent and gates reset each step (covers: S2, S4, S5).
+- [x] T1: Add request-local generation barrier and opt-out flag — acceptance: 16 calls execute only after generation finishes; call 17 cancels without client tool side effects; disabled mode streams as before (covers: S2).
+- [x] T2: Persist cancellation and recover the model step — acceptance: all observed calls have the exact aborted result and the next request contains the reminder and resumes successfully (covers: S2).
+- [x] T3: Verify boundaries and compatibility — acceptance: partial calls, transport failure, user cancellation, independent requests, FIFO scheduling, focused tests and package typecheck pass; independent review completes (covers: S2, S3).
+- [x] T4: Add default-on failure cascade at gate release — acceptance: exclusive-tool failure cancels queued and late-arriving calls, including StructuredOutput, before their bodies run; valid read/search execution failures and unrelated gates remain runnable; the opt-out restores admission (covers: S4).
+- [x] T5: Verify cascade through real session execution — acceptance: edit failure prevents a subsequent bash side effect; bash nonzero, invalid calls and hook/MCP failures follow the failure contract; successful and exempt read/search batches still run (covers: S4).
+- [x] T6: Handle invalid calls through natural cascade — acceptance: invalid names and arguments (including whitelisted read/search calls) trigger cascade and report their original errors, following calls remain in context as cancelled observations, successful prefix results remain intact, provider usage/cached tokens survive, and the cascade opt-out lets following tools execute (covers: S5).
+- [x] T7: Verify the four feature combinations — acceptance: default with both DISABLE variables unset, each protection alone, and both disabled all handle a 17-call batch followed by a failing small batch correctly; flags remain independent and gates reset each step (covers: S2, S4, S5).
