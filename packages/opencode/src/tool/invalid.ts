@@ -1,6 +1,7 @@
 import z from "zod"
 import { Effect } from "effect"
 import * as Tool from "./tool"
+import { RecoverableError } from "./recoverable"
 
 export const InvalidTool = Tool.define(
   "invalid",
@@ -11,10 +12,6 @@ export const InvalidTool = Tool.define(
       error: z.string(),
     }),
     execute: (params: { tool: string; error: string }) =>
-      Effect.succeed({
-        title: "Invalid Tool",
-        output: `The arguments provided to the tool are invalid: ${params.error}`,
-        metadata: {},
-      }),
+      Effect.die(new RecoverableError(`The tool call is invalid: ${params.error}`)),
   }),
 )

@@ -119,8 +119,8 @@ describe("tool.gate execution", () => {
       const gate = new ToolGate()
       yield* gate.run("bash", "failed", Effect.fail(new Error("tool failed"))).pipe(Effect.exit)
       expect(gate.runningCount).toBe(0)
-      const next = yield* Effect.promise(() => gate.enter("read", "next"))
-      gate.leave(next)
+      const next = yield* gate.run("read", "next", Effect.succeed("read")).pipe(Effect.flip)
+      expect(next.message).toBe("Tool call cancelled because an earlier tool call in this response failed.")
     }),
   )
 })

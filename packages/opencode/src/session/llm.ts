@@ -38,6 +38,7 @@ import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
+import { toolCallFloodingMiddleware } from "./toolcall-flooding"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -820,6 +821,7 @@ const live: Layer.Layer<
         model: wrapLanguageModel({
           model: language,
           middleware: [
+            toolCallFloodingMiddleware,
             {
               specificationVersion: "v3" as const,
               async transformParams(args) {
