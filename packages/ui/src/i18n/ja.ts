@@ -1,6 +1,8 @@
 export const dict = {
   "ui.sessionReview.title": "セッションの変更",
   "ui.sessionReview.title.lastTurn": "前回ターンの変更",
+  "ui.sessionReview.title.git": "Git の変更",
+  "ui.sessionReview.title.branch": "ブランチの変更",
   "ui.sessionReview.diffStyle.unified": "Unified",
   "ui.sessionReview.diffStyle.split": "Split",
   "ui.sessionReview.openFile": "ファイルを開く",
@@ -36,6 +38,10 @@ export const dict = {
   "ui.sessionTurn.steps.hide": "ステップを隠す",
   "ui.sessionTurn.summary.response": "応答",
   "ui.sessionTurn.diff.showMore": "さらに変更を表示 ({{count}})",
+  "ui.sessionTurn.diffs.changed": "変更済み",
+  "ui.sessionTurn.diffs.showAll": "すべて表示",
+  "ui.sessionTurn.diffs.showLess": "省略して表示",
+  "ui.sessionTurn.diffs.more": "+{{count}} ファイル",
 
   "ui.sessionTurn.retry.retrying": "再試行中",
   "ui.sessionTurn.retry.inSeconds": "{{seconds}}秒後",

@@ -1,6 +1,8 @@
 export const dict = {
   "ui.sessionReview.title": "Изменения сессии",
   "ui.sessionReview.title.lastTurn": "Изменения последнего хода",
+  "ui.sessionReview.title.git": "Изменения Git",
+  "ui.sessionReview.title.branch": "Изменения ветки",
   "ui.sessionReview.diffStyle.unified": "Объединённый",
   "ui.sessionReview.diffStyle.split": "Разделённый",
   "ui.sessionReview.openFile": "Открыть файл",
@@ -36,6 +38,10 @@ export const dict = {
   "ui.sessionTurn.steps.hide": "Скрыть шаги",
   "ui.sessionTurn.summary.response": "Ответ",
   "ui.sessionTurn.diff.showMore": "Показать ещё изменений ({{count}})",
+  "ui.sessionTurn.diffs.changed": "Изменено",
+  "ui.sessionTurn.diffs.showAll": "Показать все",
+  "ui.sessionTurn.diffs.showLess": "Показать меньше",
+  "ui.sessionTurn.diffs.more": "+{{count}} файлов",
 
   "ui.sessionTurn.retry.retrying": "повтор",
   "ui.sessionTurn.retry.inSeconds": "через {{seconds}}с",
