@@ -158,8 +158,8 @@ export function DialogModel(props: { providerID?: string }) {
 
     const providerOptions = pipe(
       sync.data.provider,
-      // Exclude xiaomi/mimo from regular list only when pinned section is shown
-      filter((provider) => !showPinned || (provider.id !== "xiaomi" && provider.id !== "mimo")),
+      // All xiaomi models are pinned; other mimo models still belong in their provider group.
+      filter((provider) => !showPinned || provider.id !== "xiaomi"),
       sortBy(
         (provider) => provider.id !== "opencode",
         (provider) => PROVIDER_PRIORITY[provider.id] ?? 99,
@@ -170,6 +170,7 @@ export function DialogModel(props: { providerID?: string }) {
           provider.models,
           entries(),
           filter(([_, info]) => info.status !== "deprecated"),
+          filter(([model]) => !showPinned || provider.id !== "mimo" || model !== "mimo-auto"),
           // Scoped views ("you just connected provider X, pick a model from X")
           // intentionally show only that provider's own models. The free
           // mimo-auto belongs to the `mimo` provider, so it is NOT surfaced
