@@ -12,7 +12,8 @@ import * as Session from "./session"
 import { LLM } from "./llm"
 import { MessageV2 } from "./message-v2"
 import { isOverflow } from "./overflow"
-import { PartID } from "./schema"
+import { MessageID, PartID } from "./schema"
+import { ToolCallFloodingError, TOOLCALL_FLOODING_ERROR, TOOLCALL_FLOODING_REMINDER } from "./toolcall-flooding"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
@@ -21,6 +22,7 @@ import { ProviderError } from "@/provider"
 import type { Provider } from "@/provider"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
+import { ToolGate, FAIL_CASCADE_MESSAGE } from "@/tool/gate"
 import { isRecoverableError } from "@/tool/recoverable"
 import { getToolResultAttachments, getToolResultMetadata } from "@/tool/result-error"
 import { Log } from "@/util"
@@ -123,6 +125,7 @@ export type ReplayInput = {
 }
 
 export interface Handle {
+  readonly toolGate: ToolGate
   readonly message: MessageV2.Assistant
   readonly updateToolCall: (
     toolCallID: string,
@@ -223,6 +226,7 @@ export const layer: Layer.Layer<
       // may execute tools internally before emitting start-step events,
       // so capturing inside the event handler can be too late.
       const initialSnapshot = yield* snapshot.track()
+      const toolGate = new ToolGate()
       const ctx: ProcessorContext = {
         assistantMessage: input.assistantMessage,
         sessionID: input.sessionID,
@@ -562,6 +566,8 @@ export const layer: Layer.Layer<
           }
 
           case "error":
+            // Flooding recovery must retain the cancelled batch, not replay it.
+            if (value.error instanceof ToolCallFloodingError) ctx.retrySafe = false
             throw value.error
 
           case "start-step":
@@ -762,7 +768,10 @@ export const layer: Layer.Layer<
           if (!match) continue
           yield* session.updatePart({
             ...match.part,
-            state: MessageV2.abortedToolState(match.part.state),
+            state: MessageV2.abortedToolState(
+              match.part.state,
+              toolGate.wasCancelled(toolCallID) ? FAIL_CASCADE_MESSAGE : undefined,
+            ),
           })
         }
         ctx.toolcalls = {}
@@ -779,7 +788,10 @@ export const layer: Layer.Layer<
           if (part.state.status !== "pending" && part.state.status !== "running") continue
           yield* session.updatePart({
             ...part,
-            state: MessageV2.abortedToolState(part.state),
+            state: MessageV2.abortedToolState(
+              part.state,
+              toolGate.wasCancelled(part.callID) ? FAIL_CASCADE_MESSAGE : undefined,
+            ),
           })
         }
         // 有 error = 没完成 = 留在 /recovery 候选集里。不管错误类型(瞬态/终态/用户中止),
@@ -904,7 +916,54 @@ export const layer: Layer.Layer<
                   }),
               }),
             ),
-            Effect.catch(halt),
+            Effect.catch((e) =>
+              Effect.gen(function* () {
+                if (aborted) {
+                  yield* halt(e)
+                  return
+                }
+                if (e instanceof ToolCallFloodingError) {
+                  for (const call of e.calls) {
+                    const match = yield* readToolCall(call.id)
+                    const parsed = yield* Effect.try({
+                      try: () => JSON.parse(call.input) as unknown,
+                      catch: () => undefined,
+                    }).pipe(Effect.catch(() => Effect.succeed({})))
+                    yield* session.updatePart({
+                      ...match?.part,
+                      id: match?.part.id ?? PartID.ascending(),
+                      messageID: ctx.assistantMessage.id,
+                      sessionID: ctx.sessionID,
+                      type: "tool",
+                      tool: call.name,
+                      callID: call.id,
+                      state: MessageV2.abortedToolState(
+                        { status: "pending", input: isRecord(parsed) ? parsed : {}, raw: call.input },
+                        TOOLCALL_FLOODING_ERROR,
+                      ),
+                    })
+                    yield* settleToolCall(call.id)
+                  }
+                  ctx.assistantMessage.finish = "tool-calls"
+                  ctx.assistantMessage.error = undefined
+                  const reminder = yield* session.updateMessage({
+                    ...streamInput.user,
+                    id: MessageID.ascending(),
+                    time: { created: Date.now() },
+                  })
+                  yield* session.updatePart({
+                    id: PartID.ascending(),
+                    messageID: reminder.id,
+                    sessionID: ctx.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: TOOLCALL_FLOODING_REMINDER,
+                  })
+                  return
+                }
+                yield* halt(e)
+              }),
+            ),
             Effect.ensuring(cleanup()),
           )
 
@@ -1115,6 +1174,7 @@ export const layer: Layer.Layer<
       })
 
       return {
+        toolGate,
         get message() {
           return ctx.assistantMessage
         },

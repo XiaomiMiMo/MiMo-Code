@@ -147,7 +147,7 @@ import { Process } from "@/util"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Scope, Context } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
-import { ToolGate } from "@/tool/gate"
+import { PARALLEL_READONLY_TOOLS } from "@/tool/gate"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
 import { SessionRunState } from "./run-state"
 import { ResumeTestHooks } from "./resume-test-hooks"
@@ -1735,7 +1735,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       model: Provider.Model
       session: Session.Info
       tools?: Record<string, boolean>
-      processor: Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall">
+      processor: Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall" | "toolGate">
       bypassAgentCheck: boolean
       messages: MessageV2.WithParts[]
       agentID?: string
@@ -1744,9 +1744,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       harness?: MessageV2.User["harness"]
     }) {
       using _ = log.time("resolveTools")
-      // One agent's assistant step owns this queue. Other agents and sessions
-      // resolve independent tool maps, even when they use the same directory.
-      const gate = new ToolGate()
+      // Share the step's gate with processor cleanup so cancellation reasons
+      // survive an early stream stop, including a rejected permission request.
+      const gate = input.processor.toolGate
       const tools: Record<string, AITool> = {}
       const activeTools = new Set<string>()
       const loadedMcpTools = new Set<string>()
@@ -1897,6 +1897,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           description: item.description,
           inputSchema: jsonSchema(schema),
           execute(args, options) {
+            // Invalid arguments never receive the read/search failure exemption.
+            const gateTool =
+              PARALLEL_READONLY_TOOLS.has(item.id) && !item.parameters.safeParse(args).success ? "invalid" : item.id
             return run.promise(
               Effect.gen(function* () {
                 const startTs = Date.now()
@@ -1910,10 +1913,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 if (
                   whitelist &&
                   !whitelist.has(item.id) &&
+                  item.id !== "invalid" &&
                   item.id !== MCP_TOOL_SEARCH_ID &&
                   !(item.id === "exec" && execAllowedByWhitelist)
                 ) {
                   const output = rejectionFor(item.id)
+                  gate.fail(gateTool)
                   log.debug("tool execute rejected", {
                     tool: item.id,
                     callID,
@@ -1929,6 +1934,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   beforeOutput,
                 )
                 if (beforeOutput.cancel) {
+                  gate.fail(gateTool)
                   const cancelOutput = {
                     title: "Cancelled",
                     output: beforeOutput.cancelReason || "Tool call cancelled by hook",
@@ -1968,6 +1974,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
                   output,
                 )
+                // These tools report failures as structured results rather than throwing.
+                if (item.id === "bash" && typeof output.metadata.exit === "number" && output.metadata.exit !== 0) {
+                  gate.fail(gateTool)
+                }
+                if (item.id === "workflow" && args.operation === "run" && output.metadata.status === "failed") {
+                  gate.fail(gateTool)
+                }
                 if (
                   (item.id === "write" || item.id === "edit") &&
                   beforeOutput.args?.file_path &&
@@ -1989,7 +2002,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   yield* input.processor.completeToolCall(options.toolCallId, output)
                 }
                 return output
-              }).pipe((body) => gate.run(item.id, options?.toolCallId ?? "?", body, { signal: options.abortSignal })),
+              }).pipe((body) =>
+                gate.run(
+                  gateTool,
+                  options?.toolCallId ?? "?",
+                  body,
+                  { signal: options.abortSignal },
+                ),
+              ),
             )
           },
         })
@@ -2061,6 +2081,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
               if (whitelist && !whitelist.has(key)) {
                 const rejection = rejectionFor(key)
+                if (modelFacing) gate.fail(key)
                 const output = {
                   title: rejection.title,
                   metadata: rejection.metadata,
@@ -2083,6 +2104,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 mcpBeforeOutput,
               )
               if (mcpBeforeOutput.cancel) {
+                if (modelFacing) gate.fail(key)
                 const cancelResult = {
                   content: [{ type: "text" as const, text: mcpBeforeOutput.cancelReason || "Tool call cancelled by hook" }],
                 }
@@ -5041,12 +5063,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const activeTools = resolvedTools.activeTools
 
             if (lastUser.format?.type === "json_schema") {
-              tools["StructuredOutput"] = createStructuredOutputTool({
+              const outputTool = createStructuredOutputTool({
                 schema: lastUser.format.schema,
                 onSuccess(output) {
                   structured = output
                 },
               })
+              const run = yield* runner()
+              tools["StructuredOutput"] = {
+                ...outputTool,
+                execute(args, options) {
+                  return run.promise(
+                    handle.toolGate.run(
+                      "StructuredOutput",
+                      options.toolCallId,
+                      Effect.promise(async () => outputTool.execute!(args, options)),
+                      { signal: options.abortSignal },
+                    ),
+                  )
+                },
+              }
               activeTools.push("StructuredOutput")
             }
 

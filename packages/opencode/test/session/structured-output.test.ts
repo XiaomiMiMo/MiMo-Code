@@ -1,7 +1,134 @@
 import { describe, expect, test } from "bun:test"
+import path from "node:path"
+import { Effect, Layer } from "effect"
+import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
+import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionID, MessageID } from "../../src/session/schema"
+import { provideTmpdirInstance } from "../fixture/fixture"
+import { testEffect } from "../lib/effect"
+import { startScriptedLLMServer, toolCallsResponse } from "../lib/scripted-llm-server"
+
+const it = testEffect(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer, CrossSpawnSpawner.defaultLayer))
+
+for (const disabled of [false, true])
+  it.live(
+    disabled
+      ? "StructuredOutput can finish after an edit failure when cascade is disabled"
+      : "StructuredOutput is cancelled after an edit failure and a later step recovers",
+    () =>
+      Effect.gen(function* () {
+        const previous = {
+          cascade: process.env.MIMOCODE_DISABLE_FAIL_CASCADE,
+          flooding: process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT,
+        }
+        delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
+        delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
+        if (disabled) process.env.MIMOCODE_DISABLE_FAIL_CASCADE = "1"
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previous.cascade == null) delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
+            else process.env.MIMOCODE_DISABLE_FAIL_CASCADE = previous.cascade
+            if (previous.flooding == null) delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
+            else process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT = previous.flooding
+          }),
+        )
+        const server = startScriptedLLMServer([
+          {
+            lines: toolCallsResponse([
+              {
+                id: "failed-edit",
+                name: "edit",
+                args: JSON.stringify({ file_path: "source.txt", old_string: "missing", new_string: "replacement" }),
+              },
+              { id: "early-output", name: "StructuredOutput", args: JSON.stringify({ answer: "premature" }) },
+            ]),
+          },
+          {
+            lines: toolCallsResponse([
+              { id: "recovered-output", name: "StructuredOutput", args: JSON.stringify({ answer: "recovered" }) },
+            ]),
+          },
+        ])
+        yield* Effect.addFinalizer(() => Effect.promise(() => server.stop()))
+        yield* provideTmpdirInstance(
+          (dir) =>
+            Effect.gen(function* () {
+              yield* Effect.promise(() => Bun.write(path.join(dir, "source.txt"), "original"))
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "Structured output cascade" })
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                harness: "default",
+                format: {
+                  type: "json_schema",
+                  schema: {
+                    type: "object",
+                    properties: { answer: { type: "string" } },
+                    required: ["answer"],
+                    additionalProperties: false,
+                  },
+                  retryCount: 2,
+                },
+                parts: [{ type: "text", text: "Apply the edit and return the answer" }],
+              })
+              const tools = (yield* sessions.messages({ sessionID: session.id }))
+                .flatMap((message) => message.parts)
+                .filter((part) => part.type === "tool")
+              const failure = tools.find((part) => part.callID === "failed-edit")!
+              const early = tools.find((part) => part.callID === "early-output")!
+              expect(failure.state.status === "error" && failure.state.error).toContain("String to replace not found")
+              expect(early.state.status).toBe(disabled ? "completed" : "error")
+              expect(result.info.role === "assistant" && result.info.structured).toEqual({
+                answer: disabled ? "premature" : "recovered",
+              })
+              expect(result.info.role === "assistant" && result.info.error).toBeUndefined()
+              expect(yield* Effect.promise(() => Bun.file(path.join(dir, "source.txt")).text())).toBe("original")
+              expect(server.captures).toHaveLength(disabled ? 1 : 2)
+              expect(tools).toHaveLength(disabled ? 2 : 3)
+              if (disabled) return
+              const cancelled = "Tool call cancelled because an earlier tool call in this response failed."
+              expect(early.state.status === "error" && early.state.error).toBe(cancelled)
+              expect(tools.find((part) => part.callID === "recovered-output")?.state.status).toBe("completed")
+              const continuation = JSON.stringify(server.captures[1].messages)
+              expect(continuation).toContain("failed-edit")
+              expect(continuation).toContain("String to replace not found")
+              expect(continuation).toContain("early-output")
+              expect(continuation).toContain(cancelled)
+            }),
+          {
+            git: true,
+            config: {
+              enabled_providers: ["test"],
+              model: "test/model",
+              provider: {
+                test: {
+                  npm: "@ai-sdk/openai-compatible",
+                  env: [],
+                  options: { apiKey: "test-key", baseURL: `${server.origin}/v1` },
+                  models: {
+                    model: {
+                      name: "Test",
+                      tool_call: true,
+                      limit: { context: 32000, output: 2000 },
+                      modalities: { input: ["text"], output: ["text"] },
+                    },
+                  },
+                },
+              },
+              agent: { build: { model: "test/model" } },
+              permission: { edit: "allow" },
+              lsp: false,
+              formatter: false,
+            },
+          },
+        )
+      }),
+    30000,
+  )
 
 describe("structured-output.OutputFormat", () => {
   test("parses text format", () => {
