@@ -586,6 +586,7 @@ export const dict = {
   // Session badges
   "tui.session.badge.auto": "自动",
   "tui.session.actor_warning": "警告",
+  "tui.session.inbox.from": "来自 {{from}} 的消息",
   "tui.session.actor_status.completed": "子代理已完成",
   "tui.session.actor_status.failed": "子代理失败",
   "tui.session.actor_status.cancelled": "子代理已取消",

@@ -568,6 +568,7 @@ export const dict: Record<string, string> = {
   // Session badges
   "tui.session.badge.auto": "Auto",
   "tui.session.actor_warning": "Warning",
+  "tui.session.inbox.from": "Message from {{from}}",
   "tui.session.actor_status.completed": "Subagent completed",
   "tui.session.actor_status.failed": "Subagent failed",
   "tui.session.actor_status.cancelled": "Subagent cancelled",

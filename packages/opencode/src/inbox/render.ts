@@ -26,6 +26,14 @@ export function renderInboxRow(row: InboxRow): string {
   return `<inbox from="${sender}" sent_at="${sentAt}">\n${blankTo(content.text, "(empty)")}\n</inbox>`
 }
 
+// Display-only decoding; keep the persisted synthetic part unchanged for model context.
+export function parseAgentInboxPart(part: { type: string; synthetic?: boolean; ignored?: boolean; text?: string }) {
+  if (part.type !== "text" || !part.synthetic || part.ignored || typeof part.text !== "string") return undefined
+  const match = /^<inbox from="([^"<>\s:]+:[^"<>\s:]+)" sent_at="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)">\n([\s\S]*)\n<\/inbox>$/.exec(part.text)
+  if (!match || !Number.isFinite(Date.parse(match[2]!))) return undefined
+  return { from: match[1]!, sentAt: match[2]!, text: match[3]! }
+}
+
 export function renderActorNotification(event: {
   actorID: string
   description: string
