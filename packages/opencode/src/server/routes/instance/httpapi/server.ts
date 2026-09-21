@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto"
 import { Effect, Layer, Redacted, Schema } from "effect"
 import { HttpApiBuilder, HttpApiMiddleware, HttpApiSecurity } from "effect/unstable/httpapi"
 import { HttpRouter, HttpServer, HttpServerRequest } from "effect/unstable/http"
@@ -77,7 +78,9 @@ const auth = Layer.succeed(
         if (credential.username !== user) {
           return yield* new Unauthorized({ message: "Unauthorized" })
         }
-        if (Redacted.value(credential.password) !== Flag.MIMOCODE_SERVER_PASSWORD) {
+        const supplied = Buffer.from(Redacted.value(credential.password))
+        const expected = Buffer.from(Flag.MIMOCODE_SERVER_PASSWORD)
+        if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
           return yield* new Unauthorized({ message: "Unauthorized" })
         }
         return yield* effect
