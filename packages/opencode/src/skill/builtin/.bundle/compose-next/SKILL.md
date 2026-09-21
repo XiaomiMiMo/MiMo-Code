@@ -58,7 +58,7 @@ Never-Ask applies to the current decision only. At every later decision point, c
 Never begin implementation on `main` or `master` without explicit user consent. If the active workspace is already chosen, skip creation below and continue with toolchain setup.
 
 - Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
-- Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
+- Create a linked worktree at `.worktrees/<slug>` by default. Base the new branch on the latest mainline (e.g. `origin/main`). If the current checkout makes the base unclear (detached HEAD, an unrelated feature branch, unknown default branch), ask the user explicitly which base to use before creating the worktree. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch" <base>`.
 - When targeting the worktree with a command, pass its absolute path as `workdir`; omitted `workdir` uses the current session directory.
 - Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
 
@@ -74,7 +74,7 @@ feature: <feature-name>
 status: designed | in-progress | delivered
 updated: YYYY-MM-DD
 branch: <branch-name>
-commits: <base-sha>..<head-sha> # filled at delivery
+commits: <short-base-sha>..<short-head-sha> # leave empty while in progress; fill at delivery
 ---
 
 # <Feature Name>
@@ -165,7 +165,7 @@ For parallel task work, review integrated task diffs at useful boundaries only w
 
 If a feature document exists, after review passes and before finishing the branch:
 
-1. Set `status: delivered`, bump `updated:`, and record the reviewed range as `<base-sha>..<head-sha>`.
+1. Set `status: delivered`, bump `updated:`, and record the reviewed range as `<short-base-sha>..<short-head-sha>` using `git rev-parse --short`. The range excludes the final documentation commit below.
 2. Check off completed tasks; leave incomplete tasks unchecked and do not claim delivery if they block acceptance.
 3. Replace `Report` with:
 
@@ -179,7 +179,7 @@ If a feature document exists, after review passes and before finishing the branc
 **Journey log** — at most 5 entries that help future work: dead ends, pivots, or transferable lessons. Preserve useful prior entries and append new ones.
 ```
 
-Update a design section only when it contradicts the delivered behavior. Commit the finalized document on the feature branch before finishing. This documentation-only commit sits outside the recorded reviewed range by construction; it does not restart verification or review, and CI re-running on it is expected.
+Update a design section only when it contradicts the delivered behavior. Commit the finalized document on the feature branch before finishing. This documentation-only commit does not restart verification or review; CI re-running on it is expected.
 
 ## Finish
 
