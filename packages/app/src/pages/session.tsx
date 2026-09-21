@@ -318,7 +318,9 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
   }
 }
 
-export default function Page() {
+export default function Page(props: { sessionID?: string; mode?: "full" | "cell" } = {}) {
+  const effectiveSessionID = createMemo(() => props.sessionID ?? params.id)
+  const isCellMode = () => props.mode === "cell"
   const globalSync = useGlobalSync()
   const layout = useLayout()
   const local = useLocal()
@@ -338,7 +340,7 @@ export default function Page() {
   createEffect(() => {
     if (!prompt.ready()) return
     untrack(() => {
-      if (params.id) return
+      if (effectiveSessionID()) return
       const text = searchParams.prompt
       if (!text) return
       prompt.set([{ type: "text", content: text, start: 0, end: text.length }], text.length)
@@ -364,7 +366,7 @@ export default function Page() {
 
   createEffect(
     on(
-      () => params.id,
+      () => effectiveSessionID(),
       (id, prev) => {
         if (!id) return
         if (prev) return
@@ -431,9 +433,9 @@ export default function Page() {
     if (!view().reviewPanel.opened()) view().reviewPanel.open()
   }
 
-  const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+  const info = createMemo(() => { const id = effectiveSessionID(); return id ? sync.session.get(id) : undefined })
   const isChildSession = createMemo(() => !!info()?.parentID)
-  const diffs = createMemo(() => (params.id ? list(sync.data.session_diff[params.id]) : []))
+  const diffs = createMemo(() => { const id = effectiveSessionID(); return id ? list(sync.data.session_diff[id]) : [] })
   const canReview = createMemo(() => !!sync.project)
   const reviewTab = createMemo(() => isDesktop())
   const tabState = createSessionTabs({
@@ -446,19 +448,19 @@ export default function Page() {
   const activeTab = tabState.activeTab
   const activeFileTab = tabState.activeFileTab
   const revertMessageID = createMemo(() => info()?.revert?.messageID)
-  const messages = createMemo(() => (params.id ? (sync.data.message[params.id] ?? []) : []))
+  const messages = createMemo(() => { const id = effectiveSessionID(); return id ? (sync.data.message[id] ?? []) : [] })
   const messagesReady = createMemo(() => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return true
     return sync.data.message[id] !== undefined
   })
   const historyMore = createMemo(() => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return false
     return sync.session.history.more(id)
   })
   const historyLoading = createMemo(() => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return false
     return sync.session.history.loading(id)
   })
@@ -501,7 +503,7 @@ export default function Page() {
 
   createEffect(
     on(
-      () => ({ dir: params.dir, id: params.id }),
+      () => ({ dir: params.dir, id: effectiveSessionID() }),
       (next, prev) => {
         if (!prev) return
         if (next.dir === prev.dir && next.id === prev.id) return
@@ -756,7 +758,7 @@ export default function Page() {
   const hasScrollGesture = () => Date.now() - ui.scrollGesture < scrollGestureWindowMs
 
   const [sessionSync] = createResource(
-    () => [sdk.directory, params.id] as const,
+    () => [sdk.directory, effectiveSessionID()] as const,
     ([directory, id]) => {
       if (refreshFrame !== undefined) cancelAnimationFrame(refreshFrame)
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
@@ -777,7 +779,7 @@ export default function Page() {
         refreshFrame = undefined
         refreshTimer = window.setTimeout(() => {
           refreshTimer = undefined
-          if (params.id !== id) return
+          if (effectiveSessionID() !== id) return
           untrack(() => {
             if (stale) void sync.session.sync(id, { force: true })
           })
@@ -791,7 +793,7 @@ export default function Page() {
   createEffect(
     on(
       () => {
-        const id = params.id
+        const id = effectiveSessionID()
         return [
           sdk.directory,
           id,
@@ -812,7 +814,7 @@ export default function Page() {
           todoFrame = undefined
           todoTimer = window.setTimeout(() => {
             todoTimer = undefined
-            if (sdk.directory !== dir || params.id !== id) return
+            if (sdk.directory !== dir || effectiveSessionID() !== id) return
             untrack(() => {
               void sync.session.todo(id, cached ? { force: true } : undefined)
             })
@@ -990,7 +992,7 @@ export default function Page() {
 
   createEffect(
     on(
-      () => sync.data.session_status[params.id ?? ""]?.type,
+      () => sync.data.session_status[effectiveSessionID() ?? ""]?.type,
       (next, prev) => {
         if (next !== "idle" || prev === undefined || prev === "idle") return
         refreshVcs()
@@ -1257,7 +1259,7 @@ export default function Page() {
   })
 
   createEffect(() => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return
 
     if (!wantsReview()) return
@@ -1277,7 +1279,7 @@ export default function Page() {
         diffTimer = undefined
         if (!wants) return
 
-        const id = params.id
+        const id = effectiveSessionID()
         if (!id) return
         if (!untrack(() => sync.data.session_diff[id] !== undefined)) return
 
@@ -1404,7 +1406,7 @@ export default function Page() {
   )
 
   const historyWindow = createSessionHistoryWindow({
-    sessionID: () => params.id,
+    sessionID: () => effectiveSessionID(),
     messagesReady,
     loaded: () => messages().length,
     visibleUserMessages,
@@ -1421,7 +1423,7 @@ export default function Page() {
     fillFrame = requestAnimationFrame(() => {
       fillFrame = undefined
 
-      if (!params.id || !messagesReady()) return
+      if (!effectiveSessionID() || !messagesReady()) return
       if (autoScroll.userScrolled() || historyLoading()) return
 
       const el = scroller
@@ -1437,7 +1439,7 @@ export default function Page() {
     on(
       () =>
         [
-          params.id,
+          effectiveSessionID(),
           messagesReady(),
           historyWindow.turnStart(),
           historyMore(),
@@ -1504,13 +1506,13 @@ export default function Page() {
   }
 
   const queuedFollowups = createMemo(() => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return emptyFollowups
     return followup.items[id] ?? emptyFollowups
   })
 
   const editingFollowup = createMemo(() => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return
     return followup.edit[id]
   })
@@ -1545,14 +1547,14 @@ export default function Page() {
     followupMutation.isPending && followupMutation.variables?.sessionID === sessionID
 
   const sendingFollowup = createMemo(() => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return
     if (!followupBusy(id)) return
     return followupMutation.variables?.id
   })
 
   const queueEnabled = createMemo(() => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return false
     return settings.general.followup() === "queue" && busy(id) && !composer.blocked() && !isChildSession()
   })
@@ -1595,7 +1597,7 @@ export default function Page() {
   }
 
   const editFollowup = (id: string) => {
-    const sessionID = params.id
+    const sessionID = effectiveSessionID()
     if (!sessionID) return
     if (followupBusy(sessionID)) return
 
@@ -1612,7 +1614,7 @@ export default function Page() {
   }
 
   const clearFollowupEdit = () => {
-    const id = params.id
+    const id = effectiveSessionID()
     if (!id) return
     setFollowup("edit", id, undefined)
   }
@@ -1646,7 +1648,7 @@ export default function Page() {
 
   const restoreMutation = useMutation(() => ({
     mutationFn: async (id: string) => {
-      const sessionID = params.id
+      const sessionID = effectiveSessionID()
       if (!sessionID) return
 
       const next = userMessages().find((item) => item.id > id)
@@ -1694,7 +1696,7 @@ export default function Page() {
   }
 
   const restore = (id: string) => {
-    if (!params.id || reverting()) return
+    if (!effectiveSessionID() || reverting()) return
     return restoreMutation.mutateAsync(id)
   }
 
@@ -1709,7 +1711,7 @@ export default function Page() {
   const actions = { revert }
 
   createEffect(() => {
-    const sessionID = params.id
+    const sessionID = effectiveSessionID()
     if (!sessionID) return
 
     const item = queuedFollowups()[0]
@@ -1748,7 +1750,7 @@ export default function Page() {
 
   const { clearMessageHash, scrollToMessage } = useSessionHashScroll({
     sessionKey,
-    sessionID: () => params.id,
+    sessionID: () => effectiveSessionID(),
     messagesReady,
     visibleUserMessages,
     historyMore,
@@ -1769,7 +1771,7 @@ export default function Page() {
 
   createEffect(
     on(
-      () => params.id,
+      () => effectiveSessionID(),
       (id) => {
         if (!id) requestAnimationFrame(() => inputRef?.focus())
       },
@@ -1795,9 +1797,11 @@ export default function Page() {
   return (
     <div class="relative bg-background-base size-full overflow-hidden flex flex-col">
       {sessionSync() ?? ""}
-      <SessionHeader />
+      <Show when={!isCellMode()}>
+        <SessionHeader sessionID={effectiveSessionID()} />
+      </Show>
       <div class="flex-1 min-h-0 flex flex-col md:flex-row">
-        <Show when={!isDesktop() && !!params.id}>
+        <Show when={!isDesktop() && !!effectiveSessionID()}>
           <Tabs value={store.mobileTab} class="h-auto">
             <Tabs.List>
               <Tabs.Trigger
@@ -1835,7 +1839,7 @@ export default function Page() {
         >
           <div class="flex-1 min-h-0 overflow-hidden">
             <Switch>
-              <Match when={params.id}>
+              <Match when={effectiveSessionID()}>
                 <Show when={messagesReady()}>
                   <MessageTimeline
                     mobileChanges={mobileChanges()}
@@ -1900,7 +1904,7 @@ export default function Page() {
             }}
             onResponseSubmit={resumeScroll}
             followup={
-              params.id && !isChildSession()
+              effectiveSessionID() && !isChildSession()
                 ? {
                     queue: queueEnabled,
                     items: followupDock(),
@@ -1908,12 +1912,12 @@ export default function Page() {
                     edit: editingFollowup(),
                     onQueue: queueFollowup,
                     onAbort: () => {
-                      const id = params.id
+                      const id = effectiveSessionID()
                       if (!id) return
                       setFollowup("paused", id, true)
                     },
                     onSend: (id) => {
-                      void sendFollowup(params.id!, id, { manual: true })
+                      void sendFollowup(effectiveSessionID()!, id, { manual: true })
                     },
                     onEdit: editFollowup,
                     onEditLoaded: clearFollowupEdit,
