@@ -3,7 +3,7 @@ feature: tool-fifo-gate
 status: delivered
 updated: 2026-09-20
 branch: feat/tool-fifo-gate
-commits: 1592084b..21e21e2c
+commits: 1592084b..e9ce0dbd
 ---
 
 # Tool FIFO Gate
