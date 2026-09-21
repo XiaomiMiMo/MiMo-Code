@@ -165,11 +165,16 @@ export async function ensureRunning(redirectUri?: string): Promise<void> {
 
   server = createServer(handleRequest)
   await new Promise<void>((resolve, reject) => {
+    const onError = (err: Error) => {
+      server!.off("error", onError)
+      reject(err)
+    }
+    server!.on("error", onError)
     server!.listen(currentPort, () => {
+      server!.off("error", onError)
       log.info("oauth callback server started", { port: currentPort, path: currentPath })
       resolve()
     })
-    server!.on("error", reject)
   })
 }
 
@@ -204,13 +209,19 @@ export function cancelPending(mcpName: string): void {
 export async function isPortInUse(port: number = OAUTH_CALLBACK_PORT): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = createConnection(port, "127.0.0.1")
-    socket.on("connect", () => {
+    const onConnect = () => {
+      socket.off("connect", onConnect)
+      socket.off("error", onError)
       socket.destroy()
       resolve(true)
-    })
-    socket.on("error", () => {
+    }
+    const onError = () => {
+      socket.off("connect", onConnect)
+      socket.off("error", onError)
       resolve(false)
-    })
+    }
+    socket.on("connect", onConnect)
+    socket.on("error", onError)
   })
 }
 
