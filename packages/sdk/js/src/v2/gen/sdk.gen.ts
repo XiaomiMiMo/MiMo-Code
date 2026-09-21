@@ -2699,7 +2699,6 @@ export class Session2 extends HeyApiClient {
   public resumeUser<ThrowOnError extends boolean = false>(
     parameters: {
       sessionID: string
-      userMessageID: string
       directory?: string
       workspace?: string
       agentID?: string
@@ -2707,6 +2706,7 @@ export class Session2 extends HeyApiClient {
       titleLocale?: string
       modelProviderID?: string
       modelID?: string
+      userMessageID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2732,6 +2732,11 @@ export class Session2 extends HeyApiClient {
       url: "/session/{sessionID}/resume",
       ...options,
       ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 

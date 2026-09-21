@@ -5548,8 +5548,8 @@ export type SessionRecoveryResponses = {
 export type SessionRecoveryResponse = SessionRecoveryResponses[keyof SessionRecoveryResponses]
 
 export type SessionResumeUserData = {
-  body: {
-    userMessageID: string
+  body?: {
+    userMessageID?: string
   }
   path: {
     sessionID: string
