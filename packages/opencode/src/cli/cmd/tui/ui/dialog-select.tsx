@@ -153,7 +153,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   })
 
   const dimensions = useTerminalDimensions()
-  const height = createMemo(() => Math.min(rows(), Math.floor(dimensions().height / 2) - 6))
+  const height = createMemo(() => Math.min(rows(), Math.floor(dimensions().height * 0.7) - 4))
 
   const selected = createMemo(() => flat()[store.selected])
 
@@ -306,7 +306,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         <scrollbox
           paddingLeft={1}
           paddingRight={1}
-          scrollbarOptions={{ visible: false }}
+          scrollbarOptions={{ visible: true }}
           scrollAcceleration={scrollAcceleration()}
           ref={(r: ScrollBoxRenderable) => (scroll = r)}
           maxHeight={height()}
