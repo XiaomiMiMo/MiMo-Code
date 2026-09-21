@@ -1,8 +1,9 @@
 ---
 feature: tool-fifo-gate
-status: in-progress
+status: delivered
 updated: 2026-09-21
 branch: feat/tool-fifo-gate
+commits: 1592084b..ee5150cc
 ---
 
 # Tool FIFO Gate
@@ -36,6 +37,10 @@ passed alone in 3.04 seconds using the repository test script's 30-second limit.
 The final gate suite also passed all 30 cases after test-only assertion cleanup.
 Package typecheck passed; changed-file oxlint reported 0 errors (46 existing
 warnings in `session/prompt.ts`); full-range diff whitespace checks passed.
+Independent fresh-eyes review of the complete PR and final simplification passed
+spec compliance, correctness, and codebase consistency with no remaining
+actionable findings. The reviewed code range is recorded above; the final
+documentation-only commit records delivery.
 
 **Journey log**
 - Synchronous token registration followed by interruptible admission is required;
