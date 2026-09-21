@@ -7,7 +7,7 @@ const xiaomi = ProviderID.make("xiaomi")
 const mimo = ProviderID.make("mimo")
 const openai = ProviderID.make("openai")
 
-function apiError(opts: { message: string; statusCode?: number; responseBody?: string }) {
+function apiError(opts: { message: string; statusCode?: number; responseBody?: string; cause?: unknown }) {
   return new APICallError({
     message: opts.message,
     url: "https://api.example.com/v1/messages",
@@ -15,6 +15,7 @@ function apiError(opts: { message: string; statusCode?: number; responseBody?: s
     statusCode: opts.statusCode,
     responseHeaders: { "content-type": "application/json" },
     responseBody: opts.responseBody,
+    cause: opts.cause,
     isRetryable: false,
   })
 }
@@ -156,6 +157,29 @@ describe("provider error message", () => {
       }),
     })
     expect(parsed.message).toBe("Insufficient account balance")
+  })
+
+  test("adds OPENSSL_ia32cap hint for Bun ConnectionRefused failures", () => {
+    const previous = process.env.OPENSSL_ia32cap
+    process.env.OPENSSL_ia32cap = "~0x200000200000000"
+
+    try {
+      const parsed = parseAPICallError({
+        providerID: xiaomi,
+        error: apiError({
+          message: "ConnectionRefused",
+          cause: { code: "ConnectionRefused", path: "https://api.xiaomimimo.com/api/free-ai/bootstrap", errno: 0 },
+        }),
+      })
+
+      expect(parsed.type).toBe("api_error")
+      expect(parsed.message).toContain("OPENSSL_ia32cap")
+      expect(parsed.message).toContain("Bun")
+      expect(parsed.message).toContain("delete it and restart")
+    } finally {
+      if (previous === undefined) delete process.env.OPENSSL_ia32cap
+      else process.env.OPENSSL_ia32cap = previous
+    }
   })
 })
 
