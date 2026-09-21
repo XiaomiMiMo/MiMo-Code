@@ -3562,8 +3562,8 @@ function Task(props: ToolProps<typeof ActorTool>) {
       header = `${agent} Task — ${desc}`
     }
 
-    if (status === "cancelled" && action !== "cancel") {
-      header += " (cancelled)"
+    if ((status === "cancelled" && action !== "cancel") || status === "stopped") {
+      header += ` (${status})`
     }
 
     let content = [header]
