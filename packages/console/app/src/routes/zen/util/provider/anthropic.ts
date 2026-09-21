@@ -16,6 +16,77 @@ type Usage = {
   }
 }
 
+// ---- Anthropic API request/response types ----
+// Pragmatic interfaces covering fields actually accessed by the converters.
+
+interface AnthSource {
+  type?: string
+  url?: string
+  media_type?: string
+  data?: string
+}
+
+interface AnthContentPart {
+  type?: string
+  text?: string
+  source?: AnthSource
+  tool_use_id?: string
+  content?: string | object
+  name?: string
+  id?: string
+  input?: object
+}
+
+interface AnthMessage {
+  role?: string
+  content?: string | AnthContentPart[]
+}
+
+interface AnthTool {
+  name?: string
+  description?: string
+  input_schema?: object
+}
+
+interface AnthToolChoice {
+  type?: string
+  name?: string
+}
+
+interface AnthropicRequestBody {
+  model?: string
+  system?: Array<{ type?: string; text?: string }>
+  messages?: AnthMessage[]
+  max_tokens?: number
+  temperature?: number
+  top_p?: number
+  stop_sequences?: string | string[]
+  stream?: boolean
+  tools?: AnthTool[]
+  tool_choice?: AnthToolChoice
+}
+
+interface AnthResponse {
+  type?: string
+  id?: string
+  model?: string
+  stop_reason?: string
+  content?: AnthContentPart[]
+  usage?: Usage
+}
+
+interface AnthChunk {
+  type?: string
+  id?: string
+  model?: string
+  delta?: { type?: string; text?: string; stop_reason?: string; partial_json?: string }
+  content_block?: { type?: string; id?: string; name?: string; text?: string }
+  index?: number
+  message?: { id?: string; model?: string; usage?: Usage }
+  usage?: Usage
+  response?: AnthResponse
+}
+
 export const anthropicHelper: ProviderHelper = ({ reqModel, providerModel }) => {
   const isBedrockModelArn = providerModel.startsWith("arn:aws:bedrock:")
   const isBedrockModelID = providerModel.startsWith("global.anthropic.")
@@ -187,7 +258,7 @@ export const anthropicHelper: ProviderHelper = ({ reqModel, providerModel }) => 
   }
 }
 
-export function fromAnthropicRequest(body: any): CommonRequest {
+export function fromAnthropicRequest(body: AnthropicRequestBody): CommonRequest {
   if (!body || typeof body !== "object") return body
 
   const msgs: any[] = []
@@ -196,48 +267,41 @@ export function fromAnthropicRequest(body: any): CommonRequest {
   if (sys && sys.length > 0) {
     for (const s of sys) {
       if (!s) continue
-      if ((s as any).type !== "text") continue
-      if (typeof (s as any).text !== "string") continue
-      if ((s as any).text.length === 0) continue
-      msgs.push({ role: "system", content: (s as any).text })
+      if (s.type !== "text") continue
+      if (typeof s.text !== "string") continue
+      if (s.text.length === 0) continue
+      msgs.push({ role: "system", content: s.text })
     }
   }
 
-  const toImg = (src: any) => {
+  const toImg = (src: AnthSource | undefined) => {
     if (!src || typeof src !== "object") return undefined
-    if ((src as any).type === "url" && typeof (src as any).url === "string")
-      return { type: "image_url", image_url: { url: (src as any).url } }
-    if (
-      (src as any).type === "base64" &&
-      typeof (src as any).media_type === "string" &&
-      typeof (src as any).data === "string"
-    )
+    if (src.type === "url" && typeof src.url === "string") return { type: "image_url", image_url: { url: src.url } }
+    if (src.type === "base64" && typeof src.media_type === "string" && typeof src.data === "string")
       return {
         type: "image_url",
-        image_url: { url: `data:${(src as any).media_type};base64,${(src as any).data}` },
+        image_url: { url: `data:${src.media_type};base64,${src.data}` },
       }
     return undefined
   }
 
-  const inMsgs = Array.isArray(body.messages) ? body.messages : []
+  const inMsgs: AnthMessage[] = Array.isArray(body.messages) ? body.messages : []
   for (const m of inMsgs) {
-    if (!m || !(m as any).role) continue
+    if (!m || !m.role) continue
 
-    if ((m as any).role === "user") {
-      const partsIn = Array.isArray((m as any).content) ? (m as any).content : []
+    if (m.role === "user") {
+      const partsIn = Array.isArray(m.content) ? m.content : []
       const partsOut: any[] = []
       for (const p of partsIn) {
-        if (!p || !(p as any).type) continue
-        if ((p as any).type === "text" && typeof (p as any).text === "string")
-          partsOut.push({ type: "text", text: (p as any).text })
-        if ((p as any).type === "image") {
-          const ip = toImg((p as any).source)
+        if (!p || !p.type) continue
+        if (p.type === "text" && typeof p.text === "string") partsOut.push({ type: "text", text: p.text })
+        if (p.type === "image") {
+          const ip = toImg(p.source)
           if (ip) partsOut.push(ip)
         }
-        if ((p as any).type === "tool_result") {
-          const id = (p as any).tool_use_id
-          const content =
-            typeof (p as any).content === "string" ? (p as any).content : JSON.stringify((p as any).content)
+        if (p.type === "tool_result") {
+          const id = p.tool_use_id
+          const content = typeof p.content === "string" ? p.content : JSON.stringify(p.content)
           msgs.push({ role: "tool", tool_call_id: id, content })
         }
       }
@@ -248,17 +312,17 @@ export function fromAnthropicRequest(body: any): CommonRequest {
       continue
     }
 
-    if ((m as any).role === "assistant") {
-      const partsIn = Array.isArray((m as any).content) ? (m as any).content : []
+    if (m.role === "assistant") {
+      const partsIn = Array.isArray(m.content) ? m.content : []
       const texts: string[] = []
       const tcs: any[] = []
       for (const p of partsIn) {
-        if (!p || !(p as any).type) continue
-        if ((p as any).type === "text" && typeof (p as any).text === "string") texts.push((p as any).text)
-        if ((p as any).type === "tool_use") {
-          const name = (p as any).name
-          const id = (p as any).id
-          const inp = (p as any).input
+        if (!p || !p.type) continue
+        if (p.type === "text" && typeof p.text === "string") texts.push(p.text)
+        if (p.type === "tool_use") {
+          const name = p.name
+          const id = p.id
+          const inp = p.input
           const input = (() => {
             if (typeof inp === "string") return inp
             try {
@@ -279,13 +343,13 @@ export function fromAnthropicRequest(body: any): CommonRequest {
 
   const tools = Array.isArray(body.tools)
     ? body.tools
-        .filter((t: any) => t && typeof t === "object" && "input_schema" in t)
-        .map((t: any) => ({
+        .filter((t) => t && typeof t === "object" && "input_schema" in t)
+        .map((t) => ({
           type: "function",
           function: {
-            name: (t as any).name,
-            description: (t as any).description,
-            parameters: (t as any).input_schema,
+            name: t.name,
+            description: t.description,
+            parameters: t.input_schema,
           },
         }))
     : undefined
@@ -293,10 +357,10 @@ export function fromAnthropicRequest(body: any): CommonRequest {
   const tcin = body.tool_choice
   const tc = (() => {
     if (!tcin) return undefined
-    if ((tcin as any).type === "auto") return "auto"
-    if ((tcin as any).type === "any") return "required"
-    if ((tcin as any).type === "tool" && typeof (tcin as any).name === "string")
-      return { type: "function" as const, function: { name: (tcin as any).name } }
+    if (tcin.type === "auto") return "auto"
+    if (tcin.type === "any") return "required"
+    if (tcin.type === "tool" && typeof tcin.name === "string")
+      return { type: "function" as const, function: { name: tcin.name } }
     return undefined
   })()
 
@@ -309,14 +373,14 @@ export function fromAnthropicRequest(body: any): CommonRequest {
   })()
 
   return {
-    model: body.model,
+    model: body.model ?? "",
     max_tokens: body.max_tokens,
     temperature: body.temperature,
     top_p: body.top_p,
     stop,
     messages: msgs,
     stream: !!body.stream,
-    tools,
+    tools: tools as CommonRequest["tools"],
     tool_choice: tc,
   }
 }
@@ -337,10 +401,10 @@ export function toAnthropicRequest(body: CommonRequest) {
   const msgsIn = Array.isArray(body.messages) ? body.messages : []
   const msgsOut: any[] = []
 
-  const toSrc = (p: any) => {
+  const toSrc = (p: { type?: string; image_url?: { url: string } | string }) => {
     if (!p || typeof p !== "object") return undefined
-    if ((p as any).type === "image_url" && (p as any).image_url) {
-      const u = (p as any).image_url.url ?? (p as any).image_url
+    if (p.type === "image_url" && p.image_url) {
+      const u = typeof p.image_url === "string" ? p.image_url : p.image_url.url
       if (typeof u === "string" && u.startsWith("data:")) {
         const m = u.match(/^data:([^;]+);base64,(.*)$/)
         if (m) return { type: "base64", media_type: m[1], data: m[2] }
@@ -351,21 +415,20 @@ export function toAnthropicRequest(body: CommonRequest) {
   }
 
   for (const m of msgsIn) {
-    if (!m || !(m as any).role) continue
+    if (!m || !m.role) continue
 
-    if ((m as any).role === "user") {
-      if (typeof (m as any).content === "string") {
+    if (m.role === "user") {
+      if (typeof m.content === "string") {
         msgsOut.push({
           role: "user",
-          content: [{ type: "text", text: (m as any).content, ...cc() }],
+          content: [{ type: "text", text: m.content, ...cc() }],
         })
-      } else if (Array.isArray((m as any).content)) {
+      } else if (Array.isArray(m.content)) {
         const parts: any[] = []
-        for (const p of (m as any).content) {
-          if (!p || !(p as any).type) continue
-          if ((p as any).type === "text" && typeof (p as any).text === "string")
-            parts.push({ type: "text", text: (p as any).text, ...cc() })
-          if ((p as any).type === "image_url") {
+        for (const p of m.content) {
+          if (!p || !p.type) continue
+          if (p.type === "text" && typeof p.text === "string") parts.push({ type: "text", text: p.text, ...cc() })
+          if (p.type === "image_url") {
             const s = toSrc(p)
             if (s) parts.push({ type: "image", source: s, ...cc() })
           }
@@ -375,16 +438,16 @@ export function toAnthropicRequest(body: CommonRequest) {
       continue
     }
 
-    if ((m as any).role === "assistant") {
-      const out: any = { role: "assistant", content: [] as any[] }
-      if (typeof (m as any).content === "string" && (m as any).content.length > 0) {
-        ;(out.content as any[]).push({ type: "text", text: (m as any).content, ...cc() })
+    if (m.role === "assistant") {
+      const out: { role: string; content: any[] } = { role: "assistant", content: [] }
+      if (typeof m.content === "string" && m.content.length > 0) {
+        out.content.push({ type: "text", text: m.content, ...cc() })
       }
-      if (Array.isArray((m as any).tool_calls)) {
-        for (const tc of (m as any).tool_calls) {
-          if ((tc as any).type === "function" && (tc as any).function) {
+      if (Array.isArray(m.tool_calls)) {
+        for (const tc of m.tool_calls) {
+          if (tc.type === "function" && tc.function) {
             let input: any
-            const a = (tc as any).function.arguments
+            const a = tc.function.arguments
             if (typeof a === "string") {
               try {
                 input = JSON.parse(a)
@@ -392,29 +455,29 @@ export function toAnthropicRequest(body: CommonRequest) {
                 input = a
               }
             } else input = a
-            const id = (tc as any).id || `toolu_${Math.random().toString(36).slice(2)}`
-            ;(out.content as any[]).push({
+            const id = tc.id || `toolu_${Math.random().toString(36).slice(2)}`
+            out.content.push({
               type: "tool_use",
               id,
-              name: (tc as any).function.name,
+              name: tc.function.name,
               input,
               ...cc(),
             })
           }
         }
       }
-      if ((out.content as any[]).length > 0) msgsOut.push(out)
+      if (out.content.length > 0) msgsOut.push(out)
       continue
     }
 
-    if ((m as any).role === "tool") {
+    if (m.role === "tool") {
       msgsOut.push({
         role: "user",
         content: [
           {
             type: "tool_result",
-            tool_use_id: (m as any).tool_call_id,
-            content: (m as any).content,
+            tool_use_id: m.tool_call_id,
+            content: m.content,
             ...cc(),
           },
         ],
@@ -425,11 +488,11 @@ export function toAnthropicRequest(body: CommonRequest) {
 
   const tools = Array.isArray(body.tools)
     ? body.tools
-        .filter((t: any) => t && typeof t === "object" && (t as any).type === "function")
-        .map((t: any) => ({
-          name: (t as any).function.name,
-          description: (t as any).function.description,
-          input_schema: (t as any).function.parameters,
+        .filter((t) => t && typeof t === "object" && t.type === "function")
+        .map((t) => ({
+          name: t.function.name,
+          description: t.function.description,
+          input_schema: t.function.parameters,
           ...cc(),
         }))
     : undefined
@@ -439,8 +502,8 @@ export function toAnthropicRequest(body: CommonRequest) {
     if (!tcIn) return undefined
     if (tcIn === "auto") return { type: "auto" }
     if (tcIn === "required") return { type: "any" }
-    if ((tcIn as any).type === "function" && (tcIn as any).function?.name)
-      return { type: "tool", name: (tcIn as any).function.name }
+    if (typeof tcIn !== "string" && tcIn.type === "function" && tcIn.function?.name)
+      return { type: "tool", name: tcIn.function.name }
     return undefined
   })()
 
@@ -465,30 +528,30 @@ export function toAnthropicRequest(body: CommonRequest) {
   }
 }
 
-export function fromAnthropicResponse(resp: any): CommonResponse {
-  if (!resp || typeof resp !== "object") return resp
+export function fromAnthropicResponse(resp: AnthResponse): CommonResponse {
+  if (!resp || typeof resp !== "object") return resp as unknown as CommonResponse
 
-  if (Array.isArray((resp as any).choices)) return resp
+  if (Array.isArray(resp.content) === false && !("type" in resp)) return resp as unknown as CommonResponse
 
-  const isAnthropic = typeof (resp as any).type === "string" && (resp as any).type === "message"
-  if (!isAnthropic) return resp
+  const isAnthropic = typeof resp.type === "string" && resp.type === "message"
+  if (!isAnthropic) return resp as unknown as CommonResponse
 
-  const idIn = (resp as any).id
+  const idIn = resp.id
   const id =
     typeof idIn === "string" ? idIn.replace(/^msg_/, "chatcmpl_") : `chatcmpl_${Math.random().toString(36).slice(2)}`
-  const model = (resp as any).model
+  const model = resp.model
 
-  const blocks: any[] = Array.isArray((resp as any).content) ? (resp as any).content : []
+  const blocks: AnthContentPart[] = Array.isArray(resp.content) ? resp.content : []
   const text = blocks
-    .filter((b) => b && b.type === "text" && typeof (b as any).text === "string")
-    .map((b: any) => b.text)
+    .filter((b) => b && b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text)
     .join("")
   const tcs = blocks
     .filter((b) => b && b.type === "tool_use")
-    .map((b: any) => {
-      const name = (b as any).name
+    .map((b) => {
+      const name = b.name
       const args = (() => {
-        const inp = (b as any).input
+        const inp = b.input
         if (typeof inp === "string") return inp
         try {
           return JSON.stringify(inp ?? {})
@@ -496,11 +559,8 @@ export function fromAnthropicResponse(resp: any): CommonResponse {
           return String(inp ?? "")
         }
       })()
-      const tid =
-        typeof (b as any).id === "string" && (b as any).id.length > 0
-          ? (b as any).id
-          : `toolu_${Math.random().toString(36).slice(2)}`
-      return { id: tid, type: "function" as const, function: { name, arguments: args } }
+      const tid = typeof b.id === "string" && b.id.length > 0 ? b.id : `toolu_${Math.random().toString(36).slice(2)}`
+      return { id: tid, type: "function" as const, function: { name: name ?? "", arguments: args } }
     })
 
   const finish = (r: string | null) => {
@@ -511,14 +571,13 @@ export function fromAnthropicResponse(resp: any): CommonResponse {
     return null
   }
 
-  const u = (resp as any).usage
+  const u = resp.usage
   const usage = (() => {
-    if (!u) return undefined as any
-    const pt = typeof (u as any).input_tokens === "number" ? (u as any).input_tokens : undefined
-    const ct = typeof (u as any).output_tokens === "number" ? (u as any).output_tokens : undefined
+    if (!u) return undefined
+    const pt = typeof u.input_tokens === "number" ? u.input_tokens : undefined
+    const ct = typeof u.output_tokens === "number" ? u.output_tokens : undefined
     const total = pt != null && ct != null ? pt + ct : undefined
-    const cached =
-      typeof (u as any).cache_read_input_tokens === "number" ? (u as any).cache_read_input_tokens : undefined
+    const cached = typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : undefined
     const details = cached != null ? { cached_tokens: cached } : undefined
     return {
       prompt_tokens: pt,
@@ -532,7 +591,7 @@ export function fromAnthropicResponse(resp: any): CommonResponse {
     id,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
-    model,
+    model: model ?? "",
     choices: [
       {
         index: 0,
@@ -541,7 +600,7 @@ export function fromAnthropicResponse(resp: any): CommonResponse {
           ...(text && text.length > 0 ? { content: text } : {}),
           ...(tcs.length > 0 ? { tool_calls: tcs } : {}),
         },
-        finish_reason: finish((resp as any).stop_reason ?? null),
+        finish_reason: finish(resp.stop_reason ?? null),
       },
     ],
     ...(usage ? { usage } : {}),
@@ -551,9 +610,9 @@ export function fromAnthropicResponse(resp: any): CommonResponse {
 export function toAnthropicResponse(resp: CommonResponse) {
   if (!resp || typeof resp !== "object") return resp
 
-  if (!Array.isArray((resp as any).choices)) return resp
+  if (!Array.isArray(resp.choices)) return resp
 
-  const choice = (resp as any).choices[0]
+  const choice = resp.choices[0]
   if (!choice) return resp
 
   const message = choice.message
@@ -566,17 +625,17 @@ export function toAnthropicResponse(resp: CommonResponse) {
 
   if (Array.isArray(message.tool_calls)) {
     for (const tc of message.tool_calls) {
-      if ((tc as any).type === "function" && (tc as any).function) {
+      if (tc.type === "function" && tc.function) {
         let input: any
         try {
-          input = JSON.parse((tc as any).function.arguments)
+          input = JSON.parse(tc.function.arguments)
         } catch {
-          input = (tc as any).function.arguments
+          input = tc.function.arguments
         }
         content.push({
           type: "tool_use",
-          id: (tc as any).id,
-          name: (tc as any).function.name,
+          id: tc.id,
+          name: tc.function.name,
           input,
         })
       }
@@ -593,7 +652,7 @@ export function toAnthropicResponse(resp: CommonResponse) {
   })()
 
   const usage = (() => {
-    const u = (resp as any).usage
+    const u = resp.usage
     if (!u) return undefined
     return {
       input_tokens: u.prompt_tokens,
@@ -603,11 +662,11 @@ export function toAnthropicResponse(resp: CommonResponse) {
   })()
 
   return {
-    id: (resp as any).id,
+    id: resp.id,
     type: "message",
     role: "assistant",
     content: content.length > 0 ? content : [{ type: "text", text: "" }],
-    model: (resp as any).model,
+    model: resp.model,
     stop_reason,
     usage,
   }
@@ -619,7 +678,7 @@ export function fromAnthropicChunk(chunk: string): CommonChunk | string {
   const dataLine = lines.find((l) => l.startsWith("data: "))
   if (!dataLine) return chunk
 
-  let json
+  let json: AnthChunk
   try {
     json = JSON.parse(dataLine.slice(6))
   } catch {
