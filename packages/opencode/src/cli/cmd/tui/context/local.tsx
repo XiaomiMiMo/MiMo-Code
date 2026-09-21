@@ -416,6 +416,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             this.set(variants[index + 1])
           },
         },
+        hasUserSet(agentName: string) {
+          return !!modelStore.model[agentName]
+        },
       }
     })
 
@@ -520,7 +523,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     createEffect(() => {
       const value = agent.current()
       if (!value) return
-      if (value.model) {
+      if (value.model && !model.hasUserSet(value.name)) {
         if (isModelValid(value.model))
           model.set({
             providerID: value.model.providerID,
