@@ -4851,9 +4851,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               writerWaitMs: AUTO_WRITER_WAIT_MS,
               // The turn is mid-flight, so explain the stall: without this the
               // TUI would sit on a bare spinner for minutes with no reason.
-              onWaitingForWriter: status
-                .set(sessionID, { type: "busy", message: "Writing checkpoint\u2026" })
-                .pipe(Effect.catch(() => Effect.void)),
+              // F55: only main owns session status — subagent onIdle never clears it.
+              onWaitingForWriter: (!agentID || agentID === "main")
+                ? status
+                    .set(sessionID, { type: "busy", message: "Writing checkpoint\u2026" })
+                    .pipe(Effect.catch(() => Effect.void))
+                : Effect.void,
             })
             if (attempt === "rebuilt") {
               skipOverflowCheck = true
@@ -5478,8 +5481,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   llm,
                   candidates: maxModeCfg?.candidates,
                   retryConfig: cfg,
-                 setStatus: (message) =>
-                   status.set(sessionID, message ? { type: "busy", message } : { type: "busy" }),
+                  setStatus: (message) =>
+                    // F55: subagent must not own session status (onIdle is void for non-main).
+                    !agentID || agentID === "main"
+                      ? status.set(sessionID, message ? { type: "busy", message } : { type: "busy" })
+                      : Effect.void,
                   onRetry: (info) =>
                     bus.publish(Session.Event.RetryAttempt, {
                       sessionID,
@@ -5620,9 +5626,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 agent: lastUser.agent,
                 model: { providerID: model.providerID, id: model.id },
                 writerWaitMs: AUTO_WRITER_WAIT_MS,
-                onWaitingForWriter: status
-                  .set(sessionID, { type: "busy", message: "Writing checkpoint\u2026" })
-                  .pipe(Effect.catch(() => Effect.void)),
+                // F55: only main owns session status — subagent onIdle never clears it.
+                onWaitingForWriter: (!agentID || agentID === "main")
+                  ? status
+                      .set(sessionID, { type: "busy", message: "Writing checkpoint\u2026" })
+                      .pipe(Effect.catch(() => Effect.void))
+                  : Effect.void,
               })
               if (attempt2 === "rebuilt") {
                 skipOverflowCheck = true
