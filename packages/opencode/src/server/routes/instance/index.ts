@@ -186,6 +186,30 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket): Hono => {
         }),
     )
     .get(
+      "/vcs/pr",
+      describeRoute({
+        summary: "Get pull request status",
+        description:
+          "Retrieve GitHub pull request status for the current branch, reusing GH_TOKEN/GITHUB_TOKEN or `gh auth token` when available.",
+        operationId: "vcs.pr",
+        responses: {
+          200: {
+            description: "Pull request status",
+            content: {
+              "application/json": {
+                schema: resolver(Vcs.PullRequest),
+              },
+            },
+          },
+        },
+      }),
+      async (c) =>
+        jsonRequest("InstanceRoutes.vcs.pr", c, function* () {
+          const vcs = yield* Vcs.Service
+          return yield* vcs.pullRequest()
+        }),
+    )
+    .get(
       "/command",
       describeRoute({
         summary: "List commands",

@@ -9335,6 +9335,47 @@
           }
         ]
       }
+    },
+    "/vcs/pr": {
+      "get": {
+        "operationId": "vcs.pr",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Get pull request status",
+        "description": "Retrieve GitHub pull request status for the current branch, reusing GH_TOKEN/GITHUB_TOKEN or `gh auth token` when available.",
+        "responses": {
+          "200": {
+            "description": "Pull request status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VcsPullRequest"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.vcs.pr({\n  ...\n})"
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -18033,6 +18074,49 @@
           }
         },
         "required": ["file", "patch", "additions", "deletions"]
+      },
+      "VcsPullRequest": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok", "none", "unauthorized", "not_github", "rate_limited", "no_branch", "error"]
+          },
+          "authenticated": {
+            "type": "boolean"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "pull": {
+            "type": "object",
+            "properties": {
+              "number": {
+                "type": "number"
+              },
+              "state": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": ["number", "state"]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["status", "authenticated"]
       },
       "Command": {
         "type": "object",
