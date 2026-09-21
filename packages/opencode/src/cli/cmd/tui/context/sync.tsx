@@ -129,7 +129,7 @@ export type ActorEntry = {
   actor_id: string
   session_id: string
   mode: "subagent" | "peer" | "main"
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "unknown"
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "stopped" | "unknown"
   agent: string
   description: string
   parent_actor_id: string | null
@@ -139,15 +139,23 @@ export type ActorEntry = {
   last_turn_time: number | null
 }
 
-function actorStatusFromEvent(
-  s: "pending" | "running" | "idle",
-  outcome: "success" | "failure" | "cancelled" | undefined,
-): ActorEntry["status"] {
-  if (s === "pending") return "pending"
-  if (s === "running") return "running"
-  if (outcome === "success") return "completed"
-  if (outcome === "failure") return "failed"
-  if (outcome === "cancelled") return "cancelled"
+export function actorStatusFromEvent(input: {
+  status: "pending" | "running" | "idle"
+  lastOutcome?: "success" | "failure" | "cancelled"
+  executionState?: "running" | "stopped" | "completed" | "failed" | "cancelled"
+  executionActive?: boolean
+}): ActorEntry["status"] {
+  // Runtime activity wins over an outcome left by a previous turn.
+  if (input.executionActive === true) return "running"
+  if (input.executionState) return input.executionState
+  if (input.executionActive !== false) {
+    if (input.status === "pending") return "pending"
+    if (input.status === "running") return "running"
+  }
+  if (input.lastOutcome === "success") return "completed"
+  if (input.lastOutcome === "failure") return "failed"
+  if (input.lastOutcome === "cancelled") return "cancelled"
+  if (input.status === "idle" || input.executionActive === false) return "stopped"
   return "unknown"
 }
 
@@ -766,10 +774,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const idx = list.findIndex((a) => a.actor_id === event.properties.actorID)
           if (idx === -1) break
           setStore("actor", sid, idx, {
-            status: actorStatusFromEvent(
-              event.properties.status,
-              event.properties.lastOutcome,
-            ),
+            status: actorStatusFromEvent(event.properties),
             turn_count: event.properties.turnCount,
             last_turn_time: event.properties.lastTurnTime,
             time_updated: Date.now(),
@@ -1064,7 +1069,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                 actor_id: row.actorID,
                 session_id: row.sessionID,
                 mode: row.mode,
-                status: actorStatusFromEvent(row.status, row.lastOutcome),
+                status: actorStatusFromEvent(row),
                 agent: row.agent,
                 description: row.description,
                 parent_actor_id: row.parentActorID ?? null,
