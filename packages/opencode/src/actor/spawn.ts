@@ -1,4 +1,4 @@
-import { Effect, Deferred, Context, Fiber, Layer, Scope, Cause, Schedule, Exit } from "effect"
+import { Effect, Deferred, Context, Fiber, Layer, Scope, Cause, Exit } from "effect"
 import { ActorExecution, type Execution } from "./execution"
 import { makeTerminalNotifier } from "./notification"
 import type { SessionID, MessageID } from "@/session/schema"
@@ -12,18 +12,13 @@ import { TaskRegistry } from "@/task/registry"
 import { TaskGate, MAX_TASK_GATE_SUBAGENT_REACT } from "@/task/gate"
 import { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
-import type { Actor, SpawnMode, ContextMode, ToolWhitelist, Lifecycle } from "@/actor/schema"
-import { deriveLiveness, DEFAULT_LIVENESS_STALL_MS } from "@/actor/schema"
-import * as ActorEvents from "@/actor/events"
+import type { SpawnMode, ContextMode, ToolWhitelist, Lifecycle } from "@/actor/schema"
 import { runTurn } from "@/actor/turn"
 import { spawnRef } from "@/actor/spawn-ref"
-import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Bus } from "@/bus"
-import { TuiEvent } from "@/cli/cmd/tui/event"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionRetry } from "@/session/retry"
 import { Inbox } from "@/inbox"
-import { renderActorNotification } from "@/inbox/render"
 import { Plugin, HookEvent } from "@/plugin"
 import { parseReturnHeader, type ReturnStatus } from "./return-header"
 import { Log } from "@/util"
@@ -41,13 +36,6 @@ const log = Log.create({ service: "actor.spawn" })
 export const MAX_PRE_REACT = 3
 /** Cap on postStop ReAct re-entries per spawn. See MAX_PRE_REACT TODO. */
 export const MAX_POST_REACT = 3
-/**
- * T40 stall watchdog scan cadence. Well inside the DEFAULT_LIVENESS_STALL_MS (6m)
- * window and just under the registry's own 60s stuck-scan, so a genuinely stalled
- * child is caught within one scan of flipping to `stalled` without hammering the
- * DB.
- */
-export const WATCHDOG_SCAN_INTERVAL_MS = 45_000
 const RETURN_FORMAT_INSTRUCTION = `
 
 ---
@@ -284,15 +272,6 @@ export interface Interface {
     options?: { wake?: boolean },
   ) => Effect.Effect<void>
   readonly getForkContext: (sessionID: SessionID, actorID: string) => Effect.Effect<ForkContext | undefined>
-  /**
-   * Run ONE stall-watchdog scan pass synchronously (the same body the background
-   * fiber repeats every WATCHDOG_SCAN_INTERVAL_MS). Exposed for deterministic
-   * tests that can't wait a real scan interval — it shares the same `notified`
-   * debounce set as the fiber, so driving it repeatedly exercises the real
-   * one-shot / re-arm semantics without touching wall-clock scheduling.
-   * Optional so lightweight test mocks of this Service need not implement it.
-   */
-  readonly scanStalledOnce?: () => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Actor") {}
@@ -966,120 +945,7 @@ export const layer = Layer.effect(
       return forkContexts.get(forkContextKey(sessionID, actorID))
     })
 
-    // === T40 stall watchdog ===
-    // Event-driven stall detection: a background fiber periodically scans active
-    // background actors (ActorRegistry.listActive → pending/running + background),
-    // computes deriveLiveness for each, and when a PEER/subagent flips to
-    // `stalled` (running/pending but nothing has landed for the actor's slice for
-    // longer than DEFAULT_LIVENESS_STALL_MS — deriveLiveness encodes exactly that)
-    // pushes ONE actor_notification{stalled} to its parent. Reuses the
-    // notifyTerminal shape (inbox.send actor_notification + renderActorNotification
-    // + a TUI toast) so stalled joins completed/failed/cancelled on one contract.
-    //
-    // Debounce — the crux: `notified` holds the "sessionID:actorID" of actors we
-    // have ALREADY warned about for their CURRENT stall episode. We emit only on
-    // the not-yet-notified → stalled edge; while it STAYS stalled across ticks it
-    // is in `notified` and we skip. We re-arm (delete the key) the moment the
-    // actor is no longer stalled — it resumed (activity landed again, so
-    // deriveLiveness reads `progressing`), went terminal, or vanished — so a
-    // later re-stall notifies again. One notification per stall episode.
-    const notified = new Set<string>()
-
-    // Emit the single stalled notification for one actor. Same gating +
-    // parent-resolution as notifyTerminal: background only, peer/subagent only,
-    // exclude SYSTEM_SPAWNED_AGENT_TYPES, address the parent's main inbox.
-    const notifyStalled = (actor: Actor, stalledForMs: number) =>
-      Effect.gen(function* () {
-        if (!actor.background) return
-        if (actor.mode !== "peer" && actor.mode !== "subagent") return
-        if (SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent)) return
-        const parentSessionID = actor.mode === "peer" ? (yield* session.get(actor.sessionID)).parentID : actor.sessionID
-        if (!parentSessionID) return
-        yield* inbox
-          .send({
-            receiverSessionID: parentSessionID,
-            receiverActorID: actor.parentActorID ?? "main",
-            senderSessionID: actor.sessionID,
-            senderActorID: actor.actorID,
-            type: "actor_notification",
-            content: renderActorNotification({
-              actorID: actor.actorID,
-              description: actor.description,
-              status: "stalled",
-              stalledForMs,
-            }),
-          })
-          .pipe(Effect.ignore)
-        yield* bus
-          .publish(ActorEvents.ActorStalled, {
-            sessionID: actor.sessionID,
-            actorID: actor.actorID,
-            description: actor.description,
-            // Same reference the classification used, for the same reason the
-            // notification carries it: an observability payload that reports the
-            // step clock while the predicate read the activity clock is a trap.
-            lastActivityTime: actor.lastActivityTime ?? actor.time.created,
-            stalledDuration: stalledForMs,
-          })
-          .pipe(Effect.ignore)
-        yield* Effect.promise(() =>
-          Bus.publish(TuiEvent.ToastShow, {
-            message: `Child "${actor.description}" appears stalled (no activity for ${Math.floor(stalledForMs / 1000)}s)`,
-            variant: "info",
-          }),
-        ).pipe(Effect.ignore)
-      }).pipe(Effect.catchCause((cause) => Effect.logError(`stall notify failed: ${cause}`)))
-
-    const scanStalled = Effect.gen(function* () {
-      const now = Date.now()
-      const active = yield* actorReg.listActive().pipe(Effect.orElseSucceed(() => [] as Actor[]))
-      const seen = new Set<string>()
-      for (const actor of active) {
-        const key = `${actor.sessionID}:${actor.actorID}`
-        seen.add(key)
-        const live = deriveLiveness(actor, now)
-        if (live === "stalled") {
-          if (notified.has(key)) continue // already warned this episode — debounce
-          notified.add(key)
-          // Report the quantity the classification actually used — silence since
-          // the last part write, or since spawn when nothing has landed — not
-          // time since the last completed step, which deriveLiveness no longer
-          // reads. A number that disagrees with its own predicate is a bug.
-          yield* notifyStalled(actor, now - (actor.lastActivityTime ?? actor.time.created))
-          continue
-        }
-        // Not stalled (progressing/terminal) → re-arm so a future re-stall notifies.
-        notified.delete(key)
-      }
-      // Drop debounce keys for actors that fell out of listActive entirely
-      // (went terminal / row gone) so the set can't grow unbounded and a
-      // recycled id re-arms cleanly.
-      for (const key of notified) if (!seen.has(key)) notified.delete(key)
-    }).pipe(Effect.catchCause((cause) => Effect.logError(`stall watchdog scan failed: ${cause}`)))
-
-    // Fork the watchdog into the instance (layer) scope. CRITICAL (T41 lesson):
-    // once the fiber detaches, Instance.current ALS context is lost, so
-    // actorReg.listActive / inbox.send → Database.use → Client() →
-    // InstanceState.bind would throw NotFound(instance). We capture the instance
-    // context that is ALS-bound HERE at layer-build time and re-provide it via
-    // InstanceRef, whose fallback path InstanceState.bind reads off the fiber
-    // context. `undefined` (no instance at build, e.g. some test harnesses) is a
-    // safe no-op — Database.use then takes its own NotFound fallback.
-    const watchdogInstance = yield* Effect.sync(() => {
-      try {
-        return Instance.current
-      } catch {
-        return undefined
-      }
-    })
-    yield* scanStalled.pipe(
-      Effect.repeat(Schedule.spaced(WATCHDOG_SCAN_INTERVAL_MS)),
-      Effect.provideService(InstanceRef, watchdogInstance),
-      Effect.ignore,
-      Effect.forkIn(scope),
-    )
-
-    const impl = Service.of({ spawn, cancel, getForkContext, scanStalledOnce: () => scanStalled })
+    const impl = Service.of({ spawn, cancel, getForkContext })
     // Late-bind the impl so SessionCheckpoint.tryStartCheckpointWriter can resolve it
     // without forming a layer cycle. See spawn-ref.ts for rationale.
     // Save the previous binding so the finalizer can restore it: when the same
@@ -1096,7 +962,7 @@ export const layer = Layer.effect(
     )
     return impl
   }),
-).pipe(Layer.provide(ActorExecution.layer))
+).pipe(Layer.provideMerge(ActorExecution.layer))
 
 // Wrapped in Layer.suspend so the cross-module `.defaultLayer` reads defer to
 // first use instead of running at module load. Without this, the

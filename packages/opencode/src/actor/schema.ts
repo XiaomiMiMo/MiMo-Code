@@ -76,7 +76,8 @@ export type Liveness = z.infer<typeof Liveness>
 
 // Default staleness threshold: a running child with no ACTIVITY for this long is
 // reported `stalled` (still routable — a display distinction, not a verdict) and
-// is the condition the T40 watchdog notifies the child's parent about.
+// is exposed only when callers explicitly inspect liveness. It does not
+// schedule scans, send notifications, or wake the parent.
 //
 // 6 minutes, not the 90s this was. 90s was picked against the per-step cadence,
 // where it meant "no COMPLETED STEP for 90s". Read against activity the same
@@ -104,7 +105,7 @@ export type Liveness = z.infer<typeof Liveness>
 //
 // 360_000 is 1.21x p99.9, clears p99.9 + coalesce by 58.2s (11.6 coalesce
 // intervals), is 72x ACTIVITY_COALESCE_MS, and is 0.6x the abandonment bound —
-// leaving a 240s `stalled` band, ~5 scans at WATCHDOG_SCAN_INTERVAL_MS (45s).
+// leaving a 240s `stalled` band for explicit liveness queries.
 // The cost is accepted deliberately: a genuine stall now surfaces within ~6
 // minutes instead of ~90 seconds. The abandonment bound limits routing eligibility;
 // neither threshold establishes a terminal execution outcome.

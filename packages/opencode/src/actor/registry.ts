@@ -1,5 +1,5 @@
-import { Effect, Layer, Context, Schedule } from "effect"
-import { Database, inArray, eq, and, lte, ne, sql } from "@/storage"
+import { Effect, Layer, Context } from "effect"
+import { Database, inArray, eq, and, ne, sql } from "@/storage"
 import { Bus } from "@/bus"
 import type { SessionID, MessageID } from "@/session/schema"
 import { ActorRegistryTable } from "./actor.sql"
@@ -18,9 +18,6 @@ import { deriveLiveness, DEFAULT_LIVENESS_ABANDON_MS } from "./schema"
 import * as Events from "./events"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { randomUUID } from "node:crypto"
-
-const STUCK_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutes
-const SCAN_INTERVAL_MS = 60 * 1000 // every 60s
 
 // Identifies the registering process; a different token does not prove termination.
 const PROCESS_INSTANCE_ID = randomUUID()
@@ -478,7 +475,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     })
 
     // Initialization cannot infer execution failure from another instance ID.
-    // Only the executor settles its turn; stuck detection remains advisory.
+    // Only the executor settles its turn; no background scan sends stall notifications.
     //
     // Time-based zombie sweep: a crashed process leaves running/pending rows
     // that nothing will ever settle. deriveLiveness already returns "idle" for
@@ -492,33 +489,6 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     //
     // Bootstrap settles actor metadata only. Question parts follow the selected
     // session's prompt/run cleanup; registry initialization never scans history.
-
-    // --- Stuck Detection ---
-    const scanStuck = Effect.gen(function* () {
-      const cutoff = Date.now() - STUCK_THRESHOLD_MS
-      const stuck = yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .select()
-            .from(ActorRegistryTable)
-            .where(and(eq(ActorRegistryTable.status, "running"), lte(ActorRegistryTable.last_turn_time, cutoff)))
-            .all(),
-        ),
-      )
-      for (const row of stuck) {
-        const entry = fromRow(row)
-        yield* bus.publish(Events.ActorStuck, {
-          sessionID: entry.sessionID,
-          actorID: entry.actorID,
-          description: entry.description,
-          lastTurnTime: entry.lastTurnTime,
-          stuckDuration: Date.now() - entry.lastTurnTime,
-        })
-      }
-    })
-
-    // Fork stuck detection fiber in the layer scope
-    yield* scanStuck.pipe(Effect.repeat(Schedule.fixed(SCAN_INTERVAL_MS)), Effect.ignore, Effect.forkScoped)
 
     return Service.of({
       register,
