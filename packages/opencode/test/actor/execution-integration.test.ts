@@ -14,6 +14,8 @@ import { ActorWaiter } from "../../src/actor/waiter"
 import { Inbox } from "../../src/inbox"
 import { sessionPromptRef } from "../../src/inbox/inbox-ref"
 import { SessionPrompt } from "../../src/session/prompt"
+import { SessionStatus } from "../../src/session/status"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import { AppLayer } from "../../src/effect/app-runtime"
 import { attach } from "../../src/effect/run-service"
 import { startScriptedLLMServer, textStopResponse } from "../lib/scripted-llm-server"
@@ -25,6 +27,92 @@ const run = <A, E>(effect: Effect.Effect<A, E, Services | Scope.Scope>) =>
   Effect.runPromise(attach(effect).pipe(Effect.scoped, Effect.provide(AppLayer)))
 
 afterEach(() => Instance.disposeAll())
+
+test("new main messages preserve four background actors awaiting model responses", async () => {
+  const entered = Array.from({ length: 4 }, () => Promise.withResolvers<void>())
+  const release = Promise.withResolvers<void>()
+  const server = startScriptedLLMServer(
+    entered.map((barrier, i) => ({
+      lines: textStopResponse(`CHILD-RESULT-${i}`),
+      beforeReply: async () => {
+        barrier.resolve()
+        await release.promise
+      },
+    })),
+  )
+  await using tmp = await tmpdir({
+    git: true,
+    config: {
+      enabled_providers: ["alibaba"],
+      provider: { alibaba: { options: { apiKey: "test-key", baseURL: `${server.origin}/v1` } } },
+      agent: { custom: { model: "alibaba/qwen-plus", mode: "subagent", completionGate: false } },
+    },
+  })
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const actors = yield* Actor.Service
+            const sessions = yield* Session.Service
+            const prompt = yield* SessionPrompt.Service
+            const status = yield* SessionStatus.Service
+            const parent = yield* sessions.create({ title: "Background progress" })
+            const children = []
+            for (let i = 0; i < 4; i++) {
+              children.push(
+                yield* actors.spawn({
+                  mode: "subagent",
+                  sessionID: parent.id,
+                  agentType: "custom",
+                  task: `Explore module ${i}`,
+                  context: "none",
+                  tools: [],
+                  background: true,
+                }),
+              )
+              yield* Effect.promise(() => entered[i]!.promise)
+            }
+            expect(yield* status.get(parent.id)).toEqual({ type: "idle" })
+            const before = yield* sessions.messages({ sessionID: parent.id, agentID: "*" })
+            expect(before.filter((m) => m.info.role === "assistant")).toHaveLength(4)
+            for (const text of ["How is progress?", "Keep working"]) {
+              yield* prompt.prompt({
+                sessionID: parent.id,
+                agent: "build",
+                noReply: true,
+                model: { providerID: ProviderID.make("alibaba"), modelID: ModelID.make("qwen-plus") },
+                parts: [{ type: "text", text }],
+              })
+              const after = yield* sessions.messages({ sessionID: parent.id, agentID: "*" })
+              for (const child of children) {
+                expect(after.filter((m) => m.info.agentID === child.actorID)).toEqual(
+                  before.filter((m) => m.info.agentID === child.actorID),
+                )
+              }
+            }
+            release.resolve()
+            for (const child of children) {
+              const outcome = yield* Deferred.await(child.outcome)
+              expect(outcome.status).toBe("success")
+              if (outcome.status === "success") expect(outcome.finalText).toContain("CHILD-RESULT-")
+              const messages = yield* sessions.messages({ sessionID: parent.id, agentID: child.actorID })
+              const assistant = messages.find((m) => m.info.role === "assistant")
+              expect(assistant?.info.role).toBe("assistant")
+              if (assistant?.info.role === "assistant") {
+                expect(assistant.info.error).toBeUndefined()
+                expect(assistant.info.finish).toBe("stop")
+              }
+            }
+          }),
+        ),
+    })
+  } finally {
+    release.resolve()
+    await server.stop()
+  }
+}, 30000)
 
 // Desktop tool-step-schema [TP-R14-07] [TP-R14-11].
 test("a pending wait receives a preStop failure's partial delivery before terminal publication", async () => {

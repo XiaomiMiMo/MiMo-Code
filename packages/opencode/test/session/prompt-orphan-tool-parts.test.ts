@@ -167,6 +167,12 @@ describe("selected-session question recovery", () => {
           expect(repaired.state.metadata?.interrupted).toBe(true)
           expect(yield* readPart(cold.id, untouched.id)).toEqual(untouched)
           expect(yield* readPart(selected.id, child.id)).toEqual(child)
+          // A new main prompt must preserve the live child's message as well as
+          // its tool. Marking only the message abandoned still emits a false error.
+          const childAfter = (yield* sessions.messages({ sessionID: selected.id, agentID: "explore-1" })).find(
+            (m) => m.info.id === child.messageID,
+          )
+          expect(childAfter).toEqual(before.find((m) => m.info.id === child.messageID))
           expect(Exit.isFailure(yield* runState.assertNotBusy(selected.id, "explore-1").pipe(Effect.exit))).toBe(true)
           expect(yield* questions.list()).toEqual([])
         }),

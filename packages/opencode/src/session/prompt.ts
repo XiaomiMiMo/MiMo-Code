@@ -3296,7 +3296,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const sweepOrphanAssistants = Effect.fn("SessionPrompt.sweepOrphanAssistants")(function* (
       sessionID: SessionID,
       // When true, sweep dangling assistants regardless of age. The caller sets
-      // this when the session is idle (no active runner), meaning any assistant
+      // this when the main slice is idle (no active main runner), meaning its assistant
       // without time.completed is definitively orphaned — left behind by a hard
       // interruption (process crash / kill / disconnect) that skipped the normal
       // `finish` effect, not an in-flight retry chain. Sweeping immediately
@@ -3307,7 +3307,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // false so background callers (spawn/hook) keep the age guard.
       immediate = false,
     ) {
-      const msgs = yield* sessions.messages({ sessionID, agentID: "*" })
+      // SessionStatus describes main only. Background actors can still be in a
+      // model request while main is idle; their messages are not ours to abandon.
+      const msgs = yield* sessions.messages({ sessionID, agentID: "main" })
       const now = Date.now()
       // 1 hour — must exceed Task 1's chunkMs (300s) plus Task 2's
       // PERSISTENT_RETRY worst-case backoff (10 attempts × 5 min cap =
@@ -3451,7 +3453,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
         if (input.source !== "spawn" && input.source !== "hook") {
           yield* revert.cleanup(session)
-          // An idle session has no active runner, so any dangling assistant is a
+          // An idle main slice has no active runner, so its dangling assistant is a
           // true orphan from a hard interruption — sweep it now (age-independent)
           // so a fresh message is not rendered as stuck QUEUED behind it.
           const idle = (yield* status.get(input.sessionID)).type === "idle"
@@ -3459,16 +3461,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // Same recovery point, same idleness argument: repair tool parts a killed
           // process left stuck at `running`. Self-gated on idle (see the function).
           //
-          // These two look mergeable into one message fetch. They are not:
-          // `sweepOrphanAssistants` reads EVERY slice (`agentID: "*"`) while this one
-          // reads the MAIN slice only, and that difference is load-bearing.
-          // `SessionProcessor` publishes status for the main slice alone, so a subagent
-          // slice can be mid-tool while the session status reads `idle` — scanning only
-          // main is what stops this sweep from rewriting a live subagent's `running`
-          // part. Sharing a fetch would mean taking the wider read and re-filtering
-          // here, which is precisely where that property would get lost. The cost is
-          // also smaller than it looks: this returns after one status lookup unless the
-          // session is genuinely idle.
+          // Both sweeps stay in the main slice: main idleness says nothing about
+          // background actors still awaiting model responses or running tools.
           yield* sweepOrphanToolParts(input.sessionID)
         }
         const eligibleTitle = input.source !== "hook" && input.source !== "spawn" && !input.provenance && session.titleSource === "fallback" && session.titleRevision === 0 && !session.parentID && (input.agentID ?? "main") === "main"
