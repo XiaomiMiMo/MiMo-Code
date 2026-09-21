@@ -148,7 +148,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Scope, Context } f
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
 import { Instance } from "@/project/instance"
-import { ToolGate, toolResource, GATE_BYPASS_TOOLS } from "@/tool/gate"
+import { ToolGate, GATE_BYPASS_TOOLS } from "@/tool/gate"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
 import { SessionRunState } from "./run-state"
 import { ResumeTestHooks } from "./resume-test-hooks"
@@ -1996,7 +1996,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 const gate = ToolGate.for(Instance.directory)
                 return yield* gate.run(item.id, callID, body, {
                   signal: options.abortSignal,
-                  resource: toolResource(item.id, args as { file_path?: unknown }, Instance.directory),
                 })
               }),
             )

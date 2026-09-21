@@ -30,7 +30,7 @@ MEMORY_PATH structure (4 sections):
 
 PROCEDURE:
 
-Turn 1 - Read all sources in parallel:
+Turn 1 - Read all sources:
   Read CHECKPOINT_PATH
   Read MEMORY_PATH
   Read NOTES_PATH (file may not exist for v8.1-era sessions; treat as empty if so)
@@ -80,7 +80,7 @@ For §4 Task tree, pull from the task tool only:
 
 (Then proceed to Turn 2 final Edit pass.)
 
-Turn 2 - Issue Edits in parallel (single message), then stop:
+Turn 2 - Issue Edits (single message), then stop:
   For checkpoint.md:
     For each of §1..§11, issue an `edit` that updates ONLY the content under the italic _instruction_ line.
     NEVER modify "## §N <title>" headers.

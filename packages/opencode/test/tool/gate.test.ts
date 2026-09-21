@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import path from "path"
-import fs from "node:fs/promises"
 import { Deferred, Effect, Fiber, Layer } from "effect"
-import { tmpdir } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { ToolGate, toolResource, type WorktreeGate } from "../../src/tool/gate"
+import { ToolGate, type WorktreeGate } from "../../src/tool/gate"
 
 const it = testEffect(Layer.empty)
 
@@ -141,166 +138,119 @@ describe("tool.gate execution", () => {
 describe("tool.gate", () => {
   test("read/grep/glob enter concurrently without leave", async () => {
     const gate = ToolGate.for(key())
-    await Promise.all([gate.enter("read", "r1"), gate.enter("grep", "g1"), gate.enter("glob", "gl1")])
+    const tokens = await Promise.all([gate.enter("read", "r1"), gate.enter("grep", "g1"), gate.enter("glob", "gl1")])
     expect(gate.runningCount).toBe(3)
     expect(gate.queuedCount).toBe(0)
+    tokens.forEach((token) => gate.leave(token))
   })
 
-  test("edit/write on different realpaths run concurrently", async () => {
-    const gate = ToolGate.for(key())
-    const a = path.join("/tmp/example", "a.ts")
-    const b = path.join("/tmp/example", "b.ts")
-    const t1 = await gate.enter("edit", "e1", { resource: toolResource("edit", { file_path: a }) })
-    const t2 = await gate.enter("write", "w1", { resource: toolResource("write", { file_path: b }) })
-    expect(gate.runningCount).toBe(2)
-    gate.leave(t1)
-    gate.leave(t2)
-  })
+  test.each(["edit", "write", "apply_patch", "bash", "task", "question", "plan_exit", "mcp_example", "custom"])(
+    "%s is exclusive against reads and itself",
+    async (tool) => {
+      const gate = ToolGate.for(key())
+      const first = await gate.enter(tool, "first")
+      const read = gate.enter("read", "read")
+      const next = gate.enter(tool, "next")
+      await expectPending(read)
+      await expectPending(next)
+      gate.leave(first)
+      const reading = await read
+      await expectPending(next)
+      gate.leave(reading)
+      gate.leave(await next)
+      expect(gate.runningCount).toBe(0)
+    },
+  )
 
-  test("edit/write on the same realpath serialize", async () => {
+  test("edit and write serialize without inspecting their arguments or paths", async () => {
     const gate = ToolGate.for(key())
-    const file = path.join("/tmp/example", "same.ts")
-    const resource = toolResource("edit", { file_path: file })
-    const t1 = await gate.enter("edit", "e1", { resource })
-    const pending = gate.enter("write", "w1", { resource })
-    await expectPending(pending)
+    const first = await gate.enter("edit", "edit")
+    const next = gate.enter("write", "write")
+    await expectPending(next)
     expect(gate.runningCount).toBe(1)
-    gate.leave(t1)
-    const t2 = await pending
-    gate.leave(t2)
+    gate.leave(first)
+    gate.leave(await next)
   })
 
-  test("edit without resource is barrier-class against another edit", async () => {
+  test("FIFO head-of-line barrier blocks later compatible reads", async () => {
     const gate = ToolGate.for(key())
-    const t1 = await gate.enter("edit", "e1")
-    const pending = gate.enter("edit", "e2")
-    await expectPending(pending)
-    gate.leave(t1)
-    await pending
+    const first = await gate.enter("read", "first")
+    const barrier = gate.enter("bash", "barrier")
+    const next = gate.enter("read", "next")
+    await expectPending(barrier)
+    await expectPending(next)
+    gate.leave(first)
+    const token = await barrier
+    await expectPending(next)
+    gate.leave(token)
+    gate.leave(await next)
   })
 
-  test("edit does not parallelize with running read", async () => {
+  test("queued readonly tools unlock together after a barrier leaves", async () => {
     const gate = ToolGate.for(key())
-    const r1 = await gate.enter("read", "r1")
-    const edit = gate.enter("edit", "e1", {
-      resource: toolResource("edit", { file_path: path.join("/tmp/example", "a.ts") }),
-    })
-    await expectPending(edit)
-    gate.leave(r1)
-    await edit
-  })
-
-  test("apply_patch stays barrier-class with edit and itself", async () => {
-    const gate = ToolGate.for(key())
-    const edit = await gate.enter("edit", "e1", {
-      resource: toolResource("edit", { file_path: path.join("/tmp/example", "a.ts") }),
-    })
-    const patch = gate.enter("apply_patch", "p1")
-    await expectPending(patch)
-    gate.leave(edit)
-    const patchToken = await patch
-    const patch2 = gate.enter("apply_patch", "p2")
-    await expectPending(patch2)
-    gate.leave(patchToken)
-    await patch2
-  })
-
-  test("bash is barrier-class against path writes and readonly", async () => {
-    const gate = ToolGate.for(key())
-    const b1 = await gate.enter("bash", "b1")
-    const edit = gate.enter("edit", "e1", {
-      resource: toolResource("edit", { file_path: path.join("/tmp/example", "a.ts") }),
-    })
-    const read = gate.enter("read", "r1")
-    await expectPending(edit)
-    await expectPending(read)
-    gate.leave(b1)
-    const editToken = await edit
-    await expectPending(read)
-    gate.leave(editToken)
-    await read
-  })
-
-  test("FIFO head-of-line: bash blocks a later read from overtaking", async () => {
-    const gate = ToolGate.for(key())
-    const b1 = await gate.enter("bash", "b1")
-    const queuedBash = gate.enter("bash", "b2")
-    const queuedRead = gate.enter("read", "r1")
-    await expectPending(queuedBash)
-    await expectPending(queuedRead)
-    gate.leave(b1)
-    const b2Token = await queuedBash
-    await expectPending(queuedRead)
-    gate.leave(b2Token)
-    await queuedRead
-  })
-
-  test("cascade admit: distinct path writes unlock together after barrier leaves", async () => {
-    const gate = ToolGate.for(key())
-    const b1 = await gate.enter("bash", "b1")
-    const e1 = gate.enter("edit", "e1", {
-      resource: toolResource("edit", { file_path: path.join("/tmp/example", "a.ts") }),
-    })
-    const w1 = gate.enter("write", "w1", {
-      resource: toolResource("write", { file_path: path.join("/tmp/example", "b.ts") }),
-    })
-    const b2 = gate.enter("bash", "b2")
-    await expectPending(e1)
-    gate.leave(b1)
-    const e1Token = await e1
-    const w1Token = await w1
-    expect(gate.runningCount).toBe(2)
-    await expectPending(b2)
-    gate.leave(e1Token)
-    gate.leave(w1Token)
-    await b2
+    const held = await gate.enter("bash", "held")
+    const reads = Promise.all([gate.enter("read", "r1"), gate.enter("grep", "g1"), gate.enter("glob", "gl1")])
+    const next = gate.enter("bash", "next")
+    await expectPending(reads)
+    gate.leave(held)
+    const tokens = await reads
+    expect(gate.runningCount).toBe(3)
+    await expectPending(next)
+    tokens.forEach((token) => gate.leave(token))
+    gate.leave(await next)
   })
 
   test("leave is idempotent and unknown tokens are ignored", async () => {
     const gate = ToolGate.for(key())
-    const token = await gate.enter("read", "r1")
-    gate.leave("missing")
+    const token = await gate.enter("bash", "first")
     gate.leave(token)
     gate.leave(token)
+    gate.leave("unknown")
     expect(gate.runningCount).toBe(0)
+    expect(gate.queuedCount).toBe(0)
   })
 
-  test("colliding callIDs still get unique admission tokens", async () => {
+  test("duplicate call ids receive distinct tokens", async () => {
     const gate = ToolGate.for(key())
-    const t1 = await gate.enter("bash", "?")
-    const pending = gate.enter("bash", "?")
-    await expectPending(pending)
+    const first = await gate.enter("read", "?")
+    const second = await gate.enter("read", "?")
+    expect(first).not.toBe(second)
+    gate.leave(first)
     expect(gate.runningCount).toBe(1)
-    gate.leave(t1)
-    const t2 = await pending
-    expect(t2).not.toBe(t1)
-    gate.leave(t2)
-    expect(gate.runningCount).toBe(0)
+    gate.leave(second)
   })
 
-  test("abort while queued dequeues without admitting", async () => {
+  test("already-aborted calls never enter", async () => {
     const gate = ToolGate.for(key())
-    const held = await gate.enter("bash", "b1")
     const ctrl = new AbortController()
-    const queued = gate.enter("read", "r1", { signal: ctrl.signal })
-    await expectPending(queued)
-    expect(gate.queuedCount).toBe(1)
+    ctrl.abort()
+    expect(
+      await gate.enter("write", "cancelled", { signal: ctrl.signal }).catch((error: unknown) => error),
+    ).toMatchObject({ name: "AbortError" })
+    expect(gate.runningCount).toBe(0)
+    expect(gate.queuedCount).toBe(0)
+  })
+
+  test("aborting a waiter removes only that queued call", async () => {
+    const gate = ToolGate.for(key())
+    const held = await gate.enter("bash", "held")
+    const ctrl = new AbortController()
+    const queued = gate.enter("write", "cancelled", { signal: ctrl.signal })
+    const next = gate.enter("read", "next")
     ctrl.abort()
     expect(await queued.catch((error: unknown) => error)).toMatchObject({ name: "AbortError" })
-    expect(gate.queuedCount).toBe(0)
+    expect(gate.queuedCount).toBe(1)
     expect(gate.runningCount).toBe(1)
     gate.leave(held)
-    const next = await gate.enter("read", "r2")
-    gate.leave(next)
+    gate.leave(await next)
   })
 
   test("abort after admission holds the slot until execution finishes", async () => {
     const gate = ToolGate.for(key())
     const ctrl = new AbortController()
-    const token = await gate.enter("bash", "b1", { signal: ctrl.signal })
-    expect(gate.runningCount).toBe(1)
+    const token = await gate.enter("bash", "active", { signal: ctrl.signal })
     ctrl.abort()
-    const next = gate.enter("write", "w1")
+    const next = gate.enter("write", "next")
     await expectPending(next)
     expect(gate.runningCount).toBe(1)
     gate.leave(token)
@@ -309,84 +259,46 @@ describe("tool.gate", () => {
 
   test("aborting a queued barrier admits compatible calls behind it", async () => {
     const gate = ToolGate.for(key())
-    const held = await gate.enter("read", "r1")
+    const held = await gate.enter("read", "held")
     const ctrl = new AbortController()
-    const barrier = gate.enter("bash", "b1", { signal: ctrl.signal })
-    const next = gate.enter("read", "r2")
+    const barrier = gate.enter("bash", "cancelled", { signal: ctrl.signal })
+    const next = gate.enter("read", "next")
     ctrl.abort()
     expect(await barrier.catch((error: unknown) => error)).toMatchObject({ name: "AbortError" })
-    await sleep(5)
+    const token = await next
     expect(gate.runningCount).toBe(2)
     gate.leave(held)
-    gate.leave(await next)
+    gate.leave(token)
   })
 
-  test("actor/exec/workflow/session bypass the gate so nested tools do not deadlock", async () => {
+  test.each(["actor", "exec", "workflow", "session"])("%s bypasses a held gate", async (tool) => {
     const gate = ToolGate.for(key())
-    const held = await gate.enter("bash", "b1")
-    const actorToken = await gate.enter("actor", "actor-run")
-    const execToken = await gate.enter("exec", "exec-1")
-    const workflowToken = await gate.enter("workflow", "wf-1")
-    const sessionToken = await gate.enter("session", "session-join")
-    // Nested tools still queue behind the outer bash barrier.
+    const held = await gate.enter("bash", "held")
+    const bypass = await gate.enter(tool, "bypass")
     const nested = gate.enter("read", "child-read")
     await expectPending(nested)
     expect(gate.runningCount).toBe(1)
-    gate.leave(actorToken)
-    gate.leave(execToken)
-    gate.leave(workflowToken)
-    gate.leave(sessionToken)
+    gate.leave(bypass)
+    expect(gate.runningCount).toBe(1)
     gate.leave(held)
-    const nestedToken = await nested
-    gate.leave(nestedToken)
-  })
-
-  test("toolResource resolves edit/write paths and ignores other tools", () => {
-    const file = path.join("/tmp/example", "x.ts")
-    expect(toolResource("edit", { file_path: file })).toBe(toolResource("write", { file_path: file }))
-    expect(toolResource("bash", { file_path: file })).toBeUndefined()
-    expect(toolResource("edit", {})).toBeUndefined()
-  })
-
-  test("relative and absolute paths in the session directory share a resource", async () => {
-    await using tmp = await tmpdir()
-    const file = path.join(tmp.path, "target.txt")
-    await Bun.write(file, "before")
-    expect(toolResource("edit", { file_path: "target.txt" }, tmp.path)).toBe(
-      toolResource("write", { file_path: file }, tmp.path),
-    )
-  })
-
-  test("new files under a symlinked parent share a resource", async () => {
-    await using tmp = await tmpdir()
-    await fs.mkdir(path.join(tmp.path, "real"))
-    await fs.symlink(
-      path.join(tmp.path, "real"),
-      path.join(tmp.path, "alias"),
-      process.platform === "win32" ? "junction" : "dir",
-    )
-    expect(toolResource("write", { file_path: path.join(tmp.path, "alias", "new.txt") })).toBe(
-      toolResource("write", { file_path: path.join(tmp.path, "real", "new.txt") }),
-    )
+    gate.leave(await nested)
   })
 
   test("gates are isolated per Instance.directory", async () => {
-    const a = ToolGate.for(key())
-    const b = ToolGate.for(key())
-    expect(a).not.toBe(b)
-    await a.enter("bash", "b1")
-    const bEdit = await b.enter("edit", "e1", {
-      resource: toolResource("edit", { file_path: path.join("/tmp/example", "a.ts") }),
-    })
-    expect(b.runningCount).toBe(1)
-    expect(a.runningCount).toBe(1)
-    b.leave(bEdit)
+    const first = ToolGate.for(key())
+    const second = ToolGate.for(key())
+    const a = await first.enter("bash", "first")
+    const b = await second.enter("write", "second")
+    expect(first.runningCount).toBe(1)
+    expect(second.runningCount).toBe(1)
+    first.leave(a)
+    second.leave(b)
   })
 
-  test("ToolGate.for returns the same instance for a directory", async () => {
-    const dir = key()
-    const first: WorktreeGate = ToolGate.for(dir)
-    const second: WorktreeGate = ToolGate.for(dir)
+  test("ToolGate.for returns the same instance for a directory", () => {
+    const directory = key()
+    const first: WorktreeGate = ToolGate.for(directory)
+    const second: WorktreeGate = ToolGate.for(directory)
     expect(first).toBe(second)
   })
 })

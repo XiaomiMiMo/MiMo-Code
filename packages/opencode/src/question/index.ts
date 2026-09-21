@@ -127,11 +127,14 @@ interface State {
 // Service
 
 export interface Interface {
-  readonly ask: (input: {
-    sessionID: SessionID
-    questions: ReadonlyArray<Info>
-    tool?: Tool
-  }) => Effect.Effect<ReadonlyArray<Answer>, RejectedError>
+  readonly ask: (
+    input: {
+      sessionID: SessionID
+      questions: ReadonlyArray<Info>
+      tool?: Tool
+    },
+    abortSignal?: AbortSignal,
+  ) => Effect.Effect<ReadonlyArray<Answer>, RejectedError>
   readonly reply: (input: { requestID: QuestionID; answers: ReadonlyArray<Answer> }) => Effect.Effect<void>
   readonly reject: (requestID: QuestionID) => Effect.Effect<void>
   readonly list: () => Effect.Effect<ReadonlyArray<Request>>
@@ -165,11 +168,15 @@ export const layer = Layer.effect(
       }),
     )
 
-    const ask = Effect.fn("Question.ask")(function* (input: {
-      sessionID: SessionID
-      questions: ReadonlyArray<Info>
-      tool?: Tool
-    }) {
+    const ask = Effect.fn("Question.ask")(function* (
+      input: {
+        sessionID: SessionID
+        questions: ReadonlyArray<Info>
+        tool?: Tool
+      },
+      abortSignal?: AbortSignal,
+    ) {
+      if (abortSignal?.aborted) return yield* Effect.fail(new RejectedError())
       const pending = (yield* InstanceState.get(state)).pending
       const id = QuestionID.ascending()
       log.info("asking", { id, questions: input.questions.length })
@@ -182,12 +189,26 @@ export const layer = Layer.effect(
         tool: input.tool,
       })
       pending.set(id, { info, deferred })
-      yield* bus.publish(Event.Asked, info)
 
       return yield* Effect.ensuring(
-        Deferred.await(deferred),
-        Effect.sync(() => {
-          pending.delete(id)
+        Effect.gen(function* () {
+          yield* bus.publish(Event.Asked, info)
+          if (!abortSignal) return yield* Deferred.await(deferred)
+          return yield* Effect.raceFirst(
+            Deferred.await(deferred),
+            Effect.callback<never, RejectedError>((resume) => {
+              const onAbort = () => resume(Effect.fail(new RejectedError()))
+              if (abortSignal.aborted) return onAbort()
+              abortSignal.addEventListener("abort", onAbort, { once: true })
+              return Effect.sync(() => abortSignal.removeEventListener("abort", onAbort))
+            }),
+          )
+        }),
+        Effect.gen(function* () {
+          // Replies/rejections already remove the request and publish an event.
+          // Cancellation must also dismiss the prompt in connected clients.
+          if (!pending.delete(id)) return
+          yield* bus.publish(Event.Rejected, { sessionID: input.sessionID, requestID: id })
         }),
       )
     })

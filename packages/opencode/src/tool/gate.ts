@@ -6,18 +6,13 @@
  * order:
  *
  * - read/grep/glob may run concurrently with each other
- * - edit/write may run concurrently when their realpath keys differ
- * - apply_patch, bash, task, MCP, and other tools are barrier-class
+ * - every other ordinary tool is barrier-class, including edit/write
  * - actor/exec/workflow/session bypass the queue (they nest or control other calls)
  */
 
-import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Effect } from "effect"
-import { lstatSync, realpathSync } from "node:fs"
-import path from "node:path"
 
 export const PARALLEL_READONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob"])
-export const PATH_WRITE_TOOLS: ReadonlySet<string> = new Set(["edit", "write"])
 
 /**
  * Top-level model tool-calls for these tools must not queue: they nest more
@@ -31,12 +26,10 @@ export const GATE_BYPASS_TOOLS: ReadonlySet<string> = new Set(["actor", "exec", 
 export type GateRequest = {
   readonly id: string
   readonly tool: string
-  readonly resource: string | undefined
 }
 
 export type EnterOptions = {
   readonly signal?: AbortSignal
-  readonly resource?: string
 }
 
 type Waiter = {
@@ -45,43 +38,8 @@ type Waiter = {
   readonly cancel: () => void
 }
 
-/** realpath key for path-local writes; undefined when not applicable. */
-export function toolResource(
-  tool: string,
-  args: { file_path?: unknown } | undefined,
-  directory = process.cwd(),
-): string | undefined {
-  if (!PATH_WRITE_TOOLS.has(tool)) return undefined
-  const filePath = args?.file_path
-  if (typeof filePath !== "string" || filePath.length === 0) return undefined
-  // New files still need their existing parents canonicalized: alias/new.txt
-  // and real/new.txt may be the same destination before either file exists.
-  const canonical = (target: string): string | undefined => {
-    try {
-      return AppFileSystem.normalizePath(realpathSync(target))
-    } catch (error) {
-      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") return undefined
-      // A dangling symlink has an unknown destination; serialize conservatively.
-      if (lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) return undefined
-      const parent = path.dirname(target)
-      if (parent === target) return undefined
-      const resolved = canonical(parent)
-      return resolved ? path.join(resolved, path.basename(target)) : undefined
-    }
-  }
-  return canonical(path.resolve(directory, AppFileSystem.windowsPath(filePath)))
-}
-
 function compatible(a: GateRequest, b: GateRequest): boolean {
-  const aRead = PARALLEL_READONLY_TOOLS.has(a.tool)
-  const bRead = PARALLEL_READONLY_TOOLS.has(b.tool)
-  if (aRead && bRead) return true
-  const aWrite = PATH_WRITE_TOOLS.has(a.tool)
-  const bWrite = PATH_WRITE_TOOLS.has(b.tool)
-  if (aWrite && bWrite && a.resource !== undefined && b.resource !== undefined) {
-    return a.resource !== b.resource
-  }
-  return false
+  return PARALLEL_READONLY_TOOLS.has(a.tool) && PARALLEL_READONLY_TOOLS.has(b.tool)
 }
 
 class WorktreeGate {
@@ -135,7 +93,7 @@ class WorktreeGate {
       signal?.addEventListener("abort", onAbort, { once: true })
 
       this.queue.push({
-        request: { id: token, tool, resource: options?.resource },
+        request: { id: token, tool },
         resolve: () => {
           signal?.removeEventListener("abort", onAbort)
           resolve(token)
@@ -202,7 +160,7 @@ export const ToolGate = {
     return next
   },
   reset(directory?: string): void {
-    if (directory === undefined) {
+    if (directory == null) {
       gates.clear()
       return
     }

@@ -39,22 +39,25 @@ export const PlanExitTool = Tool.define(
 
           const info = yield* session.get(ctx.sessionID)
           const plan = path.relative(Instance.worktree, Session.plan(info))
-          const answers = yield* question.ask({
-            sessionID: ctx.sessionID,
-            questions: [
-              {
-                key: "plan_exit",
-                params: { plan },
-                question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
-                header: "Plan",
-                options: [
-                  { label: "Yes", description: "Switch to build agent and start implementing the plan" },
-                  { label: "No", description: "Stay with plan agent to continue refining the plan" },
-                ],
-              },
-            ],
-            tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
-          })
+          const answers = yield* question.ask(
+            {
+              sessionID: ctx.sessionID,
+              questions: [
+                {
+                  key: "plan_exit",
+                  params: { plan },
+                  question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
+                  header: "Plan",
+                  options: [
+                    { label: "Yes", description: "Switch to build agent and start implementing the plan" },
+                    { label: "No", description: "Stay with plan agent to continue refining the plan" },
+                  ],
+                },
+              ],
+              tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+            },
+            ctx.abort,
+          )
 
           const answer = answers[0]?.[0]
           if (answer === "No") {
