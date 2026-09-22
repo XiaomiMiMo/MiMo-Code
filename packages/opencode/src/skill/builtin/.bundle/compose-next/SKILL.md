@@ -33,25 +33,25 @@ Every path passes through Workspace before Spec or Implement; no branch skips it
 
 Resolve one decision axis at a time. A single decision may bundle multiple dependent fields in one structured question; unrelated decisions require separate turns.
 
-Use the `question` tool for every user decision:
+Use the Question tool for every user decision:
 
 - Put known choices in `options`. Each option gets a concise `label` and a `description` explaining the consequence. List the recommendation first and mark its label `(Recommended)`.
 - For consequential choices, include 2–3 viable alternatives.
-- When choices cannot be enumerated, still call `question` with `options: []` for free-text.
+- When choices cannot be enumerated, still call Question with `options: []` for free-text.
 - Do not ask for permission to continue when no decision remains.
 
 Split requests spanning independent subsystems before refining each part. Do not begin implementation until requirements and scope are settled.
 
 ### Never-Ask handling
 
-If the `question` tool is unavailable or returns `[Never-Ask]`, resolve **this one decision** yourself and continue:
+If the Question tool is unavailable or returns `[Never-Ask]`, resolve **this one decision** yourself and continue:
 
 1. Choose the option marked `(Recommended)` when repository evidence still supports it and it can run unattended.
 2. Otherwise choose the closest minimal-scope option supported by the evidence; prefer text-only, non-interactive work.
 3. If the decision includes destructive or irreversible work, choose a non-destructive path that preserves progress; never auto-approve the destructive option.
 4. State the option selected and the reason in the response.
 
-Never-Ask applies to the current decision only. At every later decision point, call the `question` tool again — Never-Ask does not disable future questions or pause the workflow.
+Never-Ask applies to the current decision only. At every later decision point, call the Question tool again — Never-Ask does not disable future questions or pause the workflow.
 
 ## Workspace — worktree ownership
 
@@ -105,7 +105,7 @@ State explicit boundaries.
 - Remove placeholders such as `TBD`, "handle edge cases", and references to unspecified similar work.
 - Scale detail to the change; do not pad small designs.
 
-Before implementation, fix ambiguous requirements, contradictions, unresolved references, and unverifiable acceptance criteria. If the user is available, request document approval with the `question` tool; otherwise continue.
+Before implementation, fix ambiguous requirements, contradictions, unresolved references, and unverifiable acceptance criteria. If the user is available, request document approval with the Question tool; otherwise continue.
 
 ### Amendments
 
@@ -113,7 +113,7 @@ Update only affected sections, bump `updated:`, preserve anchors, and keep only 
 
 ## Implement
 
-Use the feature document as the source of requirements, or the conversation for an undocumented mechanical change. When a feature document exists, set its `status: in-progress` on the first implementation commit. Execute tasks in dependency order. Track multi-step work with the `task` tool.
+Use the feature document as the source of requirements, or the conversation for an undocumented mechanical change. When a feature document exists, set its `status: in-progress` on the first implementation commit. Execute tasks in dependency order. Track multi-step work with the Task tool.
 
 For behavior changes with a cheap reproduction, write a failing test, confirm it fails for the intended reason, implement the smallest fix, and confirm it passes. A bug fix requires a regression test when one can be written. Skip test-first for generated code, configuration-only changes, throwaway prototypes, or explicit user direction.
 
@@ -185,7 +185,7 @@ Update a design section only when it contradicts the delivered behavior. Commit 
 
 Do not auto-finish. After Finalize, report branch, base, head SHA, workspace, feature-doc path when available, and suggest a closing action.
 
-If the user asks to finish but the path is unclear, use the `question` tool to settle:
+If the user asks to finish but the path is unclear, use the Question tool to settle:
 
 - closing action: local merge / open PR / push only / keep the branch;
 - which base branch to merge or target;
