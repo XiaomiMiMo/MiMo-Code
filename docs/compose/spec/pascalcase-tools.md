@@ -3,7 +3,7 @@ feature: pascalcase-tools
 status: delivered
 updated: 2026-09-22
 branch: codex/pascalcase-tools
-commits: b8edacb7..774787bc
+commits: b8edacb7..299d9055
 ---
 
 # Default PascalCase Tool Surface
@@ -17,6 +17,8 @@ restore canonical IDs before session processing. GPT/Codex and MCP names remain
 unchanged. Primary system, memory, and first-user reminder text uses display names.
 
 **Verification** — Run from packages/opencode:
+
+- PASS after prompt simplification: `bun test test/agent/agent.test.ts` — 52 passed, 0 failed; after the final Compose wording edit, `bun test test/agent/agent.test.ts --test-name-pattern 'default system prompt|compose'` — 4 passed, 0 failed. Independent review of this correction passed.
 
 - PASS: `bun typecheck`.
 - PASS: `bun run script/build-node.ts`.
@@ -35,6 +37,8 @@ unchanged. Primary system, memory, and first-user reminder text uses display nam
   the urgent repair scope.
 - Review identified missing naming metadata in captured request prefixes; fixed
   propagation and passed the affected-area re-review.
+- Simplified casing guidance to the exact registered-name rule; removed examples
+  and display/schema explanations. Capitalized tool references use plain text.
 
 ## [S1] Problem
 
