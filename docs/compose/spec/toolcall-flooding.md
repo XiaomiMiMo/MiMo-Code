@@ -10,8 +10,8 @@ commits: b8edacb7..c3626c67
 
 ## Report
 
-**What was built** — This experiment changes flooding recovery from cancelling
-the entire batch to admitting only its first eligible client tool call. On call
+**What was built** — Flooding recovery admits only the first eligible client
+tool call and cancels the rest of the batch. On call
 17, generation is cancelled immediately. The first call passes through normal
 SDK validation, permissions, hooks, and the existing gate; all later calls retain
 the flooding cancellation result. The next model request waits for the first
@@ -24,8 +24,8 @@ reminder is shared by all recovery outcomes and repeats the existing
 An incomplete input, ambiguous first call ID, or provider-executed first call
 admits no client call and receives the same recovery reminder.
 Repeated flooded steps may each run one tool. Both existing opt-out flags remain
-independent and unchanged. This bounds execution per flooded step; whether it
-reduces repeated model flooding requires empirical use of the experiment.
+independent and unchanged. Execution is bounded per flooded step; the number
+of recovery steps is not limited.
 
 **Verification** — Installed dependencies with `bun ci`; `bun.lock` is unchanged.
 Tests and typecheck ran from `packages/opencode`, and every verification process
@@ -91,7 +91,8 @@ bun test \
 An affected model can generate an unbounded batch of tool calls. Streaming
 execution allows side effects before the batch can be identified as flooding.
 Cancelling every call can leave the model repeating the same flooded batch
-without progress. This experiment permits the first call while blocking the rest.
+without progress. Allowing the first call while blocking the rest lets the model
+continue with a tool result.
 
 ## [S2] Design
 
@@ -145,9 +146,8 @@ This trades time-to-first-tool for bounding a flooded batch to at most one
 client tool execution; normal batches retain their existing execution order after generation.
 The guard bounds calls per step, not argument bytes or the number of recovery
 steps. No additional recovery-attempt limit is introduced. Repeated flooded
-responses may each execute their first call; this is an intentional experiment,
-not a guarantee that model repetition will stop. Existing opt-out flags retain
-their defaults and independence; no additional experiment flag is introduced.
+responses may each execute their first call. Existing opt-out flags retain
+their defaults and independence; no additional flag is introduced.
 
 ## [S3] Out of Scope
 
