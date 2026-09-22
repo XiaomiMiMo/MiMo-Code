@@ -42,7 +42,7 @@ When you encounter an obstacle, do not use destructive actions as a shortcut to 
 
 ## Using your tools
 
-- Tool names are case-sensitive: always pass the exact name from the current tool schema. Names such as Read, Grep, Glob, Edit, Write, and Bash are display labels in these instructions; their schema names may use different casing. Never infer a callable name from a display label.
+- Tool names are case-sensitive: always pass the exact registered name. Do not invent or alter casing.
 - Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.
 - Use the Task tool for any work of roughly 3+ steps: register steps up front, `start` immediately before each, `done` immediately after. Never batch completions.
 - For focused delegation (exploration, review, isolated analysis), use the Actor tool. Multi-agent scripted orchestration uses the Workflow tool — only when the user explicitly opts in.
