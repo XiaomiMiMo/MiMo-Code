@@ -5,11 +5,7 @@ import { Flag } from "@/flag/flag"
 export const TOOLCALL_FLOODING_LIMIT = 16
 export const TOOLCALL_FLOODING_ERROR = "Tool call cancelled because tool-call flooding was detected."
 export const TOOLCALL_FLOODING_REMINDER = `<system-reminder>
-Tool-call flooding was detected in your previous response. Only the first tool call was allowed to proceed through normal validation and permission checks. All later client tool calls were blocked because of flooding and were not executed. Inspect the first tool call's result before deciding what to do next; it may have succeeded or failed. Continue with a smaller batch of tool calls.
-Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.
-</system-reminder>`
-export const TOOLCALL_FLOODING_NO_EXECUTION_REMINDER = `<system-reminder>
-Tool-call flooding was detected in your previous response. The first tool call could not safely be submitted for client execution, so no client tool calls were allowed to execute. All later client tool calls were blocked because of flooding. Continue with a smaller batch of complete, valid tool calls.
+Tool-call flooding was detected. Only the first tool call may have run; check its result for success, failure, an invalid call, or cancellation. All later client tool calls were cancelled because of flooding. Continue with a smaller batch.
 Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.
 </system-reminder>`
 

@@ -13,12 +13,7 @@ import { LLM } from "./llm"
 import { MessageV2 } from "./message-v2"
 import { isOverflow } from "./overflow"
 import { MessageID, PartID } from "./schema"
-import {
-  ToolCallFloodingError,
-  TOOLCALL_FLOODING_ERROR,
-  TOOLCALL_FLOODING_REMINDER,
-  TOOLCALL_FLOODING_NO_EXECUTION_REMINDER,
-} from "./toolcall-flooding"
+import { ToolCallFloodingError, TOOLCALL_FLOODING_ERROR, TOOLCALL_FLOODING_REMINDER } from "./toolcall-flooding"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
@@ -1017,7 +1012,7 @@ export const layer: Layer.Layer<
                     sessionID: ctx.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: e.releasedCallID != null ? TOOLCALL_FLOODING_REMINDER : TOOLCALL_FLOODING_NO_EXECUTION_REMINDER,
+                    text: TOOLCALL_FLOODING_REMINDER,
                   })
                   return
                 }

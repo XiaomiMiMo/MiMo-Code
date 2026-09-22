@@ -1,9 +1,9 @@
 ---
 feature: toolcall-flooding
-status: delivered
+status: in-progress
 updated: 2026-09-22
 branch: codex/flooding-first-tool
-commits: b8edacb7..ee577b7e
+commits:
 ---
 
 # Tool Batch Safety
@@ -16,11 +16,13 @@ the entire batch to admitting only its first eligible client tool call. On call
 SDK validation, permissions, hooks, and the existing gate; all later calls retain
 the flooding cancellation result. The next model request waits for the first
 call's actual success or failure and receives an English reminder explaining
-that only the first call was allowed through. The reminder repeats the existing
+that only the first call may have run and instructing the model to inspect its
+result, including success, failure, an invalid call, or cancellation. The single
+reminder is shared by all recovery outcomes and repeats the existing
 1–3/eight-call guidance and makes no claim of successful execution.
 
 An incomplete input, ambiguous first call ID, or provider-executed first call
-admits no client call and receives a corresponding no-execution reminder.
+admits no client call and receives the same recovery reminder.
 Repeated flooded steps may each run one tool. Both existing opt-out flags remain
 independent and unchanged. This bounds execution per flooded step; whether it
 reduces repeated model flooding requires empirical use of the experiment.
@@ -124,12 +126,12 @@ The processor converts every unadmitted call in a flooded step to a cancelled to
 error with the result `Tool call cancelled because tool-call flooding was detected.`
 Preserve complete arguments when available, finalize streamed text/reasoning, and mark the step
 as tool-calls without a terminal assistant error. Append a synthetic user
-system-reminder identifying toolcall flooding, stating that only the first call
-was allowed through and later client calls were blocked, and directing the model to
-inspect the first result before continuing. Do not imply successful execution
-when validation, permissions, or the tool itself failed. When no call could be
-released, explain that the first call could not safely be submitted and none
-were allowed to execute. Repeat the existing system prompt sentence verbatim:
+system-reminder identifying toolcall flooding. Use one reminder for every outcome:
+only the first call may have run, so inspect its result for success, failure, an
+invalid call, or cancellation before continuing. Later client calls were cancelled
+because of flooding. Keep the reminder focused on the model's next action rather
+than SDK validation, permissions, or other implementation details. Repeat the
+existing system prompt sentence verbatim:
 `Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.`
 Continue model sampling with those tool results and the reminder. User stop
 remains terminal. A new request owns a new buffer and count.

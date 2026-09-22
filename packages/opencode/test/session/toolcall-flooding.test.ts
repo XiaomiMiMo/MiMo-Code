@@ -1,6 +1,7 @@
 import path from "node:path"
 import { expect } from "bun:test"
 import { Deferred, Effect, Fiber, Layer } from "effect"
+import { TOOLCALL_FLOODING_REMINDER } from "../../src/session/toolcall-flooding"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Session } from "../../src/session"
 import type { Config } from "../../src/config"
@@ -96,12 +97,11 @@ for (const rounds of [1, 2])
                     content: "Tool call cancelled because tool-call flooding was detected.",
                   })),
                 )
-                const recovery = JSON.stringify(server.captures[round + 1].messages)
-                expect(recovery).toContain("Only the first tool call was allowed to proceed")
-                expect(recovery).toContain("All later client tool calls were blocked because of flooding")
-                expect(recovery).toMatch(/inspect[^<]*result/i)
-                expect(recovery).toContain("<system-reminder>")
-                expect(recovery).toContain("Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.")
+                expect(
+                  server.captures[round + 1].messages
+                    .filter((message) => message.role === "user")
+                    .map((message) => message.content),
+                ).toContain(TOOLCALL_FLOODING_REMINDER)
               }
               expect(result.info.role === "assistant" && result.info.error).toBeUndefined()
               expect(result.parts.some((part) => part.type === "text" && part.text === "Recovered")).toBe(true)
@@ -222,14 +222,11 @@ for (const entry of [
                   content: "Tool call cancelled because tool-call flooding was detected.",
                 })),
               )
-              const reminder = server.captures[1].messages
-                .filter((message) => message.role === "user")
-                .map((message) => JSON.stringify(message.content))
-                .join("\n")
-              expect(reminder).toContain("Only the first tool call was allowed to proceed")
-              expect(reminder).toContain("All later client tool calls were blocked because of flooding")
-              expect(reminder).toMatch(/inspect[^<]*result/i)
-              expect(reminder).not.toMatch(/first tool call (?:succeeded|was successful|completed successfully)/i)
+              expect(
+                server.captures[1].messages
+                  .filter((message) => message.role === "user")
+                  .map((message) => message.content),
+              ).toContain(TOOLCALL_FLOODING_REMINDER)
             }),
           {
             git: true,
@@ -244,7 +241,7 @@ for (const entry of [
   )
 
 it.live(
-  "an incomplete first call admits no substitute and explains that no tools executed",
+  "an incomplete first call admits no substitute and uses the same recovery reminder",
   () =>
     Effect.gen(function* () {
       const server = startScriptedLLMServer([
@@ -300,15 +297,11 @@ it.live(
                 content: "Tool call cancelled because tool-call flooding was detected.",
               })),
             )
-            const reminder = server.captures[1].messages
-              .filter((message) => message.role === "user")
-              .map((message) => JSON.stringify(message.content))
-              .join("\n")
-            expect(reminder).toContain("The first tool call could not safely be submitted")
-            expect(reminder).toContain("no client tool calls were allowed to execute")
-            expect(reminder).toContain("All later client tool calls were blocked because of flooding")
-            expect(reminder).not.toContain("Only the first tool call was allowed to proceed")
-            expect(reminder).toContain("Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.")
+            expect(
+              server.captures[1].messages
+                .filter((message) => message.role === "user")
+                .map((message) => message.content),
+            ).toContain(TOOLCALL_FLOODING_REMINDER)
           }),
         { git: true, config: config(server.origin) },
       )
