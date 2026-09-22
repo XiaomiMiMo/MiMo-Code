@@ -1,5 +1,6 @@
 import { Effect } from "effect"
-import { tool, jsonSchema, type Tool as AITool } from "ai"
+import { tool, jsonSchema } from "ai"
+import type { NamedTool } from "@/tool/names"
 import z from "zod"
 import { MessageV2 } from "./message-v2"
 import type { SessionID } from "./schema"
@@ -92,17 +93,20 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   // Resolve tools using parent agent's permission and toolAllowlist
   const toolDefs = yield* toolRegistry.tools({
     modelID: input.model.id,
+    apiModelID: input.model.api.id,
+    family: input.model.family,
     providerID: input.model.providerID,
     agent: input.agent,
     harness: lastUser.harness,
   })
-  const tools: Record<string, AITool> = {}
+  const tools: Record<string, NamedTool> = {}
   for (const item of toolDefs) {
     const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
     tools[item.id] = tool({
       description: item.description,
       inputSchema: jsonSchema(schema),
     })
+    tools[item.id].modelName = item.modelName
   }
 
   return { system, tools, inheritedMessages }

@@ -3,7 +3,7 @@ import { Provider, ProviderError } from "@/provider"
 import { Log } from "@/util"
 import { Context, Duration, Effect, Layer, Record, Cause } from "effect"
 import * as Stream from "effect/Stream"
-import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
+import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema, NoSuchToolError } from "ai"
 import { mergeDeep, pipe } from "remeda"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider"
@@ -38,7 +38,8 @@ import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
-import { toolCallFloodingMiddleware } from "./toolcall-flooding"
+import { toolCallFloodingMiddleware, ToolCallFloodingError } from "./toolcall-flooding"
+import { toolSurface } from "@/tool/names"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -182,9 +183,9 @@ This is your ONLY legal scratchpad — don't create \`learning.md\`, \`scratch.m
     `## What NOT to do
 
 ${[
-  ...(checkpointEnabled ? ["- Don't `edit` checkpoint.md — that's the writer's domain."] : []),
+  ...(checkpointEnabled ? ["- Don't edit checkpoint.md — that's the writer's domain."] : []),
   "- Don't create memory files other than notes.md (no learning.md, no scratch.md). Use notes.md for any free-form entry.",
-  "- Don't ask the user about something memory may already record — search first via the `grep` / `read` tools.",
+  "- Don't ask the user about something memory may already record — search first via the Grep and Read tools.",
 ].join("\n")}`,
     ...(checkpointEnabled
       ? [
@@ -199,11 +200,11 @@ After a checkpoint rebuild, the following dumps may be already in your context (
 
 If these dumps are visible in your context:
 
-- Do NOT \`read\` them again as whole files. The bytes are already in front of you.
-- For specific past details (a particular turn's content, a specific tool output, an old command), use \`grep\` with a keyword pattern to target the exact item — do not pull a whole file.
-- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), \`read\` on demand.
+- Do NOT read them again as whole files. The bytes are already in front of you.
+- For specific past details (a particular turn's content, a specific tool output, an old command), use the Grep tool with a keyword pattern to target the exact item — do not pull a whole file.
+- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), read on demand.
 
-If a dump shows "⚠️ Truncated at ~N tokens. read(<path>, offset=L) for the rest." — that file was budget-cut. Use \`read\` with the offset only when you need the missing tail.
+If a dump is budget-truncated, retrieve only the missing section when you need it: use the Read tool with offset/limit.
 
 Memory entries name functions, files, flags, paths — those are CLAIMS about a point in time when they were written. Verify before acting on a specific name.
 
@@ -594,8 +595,9 @@ const live: Layer.Layer<
         },
       )
 
-      const tools = resolveTools(input)
-      const requestedActiveTools = new Set(input.activeTools ?? Object.keys(tools))
+      const surface = toolSurface(input.tools)
+      const tools = surface.tools(resolveTools(input))
+      const requestedActiveTools = new Set((input.activeTools ?? Object.keys(input.tools)).map(surface.name))
       const activeTools = Object.keys(tools).filter((name) => name !== "invalid" && requestedActiveTools.has(name))
 
       // LiteLLM and some Anthropic proxies require the tools parameter to be present
@@ -760,7 +762,7 @@ const live: Layer.Layer<
         )
         .pipe(Effect.ignore)
 
-      return streamText({
+      const result = streamText({
         onError(error) {
           l.debug("streamText error", {
             messageID: input.user.id,
@@ -793,7 +795,12 @@ const live: Layer.Layer<
             ...failed.toolCall,
             input: JSON.stringify({
               tool: failed.toolCall.toolName,
-              error: failed.error.message,
+              error: NoSuchToolError.isInstance(failed.error)
+                ? new NoSuchToolError({
+                    toolName: failed.toolCall.toolName,
+                    availableTools: activeTools,
+                  }).message
+                : failed.error.message,
             }),
             toolName: "invalid",
           }
@@ -817,7 +824,7 @@ const live: Layer.Layer<
         // Keep one SDK-level retry for a failure before response headers. The
         // processor owns the persistent stream retry budget below this layer.
         maxRetries: input.retries ?? 0,
-        messages,
+        messages: surface.messages(messages),
         model: wrapLanguageModel({
           model: language,
           middleware: [
@@ -849,6 +856,7 @@ const live: Layer.Layer<
           },
         },
       })
+      return { result, surface }
     })
 
     const stream: Interface["stream"] = (input) => {
@@ -865,13 +873,9 @@ const live: Layer.Layer<
               )
               const result = yield* run({ ...input, abort: ctrl.signal, dropAssistantPrefill })
 
-              // Structurally identical to the pre-guard stream: a bare scoped
-              // stream over the provider's fullStream. No per-event combinator, no
-              // extra catch layer — so the normal (non-error) event flow and the
-              // AbortController scope teardown are exactly as before. The reactive
-              // prefill retry is layered lazily below and only pays a cost when an
-              // actual error surfaces.
-              const rawStream = Stream.fromAsyncIterable(result.fullStream, (e) =>
+              // Restore canonical tool IDs before session processing and persistence.
+              // The reactive prefill retry remains scoped to request failures.
+              const rawStream = Stream.fromAsyncIterable(result.result.fullStream, (e) =>
                 e instanceof Error ? e : new Error(String(e)),
               )
               let hasProviderOutput = false
@@ -892,7 +896,19 @@ const live: Layer.Layer<
                       if (SessionRetry.decide(normalized, "request").retryable) return yield* Effect.fail(event.error)
                     }
                     if (event.type !== "start" && event.type !== "error") hasProviderOutput = true
-                    return event
+                    if (event.type === "error" && event.error instanceof ToolCallFloodingError) {
+                      return {
+                        ...event,
+                        error: new ToolCallFloodingError(
+                          event.error.calls.map((call) => ({
+                            ...call,
+                            name: result.surface.id(call.name),
+                          })),
+                          event.error.releasedCallID,
+                        ),
+                      }
+                    }
+                    return result.surface.restore(event)
                   }),
                 ),
               )

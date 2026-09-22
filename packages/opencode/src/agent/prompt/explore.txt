@@ -20,7 +20,7 @@ IMPORTANT: Do not modify files or repository state. Do not create files or run c
 
 ## Using your tools
 
-- Tool names are case-sensitive: always pass the exact registered name. Do not invent or alter casing. Internal tools use snake_case names such as `read`, `grep`, and `glob`.
+- Tool names are case-sensitive: always pass the exact registered name. Do not invent or alter casing.
 - Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.
 
 ## Mode and reporting

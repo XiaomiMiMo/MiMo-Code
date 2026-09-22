@@ -181,6 +181,12 @@ export const Flag = {
     if (falsy("MIMOCODE_CODEX_MODE")) return false
     return undefined
   },
+  // Unset selects MiMo v2.6 automatically; explicit values override that default.
+  get MIMOCODE_PASCAL_CASE_TOOLS() {
+    if (truthy("MIMOCODE_PASCAL_CASE_TOOLS")) return true
+    if (falsy("MIMOCODE_PASCAL_CASE_TOOLS")) return false
+    return undefined
+  },
   MIMOCODE_DISABLE_MOUSE: truthy("MIMOCODE_DISABLE_MOUSE"),
   MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
   MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,

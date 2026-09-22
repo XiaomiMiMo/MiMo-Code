@@ -37,18 +37,18 @@ paraphrase.
 
 WHEN SEARCH RETURNS 0 (escalate, do not give up):
 1. Retry with fewer / rarer terms (see guidelines above).
-2. For a literal string the tokenizer splits (URL, port, path) — use the `grep` tool
+2. For a literal string the tokenizer splits (URL, port, path) — use the Grep tool
    on the memory dir directly; FTS can't match the punctuation form.
 3. For verbatim recall a summary may have glossed over — use the
-   history tool: search/around give summaries, then get(part_id)
+   History tool: search/around give summaries, then get(part_id)
    reads the original text.
 Widen scope progressively: session → project → global → history.
 
 Actions:
 - search: OR-joined BM25 query, optional scope/scope_id/type filters
 
-After search returns paths, use the `read` tool on the most relevant ones to
-load full content (snippets are truncated). Use the `glob` tool on
+After search returns paths, use the Read tool on the most relevant ones to
+load full content (snippets are truncated). Use the Glob tool on
 `<data>/memory/**/*.md` to inspect the tree if you need to find files
 by name pattern instead of body.
 

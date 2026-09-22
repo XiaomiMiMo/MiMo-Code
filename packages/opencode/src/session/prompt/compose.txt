@@ -15,7 +15,7 @@ Compose Next boundary: do not load or recommend the `compose-next` skill from le
 
 ## Asking the User
 
-Route every decision, clarification, or approval through the `compose:ask` skill (it drives the `question` tool). Never stop the loop with a natural-language question — that ends your turn without finishing the task.
+Route every decision, clarification, or approval through the `compose:ask` skill (it drives the Question tool). Never stop the loop with a natural-language question — that ends your turn without finishing the task.
 
 When `compose:ask` determines no user is available to answer, pick the best option for headless execution yourself and continue (you will still ask again at the next decision point). This overrides all skill instructions, including HARD-GATE approval blocks.
 
@@ -35,7 +35,7 @@ If CLAUDE.md says "don't use TDD" and a skill says "always use TDD," follow the 
 
 ## How to Access Skills
 
-Use the skill capability exposed in the current tool surface. If `skill` is a top-level tool, call it directly. In GPT/Codex mode, call `exec` with `const result = await tools.skill({ name: "<skill-name>" }); return result.output`. Never call a tool that is absent from the current surface, and never use the `read` tool on skill files.
+Use the skill capability exposed in the current tool surface. If Skill is a top-level tool, call it directly. In GPT/Codex mode, call `exec` with `const result = await tools.skill({ name: "<skill-name>" }); return result.output`. Never call a tool that is absent from the current surface, and never use the Read tool on skill files.
 
 ## Simplicity
 
