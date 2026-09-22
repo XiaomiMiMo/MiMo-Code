@@ -16,7 +16,7 @@ the entire batch to admitting only its first eligible client tool call. On call
 SDK validation, permissions, hooks, and the existing gate; all later calls retain
 the flooding cancellation result. The next model request waits for the first
 call's actual success or failure and receives an English reminder explaining
-that only the first call may have run and instructing the model to inspect its
+that the first call may have run and instructing the model to inspect its
 result, including success, failure, an invalid call, or cancellation. The single
 reminder is shared by all recovery outcomes and repeats the existing
 1–3/eight-call guidance and makes no claim of successful execution.
@@ -127,7 +127,7 @@ error with the result `Tool call cancelled because tool-call flooding was detect
 Preserve complete arguments when available, finalize streamed text/reasoning, and mark the step
 as tool-calls without a terminal assistant error. Append a synthetic user
 system-reminder identifying toolcall flooding. Use one reminder for every outcome:
-only the first call may have run, so inspect its result for success, failure, an
+the first call may have run, so inspect its result for success, failure, an
 invalid call, or cancellation before continuing. Later client calls were cancelled
 because of flooding. Keep the reminder focused on the model's next action rather
 than SDK validation, permissions, or other implementation details. Repeat the
