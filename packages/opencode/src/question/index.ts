@@ -182,12 +182,12 @@ export const layer = Layer.effect(
         tool: input.tool,
       })
       pending.set(id, { info, deferred })
-      yield* bus.publish(Event.Asked, info)
-
       return yield* Effect.ensuring(
-        Deferred.await(deferred),
-        Effect.sync(() => {
-          pending.delete(id)
+        bus.publish(Event.Asked, info).pipe(Effect.andThen(Deferred.await(deferred))),
+        Effect.gen(function* () {
+          // A caller interrupt (e.g. MCP cancellation) must also withdraw the UI.
+          if (!pending.delete(id)) return
+          yield* bus.publish(Event.Rejected, { sessionID: input.sessionID, requestID: id })
         }),
       )
     })

@@ -35,6 +35,7 @@ import { InstanceState } from "@/effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { McpSampling } from "./sampling"
+import { McpElicitation } from "./elicitation"
 import { SessionID } from "@/session/schema"
 
 const log = Log.create({ service: "mcp" })
@@ -106,6 +107,7 @@ export const CLIENT_OPTIONS = {
     // `sampling.context` are NOT implemented, and declaring them would invite
     // servers to send `tools`/`includeContext` payloads we would have to reject.
     sampling: {},
+    elicitation: { form: {} },
     experimental: {
       [TURN_LIFECYCLE_CAPABILITY]: { version: TURN_LIFECYCLE_VERSION },
     },
@@ -361,7 +363,7 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCP.Info {
 const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_")
 
 // Convert MCP tool definition to AI SDK Tool type
-function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, context?: TurnContext): Tool {
+export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, context?: TurnContext): Tool {
   const inputSchema = mcpTool.inputSchema
 
   // Spread first, then override type to ensure it's always "object"
@@ -382,6 +384,7 @@ function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number
       // this call is in flight can address its approval prompt at this session.
       if (context) McpSampling.setActiveSession(client, SessionID.make(context.sessionId))
       const progress = toolPresentationProgress(options.experimental_context)
+      const finish = McpElicitation.beginCall(client, context?.sessionId, options.abortSignal)
       try {
         return await client.callTool(
           {
@@ -398,6 +401,7 @@ function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number
           },
         )
       } finally {
+        finish()
         await progress.drain()
       }
     },
@@ -802,6 +806,7 @@ export const layer = Layer.effect(
       // Bind the effective policy for this generation so host deny is not
       // re-resolved from user config alone at sampling time.
       McpSampling.serve(name, client, bridge, undefined, undefined, sampling)
+      McpElicitation.serve(name, client, bridge)
     }
 
     const state = yield* InstanceState.make<State>(

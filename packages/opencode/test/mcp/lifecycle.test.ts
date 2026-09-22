@@ -339,10 +339,12 @@ test(
       // fails here. `sampling: {}` is declared because production registers a
       // sampling/createMessage request handler and the SDK refuses that
       // registration otherwise; sampling.tools/context stay undeclared.
+      // Form elicitation is handled by the user-confirmation bridge.
       expect(clientOptions).toEqual([
         {
           capabilities: {
             sampling: {},
+            elicitation: { form: {} },
             experimental: {
               "com.xiaomi.mimo/turn-lifecycle": { version: 1 },
             },
