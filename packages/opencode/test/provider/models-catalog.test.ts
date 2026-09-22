@@ -58,7 +58,7 @@ test("local snapshot + cache field merge, cloned reads and single-flight refresh
     expect(calls).toBe(1)
     expect((await catalog.get()).other).toBeDefined()
     resolve(Response.json({ native: { ...baseline.native, name: "Updated" } }))
-    await Promise.all([a, b])
+    expect(await Promise.all([a, b])).toEqual([{ status: "refreshed" }, { status: "refreshed" }])
     expect((await catalog.get()).native.name).toBe("Updated")
     expect((await catalog.get()).other).toBeUndefined()
   }))
@@ -88,13 +88,13 @@ test("failed/invalid responses retain last-good disk and memory; only changes no
       Response.json(baseline, { status: 500 }),
     ]) {
       response = bad
-      await catalog.refresh(true)
+      expect((await catalog.refresh(true)).status).toBe("failed")
       expect(await readFile(cache, "utf8")).toBe(disk)
       expect(await catalog.get()).toEqual(validateCatalog(baseline))
     }
     expect(events).toBe(0)
     response = Response.json({ native: { ...baseline.native, name: "Next" } })
-    await catalog.refresh(true)
+    expect(await catalog.refresh(true)).toEqual({ status: "refreshed" })
     expect(events).toBe(1)
     const before = calls
     await catalog.refresh()
@@ -112,7 +112,7 @@ test("explicit PATH is exclusive and never overwritten by network", () =>
       fetch: async () => Response.json(baseline),
     })
     expect(Object.keys(await catalog.get())).toEqual(["only"])
-    await catalog.refresh(true)
+    expect(await catalog.refresh(true)).toEqual({ status: "pinned" })
     expect(Object.keys(await catalog.get())).toEqual(["only"])
   }))
 
@@ -129,11 +129,11 @@ test("missing or malformed cache falls back to snapshot; auto refresh is gated b
       },
     })
     const stop = catalog.startRefresh()
-    await catalog.refresh()
+    expect(await catalog.refresh()).toEqual({ status: "disabled" })
     expect(await catalog.get()).toEqual(validateCatalog(baseline))
     expect(calls).toBe(0)
     // Explicit force is not gated by DISABLE_MODELS_FETCH (matches pre-catalog contract).
-    await catalog.refresh(true)
+    expect(await catalog.refresh(true)).toMatchObject({ status: "failed", error: new Error("offline") })
     expect(calls).toBe(1)
     expect(await catalog.get()).toEqual(validateCatalog(baseline))
     stop()
@@ -146,7 +146,7 @@ test("missing or malformed cache falls back to snapshot; auto refresh is gated b
         throw new Error("offline")
       },
     })
-    await enabled.refresh()
+    expect((await enabled.refresh()).status).toBe("failed")
     expect(calls).toBe(2)
     expect(await enabled.get()).toEqual(validateCatalog(baseline))
     expect(await readFile(cache, "utf8")).toBe("{}")
@@ -202,7 +202,7 @@ test("force is not swallowed by an in-flight non-force refresh", () =>
     expect(calls).toBe(1)
     const forced = catalog.refresh(true)
     release()
-    await Promise.all([background, forced])
+    expect(await Promise.all([background, forced])).toEqual([{ status: "refreshed" }, { status: "refreshed" }])
     // Force must not join the non-force flight without a subsequent fetch.
     expect(calls).toBe(2)
     expect((await catalog.get()).native.name).toBe("Fetched2")
@@ -277,7 +277,7 @@ test("force still runs after an in-flight non-force refresh fails", () =>
     await new Promise((r) => setTimeout(r, 20))
     const forced = catalog.refresh(true)
     release()
-    await Promise.all([background, forced])
+    expect(await Promise.all([background, forced])).toEqual([{ status: "refreshed" }, { status: "refreshed" }])
     expect(calls).toBe(2)
     expect((await catalog.get()).native.name).toBe("Recovered")
   }))
@@ -311,6 +311,39 @@ test("reset discards an in-flight load settle so the next get re-reads", () =>
     // Without a generation guard the in-flight settle would publish A and skip re-read.
     const second = await catalog.get()
     expect(second.native.models.m.name).toBe("FromCacheB")
+  }))
+
+test("a queued force failure is reported without rejecting background callers", () =>
+  fixture(async (cache) => {
+    let started!: () => void
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    const catalog = createCatalog({
+      cache,
+      snapshot: async () => baseline,
+      fetch: async () => {
+        calls++
+        if (calls > 1) throw new Error("offline")
+        started()
+        await gate
+        return Response.json(baseline)
+      },
+    })
+    const background = catalog.refresh()
+    await ready
+    const forced = catalog.refresh(true)
+    release()
+    const results = await Promise.all([background, forced])
+    expect(results.map((result) => result.status)).toEqual(["failed", "failed"])
+    expect(calls).toBe(2)
+    expect(await catalog.get()).toEqual(validateCatalog(baseline))
+    expect(JSON.parse(await readFile(cache, "utf8"))).toEqual(validateCatalog(baseline))
   }))
 
 test("same-source deep merge preserves omitted fields and explicit false/zero; listeners unsubscribe", () =>

@@ -8,7 +8,7 @@ import { Flag } from "../flag/flag"
 import { lazy } from "@/util/lazy"
 import { Flock } from "@mimo-ai/shared/util/flock"
 import { Hash } from "@mimo-ai/shared/util/hash"
-import { createCatalog } from "./models-catalog"
+import { createCatalog, type RefreshResult } from "./models-catalog"
 
 const log = Log.create({ service: "models.dev" })
 const catalog = lazy(() => {
@@ -47,10 +47,11 @@ export function get() {
 /** Backward-compatible local data entry point. */
 export const Data = Object.assign(get, { reset: () => catalog().reset() })
 /**
- * `force` always fetches (even under `MIMOCODE_DISABLE_MODELS_FETCH`).
+ * `force` bypasses TTL and `MIMOCODE_DISABLE_MODELS_FETCH`; pinned catalogs stay local.
  * Concurrent non-force flights cannot swallow a later force request.
+ * Failures retain the last-good catalog and are returned to explicit callers.
  */
-export function refresh(force = false): Promise<void> {
+export function refresh(force = false): Promise<RefreshResult> {
   return catalog().refresh(force)
 }
 /**

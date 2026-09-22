@@ -6,6 +6,7 @@ import { validateCatalog, type Provider } from "./models-schema"
 export { validateCatalog } from "./models-schema"
 
 type Catalog = Record<string, Provider>
+export type RefreshResult = { status: "refreshed" | "pinned" | "disabled" } | { status: "failed"; error: unknown }
 const ttl = 5 * 60 * 1000
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -56,7 +57,7 @@ export function createCatalog(options: {
   let current: Catalog | undefined
   let loading: Promise<Catalog> | undefined
   let generation = 0
-  let flight: Promise<void> | undefined
+  let flight: Promise<RefreshResult> | undefined
   let flightForce = false
   let queuedForce = false
   let timer: ReturnType<typeof setInterval> | undefined
@@ -156,9 +157,9 @@ export function createCatalog(options: {
       }
     }
   }
-  function refresh(force = false): Promise<void> {
+  function refresh(force = false): Promise<RefreshResult> {
     // Explicit force still runs when auto-fetch is disabled; only background paths are gated.
-    if (!force && options.disabled?.()) return Promise.resolve()
+    if (!force && options.disabled?.()) return Promise.resolve({ status: "disabled" })
     if (flight) {
       // A force request that joins a non-force flight must still cause a fetch afterwards.
       // Joining an already-force flight is coalesced — do not schedule a duplicate update.
@@ -178,10 +179,10 @@ export function createCatalog(options: {
           } catch (error) {
             options.onError?.(error)
             // A force that joined this flight is still owed after a failed attempt.
-            if (!queuedForce) break
+            if (!queuedForce) return { status: "failed", error }
             continue
           }
-          if (!queuedForce) break
+          if (!queuedForce) return { status: options.explicit ? "pinned" : "refreshed" }
         }
       } finally {
         flight = undefined

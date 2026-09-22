@@ -62,6 +62,25 @@ The first launch guides you through configuration automatically. Supported optio
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
 
 <details>
+<summary><strong>New models missing from the picker</strong></summary>
+
+The model list comes from [models.dev](https://models.dev). If a newly listed model
+is missing locally, refresh the catalog for your connected provider:
+
+```bash
+mimo models xiaomi --refresh
+# For the China Token Plan provider
+mimo models xiaomi-token-plan-cn --refresh
+```
+
+Restart an already-running TUI after refreshing from another terminal. A failed
+refresh keeps the previous catalog and exits with an error; check your network or
+proxy settings before retrying. If `MIMOCODE_MODELS_PATH` is set, the command uses
+that local catalog and skips online refresh.
+
+</details>
+
+<details>
 <summary><strong>WSL: clipboard issues</strong></summary>
 
 If you encounter garbled text when copying on WSL, install `xsel`:

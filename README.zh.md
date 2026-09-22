@@ -62,6 +62,24 @@ mimo
 - **自定义 Provider** — TUI 内添加任意 OpenAI 兼容 API
 
 <details>
+<summary><strong>模型选择器中找不到新模型</strong></summary>
+
+模型列表来自 [models.dev](https://models.dev)。如果上游已收录的新模型在本地仍不可见，
+请为已连接的 Provider 刷新目录：
+
+```bash
+mimo models xiaomi --refresh
+# 中国区 Token Plan Provider
+mimo models xiaomi-token-plan-cn --refresh
+```
+
+在另一个终端刷新后，请重启已运行的 TUI。刷新失败时会保留原有目录并以错误状态退出，
+请检查网络或代理设置后重试。如果设置了 `MIMOCODE_MODELS_PATH`，命令会使用该本地目录，
+跳过在线刷新。
+
+</details>
+
+<details>
 <summary><strong>WSL：剪贴板问题</strong></summary>
 
 如果在 WSL 上复制出现乱码，安装 `xsel`：

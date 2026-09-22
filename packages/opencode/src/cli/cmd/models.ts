@@ -10,6 +10,7 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { Config } from "@/config"
 import { contextWindow } from "@/session/overflow"
 import { Token } from "@/util"
+import { errorMessage } from "@/util/error"
 import { Effect } from "effect"
 
 export const ModelsCommand = cmd({
@@ -33,8 +34,18 @@ export const ModelsCommand = cmd({
   },
   handler: async (args) => {
     if (args.refresh) {
-      await ModelsDev.refresh(true)
-      UI.println(UI.Style.TEXT_SUCCESS_BOLD + "Models cache refreshed" + UI.Style.TEXT_NORMAL)
+      const result = await ModelsDev.refresh(true)
+      if (result.status === "failed") {
+        UI.error(`Failed to refresh models cache: ${errorMessage(result.error)}. The previous catalog was kept.`)
+        process.exitCode = 1
+        return
+      }
+      if (result.status === "pinned") {
+        UI.println("Using the local catalog from MIMOCODE_MODELS_PATH; online refresh skipped.")
+      }
+      if (result.status === "refreshed") {
+        UI.println(UI.Style.TEXT_SUCCESS_BOLD + "Models cache refreshed" + UI.Style.TEXT_NORMAL)
+      }
     }
 
     await Instance.provide({
