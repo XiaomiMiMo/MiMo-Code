@@ -3,7 +3,7 @@ feature: pascalcase-tools
 status: delivered
 updated: 2026-09-22
 branch: codex/pascalcase-tools
-commits: b8edacb7..299d9055
+commits: b8edacb7..8c595897
 ---
 
 # Default PascalCase Tool Surface
@@ -17,6 +17,8 @@ restore canonical IDs before session processing. GPT/Codex and MCP names remain
 unchanged. Primary system, memory, and first-user reminder text uses display names.
 
 **Verification** — Run from packages/opencode:
+
+- Shared-reminder simplification: `bun typecheck` passed. `bun test test/session/llm-system-prompt.test.ts test/session/pascalcase-tools.test.ts` passed 15 tests; one obsolete GPT prose assertion failed. After aligning that assertion with the new shared wording, `bun test test/session/pascalcase-tools.test.ts --test-name-pattern 'Codex schemas'` passed (1 test), including actual GPT tool execution. Independent review passed.
 
 - PASS after prompt simplification: `bun test test/agent/agent.test.ts` — 52 passed, 0 failed; after the final Compose wording edit, `bun test test/agent/agent.test.ts --test-name-pattern 'default system prompt|compose'` — 4 passed, 0 failed. Independent review of this correction passed.
 
@@ -38,7 +40,9 @@ unchanged. Primary system, memory, and first-user reminder text uses display nam
 - Review identified missing naming metadata in captured request prefixes; fixed
   propagation and passed the affected-area re-review.
 - Simplified casing guidance to the exact registered-name rule; removed examples
-  and display/schema explanations. Capitalized tool references use plain text.
+  and display/schema explanations. Capitalized tool references use plain text
+  across harnesses, including shared memory/plan reminders; no prose-specific
+  mode branching or name interpolation remains.
 
 ## [S1] Problem
 
