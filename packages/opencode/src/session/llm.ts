@@ -39,7 +39,6 @@ import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
 import { toolCallFloodingMiddleware, ToolCallFloodingError } from "./toolcall-flooding"
-import { usesGPTToolset } from "@/tool/gpt"
 import { toolSurface } from "@/tool/names"
 
 const log = Log.create({ service: "llm" })
@@ -126,7 +125,7 @@ export function isTransientCapacityError(error: unknown): boolean {
  * `memoryRoot` is the same absolute root returned by Memory.root(), so these
  * paths match the files used by checkpoint restore and memory/task detection.
  */
-function buildMemoryInstructions(projectID: ProjectID, memoryRoot: string, useGPTTools: boolean): string {
+function buildMemoryInstructions(projectID: ProjectID, memoryRoot: string): string {
   const memoryFile = path.join(memoryRoot, "projects", projectID, "MEMORY.md")
   const sessionMemoryDir = path.join(memoryRoot, "sessions", "current_session_id")
   const globalMemoryFile = path.join(memoryRoot, "global", "MEMORY.md")
@@ -157,7 +156,7 @@ ${files.join("\n")}`,
       : []),
     `## When to edit MEMORY.md directly
 
-Use ${useGPTTools ? "`tools.apply_patch` inside `exec`" : "the Edit tool"} for focused changes to MEMORY.md. You may edit it when:
+Use the Edit tool for focused changes to MEMORY.md. You may edit it when:
 - User states a project-level rule that should hold across sessions → ## Rules
 - User states a project-level architectural decision → ## Architecture decisions
 - A clearly durable cross-session fact emerges that you want available immediately${checkpointEnabled ? ", before the next checkpoint" : ""} → ## Discovered durable knowledge${
@@ -186,7 +185,7 @@ This is your ONLY legal scratchpad — don't create \`learning.md\`, \`scratch.m
 ${[
   ...(checkpointEnabled ? ["- Don't edit checkpoint.md — that's the writer's domain."] : []),
   "- Don't create memory files other than notes.md (no learning.md, no scratch.md). Use notes.md for any free-form entry.",
-  `- Don't ask the user about something memory may already record — search first via ${useGPTTools ? "targeted shell commands with tools.exec_command inside exec" : "the Grep and Read tools"}.`,
+  "- Don't ask the user about something memory may already record — search first via the Grep and Read tools.",
 ].join("\n")}`,
     ...(checkpointEnabled
       ? [
@@ -202,10 +201,10 @@ After a checkpoint rebuild, the following dumps may be already in your context (
 If these dumps are visible in your context:
 
 - Do NOT read them again as whole files. The bytes are already in front of you.
-- For specific past details (a particular turn's content, a specific tool output, an old command), use ${useGPTTools ? "tools.exec_command with a targeted rg command inside exec" : "the Grep tool with a keyword pattern"} to target the exact item — do not pull a whole file.
-- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), read on demand using ${useGPTTools ? "targeted shell commands with tools.exec_command inside exec" : "the Read tool"}.
+- For specific past details (a particular turn's content, a specific tool output, an old command), use the Grep tool with a keyword pattern to target the exact item — do not pull a whole file.
+- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), read on demand using the Read tool.
 
-If a dump is budget-truncated, retrieve only the missing section when you need it: ${useGPTTools ? "use tools.exec_command with a targeted sed command inside exec" : "use the Read tool with offset/limit"}.
+If a dump is budget-truncated, retrieve only the missing section when you need it: use the Read tool with offset/limit.
 
 Memory entries name functions, files, flags, paths — those are CLAIMS about a point in time when they were written. Verify before acting on a specific name.
 
@@ -393,11 +392,7 @@ const live: Layer.Layer<
         // checkpoint-flow call sites cover the writer/rebuild paths; this covers
         // the "agent edits MEMORY.md before any checkpoint" path. Idempotent.
         yield* Effect.promise(() => migrateProjectMemory(projectID)).pipe(Effect.ignore)
-        system.push(buildMemoryInstructions(
-          projectID,
-          yield* memory.root(),
-          usesGPTToolset(input.model.id, input.user.harness, input.model.api.id, input.model.family),
-        ))
+        system.push(buildMemoryInstructions(projectID, yield* memory.root()))
       }
 
       // Orchestrator fleet roster: inject a compact one-line-per-session

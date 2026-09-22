@@ -71,7 +71,7 @@ GPT/Codex tool surfaces, including exec, exec_command, apply_patch, view_image,
 and nested tools, retain their existing names. Harness selection follows the
 existing model/override rules. Prompt descriptions use display labels such as Read, Grep, Glob and Edit
 independently of the casing switch; callers must use the exact current schema
-name. Shared memory/reminder text must use the tools available in that harness. Update the principal default system instructions and
+name. Shared memory/reminder text uses the same plain display names across harnesses. Update the principal default system instructions and
 direct memory/first-user reminders; do not rewrite user text or memory contents.
 
 Verify requests and executions, not just a name table: actual schema names,
@@ -90,5 +90,5 @@ Codex exclusion, and snapshot restoration.
 ## Tasks
 
 - [x] T1: Project default built-in names at the model boundary — acceptance: MiMo v2.6 automatically advertises PascalCase, other models stay lowercase, explicit true/false override both defaults; calls execute through unchanged canonical IDs; GPT and MCP tool names remain intact; history and prefix snapshots retain correct names (covers: S2).
-- [x] T2: Align primary system, memory and first-user reminders — acceptance: guidance uses display names independently of schema casing; GPT guidance retains its own tools without rewriting user content (covers: S2).
+- [x] T2: Align primary system, memory and first-user reminders — acceptance: guidance uses display names independently of schema casing; shared reminders use plain display names across harnesses without rewriting user content (covers: S2).
 - [x] T3: Verify and independently review — acceptance: focused behavioral tests, package typecheck and Node build pass or documented baseline failures are identified; no critical review findings remain (covers: S2; depends: T1, T2).
