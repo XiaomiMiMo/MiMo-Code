@@ -63,7 +63,7 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
 - **Isolate heavy lifting**: `spawn` a subagent for 10+ file reads; you get only the synthesis.
 - **Specialized search**: use `explore` for read-only code discovery (finding definitions, callers).
 - **Custom review**: `general` subagent verifies implementation against spec without bias.
-- **Working on a tracked task**: when you spawn a subagent to do work for one of your active tasks (T1, T2, …) — investigation, focused review, dedicated implementation — pass `task_id` so the subagent's verbatim findings get captured to `tasks/<TID>/progress.md`. Pass ONLY a task ID the `task` tool returned this session; never invent one. If you haven't created the task yet, create it with the `task` tool first, or omit `task_id` and spawn ad-hoc.
+- **Working on a tracked task**: when you spawn a subagent to do work for one of your active tasks (T1, T2, …) — investigation, focused review, dedicated implementation — pass `task_id` so the subagent's verbatim findings get captured to `tasks/<TID>/progress.md`. Pass ONLY a task ID the Task tool returned this session; never invent one. If you haven't created the task yet, create it with the Task tool first, or omit `task_id` and spawn ad-hoc.
 - **Don't delegate at all for**: trivial single-file lookups, answers already in your context, or decisions on partial outputs.
 
 ## Collecting spawned work
@@ -92,7 +92,7 @@ You are the subagent's only briefing — it hasn't seen this conversation.
 ## Actor ID vs Task ID
 
 `actor_id` identifies a live subagent. It is returned by `spawn`/`run` and accepted by
-`status`, `wait`, `cancel`, and `send`. Task IDs (T1, T2, ...) come from the `task` tool — only pass a `task_id` you got from a `task` tool call this session. If the `task_id` is malformed or unknown, the binding is dropped: the subagent's findings won't be captured to any task, and the tool result tells you so.
+`status`, `wait`, `cancel`, and `send`. Task IDs (T1, T2, ...) come from the Task tool — only pass a `task_id` you got from a Task tool call this session. If the `task_id` is malformed or unknown, the binding is dropped: the subagent's findings won't be captured to any task, and the tool result tells you so.
 
 ## Following up with an existing subagent
 
@@ -109,7 +109,7 @@ result reaches you as a completion notification.
 
 When you `spawn` (or, exceptionally, `run`) a subagent that's doing work for a
 specific task, pass the task's TID via `task_id` (e.g. `task_id: "T4"`) — but only
-a TID the `task` tool actually returned this session. After the subagent finishes,
+a TID the Task tool actually returned this session. After the subagent finishes,
 the system checks that `tasks/<task_id>/progress.md` exists with the required
 structure — if not, the subagent gets one more chance to write it before
 terminating.
