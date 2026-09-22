@@ -9,6 +9,9 @@ function codexHarnessOverride(harness?: HarnessMode): boolean | undefined {
 }
 
 function usesCodexMode(harness: HarnessMode | undefined, ...modelIDs: Array<string | undefined>) {
+  // Desktop persists its execution mode per session. Model inference and a
+  // process-wide override must not change other conversations (including history).
+  if (Flag.MIMOCODE_CLIENT === "desktop") return harness === "codex"
   const mode = Flag.MIMOCODE_CODEX_MODE
   if (mode === false) return false
   if (isGPTModel(...modelIDs)) return true

@@ -7068,7 +7068,7 @@ export const PromptInput = z.object({
     .enum(["auto", "codex", "default"])
     .optional()
     .describe(
-      "Harness mode selected by the session's first user query. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.",
+      "Harness mode selected by the session's first user query. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. In CLI, MIMOCODE_CODEX_MODE=false forces the default harness for every model. Desktop uses only the persisted session harness: codex opts in, all other values use native tools regardless of model or environment.",
     ),
   variant: z.string().optional(),
   parts: z.array(
@@ -7177,7 +7177,7 @@ export const CommandInput = z.object({
     .enum(["auto", "codex", "default"])
     .optional()
     .describe(
-      "Harness mode selected by the session's first user command. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.",
+      "Harness mode selected by the session's first user command. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. In CLI, MIMOCODE_CODEX_MODE=false forces the default harness for every model. Desktop uses only the persisted session harness: codex opts in, all other values use native tools regardless of model or environment.",
     ),
   parts: z
     .array(
