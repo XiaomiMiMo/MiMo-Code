@@ -3,46 +3,49 @@ feature: pascalcase-tools
 status: delivered
 updated: 2026-09-22
 branch: codex/pascalcase-tools
-commits: b8edacb7..8c595897
+commits: 090af8c9..be5425d1
 ---
 
 # Default PascalCase Tool Surface
 
 ## Report
 
-**What was built** — Known default internal tools expose PascalCase schemas for
-MiMo v2.6 by default. MIMOCODE_PASCAL_CASE_TOOLS can explicitly enable or disable
-this behavior. Model requests project tool schemas and history; returned calls
-restore canonical IDs before session processing. GPT/Codex and MCP names remain
-unchanged. Primary system, memory, and first-user reminder text uses display names.
+**What was built** — Known default internal tools expose PascalCase schemas when
+the model ID or API model ID contains mimo-v2.6, case-insensitively and independent
+of provider. MIMOCODE_PASCAL_CASE_TOOLS overrides this default. Request schemas
+and history use the same names; execution, permissions, events, and persistence
+retain canonical IDs. GPT/Codex, external MCP names, and the shared exec gateway
+remain unchanged.
+
+Explicit tool references in primary prompts, shared reminders, common tool
+descriptions, and compose-next use plain display names. Ordinary action verbs
+remain ordinary English. Invalid-tool recovery lists only exposed active tools.
+Flooding recovery preserves the admitted first call's identity and actual result.
 
 **Verification** — Run from packages/opencode:
 
-- Shared-reminder simplification: `bun typecheck` passed. `bun test test/session/llm-system-prompt.test.ts test/session/pascalcase-tools.test.ts` passed 15 tests; one obsolete GPT prose assertion failed. After aligning that assertion with the new shared wording, `bun test test/session/pascalcase-tools.test.ts --test-name-pattern 'Codex schemas'` passed (1 test), including actual GPT tool execution. Independent review passed.
-
-- PASS after prompt simplification: `bun test test/agent/agent.test.ts` — 52 passed, 0 failed; after the final Compose wording edit, `bun test test/agent/agent.test.ts --test-name-pattern 'default system prompt|compose'` — 4 passed, 0 failed. Independent review of this correction passed.
-
 - PASS: `bun typecheck`.
 - PASS: `bun run script/build-node.ts`.
-- PASS: `bun test test/tool/names.test.ts test/session/pascalcase-tools.test.ts test/flag/pascal-case-tools-flag.test.ts test/session/prefix-snapshot.test.ts test/session/llm-request-prefix.test.ts` — 22 passed, 2 existing skips, 0 failed after scope reduction.
-- PASS before scope reduction: `bun test test/session/pascalcase-tools.test.ts test/flag/pascal-case-tools-flag.test.ts test/tool/names.test.ts test/session/prefix-snapshot.test.ts test/session/llm-system-prompt.test.ts test/util/tool-compat.test.ts test/agent/agent.test.ts test/session/prompt.test.ts test/tool/registry-invocation-style.test.ts test/tool/gpt.test.ts test/session/toolcall-flooding.test.ts` — 185 passed, 4 existing skips, 0 failed.
-- Independent review of the final implementation: spec compliance, correctness,
-  and codebase consistency passed; no outstanding findings within scope.
+- PASS: `bun test test/session/pascalcase-tools.test.ts test/session/tool-safety-flags.test.ts test/session/toolcall-flooding.test.ts test/session/toolcall-flooding-stream.test.ts test/tool/names.test.ts test/flag/pascal-case-tools-flag.test.ts test/session/prefix-snapshot.test.ts` — 54 passed, 0 failed after rebase and flooding integration fix.
+- PASS: `bun test test/session/pascalcase-tools.test.ts test/session/invalid-tool-cascade.test.ts test/util/tool-compat.test.ts` — 41 passed, 0 failed after invalid-tool guidance fix.
+- Earlier prompt verification: `bun test test/agent/agent.test.ts` — 52 passed, 0 failed.
+- Direct and API-alias matching checks passed for provider-prefixed and mixed-case
+  MiMo v2.6 flash/pro/pro-ultraspeed IDs, including a non-Xiaomi provider.
+- Independent complete-diff review and affected-area follow-ups passed for spec
+  compliance, correctness, and codebase consistency.
 
 **Journey log**
 
-- Confirmed the lowercase schema failure before implementing the mapping; real
-  Write/Read execution then verified canonical persistence and history replay.
-- Kept display labels independent of schema casing so other models retain their
-  existing callable names.
-- Removed custom override/collision handling and shared exec changes to match
-  the urgent repair scope.
+- Confirmed lowercase schema failure before implementation; real Write/Read
+  execution verifies canonical persistence and subsequent history replay.
+- Limited the patch to known internal tools and explicit tool references; removed
+  custom override/collision handling and unnecessary prose explanations.
 - Review identified missing naming metadata in captured request prefixes; fixed
-  propagation and passed the affected-area re-review.
-- Simplified casing guidance to the exact registered-name rule; removed examples
-  and display/schema explanations. Capitalized tool references use plain text
-  across harnesses, including shared memory/plan reminders; no prose-specific
-  mode branching or name interpolation remains.
+  propagation and passed re-review.
+- Rebased onto main's first-tool flooding behavior. Reproduced 18 persisted parts
+  instead of 17; forwarding releasedCallID preserves the first actual result.
+- Invalid-tool names were already projected correctly by the SDK, but its error
+  listed hidden tools. Using activeTools makes suggestions match request schemas.
 
 ## [S1] Problem
 
@@ -70,12 +73,15 @@ executors and convert event names back before session processing. Use exact
 declared names, not general case folding. Map only the explicit known internal tool IDs; MCP and other tool names remain
 unchanged. Custom overrides or collisions with built-in names are out of scope. Preserve naming
 metadata through prefix snapshots so fork/rebuild contexts stay consistent.
+Preserve releasedCallID while restoring flooding error names; unknown-tool
+recovery must list the exposed active tools.
 
 GPT/Codex tool surfaces, including exec, exec_command, apply_patch, view_image,
 and nested tools, retain their existing names. Harness selection follows the
 existing model/override rules. Prompt descriptions use display labels such as Read, Grep, Glob and Edit
 independently of the casing switch; callers must use the exact current schema
-name. Shared memory/reminder text uses the same plain display names across harnesses. Update the principal default system instructions and
+name. Only explicit tool references use display names; ordinary action verbs
+remain ordinary English. Shared reminders use plain display names across harnesses. Update the principal default system instructions and
 direct memory/first-user reminders; do not rewrite user text or memory contents.
 
 Verify requests and executions, not just a name table: actual schema names,
