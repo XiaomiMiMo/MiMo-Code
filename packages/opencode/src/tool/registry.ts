@@ -71,6 +71,7 @@ import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
 import { GPT_TOP_LEVEL_TOOLS, TOOL_SCRIPT_EXCLUDED, toolScriptRegistry } from "./tool-script-ref"
 import { type HarnessMode, usesGPTToolset } from "./gpt"
+import { defaultToolName, usesPascalCaseTools } from "./names"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -447,6 +448,8 @@ export const layer = Layer.effect(
       includeHidden: boolean,
     ) {
       const availableTools = yield* available(input)
+      const builtin = new Set((yield* InstanceState.get(state)).builtin)
+      const pascal = usesPascalCaseTools(input.modelID, input.harness, input.apiModelID, input.family)
       const selected = availableTools.useGPTTools && !includeHidden
         ? availableTools.filtered.filter((tool) => GPT_TOP_LEVEL_TOOLS.has(tool.id))
         : availableTools.filtered
@@ -472,6 +475,7 @@ export const layer = Layer.effect(
           const description = useShell ? tool.shell!.description : output.description
           return {
             id: tool.id,
+            modelName: pascal && builtin.has(tool) ? defaultToolName(tool.id) : undefined,
             description: [
               description,
               tool.id === ReadTool.id ? yield* describeReadMedia(input) : undefined,

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
-import { jsonSchema, tool, type Tool as AITool } from "ai"
+import type { NamedTool } from "@/tool/names"
+import { jsonSchema, tool } from "ai"
 import { asSchema } from "@ai-sdk/provider-utils"
 import { Effect } from "effect"
 import { and, Database, eq } from "@/storage"
@@ -47,23 +48,30 @@ export function systemHash(system: string[]) {
   return hash(system)
 }
 
-export function toolsHash(tools: Record<string, AITool>, activeTools: string[]) {
+export function toolsHash(tools: Record<string, NamedTool>, activeTools: string[]) {
   return hash(
     activeTools.toSorted().flatMap((name) => {
       const item = tools[name]
-      return item ? [{ name, description: item.description, inputSchema: item.inputSchema }] : []
+      return item
+        ? [{ name, modelName: item.modelName, description: item.description, inputSchema: item.inputSchema }]
+        : []
     }),
   )
 }
 
-export async function snapshotTools(tools: Record<string, AITool>, activeTools: string[]) {
+export async function snapshotTools(tools: Record<string, NamedTool>, activeTools: string[]) {
   return Promise.all(
     activeTools.flatMap((name) => {
       const item = tools[name]
       if (!item) return []
       return [
         Promise.resolve(asSchema(item.inputSchema).jsonSchema).then(
-          (input_schema): SessionPrefixToolSnapshot => ({ name, description: item.description, input_schema }),
+          (input_schema): SessionPrefixToolSnapshot => ({
+            name,
+            ...(item.modelName ? { model_name: item.modelName } : {}),
+            description: item.description,
+            input_schema,
+          }),
         ),
       ]
     }),
@@ -74,10 +82,13 @@ export function restoreTools(items: SessionPrefixToolSnapshot[]) {
   return Object.fromEntries(
     items.map((item) => [
       item.name,
-      tool({
-        description: item.description,
-        inputSchema: jsonSchema(item.input_schema),
-      }),
+      {
+        ...tool({
+          description: item.description,
+          inputSchema: jsonSchema(item.input_schema),
+        }),
+        ...(item.model_name ? { modelName: item.model_name } : {}),
+      },
     ]),
   )
 }
@@ -89,10 +100,7 @@ export const get = Effect.fn("SessionPrefixSnapshot.get")(function* (sessionID: 
         .select()
         .from(SessionPrefixSnapshotTable)
         .where(
-          and(
-            eq(SessionPrefixSnapshotTable.session_id, sessionID),
-            eq(SessionPrefixSnapshotTable.profile_key, key),
-          ),
+          and(eq(SessionPrefixSnapshotTable.session_id, sessionID), eq(SessionPrefixSnapshotTable.profile_key, key)),
         )
         .get(),
     ),

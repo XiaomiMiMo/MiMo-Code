@@ -38,7 +38,9 @@ import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
-import { toolCallFloodingMiddleware } from "./toolcall-flooding"
+import { toolCallFloodingMiddleware, ToolCallFloodingError } from "./toolcall-flooding"
+import { usesGPTToolset } from "@/tool/gpt"
+import { toolSurface } from "@/tool/names"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -124,7 +126,7 @@ export function isTransientCapacityError(error: unknown): boolean {
  * `memoryRoot` is the same absolute root returned by Memory.root(), so these
  * paths match the files used by checkpoint restore and memory/task detection.
  */
-function buildMemoryInstructions(projectID: ProjectID, memoryRoot: string): string {
+function buildMemoryInstructions(projectID: ProjectID, memoryRoot: string, useGPTTools: boolean): string {
   const memoryFile = path.join(memoryRoot, "projects", projectID, "MEMORY.md")
   const sessionMemoryDir = path.join(memoryRoot, "sessions", "current_session_id")
   const globalMemoryFile = path.join(memoryRoot, "global", "MEMORY.md")
@@ -155,7 +157,7 @@ ${files.join("\n")}`,
       : []),
     `## When to edit MEMORY.md directly
 
-You may edit MEMORY.md when:
+Use ${useGPTTools ? "`tools.apply_patch` inside `exec`" : "the Edit tool"} for focused changes to MEMORY.md. You may edit it when:
 - User states a project-level rule that should hold across sessions → ## Rules
 - User states a project-level architectural decision → ## Architecture decisions
 - A clearly durable cross-session fact emerges that you want available immediately${checkpointEnabled ? ", before the next checkpoint" : ""} → ## Discovered durable knowledge${
@@ -182,9 +184,9 @@ This is your ONLY legal scratchpad — don't create \`learning.md\`, \`scratch.m
     `## What NOT to do
 
 ${[
-  ...(checkpointEnabled ? ["- Don't `edit` checkpoint.md — that's the writer's domain."] : []),
+  ...(checkpointEnabled ? ["- Don't edit checkpoint.md — that's the writer's domain."] : []),
   "- Don't create memory files other than notes.md (no learning.md, no scratch.md). Use notes.md for any free-form entry.",
-  "- Don't ask the user about something memory may already record — search first via the `grep` / `read` tools.",
+  `- Don't ask the user about something memory may already record — search first via ${useGPTTools ? "targeted shell commands with tools.exec_command inside exec" : "the Grep and Read tools"}.`,
 ].join("\n")}`,
     ...(checkpointEnabled
       ? [
@@ -199,11 +201,11 @@ After a checkpoint rebuild, the following dumps may be already in your context (
 
 If these dumps are visible in your context:
 
-- Do NOT \`read\` them again as whole files. The bytes are already in front of you.
-- For specific past details (a particular turn's content, a specific tool output, an old command), use \`grep\` with a keyword pattern to target the exact item — do not pull a whole file.
-- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), \`read\` on demand.
+- Do NOT read them again as whole files. The bytes are already in front of you.
+- For specific past details (a particular turn's content, a specific tool output, an old command), use ${useGPTTools ? "tools.exec_command with a targeted rg command inside exec" : "the Grep tool with a keyword pattern"} to target the exact item — do not pull a whole file.
+- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), read on demand using ${useGPTTools ? "targeted shell commands with tools.exec_command inside exec" : "the Read tool"}.
 
-If a dump shows "⚠️ Truncated at ~N tokens. read(<path>, offset=L) for the rest." — that file was budget-cut. Use \`read\` with the offset only when you need the missing tail.
+If a dump is budget-truncated, retrieve only the missing section when you need it: ${useGPTTools ? "use tools.exec_command with a targeted sed command inside exec" : "use the Read tool with offset/limit"}.
 
 Memory entries name functions, files, flags, paths — those are CLAIMS about a point in time when they were written. Verify before acting on a specific name.
 
@@ -391,7 +393,11 @@ const live: Layer.Layer<
         // checkpoint-flow call sites cover the writer/rebuild paths; this covers
         // the "agent edits MEMORY.md before any checkpoint" path. Idempotent.
         yield* Effect.promise(() => migrateProjectMemory(projectID)).pipe(Effect.ignore)
-        system.push(buildMemoryInstructions(projectID, yield* memory.root()))
+        system.push(buildMemoryInstructions(
+          projectID,
+          yield* memory.root(),
+          usesGPTToolset(input.model.id, input.user.harness, input.model.api.id, input.model.family),
+        ))
       }
 
       // Orchestrator fleet roster: inject a compact one-line-per-session
@@ -594,8 +600,9 @@ const live: Layer.Layer<
         },
       )
 
-      const tools = resolveTools(input)
-      const requestedActiveTools = new Set(input.activeTools ?? Object.keys(tools))
+      const surface = toolSurface(input.tools)
+      const tools = surface.tools(resolveTools(input))
+      const requestedActiveTools = new Set((input.activeTools ?? Object.keys(input.tools)).map(surface.name))
       const activeTools = Object.keys(tools).filter((name) => name !== "invalid" && requestedActiveTools.has(name))
 
       // LiteLLM and some Anthropic proxies require the tools parameter to be present
@@ -760,7 +767,7 @@ const live: Layer.Layer<
         )
         .pipe(Effect.ignore)
 
-      return streamText({
+      const result = streamText({
         onError(error) {
           l.debug("streamText error", {
             messageID: input.user.id,
@@ -774,6 +781,7 @@ const live: Layer.Layer<
         async experimental_repairToolCall(failed) {
           const repaired = await ToolCompat.repairToolCall({
             toolName: failed.toolCall.toolName,
+            scriptToolName: surface.name("exec"),
             input: failed.toolCall.input,
             toolNames: activeTools,
             getSchema: (toolName) => failed.inputSchema({ toolName }),
@@ -817,7 +825,7 @@ const live: Layer.Layer<
         // Keep one SDK-level retry for a failure before response headers. The
         // processor owns the persistent stream retry budget below this layer.
         maxRetries: input.retries ?? 0,
-        messages,
+        messages: surface.messages(messages),
         model: wrapLanguageModel({
           model: language,
           middleware: [
@@ -849,6 +857,7 @@ const live: Layer.Layer<
           },
         },
       })
+      return { result, surface }
     })
 
     const stream: Interface["stream"] = (input) => {
@@ -865,13 +874,9 @@ const live: Layer.Layer<
               )
               const result = yield* run({ ...input, abort: ctrl.signal, dropAssistantPrefill })
 
-              // Structurally identical to the pre-guard stream: a bare scoped
-              // stream over the provider's fullStream. No per-event combinator, no
-              // extra catch layer — so the normal (non-error) event flow and the
-              // AbortController scope teardown are exactly as before. The reactive
-              // prefill retry is layered lazily below and only pays a cost when an
-              // actual error surfaces.
-              const rawStream = Stream.fromAsyncIterable(result.fullStream, (e) =>
+              // Restore canonical tool IDs before session processing and persistence.
+              // The reactive prefill retry remains scoped to request failures.
+              const rawStream = Stream.fromAsyncIterable(result.result.fullStream, (e) =>
                 e instanceof Error ? e : new Error(String(e)),
               )
               let hasProviderOutput = false
@@ -892,7 +897,16 @@ const live: Layer.Layer<
                       if (SessionRetry.decide(normalized, "request").retryable) return yield* Effect.fail(event.error)
                     }
                     if (event.type !== "start" && event.type !== "error") hasProviderOutput = true
-                    return event
+                    if (event.type === "error" && event.error instanceof ToolCallFloodingError) {
+                      return {
+                        ...event,
+                        error: new ToolCallFloodingError(event.error.calls.map((call) => ({
+                          ...call,
+                          name: result.surface.id(call.name),
+                        }))),
+                      }
+                    }
+                    return result.surface.restore(event)
                   }),
                 ),
               )

@@ -46,6 +46,7 @@ export interface ExecuteResult<M extends Metadata = Metadata> {
 
 export interface Def<Parameters extends z.ZodType = z.ZodType, M extends Metadata = Metadata> {
   id: string
+  modelName?: string
   description: string
   parameters: Parameters
   execute(args: z.infer<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>

@@ -330,7 +330,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
         const sysMsgs = messages.filter((m) => m.role === "system")
         const allSys = sysMsgs.map((m) => m.content).join("\n")
         expect(allSys).toContain("Active recall protocol")
-        expect(allSys).toContain("use `grep` with a keyword pattern")
+        expect(allSys).toContain("use the Grep tool with a keyword pattern")
       },
     })
   })
@@ -550,7 +550,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
           expect(allSys).toContain(path.join(Global.Path.data, "memory", "global", "MEMORY.md"))
           expect(allSys).toContain("Two file types")
           expect(allSys).toContain("When to edit MEMORY.md directly")
-          expect(allSys).toContain("search first via the `grep` / `read` tools")
+          expect(allSys).toContain("search first via the Grep and Read tools")
 
           // Checkpoint-write ownership extras stay off when the flag is on.
           // (Base agent.prompt may mention the checkpoint-writer agent name;

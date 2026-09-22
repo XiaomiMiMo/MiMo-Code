@@ -5,10 +5,10 @@ Usage:
 - By default, this tool returns up to 2000 lines from the start of the file.
 - The offset parameter is the line number to start from (1-indexed).
 - To read later sections, call this tool again with a larger offset.
-- Use the `grep` tool to find specific content in large files or files with long lines.
-- If you are unsure of the correct file path, use the `glob` tool to look up filenames by glob pattern.
+- Use the Grep tool to find specific content in large files or files with long lines.
+- If you are unsure of the correct file path, use the Glob tool to look up filenames by glob pattern.
 - Contents are returned with each line prefixed by its line number as `<line>: <content>`. For example, if a file has contents "foo\n", you will receive "1: foo\n". For directories, entries are returned one per line (without line numbers) with a trailing `/` for subdirectories.
 - Any line longer than 2000 characters is truncated.
-- You may issue several `read` calls in one step when you already know which files you need.
+- You may issue several Read tool calls in one step when you already know which files you need.
 - Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.
 - Image and PDF files are returned as file attachments when the model includes those modalities. Only a finite media allowlist is attached: jpeg/png/webp/gif, wav/mp3, mp4.

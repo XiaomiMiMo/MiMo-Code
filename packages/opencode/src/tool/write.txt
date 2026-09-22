@@ -3,8 +3,8 @@ Writes a file to the local filesystem.
 Usage:
 - The `file_path` parameter identifies the file to write.
 - This tool will overwrite the existing file if there is one at the provided path.
-- If this is an existing file, prefer using the `read` tool first so you overwrite intentional content rather than a stale guess.
+- If this is an existing file, prefer using the Read tool first so you overwrite intentional content rather than a stale guess.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
-- For large files, prefer writing the content in multiple smaller steps rather than one big call: a single very large write may exceed the output limit and get truncated, leaving the file incomplete or corrupted. Write an initial portion with this tool, then add the remaining sections with follow-up `edit` calls.
+- For large files, prefer writing the content in multiple smaller steps rather than one big call: a single very large write may exceed the output limit and get truncated, leaving the file incomplete or corrupted. Write an initial portion with this tool, then add the remaining sections with follow-up Edit tool calls.
