@@ -841,12 +841,25 @@ export const layer: Layer.Layer<
             ctx.textNgramRepeat = false
             ctx.textNgramMonitor = createTextNgramMonitor()
             const stream = llm.stream(streamInput)
+            let flooding: ToolCallFloodingError | undefined
 
             yield* stream.pipe(
-              Stream.tap((event) => handleEvent(event)),
+              Stream.tap((event) => {
+                if (event.type === "error" && event.error instanceof ToolCallFloodingError) {
+                  ctx.retrySafe = false
+                  flooding = event.error
+                  return Effect.void
+                }
+                // The SDK drains the admitted tool after the provider closes.
+                // Do not recover until its real result arrives, or invent usage
+                // from the SDK's finish event without a provider finish.
+                if (flooding && event.type === "finish-step") return Effect.void
+                return handleEvent(event)
+              }),
               Stream.takeUntil(() => ctx.needsOverflowHandling || ctx.textNgramRepeat || ctx.blocked),
               Stream.runDrain,
             )
+            if (flooding) yield* Effect.fail(flooding)
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {
@@ -924,6 +937,7 @@ export const layer: Layer.Layer<
                 }
                 if (e instanceof ToolCallFloodingError) {
                   for (const call of e.calls) {
+                    if (call.id === e.releasedCallID) continue
                     const match = yield* readToolCall(call.id)
                     const parsed = yield* Effect.try({
                       try: () => JSON.parse(call.input) as unknown,
@@ -946,6 +960,7 @@ export const layer: Layer.Layer<
                   }
                   ctx.assistantMessage.finish = "tool-calls"
                   ctx.assistantMessage.error = undefined
+                  if (ctx.blocked) return
                   const reminder = yield* session.updateMessage({
                     ...streamInput.user,
                     id: MessageID.ascending(),

@@ -69,21 +69,23 @@ for (const disableFlooding of [false, true]) {
                   const flooded = batch === 0 && !disableFlooding
                   expect(
                     yield* Effect.promise(() => Bun.file(path.join(dir, `batch-${batch}-file-0.txt`)).exists()),
-                  ).toBe(!flooded)
+                  ).toBe(true)
                   expect(
                     yield* Effect.promise(() => Bun.file(path.join(dir, `batch-${batch}-file-2.txt`)).exists()),
                   ).toBe(!flooded && disableCascade)
+                  expect(parts[0].state.status).toBe("completed")
                   if (flooded) {
                     expect(
-                      parts.every(
-                        (part) =>
-                          part.state.status === "error" &&
-                          part.state.error === "Tool call cancelled because tool-call flooding was detected.",
-                      ),
+                      parts
+                        .slice(1)
+                        .every(
+                          (part) =>
+                            part.state.status === "error" &&
+                            part.state.error === "Tool call cancelled because tool-call flooding was detected.",
+                        ),
                     ).toBe(true)
                     continue
                   }
-                  expect(parts[0].state.status).toBe("completed")
                   expect(parts[1].state.status).toBe("error")
                   expect(parts[1].state.status === "error" && parts[1].state.error).toContain("not found")
                   expect(

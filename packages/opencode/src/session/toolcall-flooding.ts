@@ -1,17 +1,21 @@
 import type { LanguageModelV3Middleware, LanguageModelV3StreamPart } from "@ai-sdk/provider"
+import { isParsableJson } from "@ai-sdk/provider-utils"
 import { Flag } from "@/flag/flag"
 
 export const TOOLCALL_FLOODING_LIMIT = 16
 export const TOOLCALL_FLOODING_ERROR = "Tool call cancelled because tool-call flooding was detected."
 export const TOOLCALL_FLOODING_REMINDER = `<system-reminder>
-Tool-call flooding was detected in your previous response. All client tool calls from that response were cancelled before execution. Continue with a smaller batch of tool calls.
+Tool-call flooding was detected. The first tool call may have run; check its result for success, failure, an invalid call, or cancellation. All later client tool calls were cancelled because of flooding. Continue with a smaller batch.
 Prefer 1–3 tool calls per step. Avoid more than 8 calls in a single step.
 </system-reminder>`
 
-type Call = { id: string; name: string; input: string }
+type Call = { id: string; name: string; input: string; providerExecuted?: boolean }
 
 export class ToolCallFloodingError extends Error {
-  constructor(readonly calls: Call[]) {
+  constructor(
+    readonly calls: Call[],
+    readonly releasedCallID?: string,
+  ) {
     super(TOOLCALL_FLOODING_ERROR)
     this.name = "ToolCallFloodingError"
   }
@@ -37,7 +41,7 @@ export function guardToolCallStream(stream: ReadableStream<LanguageModelV3Stream
         }
         const event = next.value
         if (event.type === "tool-input-start") {
-          const call = { id: event.id, name: event.toolName, input: "" }
+          const call = { id: event.id, name: event.toolName, input: "", providerExecuted: event.providerExecuted }
           calls.push(call)
           pending.set(event.id, call)
         }
@@ -48,7 +52,12 @@ export function guardToolCallStream(stream: ReadableStream<LanguageModelV3Stream
         if (event.type === "tool-call") {
           const call = pending.get(event.toolCallId)
           if (!call) {
-            calls.push({ id: event.toolCallId, name: event.toolName, input: event.input })
+            calls.push({
+              id: event.toolCallId,
+              name: event.toolName,
+              input: event.input,
+              providerExecuted: event.providerExecuted,
+            })
             controller.enqueue({
               type: "tool-input-start",
               id: event.toolCallId,
@@ -59,16 +68,34 @@ export function guardToolCallStream(stream: ReadableStream<LanguageModelV3Stream
           if (call) {
             call.name = event.toolName
             call.input = event.input
+            call.providerExecuted ||= event.providerExecuted
           }
           pending.delete(event.toolCallId)
         }
         if (calls.length > TOOLCALL_FLOODING_LIMIT) {
           if (event.type === "tool-input-start") controller.enqueue(event)
-          const error = new ToolCallFloodingError(calls)
+          const first = calls[0]
+          const release =
+            !first.providerExecuted &&
+            isParsableJson(first.input) &&
+            !calls.slice(1).some((call) => call.id === first.id)
+          const error = new ToolCallFloodingError(calls, release ? first.id : undefined)
+          // Cancel generation only; the SDK's request signal must stay live for
+          // the admitted tool's validation, permission checks, and execution.
+          void reader.cancel(error).catch(() => {})
+          if (release) {
+            controller.enqueue(
+              buffered.find((event) => event.type === "tool-call" && event.toolCallId === first.id) ?? {
+                type: "tool-call",
+                toolCallId: first.id,
+                toolName: first.name,
+                input: first.input,
+              },
+            )
+          }
           buffered.length = 0
           controller.enqueue({ type: "error", error })
           controller.close()
-          void reader.cancel(error).catch(() => {})
           return
         }
         if (event.type === "error") {

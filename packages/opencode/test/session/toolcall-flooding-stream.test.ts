@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { LanguageModelV3StreamPart } from "@ai-sdk/provider"
+import type { LanguageModelV3StreamPart, LanguageModelV3ToolCall } from "@ai-sdk/provider"
 import { jsonSchema, streamText, tool, wrapLanguageModel } from "ai"
 import { MockLanguageModelV3 } from "ai/test"
 import {
@@ -19,7 +19,7 @@ const finish: LanguageModelV3StreamPart = {
   },
 }
 
-function call(id: string): LanguageModelV3StreamPart {
+function call(id: string): LanguageModelV3ToolCall {
   return { type: "tool-call", toolCallId: id, toolName: "write", input: JSON.stringify({ value: id }) }
 }
 
@@ -100,7 +100,7 @@ test("call 17 aborts an unfinished source before its arguments arrive", async ()
   }
   const events = await reading
   expect(input.state.cancelled).toBe(true)
-  expect(events.filter((event) => event.type === "tool-call")).toHaveLength(0)
+  expect(events.filter((event) => event.type === "tool-call")).toEqual([call("0")])
   expect(events.filter((event) => event.type === "tool-input-start")).toHaveLength(17)
   const error = events.find((event) => event.type === "error")
   expect(error?.error).toBeInstanceOf(ToolCallFloodingError)
@@ -117,7 +117,7 @@ test("complete-only calls and repeated provider call IDs cannot bypass the cap",
       input.controller.enqueue(call(duplicate ? "same" : String(index)))
     }
     const events = await reading
-    expect(events.some((event) => event.type === "tool-call")).toBe(false)
+    expect(events.filter((event) => event.type === "tool-call")).toEqual(duplicate ? [] : [call("0")])
     expect(events.find((event) => event.type === "error")?.error).toBeInstanceOf(ToolCallFloodingError)
     expect(input.state.cancelled).toBe(true)
   }
@@ -232,4 +232,89 @@ test("disabling the production middleware restores SDK execution during generati
     if (previous == null) delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
     else process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT = previous
   }
+})
+
+for (const incomplete of [false, true]) {
+  test(`flooding with delta-only inputs admits ${incomplete ? "no incomplete call" : "only the first call"}`, async () => {
+    const input = source()
+    const reading = collect(guardToolCallStream(input.stream))
+    for (const index of Array.from({ length: 17 }, (_, index) => index)) {
+      input.controller.enqueue({ type: "tool-input-start", id: String(index), toolName: "write" })
+      if (index < 16)
+        input.controller.enqueue({
+          type: "tool-input-delta",
+          id: String(index),
+          delta: index === 0 && incomplete ? '{"value":' : JSON.stringify({ value: String(index) }),
+        })
+    }
+    const events = await reading
+    expect(input.state.cancelled).toBe(true)
+    expect(events.filter((event) => event.type === "tool-call")).toEqual(incomplete ? [] : [call("0")])
+  })
+}
+
+test("flooding never replays a provider-executed first call as a client call", async () => {
+  const input = source()
+  const reading = collect(guardToolCallStream(input.stream))
+  input.controller.enqueue({
+    type: "tool-call",
+    toolCallId: "0",
+    toolName: "write",
+    input: '{"value":"0"}',
+    providerExecuted: true,
+  })
+  for (const index of Array.from({ length: 16 }, (_, index) => index + 1)) input.controller.enqueue(call(String(index)))
+  const events = await reading
+  expect(events.filter((event) => event.type === "tool-call")).toHaveLength(0)
+  expect(input.state.cancelled).toBe(true)
+})
+
+test("the actual SDK lets the first flooded call finish after upstream cancellation", async () => {
+  const input = source()
+  const executed: string[] = []
+  let release!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const result = streamText({
+    onError: () => {},
+    model: wrapLanguageModel({
+      model: new MockLanguageModelV3({ doStream: async () => ({ stream: input.stream }) }),
+      middleware: toolCallFloodingMiddleware,
+    }),
+    prompt: "Write files",
+    tools: {
+      write: tool({
+        inputSchema: jsonSchema<{ value: string }>({
+          type: "object",
+          properties: { value: { type: "string" } },
+          required: ["value"],
+        }),
+        execute: async (args) => {
+          executed.push(args.value)
+          await waiting
+          return "first result"
+        },
+      }),
+    },
+  })
+  for (const index of Array.from({ length: 17 }, (_, index) => index)) input.controller.enqueue(call(String(index)))
+  const reader = result.fullStream.getReader()
+  while (true) {
+    const event = await reader.read()
+    expect(event.done).toBe(false)
+    if (event.value?.type === "error") break
+  }
+  expect(input.state.cancelled).toBe(true)
+  release()
+  const events = []
+  while (true) {
+    const event = await reader.read()
+    if (event.done) break
+    events.push(event.value)
+  }
+  expect(executed).toEqual(["0"])
+  expect(events.filter((event) => event.type === "tool-result")).toMatchObject([
+    { toolCallId: "0", output: "first result" },
+  ])
 })
