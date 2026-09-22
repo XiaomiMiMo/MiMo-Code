@@ -1,9 +1,9 @@
 ---
 feature: toolcall-flooding
-status: in-progress
+status: delivered
 updated: 2026-09-22
 branch: codex/flooding-first-tool
-commits:
+commits: b8edacb7..c3626c67
 ---
 
 # Tool Batch Safety
@@ -58,7 +58,10 @@ bun test \
 - PASS: after the review's client-execution wording correction,
   `bun test test/session/toolcall-flooding.test.ts test/session/toolcall-flooding-stream.test.ts`:
   28 tests, 259 assertions, zero failures.
-- PASS: `bun typecheck`.
+- PASS: after unifying recovery guidance, the same two-file flooding suite passed
+  28 tests and 231 assertions. Captured model requests verify that successful,
+  failed, invalid, and incomplete first calls all receive the same reminder.
+- PASS: `bun typecheck` after removing the alternate reminder and selection branch.
 - PASS: changed-code lint from the worktree root using
   `bunx oxlint --config .oxlintrc.json --disable-nested-config --format json`
   on the two changed source files and three changed test files. No new diagnostics.
@@ -66,7 +69,7 @@ bun test \
   Explicit configuration avoids nested worktree discovery treating the main
   checkout's type-aware configuration as a child configuration.
 - PASS: `git diff --check` and `git diff --cached --check`.
-- PASS: independent review of `b8edacb7..ee577b7e`, with separate passing
+- PASS: independent review of `b8edacb7..c3626c67`, with separate passing
   conclusions for spec compliance, correctness, and codebase consistency.
 
 **Journey log**
@@ -79,8 +82,9 @@ bun test \
    usage accounting; invalid read/search arguments remain cascade failures.
 4. A flooding error must not tear down the admitted first tool. Drain its SDK
    result before recovery, and skip synthetic finish-step usage accounting.
-5. Independent review required reminders to distinguish client execution from
-   provider-executed tools whose remote side effects cannot be rolled back.
+5. Recovery uses one model-facing reminder for all outcomes. It asks the model
+   to inspect the actual first result, without implementation explanations or
+   claims about provider-executed side effects.
 
 ## [S1] Problem
 
