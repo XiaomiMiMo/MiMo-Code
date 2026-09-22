@@ -422,7 +422,7 @@ it.live(
 )
 
 it.live(
-  "flooding cancels PascalCase calls while persisting canonical names",
+  "flooding runs the first PascalCase call and cancels later calls with canonical names",
   () =>
     Effect.gen(function* () {
       const stub = yield* server([
@@ -430,7 +430,7 @@ it.live(
           Array.from({ length: 17 }, (_, index) => ({
             id: `flood-${index}`,
             name: "Write",
-            args: JSON.stringify({ file_path: "flood.txt", content: "must not write" }),
+            args: JSON.stringify({ file_path: `flood-${index}.txt`, content: "example content" }),
           })),
         ),
         textStopResponse("Stopped flooding"),
@@ -446,13 +446,15 @@ it.live(
               harness: "default",
               parts: [{ type: "text", text: "Attempt too many calls" }],
             })
-            expect(yield* Effect.promise(() => Bun.file(path.join(dir, "flood.txt")).exists())).toBe(false)
+            expect(yield* Effect.promise(() => Bun.file(path.join(dir, "flood-0.txt")).text())).toBe("example content")
+            expect(yield* Effect.promise(() => Bun.file(path.join(dir, "flood-1.txt")).exists())).toBe(false)
             const parts = (yield* sessions.messages({ sessionID: session.id }))
               .flatMap((message) => message.parts)
               .filter((part) => part.type === "tool")
             expect(parts).toHaveLength(17)
             expect(new Set(parts.map((part) => part.tool))).toEqual(new Set(["write"]))
-            expect(parts.every((part) => part.state.status === "error")).toBe(true)
+            expect(parts.find((part) => part.callID === "flood-0")?.state.status).toBe("completed")
+            expect(parts.filter((part) => part.callID !== "flood-0").every((part) => part.state.status === "error")).toBe(true)
           }),
         { git: true, config: config(stub.origin) },
       )

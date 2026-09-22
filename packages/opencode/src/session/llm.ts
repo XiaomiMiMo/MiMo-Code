@@ -894,10 +894,13 @@ const live: Layer.Layer<
                     if (event.type === "error" && event.error instanceof ToolCallFloodingError) {
                       return {
                         ...event,
-                        error: new ToolCallFloodingError(event.error.calls.map((call) => ({
-                          ...call,
-                          name: result.surface.id(call.name),
-                        }))),
+                        error: new ToolCallFloodingError(
+                          event.error.calls.map((call) => ({
+                            ...call,
+                            name: result.surface.id(call.name),
+                          })),
+                          event.error.releasedCallID,
+                        ),
                       }
                     }
                     return result.surface.restore(event)
