@@ -2,6 +2,7 @@ import type { LanguageModelV3Middleware, LanguageModelV3StreamPart } from "@ai-s
 import { Flag } from "@/flag/flag"
 
 export const TOOLCALL_FLOODING_LIMIT = 16
+export const TOOLCALL_FLOODING_MAX_RECOVERY = 2
 export const TOOLCALL_FLOODING_ERROR = "Tool call cancelled because tool-call flooding was detected."
 export const TOOLCALL_FLOODING_REMINDER = `<system-reminder>
 Tool-call flooding was detected in your previous response. All client tool calls from that response were cancelled before execution. Continue with a smaller batch of tool calls.

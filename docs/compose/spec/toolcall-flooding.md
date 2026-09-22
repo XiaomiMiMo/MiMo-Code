@@ -15,6 +15,9 @@ flooding guard waits for provider finish before releasing client tool calls. A
 17th call cancels the batch without executing its tools, records English
 cancellation results, adds a system reminder repeating the existing guidance to prefer 1–3 calls and
 avoid more than 8, and continues sampling.
+Recovery is limited to two attempts per agent turn. A third flooded response
+still cancels every tool, then stops the turn with a visible error instead of
+sending another reminder or model request.
 
 Failure cascade cancels the remaining batch after any non-read/search failure
 or any invalid call. Only execution failures of valid `read`, `grep`, and `glob`
@@ -112,11 +115,18 @@ repeating the existing system prompt sentence verbatim:
 Continue model sampling with those tool results and the reminder. User stop
 remains terminal. A new request owns a new buffer and count.
 
+The recovery budget is shared across assistant steps in the current agent turn.
+Allow two recovery requests; on the third flooded response, preserve the
+cancellation results, record and publish a terminal assistant error, and stop
+without another reminder. Intervening successful steps do not replenish the
+budget, and neither text-loop recovery nor the goal judge may restart an
+exhausted turn. A later user turn starts with a fresh budget.
+
 The threshold intentionally exceeds the prompt's guidance to leave headroom.
 This trades time-to-first-tool for preventing side effects from an abnormal
 batch; normal batches retain their existing execution order after generation.
-The guard bounds calls per step, not argument bytes or the number of recovery
-steps. No additional recovery-attempt limit is introduced.
+The guard bounds calls per step and flooding recovery attempts per turn, not
+argument bytes or the total number of successful steps.
 
 ## [S3] Out of Scope
 
