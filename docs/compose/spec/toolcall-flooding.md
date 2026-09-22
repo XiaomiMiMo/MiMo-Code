@@ -44,8 +44,9 @@ Discard all remaining buffered executions. Normal argument repair/validation,
 permission checks, hooks, FIFO admission, and invalid-tool handling still apply.
 Wait for the first call's actual result before recovering the model step; do not
 interrupt its execution when the flooding notification arrives. Preserve its
-original success or failure, and do not replace it with a flooding cancellation. Cancel/error/EOF
-without a finish must never release a partial batch. Provider-executed tools
+original success or failure, and do not replace it with a flooding cancellation.
+Other stream errors, user cancellation, or EOF without a finish must never
+release a partial batch. Provider-executed tools
 cannot have their remote side effects rolled back; the barrier controls client
 execution only. Calls made inside exec scripts retain script-owned semantics.
 
@@ -54,7 +55,7 @@ error with the result `Tool call cancelled because tool-call flooding was detect
 Preserve complete arguments when available, finalize streamed text/reasoning, and mark the step
 as tool-calls without a terminal assistant error. Append a synthetic user
 system-reminder identifying toolcall flooding, stating that only the first call
-was allowed through and later calls were blocked, and directing the model to
+was allowed through and later client calls were blocked, and directing the model to
 inspect the first result before continuing. Do not imply successful execution
 when validation, permissions, or the tool itself failed. When no call could be
 released, explain that the first call could not safely be submitted and none
