@@ -1,14 +1,84 @@
 ---
 feature: toolcall-flooding
-status: in-progress
+status: delivered
 updated: 2026-09-22
 branch: codex/flooding-first-tool
-commits:
+commits: b8edacb7..ee577b7e
 ---
 
 # Tool Batch Safety
 
 ## Report
+
+**What was built** — This experiment changes flooding recovery from cancelling
+the entire batch to admitting only its first eligible client tool call. On call
+17, generation is cancelled immediately. The first call passes through normal
+SDK validation, permissions, hooks, and the existing gate; all later calls retain
+the flooding cancellation result. The next model request waits for the first
+call's actual success or failure and receives an English reminder explaining
+that only the first call was allowed through. The reminder repeats the existing
+1–3/eight-call guidance and makes no claim of successful execution.
+
+An incomplete input, ambiguous first call ID, or provider-executed first call
+admits no client call and receives a corresponding no-execution reminder.
+Repeated flooded steps may each run one tool. Both existing opt-out flags remain
+independent and unchanged. This bounds execution per flooded step; whether it
+reduces repeated model flooding requires empirical use of the experiment.
+
+**Verification** — Installed dependencies with `bun ci`; `bun.lock` is unchanged.
+Tests and typecheck ran from `packages/opencode`, and every verification process
+exited before independent review.
+
+- PASS: integrated regression suite, 176 tests, 1,087 assertions, zero failures:
+
+```sh
+bun test \
+  test/session/toolcall-flooding.test.ts \
+  test/session/toolcall-flooding-stream.test.ts \
+  test/session/tool-fail-cascade.test.ts \
+  test/session/invalid-tool-cascade.test.ts \
+  test/session/tool-safety-flags.test.ts \
+  test/tool/fail-cascade.test.ts test/tool/gate.test.ts \
+  test/session/tool-gate-cancel.test.ts \
+  test/session/tool-gate-hook.test.ts \
+  test/session/tool-gate-orchestration.test.ts \
+  test/session/length-tool-safety.test.ts \
+  test/session/structured-output.test.ts \
+  test/session/llm-retry.test.ts test/session/max-mode.test.ts \
+  test/session/auto-resume-after-tools.test.ts \
+  test/provider/openai-compatible-tool-id.test.ts
+```
+
+- PASS: final runtime revision, `bun test test/session/toolcall-flooding.test.ts
+  test/session/toolcall-flooding-stream.test.ts test/session/tool-safety-flags.test.ts`:
+  32 tests, 319 assertions. Covers repeated flooding, four flag combinations,
+  invalid/failed first calls, incomplete arguments, permissions, and cancellation.
+- PASS: after the review's client-execution wording correction,
+  `bun test test/session/toolcall-flooding.test.ts test/session/toolcall-flooding-stream.test.ts`:
+  28 tests, 259 assertions, zero failures.
+- PASS: `bun typecheck`.
+- PASS: changed-code lint from the worktree root using
+  `bunx oxlint --config .oxlintrc.json --disable-nested-config --format json`
+  on the two changed source files and three changed test files. No new diagnostics.
+  PRE-EXISTING `processor-lint`: 16 warnings on unchanged processor lines.
+  Explicit configuration avoids nested worktree discovery treating the main
+  checkout's type-aware configuration as a child configuration.
+- PASS: `git diff --check` and `git diff --cached --check`.
+- PASS: independent review of `b8edacb7..ee577b7e`, with separate passing
+  conclusions for spec compliance, correctness, and codebase consistency.
+
+**Journey log**
+
+1. Normal batches must release at provider finish; SDK finish-step waits for tool
+   results and would deadlock a closed execution barrier.
+2. The OpenAI-compatible adapter buffers complete calls until EOF. Flood recovery
+   therefore reconstructs the first input from complete JSON deltas when needed.
+3. Ordinary tool failures and invalid calls retain the full generation stream for
+   usage accounting; invalid read/search arguments remain cascade failures.
+4. A flooding error must not tear down the admitted first tool. Drain its SDK
+   result before recovery, and skip synthetic finish-step usage accounting.
+5. Independent review required reminders to distinguish client execution from
+   provider-executed tools whose remote side effects cannot be rolled back.
 
 ## [S1] Problem
 
@@ -141,6 +211,6 @@ allows subsequent tools to execute, while invalid calls still report failure.
 
 ## Tasks
 
-- [ ] T1: Release only the first eligible call at flooding detection — acceptance: call 17 cancels upstream, at most the first call reaches the SDK, incomplete/ambiguous/provider-executed first calls never admit a substitute, and normal finish/error/cancel behavior stays intact (covers: S2, S3).
-- [ ] T2: Preserve the first result through recovery — acceptance: its real success, failure, or invalid result survives; every suffix call has the flooding cancellation; recovery waits for completion and includes an accurate English reminder plus the unchanged 1–3/eight-call guidance (covers: S1, S2, S4, S5; depends: T1).
-- [ ] T3: Verify repeated flooding and compatibility — acceptance: repeated flooding admits one call per step, first-call failure never admits a suffix, user stop stays terminal, all four flag combinations and relevant regressions pass, package typecheck passes, and independent review completes (covers: S2, S3, S4, S5; depends: T2).
+- [x] T1: Release only the first eligible call at flooding detection — acceptance: call 17 cancels upstream, at most the first call reaches the SDK, incomplete/ambiguous/provider-executed first calls never admit a substitute, and normal finish/error/cancel behavior stays intact (covers: S2, S3).
+- [x] T2: Preserve the first result through recovery — acceptance: its real success, failure, or invalid result survives; every suffix call has the flooding cancellation; recovery waits for completion and includes an accurate English reminder plus the unchanged 1–3/eight-call guidance (covers: S1, S2, S4, S5; depends: T1).
+- [x] T3: Verify repeated flooding and compatibility — acceptance: repeated flooding admits one call per step, first-call failure never admits a suffix, user stop stays terminal, all four flag combinations and relevant regressions pass, package typecheck passes, and independent review completes (covers: S2, S3, S4, S5; depends: T2).
