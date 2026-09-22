@@ -2309,7 +2309,7 @@
           }
         ],
         "summary": "Generate conversation title",
-        "description": "Generate a short conversation title with the configured lite model and deterministic fallback.",
+        "description": "Generate a short conversation title with the configured lite model, optional source model, and deterministic fallback.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2370,6 +2370,18 @@
                   },
                   "locale": {
                     "type": "string"
+                  },
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "providerID": {
+                        "type": "string"
+                      },
+                      "modelID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["providerID", "modelID"]
                   }
                 }
               }
@@ -2693,7 +2705,8 @@
                     "pattern": "^msg.*"
                   },
                   "title": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                   },
                   "permission": {
                     "$ref": "#/components/schemas/PermissionRuleset"
@@ -2969,6 +2982,32 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Title changed by another writer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "const": "TitleConflictError"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "current": {
+                          "$ref": "#/components/schemas/TitleSnapshot"
+                        }
+                      },
+                      "required": ["current"]
+                    }
+                  },
+                  "required": ["name", "data"]
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -2978,7 +3017,13 @@
                 "type": "object",
                 "properties": {
                   "title": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "expectedRevision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
                   },
                   "permission": {
                     "$ref": "#/components/schemas/PermissionRuleset"
@@ -2991,7 +3036,8 @@
                       }
                     }
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -3412,6 +3458,10 @@
                   "messageID": {
                     "type": "string",
                     "pattern": "^msg.*"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 }
               }
@@ -4576,7 +4626,7 @@
           }
         ],
         "summary": "List interrupted turn recovery candidates",
-        "description": "Return the latest incomplete assistant turn that can be resumed without creating a user message.",
+        "description": "Return resumable targets: incomplete assistant turns and/or a trailing parent user (D16f).",
         "responses": {
           "200": {
             "description": "Recovery candidates",
@@ -4585,21 +4635,46 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "properties": {
-                      "assistantMessageID": {
-                        "type": "string",
-                        "pattern": "^msg.*"
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "assistant"
+                          },
+                          "assistantMessageID": {
+                            "type": "string",
+                            "pattern": "^msg.*"
+                          },
+                          "parentMessageID": {
+                            "type": "string",
+                            "pattern": "^msg.*"
+                          },
+                          "created": {
+                            "type": "number"
+                          }
+                        },
+                        "required": ["kind", "assistantMessageID", "parentMessageID", "created"]
                       },
-                      "parentMessageID": {
-                        "type": "string",
-                        "pattern": "^msg.*"
-                      },
-                      "created": {
-                        "type": "number"
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "parent-user"
+                          },
+                          "userMessageID": {
+                            "type": "string",
+                            "pattern": "^msg.*"
+                          },
+                          "created": {
+                            "type": "number"
+                          }
+                        },
+                        "required": ["kind", "userMessageID", "created"]
                       }
-                    },
-                    "required": ["assistantMessageID", "parentMessageID", "created"]
+                    ]
                   }
                 }
               }
@@ -4690,6 +4765,20 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "modelProviderID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "modelID",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "summary": "Resume an interrupted turn",
@@ -4733,6 +4822,129 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.resume({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/{sessionID}/resume": {
+      "post": {
+        "operationId": "session.resumeUser",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "agentID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "titleLocale",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "modelProviderID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "modelID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Resume from a trailing user",
+        "description": "Start the next turn from a trailing user message without creating another user message.",
+        "responses": {
+          "202": {
+            "description": "Resume accepted"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — session resource is busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userMessageID": {
+                    "type": "string",
+                    "pattern": "^msg.*"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.resumeUser({\n  ...\n})"
           }
         ]
       }
@@ -4996,6 +5208,13 @@
                   "model": {
                     "type": "string"
                   },
+                  "source": {
+                    "type": "string",
+                    "enum": ["user", "spawn", "hook"]
+                  },
+                  "provenance": {
+                    "$ref": "#/components/schemas/Provenance"
+                  },
                   "arguments": {
                     "type": "string"
                   },
@@ -5027,6 +5246,48 @@
                     "type": "array",
                     "items": {
                       "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^prt.*"
+                            },
+                            "type": {
+                              "type": "string",
+                              "const": "text"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "synthetic": {
+                              "type": "boolean"
+                            },
+                            "ignored": {
+                              "type": "boolean"
+                            },
+                            "time": {
+                              "type": "object",
+                              "properties": {
+                                "start": {
+                                  "type": "number"
+                                },
+                                "end": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": ["start"]
+                            },
+                            "metadata": {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": ["type", "text"]
+                        },
                         {
                           "type": "object",
                           "properties": {
@@ -5551,7 +5812,7 @@
           }
         ],
         "summary": "List session actors",
-        "description": "List actors registered for a session.",
+        "description": "List actors with execution status in this server runtime; persisted outcomes are preserved.",
         "responses": {
           "200": {
             "description": "Actor list"
@@ -11592,20 +11853,25 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.vcs.branch.updated": {
+      "Event.session.compacted": {
         "type": "object",
         "properties": {
           "type": {
             "type": "string",
-            "const": "vcs.branch.updated"
+            "const": "session.compacted"
           },
           "properties": {
             "type": "object",
             "properties": {
-              "branch": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "agentID": {
                 "type": "string"
               }
-            }
+            },
+            "required": ["sessionID"]
           }
         },
         "required": ["type", "properties"]
@@ -11677,6 +11943,77 @@
               }
             },
             "required": ["name", "sessionID", "arguments", "messageID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.session.goal": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.goal"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "goal": {
+                "type": "object",
+                "properties": {
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "required": ["condition"]
+              },
+              "lastVerdict": {
+                "type": "object",
+                "properties": {
+                  "ok": {
+                    "type": "boolean"
+                  },
+                  "impossible": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "attempt": {
+                    "type": "number"
+                  },
+                  "messageID": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["ok", "reason", "attempt"]
+              }
+            },
+            "required": ["sessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.vcs.branch.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "vcs.branch.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "branch": {
+                "type": "string"
+              }
+            }
           }
         },
         "required": ["type", "properties"]
@@ -11758,82 +12095,6 @@
               }
             },
             "required": ["sessionID", "todos"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.session.goal": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.goal"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "goal": {
-                "type": "object",
-                "properties": {
-                  "condition": {
-                    "type": "string"
-                  }
-                },
-                "required": ["condition"]
-              },
-              "lastVerdict": {
-                "type": "object",
-                "properties": {
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "impossible": {
-                    "type": "boolean"
-                  },
-                  "reason": {
-                    "type": "string"
-                  },
-                  "attempt": {
-                    "type": "number"
-                  },
-                  "messageID": {
-                    "type": "string"
-                  },
-                  "error": {
-                    "type": "boolean"
-                  }
-                },
-                "required": ["ok", "reason", "attempt"]
-              }
-            },
-            "required": ["sessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.session.compacted": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.compacted"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "agentID": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID"]
           }
         },
         "required": ["type", "properties"]
@@ -12093,7 +12354,7 @@
           }
         ]
       },
-      "Provenance": {
+      "HookProvenance": {
         "type": "object",
         "properties": {
           "hookPhase": {
@@ -12119,6 +12380,26 @@
           }
         },
         "required": ["hookPhase", "hookIteration", "pluginNames", "hookIDs"]
+      },
+      "MachineProvenance": {
+        "type": "object",
+        "properties": {
+          "machine": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["machine"]
+      },
+      "Provenance": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/HookProvenance"
+          },
+          {
+            "$ref": "#/components/schemas/MachineProvenance"
+          }
+        ]
       },
       "UserMessage": {
         "type": "object",
@@ -12344,6 +12625,28 @@
             "required": ["input", "output", "reasoning", "cache"]
           },
           "structured": {},
+          "actorResult": {
+            "type": "object",
+            "properties": {
+              "finalText": {
+                "type": "string"
+              },
+              "structured": {},
+              "reportedStatus": {
+                "type": "string",
+                "enum": ["success", "partial", "failed", "blocked"]
+              },
+              "reportedSummary": {
+                "type": "string"
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "variant": {
             "type": "string"
           },
@@ -13462,6 +13765,15 @@
           "title": {
             "type": "string"
           },
+          "titleSource": {
+            "type": "string",
+            "enum": ["fallback", "generated", "user"]
+          },
+          "titleRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
           "version": {
             "type": "string"
           },
@@ -13525,14 +13837,14 @@
             "required": ["messageID"]
           }
         },
-        "required": ["id", "slug", "projectID", "directory", "title", "version", "time"]
+        "required": ["id", "slug", "projectID", "directory", "title", "titleSource", "titleRevision", "version", "time"]
       },
-      "Event.session.created": {
+      "Event.session.updated": {
         "type": "object",
         "properties": {
           "type": {
             "type": "string",
-            "const": "session.created"
+            "const": "session.updated"
           },
           "properties": {
             "type": "object",
@@ -13550,12 +13862,12 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.session.updated": {
+      "Event.session.created": {
         "type": "object",
         "properties": {
           "type": {
             "type": "string",
-            "const": "session.updated"
+            "const": "session.created"
           },
           "properties": {
             "type": "object",
@@ -13753,7 +14065,7 @@
         },
         "required": ["type", "name", "id", "seq", "aggregateID", "data"]
       },
-      "SyncEvent.session.created": {
+      "SyncEvent.session.updated": {
         "type": "object",
         "properties": {
           "type": {
@@ -13762,7 +14074,7 @@
           },
           "name": {
             "type": "string",
-            "const": "session.created.1"
+            "const": "session.updated.2"
           },
           "id": {
             "type": "string"
@@ -13781,42 +14093,10 @@
                 "type": "string",
                 "pattern": "^ses.*"
               },
-              "info": {
-                "$ref": "#/components/schemas/Session"
-              }
-            },
-            "required": ["sessionID", "info"]
-          }
-        },
-        "required": ["type", "name", "id", "seq", "aggregateID", "data"]
-      },
-      "SyncEvent.session.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "sync"
-          },
-          "name": {
-            "type": "string",
-            "const": "session.updated.1"
-          },
-          "id": {
-            "type": "string"
-          },
-          "seq": {
-            "type": "number"
-          },
-          "aggregateID": {
-            "type": "string",
-            "const": "sessionID"
-          },
-          "data": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
+              "previousRevision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
               },
               "info": {
                 "type": "object",
@@ -13960,6 +14240,29 @@
                       }
                     ]
                   },
+                  "titleSource": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": ["fallback", "generated", "user"]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "titleRevision": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "version": {
                     "anyOf": [
                       {
@@ -14090,11 +14393,50 @@
                   "contextWatermark",
                   "summary",
                   "title",
+                  "titleSource",
+                  "titleRevision",
                   "version",
                   "permission",
                   "prompt",
                   "revert"
                 ]
+              }
+            },
+            "required": ["sessionID", "info"]
+          }
+        },
+        "required": ["type", "name", "id", "seq", "aggregateID", "data"]
+      },
+      "SyncEvent.session.created": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "sync"
+          },
+          "name": {
+            "type": "string",
+            "const": "session.created.1"
+          },
+          "id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "number"
+          },
+          "aggregateID": {
+            "type": "string",
+            "const": "sessionID"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "info": {
+                "$ref": "#/components/schemas/Session"
               }
             },
             "required": ["sessionID", "info"]
@@ -14313,7 +14655,7 @@
                 "$ref": "#/components/schemas/Event.session.idle"
               },
               {
-                "$ref": "#/components/schemas/Event.vcs.branch.updated"
+                "$ref": "#/components/schemas/Event.session.compacted"
               },
               {
                 "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -14325,6 +14667,12 @@
                 "$ref": "#/components/schemas/Event.command.executed"
               },
               {
+                "$ref": "#/components/schemas/Event.session.goal"
+              },
+              {
+                "$ref": "#/components/schemas/Event.vcs.branch.updated"
+              },
+              {
                 "$ref": "#/components/schemas/Event.worktree.ready"
               },
               {
@@ -14332,12 +14680,6 @@
               },
               {
                 "$ref": "#/components/schemas/Event.todo.updated"
-              },
-              {
-                "$ref": "#/components/schemas/Event.session.goal"
-              },
-              {
-                "$ref": "#/components/schemas/Event.session.compacted"
               },
               {
                 "$ref": "#/components/schemas/Event.pty.created"
@@ -14376,10 +14718,10 @@
                 "$ref": "#/components/schemas/Event.message.part.removed"
               },
               {
-                "$ref": "#/components/schemas/Event.session.created"
+                "$ref": "#/components/schemas/Event.session.updated"
               },
               {
-                "$ref": "#/components/schemas/Event.session.updated"
+                "$ref": "#/components/schemas/Event.session.created"
               },
               {
                 "$ref": "#/components/schemas/Event.session.deleted"
@@ -14395,6 +14737,9 @@
               },
               {
                 "$ref": "#/components/schemas/SyncEvent.message.part.removed"
+              },
+              {
+                "$ref": "#/components/schemas/SyncEvent.session.updated"
               },
               {
                 "$ref": "#/components/schemas/SyncEvent.session.created"
@@ -16357,20 +16702,6 @@
               }
             }
           },
-          "history": {
-            "description": "Trajectory (conversation history) FTS index configuration.",
-            "type": "object",
-            "properties": {
-              "kinds": {
-                "description": "Which part kinds the history FTS index should cover. Defaults to text (user/assistant) + tool input + tool errors. Add 'reasoning' or 'tool_output' to grow recall at the cost of database size. Note: enabling 'tool_output' reclassifies completed tools from kind='tool_input' to kind='tool_output' (input remains searchable in the body, but kind:['tool_input'] filter will then only match pending/error tools).",
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": ["user_text", "assistant_text", "tool_input", "tool_error", "reasoning", "tool_output"]
-                }
-              }
-            }
-          },
           "dream": {
             "type": "object",
             "properties": {
@@ -16487,6 +16818,16 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  }
+                }
+              },
+              "uncommitted_hint": {
+                "description": "Turn-end uncommitted-changes soft hint (experimental).",
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "description": "After a completed user-source main turn, if the session workspace has uncommitted git changes, inject a soft hint (may repeat on later dirty user turns; hook turns never re-inject; does not force a commit). Default off.",
+                    "type": "boolean"
                   }
                 }
               },
@@ -17139,6 +17480,15 @@
           "title": {
             "type": "string"
           },
+          "titleSource": {
+            "type": "string",
+            "enum": ["fallback", "generated", "user"]
+          },
+          "titleRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
           "version": {
             "type": "string"
           },
@@ -17212,7 +17562,18 @@
             ]
           }
         },
-        "required": ["id", "slug", "projectID", "directory", "title", "version", "time", "project"]
+        "required": [
+          "id",
+          "slug",
+          "projectID",
+          "directory",
+          "title",
+          "titleSource",
+          "titleRevision",
+          "version",
+          "time",
+          "project"
+        ]
       },
       "McpResource": {
         "type": "object",
@@ -17234,6 +17595,28 @@
           }
         },
         "required": ["name", "uri", "client"]
+      },
+      "TitleSnapshot": {
+        "type": "object",
+        "properties": {
+          "sessionID": {
+            "type": "string",
+            "pattern": "^ses.*"
+          },
+          "title": {
+            "type": "string"
+          },
+          "titleSource": {
+            "type": "string",
+            "enum": ["fallback", "generated", "user"]
+          },
+          "titleRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["sessionID", "title", "titleSource", "titleRevision"]
       },
       "ConflictError": {
         "type": "object",
@@ -17819,7 +18202,7 @@
             "$ref": "#/components/schemas/Event.session.idle"
           },
           {
-            "$ref": "#/components/schemas/Event.vcs.branch.updated"
+            "$ref": "#/components/schemas/Event.session.compacted"
           },
           {
             "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -17831,6 +18214,12 @@
             "$ref": "#/components/schemas/Event.command.executed"
           },
           {
+            "$ref": "#/components/schemas/Event.session.goal"
+          },
+          {
+            "$ref": "#/components/schemas/Event.vcs.branch.updated"
+          },
+          {
             "$ref": "#/components/schemas/Event.worktree.ready"
           },
           {
@@ -17838,12 +18227,6 @@
           },
           {
             "$ref": "#/components/schemas/Event.todo.updated"
-          },
-          {
-            "$ref": "#/components/schemas/Event.session.goal"
-          },
-          {
-            "$ref": "#/components/schemas/Event.session.compacted"
           },
           {
             "$ref": "#/components/schemas/Event.pty.created"
@@ -17882,10 +18265,10 @@
             "$ref": "#/components/schemas/Event.message.part.removed"
           },
           {
-            "$ref": "#/components/schemas/Event.session.created"
+            "$ref": "#/components/schemas/Event.session.updated"
           },
           {
-            "$ref": "#/components/schemas/Event.session.updated"
+            "$ref": "#/components/schemas/Event.session.created"
           },
           {
             "$ref": "#/components/schemas/Event.session.deleted"

@@ -172,10 +172,10 @@ import type {
   SessionPromptResponses,
   SessionRecoveryErrors,
   SessionRecoveryResponses,
-  SessionResumeUserResponses,
-  SessionResumeUserErrors,
   SessionResumeErrors,
   SessionResumeResponses,
+  SessionResumeUserErrors,
+  SessionResumeUserResponses,
   SessionRevertErrors,
   SessionRevertResponses,
   SessionShareErrors,
@@ -2616,7 +2616,7 @@ export class Session2 extends HeyApiClient {
   /**
    * List interrupted turn recovery candidates
    *
-   * Return the latest incomplete assistant turn that can be resumed without creating a user message.
+   * Return resumable targets: incomplete assistant turns and/or a trailing parent user (D16f).
    */
   public recovery<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2829,6 +2829,8 @@ export class Session2 extends HeyApiClient {
       messageID?: string
       agent?: string
       model?: string
+      source?: "user" | "spawn" | "hook"
+      provenance?: Provenance
       arguments?: string
       command?: string
       titleLocale?: string
@@ -2874,6 +2876,8 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "messageID" },
             { in: "body", key: "agent" },
             { in: "body", key: "model" },
+            { in: "body", key: "source" },
+            { in: "body", key: "provenance" },
             { in: "body", key: "arguments" },
             { in: "body", key: "command" },
             { in: "body", key: "titleLocale" },
@@ -3056,7 +3060,7 @@ export class Session2 extends HeyApiClient {
   /**
    * List session actors
    *
-   * List actors registered for a session.
+   * List actors with execution status in this server runtime; persisted outcomes are preserved.
    */
   public actors<ThrowOnError extends boolean = false>(
     parameters: {
