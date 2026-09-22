@@ -16,10 +16,6 @@ this behavior. Model requests project tool schemas and history; returned calls
 restore canonical IDs before session processing. GPT/Codex and MCP names remain
 unchanged. Primary system, memory, and first-user reminder text uses display names.
 
-Desktop was inspected only. Its adoption requires updating the engine pin and
-its overriding prompt text, especially electron/prompts/claude.txt. Canonical
-engine events and persisted IDs preserve existing downstream consumers.
-
 **Verification** — Run from packages/opencode:
 
 - PASS: `bun typecheck`.
@@ -86,9 +82,6 @@ Codex exclusion, and snapshot restoration.
 - Exhaustive prompt/tool-description/workflow/skill cleanup.
 - TUI/CLI display renaming and internal ID or database migrations.
 - Changing tool parameters, capabilities, or availability.
-- Editing mimo-desktop. Its later integration needs an engine pin update and
-  its own overriding system prompt/skills adjusted; stable internal IDs preserve
-  the existing event, permission, history, diff, and artifact consumers.
 
 ## Tasks
 
