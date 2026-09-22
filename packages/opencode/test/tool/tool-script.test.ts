@@ -421,6 +421,7 @@ describe("exec", () => {
     expect(result.output).toContain("unknown tool: nope")
   })
 
+  // Desktop exec-mode [TP-R5-02]: tool failures remain catchable errors with a trace.
   test("tool failure rejects the guest promise with tool name prefix", async () => {
     const defs = [
       fakeDef("boom", async () => {
@@ -548,6 +549,7 @@ return r.output;`,
     expect(result.output).toContain("found data-quality-platform")
   })
 
+  // Desktop exec-mode [TP-R5-02]: cancellation interrupts guest execution.
   test("pre-aborted signal cancels the execution", async () => {
     // A sync spin blocks the host event loop, so a timer-armed abort can never
     // fire mid-spin (the 60s active budget covers that in production). An
