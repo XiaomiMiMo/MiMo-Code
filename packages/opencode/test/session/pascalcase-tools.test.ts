@@ -121,7 +121,7 @@ it.live(
               parts: [{ type: "text", text: "Write and read the example file" }],
             })
             const system = JSON.stringify(stub.captures[0].messages.filter((message) => message.role === "system"))
-            expect(system).toContain("the Edit tool")
+            expect(system).toContain("You may edit MEMORY.md when:")
             expect(system).toContain("the Grep and Read tools")
             expect(stub.captures[0].tools.map((tool) => tool.function.name)).toContain("Write")
             expect(stub.captures[0].tools.map((tool) => tool.function.name)).toContain("Read")
@@ -318,7 +318,7 @@ it.live(
             })
             const names = stub.captures[0].tools.map((tool) => tool.function.name)
             const system = JSON.stringify(stub.captures[0].messages.filter((message) => message.role === "system"))
-            expect(system).toContain("Use the Edit tool for focused changes to MEMORY.md")
+            expect(system).toContain("You may edit MEMORY.md when:")
             expect(system).toContain("the Grep and Read tools")
             expect(names).toContain("exec")
             expect(names).not.toContain("Exec")

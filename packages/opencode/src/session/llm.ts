@@ -156,7 +156,7 @@ ${files.join("\n")}`,
       : []),
     `## When to edit MEMORY.md directly
 
-Use the Edit tool for focused changes to MEMORY.md. You may edit it when:
+You may edit MEMORY.md when:
 - User states a project-level rule that should hold across sessions → ## Rules
 - User states a project-level architectural decision → ## Architecture decisions
 - A clearly durable cross-session fact emerges that you want available immediately${checkpointEnabled ? ", before the next checkpoint" : ""} → ## Discovered durable knowledge${
@@ -202,7 +202,7 @@ If these dumps are visible in your context:
 
 - Do NOT read them again as whole files. The bytes are already in front of you.
 - For specific past details (a particular turn's content, a specific tool output, an old command), use the Grep tool with a keyword pattern to target the exact item — do not pull a whole file.
-- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), read on demand using the Read tool.
+- For files NOT in the rebuild dump (per-task splitover progress.md files for tasks you don't actively need, spillover files, older session checkpoints in other sessions), read on demand.
 
 If a dump is budget-truncated, retrieve only the missing section when you need it: use the Read tool with offset/limit.
 
