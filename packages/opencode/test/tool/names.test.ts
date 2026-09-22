@@ -1,19 +1,8 @@
-import { afterEach, expect, test } from "bun:test"
+import { expect, test } from "bun:test"
 import { jsonSchema, tool, type ModelMessage } from "ai"
-import { Effect, Layer } from "effect"
-import path from "node:path"
-import { pathToFileURL } from "node:url"
-import { Agent } from "../../src/agent/agent"
-import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { Instance } from "../../src/project/instance"
-import { ModelID, ProviderID } from "../../src/provider/schema"
 import { SessionPrefixSnapshot } from "../../src/session/prefix-snapshot"
-import { ToolRegistry } from "../../src/tool"
 import { defaultToolName, toolSurface } from "../../src/tool/names"
-import { provideTmpdirInstance } from "../fixture/fixture"
-import { testEffect } from "../lib/effect"
 
-const it = testEffect(Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer))
 const read = {
   ...tool({
     description: "Read an example file",
@@ -27,10 +16,6 @@ const read = {
   modelName: "Read",
 }
 const external = tool({ inputSchema: jsonSchema({ type: "object", properties: {} }) })
-
-afterEach(async () => {
-  await Instance.disposeAll()
-})
 
 test("built-in names are explicit and exact rather than case folded", async () => {
   expect(defaultToolName("read")).toBe("Read")
@@ -52,23 +37,11 @@ test("built-in names are explicit and exact rather than case folded", async () =
   expect(surface.name("Read")).toBe("Read")
 })
 
-test("custom and MCP names remain unchanged even when they resemble built-ins", () => {
-  const tools = { read: external, Read: external, mcp_read: external, example_tool: external }
+test("external tool names remain unchanged", () => {
+  const tools = { mcp_read: external, example_tool: external }
   const surface = toolSurface(tools)
   expect(surface.tools(tools)).toEqual(tools)
-  expect(surface.name("read")).toBe("read")
-  expect(surface.id("Read")).toBe("Read")
-})
-
-test("an external Read collision preserves both distinct executors", () => {
-  const tools = { read, Read: external }
-  const surface = toolSurface(tools)
-  expect(Object.keys(surface.tools(tools))).toEqual(["read", "Read"])
-  expect(surface.tools(tools).read).toBe(read)
-  expect(surface.tools(tools).Read).toBe(external)
-  expect(surface.name("read")).toBe("read")
-  expect(surface.id("Read")).toBe("Read")
-  expect(surface.id("read")).toBe("read")
+  expect(surface.name("mcp_read")).toBe("mcp_read")
 })
 
 test("history projects paired calls and results without rewriting text or inputs", () => {
@@ -174,37 +147,3 @@ test("prefix snapshots preserve optional model names and include them in the too
   expect(legacy.read.modelName).toBeUndefined()
   expect(Object.keys(toolSurface(legacy).tools(legacy))).toEqual(["read"])
 })
-
-for (const plugin of [false, true]) {
-  it.live(`registry assigns PascalCase to the built-in but not its plugin override: plugin=${plugin}`, () =>
-    provideTmpdirInstance((dir) =>
-      Effect.gen(function* () {
-        if (plugin) {
-          const file = path.join(dir, "plugin.ts")
-          yield* Effect.promise(() =>
-            Bun.write(
-              file,
-              "export default async () => ({ tool: { read: { description: 'Plugin example', args: {}, execute: async () => 'example' } } })",
-            ),
-          )
-          yield* Effect.promise(() =>
-            Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({ plugin: [pathToFileURL(file).href] })),
-          )
-        }
-        const registry = yield* ToolRegistry.Service
-        const agent = yield* (yield* Agent.Service).get("build")
-        const tools = yield* registry.tools({
-          providerID: ProviderID.make("test"),
-          modelID: ModelID.make("test/model"),
-          apiModelID: "mimo-v2.6-flash",
-          harness: "default",
-          agent,
-        })
-        const result = tools.find((item) => item.id === "read")
-        expect(result).toBeDefined()
-        expect(result?.modelName).toBe(plugin ? undefined : "Read")
-        if (plugin) expect(result?.description).toBe("Plugin example")
-      }),
-    ),
-  )
-}

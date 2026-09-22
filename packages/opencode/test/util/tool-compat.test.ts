@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import type { JSONSchema7 } from "@ai-sdk/provider"
-import { canonical, normalizeInput, parseToolInput, repairToolCall } from "../../src/util/tool-compat"
+import {
+  canonical,
+  normalizeInput,
+  parseToolInput,
+  repairToolCall,
+} from "../../src/util/tool-compat"
 
 describe("util.tool-compat", () => {
   describe("canonical", () => {
@@ -182,31 +187,29 @@ describe("util.tool-compat", () => {
       expect(repaired).toBeUndefined()
     })
 
-    for (const toolName of ["exec", "Exec"])
-      test(`wraps raw ${toolName} source in the code argument object`, async () => {
-        const execSchema = {
-          type: "object",
-          properties: {
-            code: { type: "string" },
-            max_tool_calls: { type: "number" },
-          },
-          required: ["code"],
-        } satisfies JSONSchema7
-        const source = 'const result = await tools.exec_command({ cmd: "pwd" }); return result.output'
+    test("wraps raw exec source in the code argument object", async () => {
+      const execSchema = {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          max_tool_calls: { type: "number" },
+        },
+        required: ["code"],
+      } satisfies JSONSchema7
+      const source = 'const result = await tools.exec_command({ cmd: "pwd" }); return result.output'
 
-        const repaired = await repairToolCall({
-          toolName,
-          input: source,
-          toolNames: [toolName],
-          scriptToolName: toolName,
-          getSchema: () => execSchema,
-        })
-
-        expect(repaired).toEqual({
-          toolName,
-          input: JSON.stringify({ code: source }),
-        })
+      const repaired = await repairToolCall({
+        toolName: "exec",
+        input: source,
+        toolNames: ["exec"],
+        getSchema: () => execSchema,
       })
+
+      expect(repaired).toEqual({
+        toolName: "exec",
+        input: JSON.stringify({ code: source }),
+      })
+    })
 
     test("does not wrap raw input for other object tools", async () => {
       const repaired = await repairToolCall({

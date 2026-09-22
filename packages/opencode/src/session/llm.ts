@@ -781,7 +781,6 @@ const live: Layer.Layer<
         async experimental_repairToolCall(failed) {
           const repaired = await ToolCompat.repairToolCall({
             toolName: failed.toolCall.toolName,
-            scriptToolName: surface.name("exec"),
             input: failed.toolCall.input,
             toolNames: activeTools,
             getSchema: (toolName) => failed.inputSchema({ toolName }),

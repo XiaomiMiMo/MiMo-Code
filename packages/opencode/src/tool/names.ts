@@ -27,7 +27,6 @@ const defaults = new Map([
   ["plan_exit", "PlanExit"],
   ["cron", "Cron"],
   ["workflow", "Workflow"],
-  ["exec", "Exec"],
 ])
 
 export function defaultToolName(id: string) {
@@ -39,14 +38,9 @@ export function usesPascalCaseTools(modelID: string, harness?: HarnessMode, apiM
   return Flag.MIMOCODE_PASCAL_CASE_TOOLS ?? [modelID, apiModelID].some((id) => id?.toLowerCase().includes("mimo-v2.6"))
 }
 
-/** Only registry-marked built-ins are projected; external names always win collisions. */
+/** Project the known internal names without changing persisted tool IDs. */
 export function toolSurface(input: Record<string, NamedTool>) {
-  const names = new Map(
-    Object.entries(input).map(([id, item]) => [
-      id,
-      item.modelName && !Object.hasOwn(input, item.modelName) ? item.modelName : id,
-    ]),
-  )
+  const names = new Map(Object.entries(input).map(([id, item]) => [id, item.modelName ?? id]))
   const canonical = new Map([...names].map(([id, name]) => [name, id]))
   const name = (id: string) => names.get(id) ?? id
   const id = (name: string) => canonical.get(name) ?? name

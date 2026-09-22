@@ -448,7 +448,6 @@ export const layer = Layer.effect(
       includeHidden: boolean,
     ) {
       const availableTools = yield* available(input)
-      const builtin = new Set((yield* InstanceState.get(state)).builtin)
       const pascal = usesPascalCaseTools(input.modelID, input.harness, input.apiModelID, input.family)
       const selected = availableTools.useGPTTools && !includeHidden
         ? availableTools.filtered.filter((tool) => GPT_TOP_LEVEL_TOOLS.has(tool.id))
@@ -475,7 +474,7 @@ export const layer = Layer.effect(
           const description = useShell ? tool.shell!.description : output.description
           return {
             id: tool.id,
-            modelName: pascal && builtin.has(tool) ? defaultToolName(tool.id) : undefined,
+            modelName: pascal ? defaultToolName(tool.id) : undefined,
             description: [
               description,
               tool.id === ReadTool.id ? yield* describeReadMedia(input) : undefined,

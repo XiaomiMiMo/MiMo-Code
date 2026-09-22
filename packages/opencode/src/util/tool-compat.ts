@@ -175,7 +175,6 @@ export function stringifyToolInput(input: unknown): string {
 
 export type RepairToolCallInput = {
   toolName: string
-  scriptToolName?: string
   input: string
   toolNames: readonly string[]
   getSchema: (toolName: string) => JSONSchema7 | PromiseLike<JSONSchema7>
@@ -194,7 +193,7 @@ export async function repairToolCall(input: RepairToolCallInput): Promise<Repair
   const parsed = parseToolInput(input.input)
   const codeSchema = isRecord(schema.properties) ? schema.properties.code : undefined
   if (
-    input.toolName === (input.scriptToolName ?? "exec") &&
+    input.toolName === "exec" &&
     typeof parsed === "string" &&
     isRecord(codeSchema) &&
     codeSchema.type === "string"

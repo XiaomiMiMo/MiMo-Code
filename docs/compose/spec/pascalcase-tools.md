@@ -23,8 +23,8 @@ Keep canonical internal tool IDs, permissions, hooks, persisted tool parts, and
 downstream events unchanged. Give built-in definitions an explicit model-facing
 name when PascalCase exposure is enabled: Read, Grep, Glob, Edit, Write, Bash, NotebookEdit,
 Actor, Task, Session, Memory, History, Skill, SkillSearch, Question, WebFetch,
-WebSearch, CodeSearch, LSP, PlanExit, Cron, Workflow, and Exec when enabled.
-Internal sentinels and mcp_tool_search are excluded. Existing availability gates
+WebSearch, CodeSearch, LSP, PlanExit, Cron, and Workflow.
+Internal sentinels, the shared exec gateway, and mcp_tool_search are excluded. Existing availability gates
 remain. MIMOCODE_PASCAL_CASE_TOOLS is a tri-state environment switch: true/1
 enables projection, false/0 disables it, and unset defaults to enabled only when
 a model ID or API model ID contains mimo-v2.6 (case insensitive), including
@@ -33,9 +33,8 @@ flash/pro/pro-ultraspeed variants. GPT/Codex mode always keeps its own names.
 Project tool schemas and paired historical tool calls/results to those names
 before the model request. Dispatch returned calls through the canonical
 executors and convert event names back before session processing. Use exact
-declared names, not general case folding. Preserve custom/plugin and external
-MCP names, including names colliding with a built-in display name; resolve such
-collisions without hiding or overwriting either executor. Preserve naming
+declared names, not general case folding. Map only the explicit known internal tool IDs; MCP and other tool names remain
+unchanged. Custom overrides or collisions with built-in names are out of scope. Preserve naming
 metadata through prefix snapshots so fork/rebuild contexts stay consistent.
 
 GPT/Codex tool surfaces, including exec, exec_command, apply_patch, view_image,
@@ -47,11 +46,13 @@ direct memory/first-user reminders; do not rewrite user text or memory contents.
 
 Verify requests and executions, not just a name table: actual schema names,
 history pairing, internal execution/events, permission filtering, strict lookup,
-custom/MCP names, model-specific defaults and both explicit switch overrides,
+MCP names, model-specific defaults and both explicit switch overrides,
 Codex exclusion, and snapshot restoration.
 
 ## [S3] Out of Scope
 
+- Emergency scope: no custom overrides of built-in tools, display-name collision
+  handling, or changes to the shared exec gateway.
 - Exhaustive prompt/tool-description/workflow/skill cleanup.
 - TUI/CLI display renaming and internal ID or database migrations.
 - Changing tool parameters, capabilities, or availability.
