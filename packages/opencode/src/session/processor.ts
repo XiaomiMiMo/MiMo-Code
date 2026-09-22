@@ -13,7 +13,12 @@ import { LLM } from "./llm"
 import { MessageV2 } from "./message-v2"
 import { isOverflow } from "./overflow"
 import { MessageID, PartID } from "./schema"
-import { ToolCallFloodingError, TOOLCALL_FLOODING_ERROR, TOOLCALL_FLOODING_REMINDER } from "./toolcall-flooding"
+import {
+  ToolCallFloodingError,
+  TOOLCALL_FLOODING_ERROR,
+  TOOLCALL_FLOODING_MAX_RECOVERY,
+  TOOLCALL_FLOODING_REMINDER,
+} from "./toolcall-flooding"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
@@ -192,6 +197,8 @@ type Input = {
   sessionID: SessionID
   model: Provider.Model
   agentMetrics?: AgentMetrics
+  /** Shared across every assistant step in one agent turn. */
+  toolCallFloodingRecovery?: { attempts: number }
 }
 
 export interface Interface {
@@ -260,6 +267,7 @@ export const layer: Layer.Layer<
       // so capturing inside the event handler can be too late.
       const initialSnapshot = yield* snapshot.track()
       const toolGate = new ToolGate()
+      const floodingRecovery = input.toolCallFloodingRecovery ?? { attempts: 0 }
       const ctx: ProcessorContext = {
         assistantMessage: input.assistantMessage,
         sessionID: input.sessionID,
@@ -986,6 +994,15 @@ export const layer: Layer.Layer<
                   }
                   ctx.assistantMessage.finish = "tool-calls"
                   ctx.assistantMessage.error = undefined
+                  floodingRecovery.attempts++
+                  if (floodingRecovery.attempts > TOOLCALL_FLOODING_MAX_RECOVERY) {
+                    yield* halt(
+                      new Error(
+                        `Tool-call flooding persisted after ${TOOLCALL_FLOODING_MAX_RECOVERY} recovery attempts. The turn was stopped to prevent repeated cancellations.`,
+                      ),
+                    )
+                    return
+                  }
                   const reminder = yield* session.updateMessage({
                     ...streamInput.user,
                     id: MessageID.ascending(),

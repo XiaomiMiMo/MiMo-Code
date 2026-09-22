@@ -54,7 +54,7 @@ test("the actual SDK executes all 16 calls only after provider finish", async ()
   const result = streamText({
     model: wrapLanguageModel({
       model: new MockLanguageModelV3({ doStream: async () => ({ stream: input.stream }) }),
-      middleware: toolCallFloodingMiddleware,
+      middleware: toolCallFloodingMiddleware(),
     }),
     prompt: "Write files",
     tools: {
@@ -109,6 +109,68 @@ test("call 17 aborts an unfinished source before its arguments arrive", async ()
   expect(error.error.calls.at(-1)?.input).toBe("")
 })
 
+for (const mode of ["deltas", "completed"] as const) {
+  test(`MiMo yields only the first 16 complete calls (${mode}) and closes open content blocks`, async () => {
+    const input = source()
+    const reading = collect(guardToolCallStream(input.stream, true))
+    input.controller.enqueue({ type: "reasoning-start", id: "reasoning" })
+    input.controller.enqueue({ type: "text-start", id: "text" })
+    for (let index = 0; index < 17; index++) {
+      if (mode === "completed") input.controller.enqueue(call(String(index)))
+      if (mode === "deltas") {
+        input.controller.enqueue({ type: "tool-input-start", id: String(index), toolName: "write" })
+        if (index < 16)
+          input.controller.enqueue({ type: "tool-input-delta", id: String(index), delta: '{"value":"ok"}' })
+      }
+    }
+    const events = await reading
+    expect(input.state.cancelled).toBe(true)
+    expect(events.filter((event) => event.type === "tool-call").map((event) => event.toolCallId)).toEqual(
+      Array.from({ length: 16 }, (_, index) => String(index)),
+    )
+    expect(events.filter((event) => event.type === "tool-input-start")).toHaveLength(16)
+    expect(events.filter((event) => event.type === "tool-input-end")).toHaveLength(16)
+    expect(events).toContainEqual({ type: "reasoning-end", id: "reasoning" })
+    expect(events).toContainEqual({ type: "text-end", id: "text" })
+    expect(events.at(-1)).toMatchObject({
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: "mimocode_tool_call_limit" },
+      usage: { inputTokens: { total: undefined }, outputTokens: { total: undefined } },
+    })
+    expect(events.some((event) => event.type === "error")).toBe(false)
+  })
+}
+
+for (const mode of ["partial", "duplicate", "provider", "metadata", "approval"] as const) {
+  test(`MiMo cannot yield an unsafe batch (${mode})`, async () => {
+    const input = source()
+    const reading = collect(guardToolCallStream(input.stream, true))
+    for (let index = 0; index < 17; index++) {
+      const id = mode === "duplicate" ? "same" : String(index)
+      input.controller.enqueue({
+        type: "tool-input-start",
+        id,
+        toolName: "write",
+        ...(mode === "provider" ? { providerExecuted: true } : {}),
+        ...(mode === "metadata" ? { providerMetadata: { test: { signature: "opaque" } } } : {}),
+      })
+      if (index === 16) break
+      input.controller.enqueue({
+        type: "tool-input-delta",
+        id,
+        delta: mode === "partial" && index === 0 ? '{"value":' : '{"value":"ok"}',
+      })
+      if (mode === "approval") {
+        input.controller.enqueue({ type: "tool-approval-request", approvalId: `approval-${index}`, toolCallId: id })
+      }
+    }
+    const events = await reading
+    expect(events.some((event) => event.type === "tool-call")).toBe(false)
+    expect(events.find((event) => event.type === "error")?.error).toBeInstanceOf(ToolCallFloodingError)
+    expect(input.state.cancelled).toBe(true)
+  })
+}
+
 test("complete-only calls and repeated provider call IDs cannot bypass the cap", async () => {
   for (const duplicate of [false, true]) {
     const input = source()
@@ -142,42 +204,44 @@ test("start and completion count once, and independent requests have independent
   expect((await firstReading).filter((event) => event.type === "tool-call")).toHaveLength(16)
 })
 
-for (const ending of ["eof", "error", "throw"] as const) {
-  test(`${ending} before finish never releases buffered tools`, async () => {
-    const input = source()
-    const events: LanguageModelV3StreamPart[] = []
-    const reading = (async () => {
-      const reader = guardToolCallStream(input.stream).getReader()
-      while (true) {
-        const event = await reader.read()
-        if (event.done) break
-        events.push(event.value)
+for (const yieldCompleteBatch of [false, true])
+  for (const ending of ["eof", "error", "throw"] as const) {
+    test(`${ending} before finish never releases buffered tools`, async () => {
+      const input = source()
+      const events: LanguageModelV3StreamPart[] = []
+      const reading = (async () => {
+        const reader = guardToolCallStream(input.stream, yieldCompleteBatch).getReader()
+        while (true) {
+          const event = await reader.read()
+          if (event.done) break
+          events.push(event.value)
+        }
+      })()
+      input.controller.enqueue(call("first"))
+      input.controller.enqueue({ type: "text-start", id: "text" })
+      input.controller.enqueue({ type: "text-delta", id: "text", delta: "before failure" })
+      if (ending === "eof") input.controller.close()
+      if (ending === "error") input.controller.enqueue({ type: "error", error: new Error("transport failed") })
+      if (ending === "throw") input.controller.error(new Error("transport failed"))
+      if (ending === "throw") {
+        expect(await reading.catch((error: unknown) => error)).toMatchObject({ message: "transport failed" })
       }
-    })()
-    input.controller.enqueue(call("first"))
-    input.controller.enqueue({ type: "text-start", id: "text" })
-    input.controller.enqueue({ type: "text-delta", id: "text", delta: "before failure" })
-    if (ending === "eof") input.controller.close()
-    if (ending === "error") input.controller.enqueue({ type: "error", error: new Error("transport failed") })
-    if (ending === "throw") input.controller.error(new Error("transport failed"))
-    if (ending === "throw") {
-      expect(await reading.catch((error: unknown) => error)).toMatchObject({ message: "transport failed" })
-    }
-    if (ending !== "throw") await reading
-    expect(events.some((event) => event.type === "tool-call")).toBe(false)
-    if (ending !== "throw") expect(events.some((event) => event.type === "error")).toBe(true)
-  })
-}
+      if (ending !== "throw") await reading
+      expect(events.some((event) => event.type === "tool-call")).toBe(false)
+      if (ending !== "throw") expect(events.some((event) => event.type === "error")).toBe(true)
+    })
+  }
 
-test("downstream cancellation discards buffered tools and cancels the provider", async () => {
-  const input = source()
-  const reader = guardToolCallStream(input.stream).getReader()
-  input.controller.enqueue(call("first"))
-  expect((await reader.read()).value?.type).toBe("tool-input-start")
-  await reader.cancel()
-  expect(input.state.cancelled).toBe(true)
-  expect((await reader.read()).done).toBe(true)
-})
+for (const yieldCompleteBatch of [false, true])
+  test(`downstream cancellation discards buffered tools (yield=${yieldCompleteBatch})`, async () => {
+    const input = source()
+    const reader = guardToolCallStream(input.stream, yieldCompleteBatch).getReader()
+    input.controller.enqueue(call("first"))
+    expect((await reader.read()).value?.type).toBe("tool-input-start")
+    await reader.cancel()
+    expect(input.state.cancelled).toBe(true)
+    expect((await reader.read()).done).toBe(true)
+  })
 
 test("recovery repeats the current system prompt tool-call guidance verbatim", async () => {
   const prompt = await Bun.file(new URL("../../src/session/prompt/default.txt", import.meta.url)).text()
@@ -213,7 +277,7 @@ test("disabling the production middleware restores SDK execution during generati
     const result = streamText({
       model: wrapLanguageModel({
         model: new MockLanguageModelV3({ doStream: async () => ({ stream: input.stream }) }),
-        middleware: toolCallFloodingMiddleware,
+        middleware: toolCallFloodingMiddleware(),
       }),
       prompt: "Write files",
       tools: { write: tool({ inputSchema: jsonSchema({ type: "object" }), execute: async () => "written" }) },

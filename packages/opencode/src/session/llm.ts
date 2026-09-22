@@ -821,7 +821,10 @@ const live: Layer.Layer<
         model: wrapLanguageModel({
           model: language,
           middleware: [
-            toolCallFloodingMiddleware,
+            toolCallFloodingMiddleware(
+              input.model.api.npm === "@ai-sdk/openai-compatible" &&
+                (input.model.family === "mimo" || input.model.api.id.startsWith("mimo-")),
+            ),
             {
               specificationVersion: "v3" as const,
               async transformParams(args) {
