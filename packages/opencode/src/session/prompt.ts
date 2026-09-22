@@ -16,6 +16,7 @@ import {
 } from "@/util/media"
 import { shrinkAttachment } from "@/provider/image"
 import { classifyAssistantStep } from "./classify"
+import { TOOLCALL_FLOODING_MAX_RECOVERY } from "./toolcall-flooding"
 import { Log, Token } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
@@ -4068,6 +4069,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         let textLoopRecoveryAttempts = 0
         let textNgramRecoveryAttempts = 0
         let loopStreakCropped = false
+        const toolCallFloodingRecovery = { attempts: 0 }
 
         // Contract (T05): on finish="length", inject a continuation nudge ONLY for
         // plain text. If any non-providerExecuted client tool part exists we bail
@@ -5049,6 +5051,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             sessionID,
             model,
             agentMetrics,
+            toolCallFloodingRecovery,
           })
 
           const outcome: "break" | "continue" = yield* Effect.gen(function* () {
@@ -5704,6 +5707,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             return "continue" as const
           }).pipe(Effect.ensuring(instruction.clear(handle.message.id)))
+
+          // Neither text-loop recovery nor an active goal may restart an exhausted turn.
+          if (toolCallFloodingRecovery.attempts > TOOLCALL_FLOODING_MAX_RECOVERY) break
 
           // --- Text Loop Detection (cross-step) ---
           const completedParts = MessageV2.parts(handle.message.id)

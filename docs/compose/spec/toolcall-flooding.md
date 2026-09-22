@@ -11,10 +11,18 @@ commits: 47920126..0ffdd318
 ## Report
 
 **What was built** — Two independent protections are enabled by default. The
-flooding guard waits for provider finish before releasing client tool calls. A
-17th call cancels the batch without executing its tools, records English
+flooding guard normally waits for provider finish before releasing client tool calls. A
+17th call cancels an unrecoverable batch without executing its tools, records English
 cancellation results, adds a system reminder repeating the existing guidance to prefer 1–3 calls and
 avoid more than 8, and continues sampling.
+Recovery is limited to two attempts per agent turn. A third flooded response
+still cancels every tool, then stops the turn with a visible error instead of
+sending another reminder or model request.
+
+MiMo models using the OpenAI-compatible adapter can instead yield the first 16
+complete client calls at that boundary. Their real tool results let the model
+continue the task instead of repeatedly regenerating a cancelled batch. See the
+MiMo exception in S2 for the validation and accounting limits.
 
 Failure cascade cancels the remaining batch after any non-read/search failure
 or any invalid call. Only execution failures of valid `read`, `grep`, and `glob`
@@ -96,11 +104,34 @@ Existing read/search concurrency and independent agent gates remain unchanged.
 
 Count each call when its input starts, with a fallback for providers emitting
 only complete tool calls. Do not double-count the start and completed call.
-Allow 16 calls; on call 17, immediately cancel the upstream stream, discard all
+Allow 16 calls; on call 17, immediately cancel the upstream stream. By default, discard all
 buffered executions, and report a distinct flooding error. Cancel/error/EOF
 without a finish must never release a partial batch. Provider-executed tools
 cannot have their remote side effects rolled back; the barrier controls client
 execution only. Calls made inside exec scripts retain script-owned semantics.
+
+### MiMo bounded continuation
+
+For the OpenAI-compatible adapter and a model whose family is `mimo` or whose
+API ID starts with `mimo-`, call 17 is a local batch boundary. If all first 16
+calls have complete JSON object arguments and unique IDs, release that prefix
+through the existing SDK schema validation, permission checks and execution
+gate. The discarded call must not create a pending session part. Close open
+text/reasoning/input blocks, mark the local finish with
+`mimocode_tool_call_limit`, and continue with the real tool observations.
+Do not ask the model to regenerate calls that already ran.
+
+This exception only handles local function calls without opaque provider
+metadata. Partial inputs, duplicate IDs, provider execution, provider results
+or approvals use the cancellation/recovery path instead. Transport errors,
+premature EOF and user cancellation never yield buffered calls. Calls below
+the cap still wait for provider finish; other adapters retain their existing
+behavior. The global opt-out still disables both behaviors.
+
+The interrupted response has no provider usage chunk. Report unknown usage at
+the SDK boundary rather than fabricated counts, and include the local limit
+in response metadata. Token totals for interrupted generations are therefore
+incomplete. Normal provider finishes retain their usage unchanged.
 
 The processor converts every pending call in a flooded step to a cancelled tool
 error with the result `Tool call cancelled because tool-call flooding was detected.`
@@ -112,16 +143,23 @@ repeating the existing system prompt sentence verbatim:
 Continue model sampling with those tool results and the reminder. User stop
 remains terminal. A new request owns a new buffer and count.
 
+The recovery budget is shared across assistant steps in the current agent turn.
+Allow two recovery requests; on the third flooded response, preserve the
+cancellation results, record and publish a terminal assistant error, and stop
+without another reminder. Intervening successful steps do not replenish the
+budget, and neither text-loop recovery nor the goal judge may restart an
+exhausted turn. A later user turn starts with a fresh budget.
+
 The threshold intentionally exceeds the prompt's guidance to leave headroom.
 This trades time-to-first-tool for preventing side effects from an abnormal
 batch; normal batches retain their existing execution order after generation.
-The guard bounds calls per step, not argument bytes or the number of recovery
-steps. No additional recovery-attempt limit is introduced.
+The guard bounds calls per step and flooding recovery attempts per turn, not
+argument bytes or the total number of successful steps.
 
 ## [S3] Out of Scope
 
 Changing TUI controls, changing the existing parallel group, counting nested exec
-calls, model-name detection, token/time limits, or changing provider-native tool
+calls, token/time limits, or changing provider-native tool
 execution semantics.
 
 ## [S4] Failure Cascade
@@ -180,8 +218,8 @@ require whitelist admission.
 
 Preserve all calls and results in the conversation: earlier successful results,
 the original failure, and every subsequent call with its cascade cancellation
-result. Do not truncate or hide the suffix, and do not synthesize a finish event
-or usage. Normal sampling resumes with the full observations. Disabling cascade
+result. Ordinary failures do not truncate the suffix or synthesize a finish event
+or usage; the explicit MiMo batch boundary above is the exception. Normal sampling resumes with the full observations. Disabling cascade
 allows subsequent tools to execute, while invalid calls still report failure.
 
 ## Tasks
