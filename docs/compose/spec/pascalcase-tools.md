@@ -1,14 +1,44 @@
 ---
 feature: pascalcase-tools
-status: in-progress
+status: delivered
 updated: 2026-09-22
 branch: codex/pascalcase-tools
-commits:
+commits: b8edacb7..774787bc
 ---
 
 # Default PascalCase Tool Surface
 
 ## Report
+
+**What was built** — Known default internal tools expose PascalCase schemas for
+MiMo v2.6 by default. MIMOCODE_PASCAL_CASE_TOOLS can explicitly enable or disable
+this behavior. Model requests project tool schemas and history; returned calls
+restore canonical IDs before session processing. GPT/Codex and MCP names remain
+unchanged. Primary system, memory, and first-user reminder text uses display names.
+
+Desktop was inspected only. Its adoption requires updating the engine pin and
+its overriding prompt text, especially electron/prompts/claude.txt. Canonical
+engine events and persisted IDs preserve existing downstream consumers.
+
+**Verification** — Run from packages/opencode:
+
+- PASS: `bun typecheck`.
+- PASS: `bun run script/build-node.ts`.
+- PASS: `bun test test/tool/names.test.ts test/session/pascalcase-tools.test.ts test/flag/pascal-case-tools-flag.test.ts test/session/prefix-snapshot.test.ts test/session/llm-request-prefix.test.ts` — 22 passed, 2 existing skips, 0 failed after scope reduction.
+- PASS before scope reduction: `bun test test/session/pascalcase-tools.test.ts test/flag/pascal-case-tools-flag.test.ts test/tool/names.test.ts test/session/prefix-snapshot.test.ts test/session/llm-system-prompt.test.ts test/util/tool-compat.test.ts test/agent/agent.test.ts test/session/prompt.test.ts test/tool/registry-invocation-style.test.ts test/tool/gpt.test.ts test/session/toolcall-flooding.test.ts` — 185 passed, 4 existing skips, 0 failed.
+- Independent review of the final implementation: spec compliance, correctness,
+  and codebase consistency passed; no outstanding findings within scope.
+
+**Journey log**
+
+- Confirmed the lowercase schema failure before implementing the mapping; real
+  Write/Read execution then verified canonical persistence and history replay.
+- Kept display labels independent of schema casing so other models retain their
+  existing callable names.
+- Removed custom override/collision handling and shared exec changes to match
+  the urgent repair scope.
+- Review identified missing naming metadata in captured request prefixes; fixed
+  propagation and passed the affected-area re-review.
 
 ## [S1] Problem
 
@@ -62,6 +92,6 @@ Codex exclusion, and snapshot restoration.
 
 ## Tasks
 
-- [ ] T1: Project default built-in names at the model boundary — acceptance: MiMo v2.6 automatically advertises PascalCase, other models stay lowercase, explicit true/false override both defaults; calls execute through unchanged canonical IDs; GPT and MCP tool names remain intact; history and prefix snapshots retain correct names (covers: S2).
-- [ ] T2: Align primary system, memory and first-user reminders — acceptance: guidance uses display names independently of schema casing; GPT guidance retains its own tools without rewriting user content (covers: S2).
-- [ ] T3: Verify and independently review — acceptance: focused behavioral tests, package typecheck and Node build pass or documented baseline failures are identified; no critical review findings remain (covers: S2; depends: T1, T2).
+- [x] T1: Project default built-in names at the model boundary — acceptance: MiMo v2.6 automatically advertises PascalCase, other models stay lowercase, explicit true/false override both defaults; calls execute through unchanged canonical IDs; GPT and MCP tool names remain intact; history and prefix snapshots retain correct names (covers: S2).
+- [x] T2: Align primary system, memory and first-user reminders — acceptance: guidance uses display names independently of schema casing; GPT guidance retains its own tools without rewriting user content (covers: S2).
+- [x] T3: Verify and independently review — acceptance: focused behavioral tests, package typecheck and Node build pass or documented baseline failures are identified; no critical review findings remain (covers: S2; depends: T1, T2).
