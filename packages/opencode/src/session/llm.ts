@@ -3,7 +3,7 @@ import { Provider, ProviderError } from "@/provider"
 import { Log } from "@/util"
 import { Context, Duration, Effect, Layer, Record, Cause } from "effect"
 import * as Stream from "effect/Stream"
-import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
+import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema, NoSuchToolError } from "ai"
 import { mergeDeep, pipe } from "remeda"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider"
@@ -795,7 +795,12 @@ const live: Layer.Layer<
             ...failed.toolCall,
             input: JSON.stringify({
               tool: failed.toolCall.toolName,
-              error: failed.error.message,
+              error: NoSuchToolError.isInstance(failed.error)
+                ? new NoSuchToolError({
+                    toolName: failed.toolCall.toolName,
+                    availableTools: activeTools,
+                  }).message
+                : failed.error.message,
             }),
             toolName: "invalid",
           }

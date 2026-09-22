@@ -283,6 +283,9 @@ it.live(
             expect(parts).toHaveLength(1)
             expect(parts[0].tool).not.toBe("write")
             expect(stub.captures).toHaveLength(2)
+            const available = `Available tools: ${stub.captures[0].tools.map((tool) => tool.function.name).join(", ")}.`
+            expect(parts[0].state).toMatchObject({ status: "error", error: expect.stringContaining(available) })
+            expect(JSON.stringify(stub.captures[1].messages.filter((message) => message.role === "tool"))).toContain(available)
           }),
         { git: true, config: config(stub.origin) },
       )
