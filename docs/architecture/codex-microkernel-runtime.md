@@ -62,6 +62,8 @@ GPT profile 会隐藏能力重叠的 `read`、`write`、`edit`、`multiedit`、`
 
 `Tool.Def → toolScriptCatalog → exec description / ALL_TOOLS` 是本地工具元数据的单一生成链路。每项包含 `name`、完整 `description` 和 `inputSchema`。参数通过 Zod 的输入视图生成 JSON Schema，保留字段说明、默认值、范围、字符串/数组约束与嵌套定义；具有默认值的入参仍可省略。
 
+工具 schema 的统一序列化入口是 `Tool.jsonSchema()`：元数据查找经每个 schema 自身的 `meta()`，兼容 Desktop/plugin 独立打包的 Zod 实例；缺少该接口的 core schema 回落引擎 registry。普通请求、前缀快照、工具查询接口与 exec 共用此入口，不复制或修改全局 registry。
+
 `exec` description 同时提供简明 TypeScript 调用签名与完整 JSON 目录；JSON Schema 是参数语义的权威来源，不能只根据 TypeScript 类型推断约束。完整描述不受首行或长度截断。代价是提示词长度增加，不通过字段白名单省略约束。`exec_command` 使用自身参数 schema，而不是宿主 Bash 的入参。
 
 QuickJS 内的 `ALL_TOOLS` 复用同一目录，并附请求已授权的 MCP 工具及其输入 schema；MCP schema 经 AI SDK 规范化读取，不再做字段投影。`$ref`、组合约束和扩展字段原样保留。目录不扩大授权面，CUA 及被排除工具不进入脚本目录。

@@ -166,7 +166,7 @@ function toolScriptCatalog(defs: Tool.Def[]) {
     .map((def) => ({
       name: def.id,
       description: def.description,
-      inputSchema: z.toJSONSchema(def.parameters, { io: "input" }),
+      inputSchema: Tool.jsonSchema(def.parameters, "input"),
     }))
   const aliasEntries = Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([alias, target]) => {
     const def = defs.find((item) => item.id === target)
@@ -174,7 +174,7 @@ function toolScriptCatalog(defs: Tool.Def[]) {
     return [{
       name: alias,
       description: alias === "exec_command" ? EXEC_COMMAND_DESCRIPTION : `Alias for ${target}. ${def.description}`,
-      inputSchema: z.toJSONSchema(alias === "exec_command" ? ExecCommandParameters : def.parameters, { io: "input" }),
+      inputSchema: Tool.jsonSchema(alias === "exec_command" ? ExecCommandParameters : def.parameters, "input"),
     }]
   })
   return [...entries, ...aliasEntries]
