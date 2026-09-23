@@ -18,6 +18,7 @@ import { Database, NotFoundError, and, desc, eq, inArray, lt, or } from "@/stora
 import { MessageTable, PartTable, SessionTable } from "./session.sql"
 import { ProviderError } from "@/provider"
 import { errorMessage } from "@/util/error"
+import { HostErrorRegistry } from "@/error/host-registry"
 import { isMedia } from "@/util/media"
 import type { Provider } from "@/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
@@ -73,6 +74,8 @@ export const APIError = NamedError.create(
     responseHeaders: z.record(z.string(), z.string()).optional(),
     responseBody: z.string().optional(),
     metadata: z.record(z.string(), z.string()).optional(),
+    hostCode: z.string().optional(),
+    hostRetryClass: z.string().optional(),
   }),
 )
 export type APIError = z.infer<typeof APIError.Schema>
@@ -93,7 +96,10 @@ export const ContextOverflowError = NamedError.create(
   "ContextOverflowError",
   z.object({ message: z.string(), responseBody: z.string().optional() }),
 )
-export const InvalidOutputError = NamedError.create("InvalidOutputError", z.object({ message: z.string() }))
+export const InvalidOutputError = NamedError.create(
+  "InvalidOutputError",
+  z.object({ message: z.string(), hostCode: z.string().optional(), hostRetryClass: z.string().optional() }),
+)
 export const TextToolCallError = NamedError.create("TextToolCallError", z.object({ message: z.string() }))
 export const ContentFilterError = NamedError.create("ContentFilterError", z.object({ message: z.string() }))
 export const ModelError = NamedError.create("ModelError", z.object({ message: z.string() }))
@@ -1326,7 +1332,14 @@ function fromParsedStreamError(
 }
 
 export function fromError(
- e: unknown,
+  e: unknown,
+  ctx: { providerID: ProviderID; aborted?: boolean; allow404Retry?: boolean },
+): NonNullable<Assistant["error"]> {
+  return HostErrorRegistry.stampHostError(fromErrorCore(e, ctx), e) as NonNullable<Assistant["error"]>
+}
+
+function fromErrorCore(
+  e: unknown,
   ctx: { providerID: ProviderID; aborted?: boolean; allow404Retry?: boolean },
 ): NonNullable<Assistant["error"]> {
   switch (true) {

@@ -1,5 +1,6 @@
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { Cause, Clock, Duration, Effect, Schedule } from "effect"
+import { isRetryClass, type RetryClass } from "@/error/host-registry"
 import { MessageV2 } from "./message-v2"
 import { ProviderError } from "@/provider"
 import type { Budget as RetryBudgetConfig, Info as RetryConfig } from "@/config/retry"
@@ -184,6 +185,8 @@ export type RetryDecision = {
   uiMessage?: string
   statusCode?: number
   retryAfterMs?: number
+  /** Host registry code when the decision was host-driven (retry banner identity). */
+  hostCode?: string
 }
 
 const RETRYABLE_HTTP_STATUS = new Set([408, 425, 429])
@@ -241,6 +244,20 @@ function messageOf(error: unknown): string {
   return summary?.message || summary?.name || "Provider request failed"
 }
 
+function hostCodeOf(error: unknown): string | undefined {
+  if (error === null || typeof error !== "object") return undefined
+  const data = (error as { data?: { hostCode?: unknown } }).data
+  const code = data?.hostCode ?? (error as { hostCode?: unknown }).hostCode
+  return typeof code === "string" && code.length > 0 ? code : undefined
+}
+
+function hostClassOf(error: unknown): RetryClass | "terminal" {
+  if (error === null || typeof error !== "object") return "terminal"
+  const data = (error as { data?: { hostRetryClass?: unknown } }).data
+  const cls = data?.hostRetryClass ?? (error as { hostRetryClass?: unknown }).hostRetryClass
+  return isRetryClass(cls) ? cls : "terminal"
+}
+
 function responseBodyOf(error: unknown): string | undefined {
   if (MessageV2.APIError.isInstance(error)) return error.data.responseBody
   if (typeof error === "object" && error !== null) {
@@ -295,6 +312,7 @@ export function decide(
 ): RetryDecision {
   if (error === null || typeof error !== "object")
     return { retryable: false, phase, scope, kind: "terminal", message: String(error) }
+  // Terminal invariants first (abort / auth / context overflow) — never host-overrideable to retryable.
   if (MessageV2.ContextOverflowError.isInstance(error)) {
     return { retryable: false, phase, scope, kind: "terminal", message: "Context window exceeded" }
   }
@@ -326,6 +344,7 @@ export function decide(
   const retryAfterMs = MessageV2.APIError.isInstance(error)
     ? (retryAfterFromHeaders(error) ?? retryAfterFromMessage(message))
     : retryAfterFromMessage(message)
+  const hostCode = hostCodeOf(error)
   const retry = (kind: RetryKind, retryPhase = phase, retryMessage = message): RetryDecision => ({
     retryable: true,
     phase: retryPhase,
@@ -334,6 +353,7 @@ export function decide(
     message: retryMessage || "Transient provider failure",
     statusCode: status,
     retryAfterMs,
+    ...(hostCode ? { hostCode } : {}),
   })
   const terminal = (terminalMessage = message, uiMessage?: string): RetryDecision => ({
     retryable: false,
@@ -343,14 +363,26 @@ export function decide(
     message: terminalMessage || "Provider request failed",
     ...(uiMessage ? { uiMessage } : {}),
     statusCode: status,
+    ...(hostCode ? { hostCode } : {}),
   })
 
+  // Explicit engine terminals (quota / 402 / 501 / 505 / hard 404) — cannot be host-retried.
   if (signals.code === "FreeUsageLimitError" || responseBody?.includes("FreeUsageLimitError"))
     return terminal("Usage limit reached", GO_UPSELL_MESSAGE)
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
     return terminal()
   if (status === 402 || status === 501 || status === 505) return terminal()
   if (status === 404 && (!MessageV2.APIError.isInstance(error) || error.data.metadata?.allow404Retry !== "true")) return terminal()
+
+  // Host-stamped codes: class-only decision (no heuristic fall-through).
+  // Missing/invalid class → terminal (deterministic).
+  if (hostCode) {
+    const cls = hostClassOf(error)
+    const kind: RetryKind = cls === "terminal" ? "terminal" : (cls as RetryKind)
+    if (cls === "terminal" || kind === "terminal") return terminal(message)
+    return retry(kind)
+  }
+
   if (signals.code === "stream_read_error" || signals.type === "upstream_error")
     return retry("stream", "stream", signals.message || "Upstream stream read failed")
   if (ProviderError.isRetryableNetworkError(error)) return retry("network")
@@ -441,6 +473,7 @@ export function policy(opts: {
     phase: RetryPhase
     scope: RetryScope
     kind: RetryKind
+    hostCode?: string
   }) => Effect.Effect<void>
   phase?: RetryPhase
   scope?: RetryScope
@@ -499,6 +532,7 @@ export function policy(opts: {
           phase: decision.phase,
           scope: decision.scope,
           kind: decision.kind,
+          hostCode: decision.hostCode,
         })
         return [meta.attempt, Duration.millis(wait)] as [number, Duration.Duration]
       })

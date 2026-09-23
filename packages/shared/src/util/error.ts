@@ -3,6 +3,9 @@ import z from "zod"
 export abstract class NamedError extends Error {
   abstract schema(): z.core.$ZodType
   abstract toObject(): { name: string; data: any }
+  /** Optional host registry stamp (merged into toObject().data). */
+  hostCode?: string
+  hostRetryClass?: string
 
   static hasName(error: unknown, name: string): boolean {
     return (
@@ -41,6 +44,15 @@ export abstract class NamedError extends Error {
       }
 
       toObject() {
+        if (this.hostCode || this.hostRetryClass) {
+          const base =
+            this.data !== null && typeof this.data === "object"
+              ? ({ ...(this.data as Record<string, unknown>) } as Record<string, unknown>)
+              : ({ value: this.data } as Record<string, unknown>)
+          if (this.hostCode) base.hostCode = this.hostCode
+          if (this.hostRetryClass) base.hostRetryClass = this.hostRetryClass
+          return { name: name, data: base as z.input<Data> }
+        }
         return {
           name: name,
           data: this.data,

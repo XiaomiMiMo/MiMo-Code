@@ -12,3 +12,5 @@ export { HostMcp } from "./mcp/host"
 export { HostModelTransport } from "./provider/host-transport"
 /** Capability API tokens — single mint/verify source for embedders. */
 export { LLMServerTokens } from "./llm-server/tokens"
+/** Generic host error catalog injection (codes + retry class). */
+export { HostErrorRegistry } from "./error/host-registry"
