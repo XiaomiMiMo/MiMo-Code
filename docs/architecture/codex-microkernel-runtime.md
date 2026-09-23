@@ -64,6 +64,8 @@ GPT profile 会隐藏能力重叠的 `read`、`write`、`edit`、`multiedit`、`
 
 工具 schema 的统一序列化入口是 `Tool.jsonSchema()`：元数据查找经每个 schema 自身的 `meta()`，兼容 Desktop/plugin 独立打包的 Zod 实例；缺少该接口的 core schema 回落引擎 registry。普通请求、前缀快照、工具查询接口与 exec 共用此入口，不复制或修改全局 registry。
 
+独立打包的 plugin 可同时传 `args` 与由定义方 Zod 构造的完整 `parameters`；引擎优先保留 parameters，并使用其 `toJSONSchema({io})`（若提供）。这让数值范围等内部表示随 Zod 版本变化时仍由定义方解释，而非由引擎旧版 Zod 重新解释。只提供 args 的 plugin 保持兼容。
+
 `exec` description 同时提供简明 TypeScript 调用签名与完整 JSON 目录；JSON Schema 是参数语义的权威来源，不能只根据 TypeScript 类型推断约束。完整描述不受首行或长度截断。代价是提示词长度增加，不通过字段白名单省略约束。`exec_command` 使用自身参数 schema，而不是宿主 Bash 的入参。
 
 QuickJS 内的 `ALL_TOOLS` 复用同一目录，并附请求已授权的 MCP 工具及其输入 schema；MCP schema 经 AI SDK 规范化读取，不再做字段投影。`$ref`、组合约束和扩展字段原样保留。目录不扩大授权面，CUA 及被排除工具不进入脚本目录。

@@ -32,6 +32,8 @@ export type ToolResult = string | { output: string; metadata?: { [key: string]: 
 export function tool<Args extends z.ZodRawShape>(input: {
   description: string
   args: Args
+  /** Complete schema owned by the plugin's Zod instance, when independently bundled. */
+  parameters?: z.ZodObject<Args>
   execute(args: z.infer<z.ZodObject<Args>>, context: ToolContext): Promise<ToolResult>
 }) {
   return input

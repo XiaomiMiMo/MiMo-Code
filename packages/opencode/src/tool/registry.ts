@@ -191,7 +191,7 @@ export const layer = Layer.effect(
         function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
           return {
             id,
-            parameters: z.object(def.args),
+            parameters: def.parameters ?? z.object(def.args),
             description: def.description,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {

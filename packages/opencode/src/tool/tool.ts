@@ -67,6 +67,8 @@ export type DefWithoutID<Parameters extends z.ZodType = z.ZodType, M extends Met
 
 /** Plugin bundles may own another Zod registry. Read metadata at its source. */
 export function jsonSchema(parameters: z.ZodType, io: "input" | "output" = "output") {
+  const owner: z.ZodType & { toJSONSchema?: (options: { io: "input" | "output" }) => z.core.JSONSchema.BaseSchema } = parameters
+  if (typeof owner.toJSONSchema === "function") return owner.toJSONSchema({ io })
   const metadata = z.registry<z.core.GlobalMeta>()
   metadata.get = (schema) => {
     const source: z.core.$ZodType & { meta?: () => z.core.GlobalMeta | undefined } = schema
