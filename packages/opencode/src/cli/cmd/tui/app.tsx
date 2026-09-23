@@ -53,7 +53,6 @@ import { DialogConfirm } from "./ui/dialog-confirm"
 import { ToastProvider, useToast } from "./ui/toast"
 import { ExitProvider, useExit } from "./context/exit"
 import { Session as SessionApi } from "@/session"
-import { orchestratorDir } from "@/global"
 import { TuiEvent } from "./event"
 import { KVProvider, useKV } from "./context/kv"
 import { resolveVisualMode, toggleVisualMode } from "./context/visual"
@@ -235,7 +234,7 @@ export function tui(input: {
   })
 }
 
-function App(props: { onSnapshot?: () => Promise<string[]> }) {
+export function App(props: { onSnapshot?: () => Promise<string[]> }) {
   const tuiConfig = useTuiConfig()
   const plainTerminal = isPlainTerminal()
   const route = useRoute()
@@ -387,55 +386,10 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     })
   })
 
-  // Resolve the orchestrator workspace path once so the -c resume effect below
-  // can tell whether we were launched inside it (only relevant when the feature
-  // is enabled).
-  const [orchestratorDirPath, setOrchestratorDirPath] = createSignal<string | undefined>(undefined)
-  // `undefined` means "not resolved yet" (the async resolve below hasn't run) —
-  // indistinguishable from "resolved to nothing", which is why the -c effect
-  // must not treat undefined as an answer. This flag flips true once the resolve
-  // settles (success OR failure) so the -c effect knows the orchestrator-mode
-  // question has actually been answered.
-  const [orchestratorDirResolved, setOrchestratorDirResolved] = createSignal(false)
-  onMount(() => {
-    if (!Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR) return
-    void orchestratorDir()
-      .then(setOrchestratorDirPath)
-      .catch(() => {})
-      .finally(() => setOrchestratorDirResolved(true))
-  })
-
   let continued = false
   createEffect(() => {
     // When using -c, session list is loaded in blocking phase, so we can navigate at "partial"
     if (continued || sync.status === "loading" || !args.continue) return
-    // RACE GUARD: orchestratorDirPath() resolves asynchronously (onMount above).
-    // If sync reaches "partial" first, orchestratorDirPath() is still undefined
-    // and we'd wrongly skip the orchestrator branch, resume the persistent
-    // orchestrator session as a PLAIN build session, and latch continued=true —
-    // permanently, so the later resolve can never correct it. So when the
-    // feature is on, WAIT for the resolve to settle before deciding. Reading the
-    // signal keeps this effect subscribed, so it re-runs (and re-decides) the
-    // moment the path resolves.
-    if (Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR && !orchestratorDirResolved()) return
-    // Resuming via -c inside the orchestrator workspace means the most-recent
-    // root session IS the persistent orchestrator session. Enter Orchestrator
-    // mode directly (mirrors -s landing in it) instead of resuming it as a
-    // plain build session: switching the agent lets the orchestrator-entry
-    // effect resolve+stash the root, and the composer submits into it. Without
-    // this, -c resumes the orchestrator session in build mode and a later Tab
-    // switch would blackscreen (route left on a session from the launch dir).
-    if (
-      Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR &&
-      orchestratorDirPath() !== undefined &&
-      sdk.directory === orchestratorDirPath()
-    ) {
-      continued = true
-      // No-op if --agent orchestrator already selected it; the entry effect
-      // resolves+stashes the root either way and the composer submits into it.
-      if (local.agent.current()?.name !== "orchestrator") local.agent.set("orchestrator")
-      return
-    }
     const match = sync.data.session
       .toSorted((a, b) => b.time.updated - a.time.updated)
       .find((x) => x.parentID === undefined && !isSystemSession(x))?.id
@@ -470,99 +424,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       }
     })
   })
-
-  // Orchestrator mode is GLOBALLY UNIQUE: switching INTO it (from any launch
-  // directory) switches the working dir to a fixed global orchestrator workspace
-  // and resolves the single root session there (find-or-create). This guarantees
-  // there is exactly one orchestrator session regardless of where the user
-  // launched, so previously-created child sessions are always reachable. Mirrors
-  // dialog-worktree's switch sequence (dispose → switchDirectory → bootstrap).
-  //
-  // Crucially we do NOT route.navigate on mode entry: switching modes must not
-  // swap the view for a fresh session (that's the reported bug). Instead we
-  // stash the resolved root id in local.orchestrator so the composer submits the
-  // first message INTO it (dedupe preserved) and the view only switches after
-  // that message is sent — matching every other mode's behavior.
-  let enteringOrchestrator = false
-  let lastAgentName: string | undefined = undefined
-  // While an orchestrator dir-switch is in flight we can neither keep rendering
-  // the stale launch-dir session (blackscreen: it no longer exists after
-  // switchDirectory) NOR flash Home as an intermediate (the T50 regression). So
-  // we SUPPRESS the view for the switch window and navigate exactly ONCE at the
-  // end — directly to the resolved orchestrator session. StartupLoading already
-  // shows a spinner overlay, so the window reads as "loading", not "home".
-  const [switchingOrchestrator, setSwitchingOrchestrator] = createSignal(false)
-  createEffect(() => {
-    const name = local.agent.current()?.name
-    const prev = lastAgentName
-    lastAgentName = name
-    // Only act on the transition INTO orchestrator, and never re-enter while a
-    // switch is already in flight. No-op entirely when the feature is off.
-    if (!Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR) return
-    // Leaving orchestrator: drop the stashed id so a later non-orchestrator
-    // submit can never accidentally target the orchestrator root.
-    if (name !== "orchestrator") {
-      if (prev === "orchestrator") local.orchestrator.setSessionID(undefined)
-      return
-    }
-    if (prev === "orchestrator" || enteringOrchestrator) return
-    enteringOrchestrator = true
-    // If we're currently viewing a session that belongs to a DIFFERENT (launch)
-    // directory, that session will not exist once we switch the SDK to
-    // orchestratorDir(). Leaving the route pointed at it makes the session
-    // route's session.get fail against the new directory and blank the view
-    // (blackscreen — the T20 -c case). We therefore SUPPRESS the view during the
-    // switch (StartupLoading overlay stands in) instead of navigating to Home —
-    // navigating to Home was the T50 fix but it flashes the Orchestrator home
-    // page before the session appears. When we launched INSIDE the orchestrator
-    // dir (sdk.directory is already orchestratorDir(), the -s
-    // <orchestratorSessionID> direct-entry case), no dir switch happens: the
-    // route already points at the orchestrator root session and MUST be kept —
-    // so suppression is gated by the SAME `sdk.directory !== dir` check that
-    // gates the actual switch (race-free: uses the freshly-resolved dir, not the
-    // async-populated signal).
-    // A `-s <orchestratorSessionID>` launch from OUTSIDE orchestratorDir (the
-    // common case: user runs `mimo -s <id>` from a project dir) navigates the
-    // route to that session (app.tsx onMount) and auto-restores agent=orchestrator
-    // from the session's last message. That drives us here with sdk.directory !==
-    // dir. We suppress the view, switch+bootstrap, then navigate ONCE directly to
-    // the resolved orchestrator root — a single transition, no Home flash, no
-    // blackscreen (the root exists in the switched dir after bootstrap).
-    const resumeIntoSession = args.sessionID != null && route.data.type === "session"
-    void (async () => {
-      try {
-        const dir = await orchestratorDir()
-        const switching = sdk.directory !== dir
-        if (switching) {
-          setSwitchingOrchestrator(true)
-          await sdk.client.instance.dispose().catch(() => {})
-          sdk.switchDirectory(dir)
-          await sync.bootstrap()
-        }
-        // Authoritative resolve-or-create against the switched directory. Reading
-        // sync.data.session here raced bootstrap's NON-blocking session list —
-        // bootstrap resolves before the list lands, so the lookup missed the
-        // existing root and minted another one on every entry.
-        const root = await sync.session.resolveRoot()
-        if (root.id) local.orchestrator.setSessionID(root.id)
-        // A `-s` launch wanted to land IN the orchestrator session; a plain
-        // Tab-into-orchestrator from a stale launch-dir session wanted Home
-        // (the fresh-entry state). Either way navigate exactly once, AFTER
-        // bootstrap, so the switched view resolves directly to its target with
-        // no intermediate frame — the root now exists in orchestratorDir. A root
-        // we just created is empty, so resuming into it makes no sense: go Home.
-        if (root.id && !root.created && resumeIntoSession) route.navigate({ type: "session", sessionID: root.id })
-        else if (switching) route.navigate({ type: "home" })
-      } catch (e) {
-        toast.show({ message: `Failed to enter Orchestrator: ${e}`, variant: "error" })
-      } finally {
-        setSwitchingOrchestrator(false)
-        enteringOrchestrator = false
-      }
-    })()
-  })
-
-
 
   const connected = useConnected()
 
@@ -1493,7 +1354,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       <Show when={Flag.MIMOCODE_SHOW_TTFD}>
         <TimeToFirstDraw />
       </Show>
-      <Show when={ready() && !switchingOrchestrator()}>
+      <Show when={ready()}>
         <Switch>
           <Match when={route.data.type === "home"}>
             <Home />

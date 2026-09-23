@@ -14,11 +14,11 @@ import { Plugin } from "../../src/plugin"
 import * as Git from "../../src/git"
 import { tmpdir } from "../fixture/fixture"
 
-// The affordance that replaced prose. orchestrator.txt says a CONFLICT belongs to
-// the session that owns the branch — abort and route it back — and that sentence
-// lost 3/3 live turns to the model resolving the hunks itself. The fix is that a
-// `git merge` which conflicts reports the rule in its OWN tool result, because a
-// tool result is read before the next tool call and a system prompt is not.
+// The affordance that replaced prose. A CONFLICT belongs to whoever owns the
+// branch — abort and route it back — and that sentence lost 3/3 live turns to
+// the model resolving the hunks itself. The fix is that a `git merge` which
+// conflicts reports the rule in its OWN tool result, because a tool result is
+// read before the next tool call and a system prompt is not.
 //
 // What has to be nailed down, and is:
 //   - a REAL conflicted merge is annotated,
@@ -101,10 +101,10 @@ const clean = async (dir: string) => {
   return branch
 }
 
-const MARKER = "THE CONFLICT IS NOT YOURS TO RESOLVE"
+const MARKER = "THE CONFLICT MAY NOT BE YOURS TO RESOLVE"
 
 describe("tool.bash conflict-ownership affordance", () => {
-  test("annotates a REAL conflicted merge with the ownership rule, the abort and the route-back", async () => {
+  test("annotates a REAL conflicted merge with the ownership rule and the abort", async () => {
     await using tmp = await tmpdir({ git: true, init: conflicting("payments-shard.txt") })
     const output = await bash(tmp.path, "git merge feature")
 
@@ -112,11 +112,20 @@ describe("tool.bash conflict-ownership affordance", () => {
     expect(output).toContain("CONFLICT")
     expect(output).toContain(MARKER)
     // The ownership rule, stated as ownership and not as "be careful".
-    expect(output).toContain("A conflict belongs to the session that OWNS `feature`")
-    // The two literal commands. `git merge --abort` because MERGE_HEAD is what is
-    // on disk; the branch name because git recorded it in MERGE_MSG.
+    expect(output).toContain("A conflict belongs to whoever OWNS `feature`")
+    // The literal abort. `git merge --abort` because MERGE_HEAD is what is on disk.
     expect(output).toContain("1. git merge --abort")
-    expect(output).toContain('2. session send <owning-session-id> "feature conflicts with the base branch')
+    // Ownership branches: resolve only if you own it; otherwise tell the user.
+    expect(output).toContain("If YOU own `feature`")
+    expect(output).toContain("If SOMEONE ELSE owns `feature`")
+    // Honest about delivery: nothing is sent, so never claim the conflict "went back".
+    expect(output).toContain("needs the branch owner to handle it")
+    expect(output).toContain("it has NOT been handed off")
+    expect(output).not.toContain("went back to the")
+    // Never names deleted session-orchestration commands.
+    expect(output).not.toContain("session send")
+    expect(output).not.toContain("session list")
+    expect(output).not.toContain("session create")
     // The conflicted path is named, from git's index rather than from the text.
     expect(output).toContain("payments-shard.txt")
     // And the exact moves the 3 live runs made are named as forbidden.
@@ -204,8 +213,10 @@ describe("tool.merge-conflict-notice decision logic", () => {
   test("notice degrades honestly when git recorded no branch name", () => {
     const text = MergeConflict.notice({ files: ["a.txt"], abort: "git merge --abort", label: "merge" })
     expect(text).toContain("the branch you just integrated")
-    // No id is invented; the roster the session tool already injects is cited.
-    expect(text).toContain("<owning-session-id>")
-    expect(text).toContain("`session list` shows the roster")
+    // No id is invented; no deleted session-orchestration command is named.
+    expect(text).not.toContain("<owning-session-id>")
+    expect(text).not.toContain("session send")
+    expect(text).not.toContain("session list")
+    expect(text).not.toContain("went back to the")
   })
 })

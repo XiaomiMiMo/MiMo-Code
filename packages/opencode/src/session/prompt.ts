@@ -234,22 +234,6 @@ export function buildLoopStreakReminderText(threshold: number): string {
   ].join("\n")
 }
 
-// The orchestrator root session is PERSISTENT and coordinates many tasks over
-// its lifetime, so its title must be stable and task-independent — it must not
-// be renamed by the per-first-message auto-title generator as tasks come and
-// go. Any root session driven by the orchestrator agent keeps this fixed name.
-export const ORCHESTRATOR_TITLE = "Orchestrator"
-
-// Returns the stable, task-independent title a root session should keep instead
-// of a per-message auto-generated one, or undefined when normal auto-titling
-// applies. Pure + exported for unit testing. `agent` is the triggering agent's
-// name (e.g. "orchestrator"); `parentID` distinguishes root from child sessions.
-export function stableRootTitle(input: { agent: string | undefined; parentID: string | undefined }): string | undefined {
-  if (input.parentID) return undefined
-  if (input.agent === "orchestrator") return ORCHESTRATOR_TITLE
-  return undefined
-}
-
 /**
  * Cap on goal-driven main-loop re-entries per turn — the safety valve against
  * a never-satisfiable condition burning tokens forever. Higher than spawned
@@ -1315,11 +1299,6 @@ export const layer = Layer.effect(
       titleLocale?: string
     }) {
       if (input.session.parentID || input.session.titleSource !== "fallback" || input.session.titleRevision !== 0) return
-      const stable = stableRootTitle({ agent: input.agent, parentID: input.session.parentID })
-      if (stable) {
-        yield* sessions.setTitle({ sessionID: input.session.id, title: stable, expectedRevision: input.session.titleRevision })
-        return
-      }
       const firstUser = input.history.find(hasTitleInput)
       if (!firstUser && input.arguments === undefined) return
       const normalized = normalizeTitleInput(firstUser?.parts ?? [{ type: "text", text: input.arguments }, ...(input.files ?? [])])
@@ -1802,9 +1781,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const askActor = input.agentID
         ? yield* actorRegistry.get(input.session.id, input.agentID)
         : undefined
-      // Three-way permission-ask routing (see decideAskRouting): system agent ->
-      // auto-deny; orchestrator peer -> FORWARD for approval; ordinary background
-      // subagent -> INHERIT the parent's held grants; normal -> interactive.
+      // Permission-ask routing (see decideAskRouting): system agent ->
+      // auto-deny; ordinary background subagent -> INHERIT the parent's held
+      // grants; normal -> interactive.
       const askRouting = decideAskRouting({
         askActor: askActor
           ? {
@@ -1817,10 +1796,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         sessionParentID: input.session.parentID,
         sessionID: input.session.id,
         agentName: input.agent.name,
-        orchestratorEnabled: Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR,
       })
       const askInteractive = askRouting.interactive
-      const askForward = askRouting.forward
       const askInherit = askRouting.inherit
       const rejectionFor = (toolID: string) => ({
         title: "Tool not permitted",
@@ -1870,11 +1847,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 sessionID: input.session.id,
                 tool: { messageID: input.processor.message.id, callID: options.toolCallId },
                 ruleset: Agent.runtimePermission(input.agent, input.session.permission),
-                // System-spawned + non-peer background agents have no human to answer
-                // → fail clean, don't hang. Orchestrator peers FORWARD for approval;
-                // ordinary background subagents INHERIT the parent's held grants.
+                // System-spawned + background peers/subagents have no human to
+                // answer → fail clean or inherit the parent's held grants
+                // (decideAskRouting); never hang.
                 interactive: askInteractive,
-                ...(askForward ? { forward: askForward } : {}),
                 ...(askInherit ? { inherit: askInherit } : {}),
               },
               options.abortSignal,

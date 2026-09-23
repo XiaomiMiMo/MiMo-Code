@@ -535,20 +535,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     })
 
-    // Orchestrator mode resolves (find-or-create) its single global root session
-    // on mode entry, but must NOT switch the view then. The resolved id is
-    // stashed here so the composer can submit the first message INTO it instead
-    // of creating a duplicate root. Cleared whenever we leave orchestrator mode.
-    const orchestrator = iife(() => {
-      const [sessionID, setSessionID] = createSignal<string | undefined>(undefined)
-      return {
-        sessionID,
-        setSessionID(id: string | undefined) {
-          setSessionID(id)
-        },
-      }
-    })
-
     const result = {
       model,
       agent,
@@ -556,7 +542,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       neverAsk,
       skipPermissions,
       permissionAskTimeout,
-      orchestrator,
     }
     return result
   },

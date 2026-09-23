@@ -23,7 +23,7 @@ const PRIORITY_WEIGHTS: Record<string, number> = {
   "tui.tips.login": 40,
   "tui.tips.theme_mode": 40,
   "tui.tips.tab_agent": 40,
-  "tui.tips.tab_agent_orchestrator": 40,
+
   "tui.tips.doc": 30,
   "tui.tips.models": 30,
   "tui.tips.connect": 30,
@@ -137,22 +137,17 @@ export function tipWeight(key: string) {
   return PRIORITY_WEIGHTS[key] ?? 1
 }
 
-// Build the tip key pool. The Tab-cycle tip mentions the Orchestrator agent
-// only when the experiment is enabled; otherwise use the variant without it so
-// we never point users at an agent that isn't reachable. The platform-specific
-// suspend tip is always appended last.
+// Build the tip key pool. The platform-specific suspend tip is always appended last.
 export function buildTipKeys(
-  orchestratorEnabled: boolean,
   platform: NodeJS.Platform,
   freeApiSunset = false,
   xiaomiAuthenticated = false,
 ): readonly string[] {
-  const tabAgentKey = orchestratorEnabled ? "tui.tips.tab_agent_orchestrator" : "tui.tips.tab_agent"
   const suspendKey = platform === "win32" ? "tui.tips.suspend.win" : "tui.tips.suspend.unix"
   return [
     ...TIP_KEYS.filter((key) => !freeApiSunset || key !== "tui.tips.free_models"),
     ...(freeApiSunset && !xiaomiAuthenticated ? ["tui.tips.free_api_sunset"] : []),
-    tabAgentKey,
+    "tui.tips.tab_agent",
     suspendKey,
   ]
 }
@@ -202,7 +197,6 @@ export function Tips() {
   const freeApiSunset = createFreeApiSunsetSignal()
   const allKeys = createMemo(() =>
     buildTipKeys(
-      Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR,
       process.platform,
       freeApiSunset(),
       sync.data.provider_next.authenticated.includes("xiaomi"),

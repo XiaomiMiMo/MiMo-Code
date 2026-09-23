@@ -7,8 +7,6 @@ import { WorkspaceContext } from "@/control-plane/workspace-context"
 import { WorkspaceID } from "@/control-plane/schema"
 import { Flag } from "@/flag/flag"
 import { Filesystem } from "@/util"
-import { Global } from "@/global"
-import path from "node:path"
 import { DIRECTORY_DENIED_CODE } from "./access"
 
 export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler {
@@ -31,15 +29,7 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
     // machine. An operator who sets the password themselves keeps the old freedom.
     if (!Flag.MIMOCODE_SERVER_PASSWORD_SUPPLIED) {
       const cwd = Filesystem.resolve(process.cwd())
-      // The fixed global Orchestrator workspace is app-owned (under Global.Path.data),
-      // not user-supplied, so entering Orchestrator mode may switch to it even though
-      // it lives outside the server's cwd. Allow it explicitly — but only when the
-      // Orchestrator feature is enabled (otherwise no escape hatch exists).
-      const orchestrator =
-        Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR
-          ? Filesystem.resolve(path.join(Global.Path.data, "orchestrator"))
-          : undefined
-      if (!Filesystem.contains(cwd, directory) && directory !== orchestrator) {
+      if (!Filesystem.contains(cwd, directory)) {
         // Keep the 403 and the prose message; add a stable `code` so a client can
         // tell this policy rejection apart from a transport failure and surface it
         // instead of dying (see ./access.ts).

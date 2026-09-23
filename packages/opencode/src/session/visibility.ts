@@ -16,14 +16,15 @@ const log = Log.create({ service: "session.visibility" })
  *
  * Enumerated by grepping every `create({ parentID })` in src/ (non-test):
  *
- *   1. `actor/spawn.ts:674` — a PEER child (`session create`, `mode: "peer"`,
+ *   1. `actor/spawn.ts` — a PEER child (`mode: "peer"` spawn),
  *      `session_id === actor_id === child.id`). A real conversation the
  *      subagent dialog already shows. Renderable.
- *   2. `tool/session.ts:128` — the `session ask` fork-query host (`forkQuery`,
+ *   2. `tool/session.ts` — the HTTP `/ask` fork-query host (`forkQuery`,
  *      title `ask: <question>`, `mode: "subagent"`, and `agentType` is the
  *      TARGET's own last-assistant agent, so `build` / `compose` / `general`).
- *      MODEL-spawned and read-only. Renderable — if a compose or workflow run
- *      goes wrong, its side-question transcript is exactly what you want.
+ *      Spawned for a one-shot side question and read-only. Renderable — if a
+ *      compose or workflow run goes wrong, its side-question transcript is
+ *      exactly what you want.
  *   3. `session/checkpoint.ts:851` — the checkpoint-writer host, spawned with
  *      `agentType: "checkpoint-writer"` (`checkpoint.ts:878`). RUNTIME-spawned
  *      bookkeeping. The one population this file exists to refuse.

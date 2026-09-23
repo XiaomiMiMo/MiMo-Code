@@ -1187,23 +1187,6 @@ export function Prompt(props: PromptProps) {
     try {
 
     let sessionID = props.sessionID
-    // In orchestrator mode the single global root session was already resolved
-    // (find-or-create) on mode entry and stashed. Submitting from the home
-    // composer must land the first message INTO that root rather than creating a
-    // duplicate root session. Only applies when the composer has no bound
-    // sessionID (home view) and the current agent is orchestrator.
-    if (sessionID == null && agent.name === "orchestrator") {
-      const stashed = local.orchestrator.sessionID()
-      if (stashed) {
-        sessionID = stashed
-      } else {
-        // Root not resolved yet (mode-entry find-or-create still in flight).
-        // Do NOT fall through to session.create — that would spawn a duplicate
-        // orchestrator root. Ask the user to retry in a moment instead.
-        toast.show({ message: "Orchestrator session is still initializing, try again", variant: "warning" })
-        return false
-      }
-    }
     if (sessionID == null) {
       const res = await sdk.client.session.create({ workspace: props.workspaceID })
 

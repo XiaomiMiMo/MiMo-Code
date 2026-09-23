@@ -389,11 +389,6 @@ export const Flag = {
   // function-calling model.
   MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH:
     MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH"),
-  // Defaults to OFF (opt-in): the Orchestrator primary mode — a general
-  // coordinator that delegates to child sessions via the `session` tool, with a
-  // global singleton workspace and child permission-approval routing. Enable with
-  // MIMOCODE_EXPERIMENTAL_ORCHESTRATOR=true (or the umbrella MIMOCODE_EXPERIMENTAL).
-  MIMOCODE_EXPERIMENTAL_ORCHESTRATOR: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_ORCHESTRATOR"),
   // Defaults to OFF (opt-in): dynamic workflows and built-in workflows.
   // Enable with MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL=true (or the umbrella
   // MIMOCODE_EXPERIMENTAL flag).

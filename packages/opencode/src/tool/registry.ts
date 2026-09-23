@@ -13,7 +13,7 @@ import { ViewImageTool } from "./view-image"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"
 import { CronTool } from "./cron"
-import { SessionTool, SessionTitleTool } from "./session"
+import { SessionTitleTool } from "./session"
 import { WorkflowTool } from "./workflow"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -136,10 +136,8 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ToolRegistry") {}
 
-// SessionTool's `dashboard` verb correlates worktrees via Git.Service. Git is a
-// leaf layer (needs only ChildProcessSpawner) with no shared state, so the
-// registry self-provides it rather than leaking Git.Service as an external
-// requirement onto every consumer (production wiring + ~20 test harnesses).
+// Registry self-provides leaf layers (e.g. Git) rather than leaking them as
+// external requirements onto every consumer (production wiring + test harnesses).
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -174,7 +172,6 @@ export const layer = Layer.effect(
     const memorytool = yield* MemoryTool
     const tasktool = yield* TaskTool
     const crontool = yield* CronTool
-    const sessiontool = yield* SessionTool
     const sessiontitle = yield* SessionTitleTool
     const workflowtool = yield* WorkflowTool
     const toolscript = yield* ToolScriptTool
@@ -251,7 +248,6 @@ export const layer = Layer.effect(
           history: Tool.init(historytool),
           task: Tool.init(tasktool),
           cron: Tool.init(crontool),
-          session: Tool.init(sessiontool),
           sessiontitle: Tool.init(sessiontitle),
           workflow: Tool.init(workflowtool),
           toolscript: Tool.init(toolscript),
@@ -285,7 +281,7 @@ export const layer = Layer.effect(
             tool.task,
             tool.toolscript,
             ...(Flag.MIMOCODE_EXPERIMENTAL_CRON ? [tool.cron] : []),
-            Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR ? tool.session : tool.sessiontitle,
+            tool.sessiontitle,
             ...(Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL ? [tool.workflow] : []),
           ],
           actor: tool.actor,
@@ -388,12 +384,6 @@ export const layer = Layer.effect(
             (tool.id === ToolScriptTool.id && allowExecGateway),
         )
       }
-
-      // The `session` tool is orchestrator-only. Orchestrator is a
-      // full-capability agent (no toolAllowlist), so gate on the agent name
-      // rather than an allowlist: every other agent — primaries without an
-      // allowlist (build/plan/compose) and subagents — must not see `session`.
-      filtered = filtered.filter((tool) => tool.id !== "session" || input.agent.name === "orchestrator")
 
       // No subagent may spawn further subagents. `actor` is the only tool that
       // spawns/runs child agents, so mask it out for every `mode: "subagent"`

@@ -141,7 +141,7 @@ export function DialogSessionList() {
     //
     // classifySession is the same predicate the route's render gate uses, so the
     // list cannot disagree with what opening the entry would do. It fails OPEN
-    // (no actor rows ⇒ listed), which is what keeps orchestrator `session create`
+    // (no actor rows ⇒ listed), which is what keeps peer child sessions
     // children — including the `[topic:…]` ones — listed: they own a mode "peer"
     // row and are returned renderable outright.
     const isChildOfCurrent = (x: { parentID?: string }) => current !== undefined && x.parentID === current

@@ -2,7 +2,6 @@ import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { Session } from "../../src/session"
 import { MessageID } from "../../src/session/schema"
-import { Flag } from "../../src/flag/flag"
 import * as ToolRegistry from "../../src/tool/registry"
 import * as Tool from "../../src/tool/tool"
 import { Instance } from "../../src/project/instance"
@@ -20,7 +19,7 @@ test("session set-title preserves ownership and gates other operations", async (
     const registered = (yield* registry.all()).filter(tool => tool.id === "session")
     expect(registered).toHaveLength(1)
     const tool = registered[0]!
-    expect(tool.parameters.safeParse({ operation: { action: "create", task: "Not a title operation" } }).success).toBe(Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR)
+    expect(tool.parameters.safeParse({ operation: { action: "create", task: "Not a title operation" } }).success).toBe(false)
     expect(tool.parameters.safeParse({ operation: { action: "setTitle", title: "Wrong action" } }).success).toBe(false)
     const ctx: Tool.Context = { sessionID: session.id, messageID: MessageID.ascending(), agent: "build", actorID: "main", abort: new AbortController().signal, messages: [], metadata: () => Effect.void, ask: () => Effect.void }
     expect((yield* tool.execute({ operation: { action: "set-title", title: "Attachment semantics" } }, ctx)).metadata.changed).toBe(true)

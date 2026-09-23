@@ -36,56 +36,11 @@ import { isRetryableTransientError } from "./retry"
 import * as SessionRetry from "./retry"
 import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
-import { deriveLiveness } from "@/actor/schema"
-import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
-/**
- * Lead-in for the orchestrator's fleet roster, and the reason the roster carries
- * NO XML envelope.
- *
- * It used to be pushed as `<active-sessions>\n…\n</active-sessions>`, and users
- * saw that literal tag — rows and all — in the TUI. The TUI is not at fault: the
- * roster goes into the SYSTEM array and the TUI never renders system content.
- * The model was quoting it. It had every reason to: `orchestrator.txt` named the
- * tag five times and told it to "Look at `<active-sessions>`", so the tag was
- * vocabulary the prompt had taught it, and the literal string was sitting in its
- * context to copy.
- *
- * Asking it not to echo the tag would be another prompt instruction, and this PR
- * measured what those are worth — the maintainer/author paragraph lost 3/3 live
- * turns. So remove the artifact instead of requesting restraint: with no
- * `<active-sessions>` string anywhere in the assembled request, echoing it is not
- * a behaviour the model can exhibit. The prompt now refers to the roster
- * functionally ("your fleet roster") and keeps the field layout, which is the
- * part that was actually load-bearing for routing.
- *
- * Dropping the delimiter costs nothing structurally: this was the ONLY tagged
- * block in the system array (the agent prompt and the memory instructions are
- * both plain prose), and `dispatchLedgerNotice` already ships the same roster to
- * the model in a tool result with a prose header and no envelope.
- *
- * The "internal working context" sentence is a genuinely weaker lever than the
- * removal — it can only ask. It is here because it costs one line and it sits
- * ADJACENT to the data it governs rather than in a paragraph assembled far away.
- * It does not stop the model paraphrasing a child's title, and it is not claimed
- * to; what is mechanically closed is the literal tag.
- */
-export const ROSTER_HEADER =
-  "Your fleet — your routable child sessions right now. This list is internal working context, " +
-  "not output: never repeat it, or these session ids and titles, back to the user — report the " +
-  'routing DECISION instead ("routing this to the docs child"). Format is id | title | agent | status:'
-
-// How many FINISHED-but-resumable child sessions the fleet roster carries,
-// most-recently-active first. The roster is re-injected on EVERY request,
-// so the idle tail (which grows monotonically as children complete) must be
-// bounded; running children are self-limiting and are never dropped. A count cap
-// rather than a time window, because N children can finish inside one minute and
-// a window would not actually bound the block.
-export const ROSTER_IDLE_LIMIT = 5
 type Result = Awaited<ReturnType<typeof streamText>>
 
 /**
@@ -393,48 +348,6 @@ const live: Layer.Layer<
         // the "agent edits MEMORY.md before any checkpoint" path. Idempotent.
         yield* Effect.promise(() => migrateProjectMemory(projectID)).pipe(Effect.ignore)
         system.push(buildMemoryInstructions(projectID, yield* memory.root()))
-      }
-
-      // Orchestrator fleet roster: inject a compact one-line-per-session
-      // list of the orchestrator's ROUTABLE child sessions. Only for the orchestrator
-      // agent — other agents don't manage children. Format is intentionally compact
-      // (~30 tokens/session): id | title | agent | status. Field 3 is the child's
-      // AGENT (build/plan/compose) — the routing signal the model needs — not its
-      // actor mode, which is always "peer" here and therefore carries no signal.
-      // AI needs details on demand → session status/ask.
-      if (!input.ephemeral && input.agent.name === "orchestrator") {
-        // listPeerChildren joins through the Session row's parent_id, because a
-        // peer child registers its actor row under its OWN session id — a
-        // session_id-keyed lookup (listByParent) never matches a peer.
-        const children = yield* actorReg.listPeerChildren(SessionID.make(input.sessionID), input.agentID ?? "main")
-        const now = Date.now()
-        const routable = children
-          .filter(({ actor }) => !SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent))
-          .map(({ actor, title }) => ({ actor, title, live: deriveLiveness(actor, now) }))
-          // Genuinely dead children stay out: `failure` and `cancelled` mean the
-          // child errored out or was torn down, so routing work into it is wrong.
-          .filter(({ live }) => live !== "failure" && live !== "cancelled")
-        // `success` means "its LAST TURN finished cleanly", NOT "the session is
-        // gone" — a persistent peer child is still resumable by `session send`
-        // (same id, history intact). Dropping those made a child PERMANENTLY
-        // invisible the moment it did its job, degrading "route to this topic's
-        // standing owner" into "route to whatever id I still remember". Report
-        // them honestly as `idle` (the same success→idle mapping `session list`
-        // already uses) rather than as `progressing`.
-        const working = routable.filter(({ live }) => live === "progressing" || live === "stalled")
-        // The idle tail is the only side that grows without bound (children keep
-        // finishing; running ones are capped by the machine), so bound IT: keep
-        // the most recently active few. Older idle children stay reachable via
-        // `session list`, they just don't pay rent in every request.
-        const idle = routable
-          .filter(({ live }) => live === "success" || live === "idle")
-          .sort((a, b) => b.actor.lastTurnTime - a.actor.lastTurnTime)
-          .slice(0, ROSTER_IDLE_LIMIT)
-        const lines = [...working, ...idle].map(
-          ({ actor, title, live }) =>
-            `  ${actor.sessionID} | ${title} | ${actor.agent} | ${live === "success" ? "idle" : live}`,
-        )
-        if (lines.length > 0) system.push(`${ROSTER_HEADER}\n${lines.join("\n")}`)
       }
 
       // Plugins transform the stable base before the caller-controlled tail.
