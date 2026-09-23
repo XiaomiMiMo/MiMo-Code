@@ -135,6 +135,8 @@ Emitted event types (from the run event stream):
 {"type":"tool_use","timestamp":...,"sessionID":"ses_abc","part":{"type":"tool","tool":"write","state":{"status":"completed",...}}}
 {"type":"step_finish","timestamp":...,"sessionID":"ses_abc","part":{...}}
 {"type":"error","timestamp":...,"sessionID":"ses_abc","error":{...}}
+{"type":"checkpoint_wait_start","timestamp":...,"sessionID":"ses_abc","count":1,"timeoutMs":120000}
+{"type":"checkpoint_wait_end","timestamp":...,"sessionID":"ses_abc","drained":1,"timedOut":0}
 ```
 
 Notes that matter for parsing:
@@ -147,9 +149,12 @@ Notes that matter for parsing:
 - **`text` / `reasoning` text lives at `part.text`**, not top-level `.text`.
 - **`reasoning` is only emitted when `--thinking` is passed.** Without it, no
   reasoning events appear.
-- **Completion is not a stream event.** The process finishes when the run
-  completes; the reliable completion signal is **process exit** (exit code 0),
-  not any line in the JSONL.
+- **Checkpoint wait events appear only when a local `mimo run` has a background
+  checkpoint writer still running after the main answer.** They explain why the
+  process remains open after `step_finish`; `checkpoint_wait_end` says whether
+  the writer settled or the bounded wait timed out.
+- **Completion is not a stream event.** The reliable completion signal is
+  **process exit** (exit code 0), not `step_finish` or `checkpoint_wait_end`.
 
 ### Validation patterns
 

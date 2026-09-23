@@ -314,6 +314,7 @@ export const RunCommand = cmd({
       })
   },
   handler: async (args) => {
+    let activeSessionID: string | undefined
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
       .join(" ")
@@ -651,6 +652,7 @@ export const RunCommand = cmd({
         await Log.exit(1)
         throw new Error("Log.exit returned unexpectedly")
       }
+      activeSessionID = sessionID
       await share(sdk, sessionID)
 
       const queryLog = Log.create({ service: "cli.run.poll" })
@@ -718,13 +720,46 @@ export const RunCommand = cmd({
       return await execute(sdk)
     }
 
-    await bootstrap(process.cwd(), async () => {
-      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = new Request(input, init)
-        return Server.Default().app.fetch(request)
-      }) as typeof globalThis.fetch
-      const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
-      await execute(sdk)
-    })
+    await bootstrap(
+      process.cwd(),
+      async () => {
+        const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = new Request(input, init)
+          return Server.Default().app.fetch(request)
+        }) as typeof globalThis.fetch
+        const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
+        await execute(sdk)
+      },
+      {
+        onCheckpointDrain: (event) => {
+          if (args.format === "json") {
+            process.stdout.write(
+              JSON.stringify({
+                type: event.type === "start" ? "checkpoint_wait_start" : "checkpoint_wait_end",
+                timestamp: Date.now(),
+                sessionID: activeSessionID,
+                ...(event.type === "start"
+                  ? { count: event.count, timeoutMs: event.timeoutMs }
+                  : { drained: event.drained, timedOut: event.timedOut }),
+              }) + EOL,
+            )
+            return
+          }
+          if (event.type === "start") {
+            process.stderr.write(
+              `Waiting for ${event.count} checkpoint ${event.count === 1 ? "writer" : "writers"} (up to ${Math.ceil(event.timeoutMs / 1000)}s)...${EOL}`,
+            )
+            return
+          }
+          if (event.timedOut > 0) {
+            process.stderr.write(
+              `Checkpoint wait ended with ${event.timedOut} ${event.timedOut === 1 ? "writer" : "writers"} still running.${EOL}`,
+            )
+            return
+          }
+          process.stderr.write(`Checkpoint ${event.drained === 1 ? "writer" : "writers"} finished.${EOL}`)
+        },
+      },
+    )
   },
 })

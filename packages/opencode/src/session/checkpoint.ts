@@ -464,6 +464,9 @@ export type TryStartCheckpointWriterInput = {
  */
 export type TryStartCheckpointWriterResult = "started" | "queued" | "skipped"
 
+export type DrainStart = { count: number; timeoutMs: number }
+export type DrainOptions = { timeoutMs?: number; onStart?: (info: DrainStart) => void }
+
 export interface Interface {
   readonly tryStartCheckpointWriter: (
     input: TryStartCheckpointWriterInput,
@@ -489,10 +492,11 @@ export interface Interface {
    * Await all in-flight writers across sessions up to `timeoutMs`. Used by
    * the CLI shutdown path so headless `mimo run` invocations don't exit
    * while a forked checkpoint writer is still waiting on its LLM round-trip.
+   * Calls `onStart` once before waiting when at least one writer is pending.
    * Returns the count of writers that completed vs. still pending when the
    * timeout fired.
    */
-  readonly drainWriters: (input?: { timeoutMs?: number }) => Effect.Effect<{
+  readonly drainWriters: (input?: DrainOptions) => Effect.Effect<{
     drained: number
     timedOut: number
   }>
@@ -1166,7 +1170,7 @@ export const layer: Layer.Layer<
     })
 
 
-    const drainWriters = Effect.fn("SessionCheckpoint.drainWriters")(function* (input?: { timeoutMs?: number }) {
+    const drainWriters = Effect.fn("SessionCheckpoint.drainWriters")(function* (input?: DrainOptions) {
       const timeoutMs = input?.timeoutMs ?? 120_000
       const pending = [...writers.values()]
       if (pending.length === 0) return { drained: 0, timedOut: 0 }
@@ -1174,6 +1178,7 @@ export const layer: Layer.Layer<
         count: pending.length,
         timeoutMs,
       })
+      yield* Effect.sync(() => input?.onStart?.({ count: pending.length, timeoutMs }))
 
       // Deferred.await ignores fiber interruption during shutdown because
       // it resolves via Deferred.succeed in the detached writer. We only
