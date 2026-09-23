@@ -146,6 +146,10 @@ export const Flag = {
   get MIMOCODE_DISABLE_FAIL_CASCADE() {
     return truthy("MIMOCODE_DISABLE_FAIL_CASCADE")
   },
+  // Defaults to protection on. Opt out to allow exact same-step tool repeats.
+  get MIMOCODE_DISABLE_TOOLCALL_DUPLICATE_DETECT() {
+    return truthy("MIMOCODE_DISABLE_TOOLCALL_DUPLICATE_DETECT")
+  },
   MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
   // Default compaction trigger, used when `compaction.max_context` is not set in
   // config. Same grammar as that config field: an absolute token count
