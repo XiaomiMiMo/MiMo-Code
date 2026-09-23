@@ -48,7 +48,7 @@ import type { GrepTool } from "@/tool/grep"
 import type { EditTool } from "@/tool/edit"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
 import type { ViewImageTool } from "@/tool/view-image"
-import type { ReadVideoTool } from "@/tool/read-video"
+import type { WatchVideoTool } from "@/tool/watch-video"
 import type { ListenAudioTool } from "@/tool/listen-audio"
 import type { WebFetchTool } from "@/tool/webfetch"
 import type { CodeSearchTool } from "@/tool/codesearch"
@@ -2350,7 +2350,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "view_image"}>
           <ViewImage {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "read_video" || props.part.tool === "listen_audio"}>
+        <Match when={props.part.tool === "watch_video" || props.part.tool === "listen_audio"}>
           <ReadMedia {...toolprops} />
         </Match>
         <Match when={props.part.tool === "grep"}>
@@ -3421,7 +3421,7 @@ function ViewImage(props: ToolProps<typeof ViewImageTool>) {
   )
 }
 
-function ReadMedia(props: ToolProps<typeof ReadVideoTool | typeof ListenAudioTool>) {
+function ReadMedia(props: ToolProps<typeof WatchVideoTool | typeof ListenAudioTool>) {
   const isRunning = createMemo(() => props.part.state.status === "running")
   const audio = () => props.part.tool === "listen_audio"
   return (

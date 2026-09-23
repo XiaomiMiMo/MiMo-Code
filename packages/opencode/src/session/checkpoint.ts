@@ -222,7 +222,7 @@ const FIRST_CHECKPOINT_WAIT_MS = "5 minutes"
 const COMPACTABLE_TOOL_NAMES = new Set<string>([
   "read",
   "view_image",
-  "read_video",
+  "watch_video",
   "listen_audio",
   "bash",
   "grep",

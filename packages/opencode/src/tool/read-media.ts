@@ -15,7 +15,7 @@ import {
   sniffAttachmentMime,
 } from "@/util/media"
 
-// Shared by read, read_video, and listen_audio so capability and encoded-size gates stay aligned.
+// Shared by read, watch_video, and listen_audio so capability and encoded-size gates stay aligned.
 export const ReadMedia = Effect.gen(function* () {
   const fs = yield* AppFileSystem.Service
 

@@ -130,7 +130,7 @@ describe("rebuild microcompact", () => {
           seedAssistantWithTool(info.id, boundaryTime + 7, "edit", "POST_EDIT_BODY"),
         )
         const postVideo = yield* Effect.promise(() =>
-          seedAssistantWithTool(info.id, boundaryTime + 7, "read_video", "POST_VIDEO_BODY"),
+          seedAssistantWithTool(info.id, boundaryTime + 7, "watch_video", "POST_VIDEO_BODY"),
         )
         const postAudio = yield* Effect.promise(() =>
           seedAssistantWithTool(info.id, boundaryTime + 7, "listen_audio", "POST_AUDIO_BODY"),

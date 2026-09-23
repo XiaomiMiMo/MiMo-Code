@@ -10,7 +10,7 @@ import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
 import { ReadTool, describeMedia } from "./read"
 import { ViewImageTool } from "./view-image"
-import { ReadVideoTool } from "./read-video"
+import { WatchVideoTool } from "./watch-video"
 import { ListenAudioTool } from "./listen-audio"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"
@@ -156,7 +156,7 @@ export const layer = Layer.effect(
     const actor = yield* ActorTool
     const read = yield* ReadTool
     const viewimage = yield* ViewImageTool
-    const readvideo = yield* ReadVideoTool
+    const watchvideo = yield* WatchVideoTool
     const listenaudio = yield* ListenAudioTool
     const question = yield* QuestionTool
     const lsptool = yield* LspTool
@@ -235,7 +235,7 @@ export const layer = Layer.effect(
           bash: Tool.init(bash),
           read: Tool.init(read),
           viewimage: Tool.init(viewimage),
-          readvideo: Tool.init(readvideo),
+          watchvideo: Tool.init(watchvideo),
           listenaudio: Tool.init(listenaudio),
           glob: Tool.init(globtool),
           grep: Tool.init(greptool),
@@ -271,7 +271,7 @@ export const layer = Layer.effect(
             tool.bash,
             tool.read,
             tool.viewimage,
-            tool.readvideo,
+            tool.watchvideo,
             tool.listenaudio,
             tool.glob,
             tool.grep,
@@ -371,7 +371,7 @@ export const layer = Layer.effect(
         if (
           tool.id === ApplyPatchTool.id ||
           tool.id === ViewImageTool.id ||
-          tool.id === ReadVideoTool.id ||
+          tool.id === WatchVideoTool.id ||
           tool.id === ListenAudioTool.id
         )
           return useGPTTools

@@ -8,7 +8,7 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { Truncate, Tool } from "../../src/tool"
-import { ReadVideoTool } from "../../src/tool/read-video"
+import { WatchVideoTool } from "../../src/tool/watch-video"
 import { MAX_MEDIA_BASE64_BYTES } from "../../src/util/media"
 import { ProviderTest } from "../fake/provider"
 import { provideTmpdirInstance, tmpdirScoped } from "../fixture/fixture"
@@ -44,12 +44,12 @@ const it = testEffect(
     ProviderTest.fake({ model }).layer,
   ),
 )
-const run = Effect.fn("ReadVideoTest.run")(function* (filepath: string, next: Tool.Context = ctx) {
-  const tool = yield* ReadVideoTool.pipe(Effect.flatMap(Tool.init))
+const run = Effect.fn("WatchVideoTest.run")(function* (filepath: string, next: Tool.Context = ctx) {
+  const tool = yield* WatchVideoTool.pipe(Effect.flatMap(Tool.init))
   return yield* tool.execute({ path: filepath }, next)
 })
 
-describe("tool.read_video", () => {
+describe("tool.watch_video", () => {
   it.live("reads a relative MP4 path as a video attachment with read permission", () =>
     provideTmpdirInstance(
       (dir) =>

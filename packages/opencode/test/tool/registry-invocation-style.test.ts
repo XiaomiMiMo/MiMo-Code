@@ -42,11 +42,11 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
           harness: "codex",
         })
         const exec = defs.find((tool) => tool.id === "exec")!
-        expect(exec.description).toContain("read_video(input:")
+        expect(exec.description).toContain("watch_video(input:")
         expect(exec.description).toContain("listen_audio(input:")
         const result = yield* exec.execute(
           {
-            code: 'return await Promise.all([tools.read_video({ path: "clip.mp4" }), tools.listen_audio({ path: "clip.wav" })])',
+            code: 'return await Promise.all([tools.watch_video({ path: "clip.mp4" }), tools.listen_audio({ path: "clip.wav" })])',
           },
           {
             sessionID: SessionID.make("ses_test"),
@@ -62,7 +62,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
         )
         expect(result.output).toContain("Video read successfully")
         expect(result.output).toContain("Audio read successfully")
-        const video = viewExecSubtools(result.metadata).find((part) => part.tool === "read_video")
+        const video = viewExecSubtools(result.metadata).find((part) => part.tool === "watch_video")
         expect(video?.state.status).toBe("completed")
         expect(video?.state.attachments).toEqual([
           {
@@ -107,7 +107,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
           "bash",
           "apply_patch",
           "view_image",
-          "read_video",
+          "watch_video",
           "listen_audio",
           "actor",
           "task",
@@ -123,7 +123,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
 
         expect(ids).toEqual(["exec"])
         expect(registered.map((tool) => tool.id)).toContain("webfetch")
-        expect(registered.map((tool) => tool.id)).toContain("read_video")
+        expect(registered.map((tool) => tool.id)).toContain("watch_video")
         expect(registered.map((tool) => tool.id)).toContain("listen_audio")
         nested.forEach((id) => expect(ids).not.toContain(id))
 
@@ -168,7 +168,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
 
         expect(normalDefault.map((tool) => tool.id)).toContain("bash")
         expect(normalDefault.map((tool) => tool.id)).not.toContain("exec")
-        expect(normalDefault.map((tool) => tool.id)).not.toContain("read_video")
+        expect(normalDefault.map((tool) => tool.id)).not.toContain("watch_video")
         expect(normalDefault.map((tool) => tool.id)).not.toContain("listen_audio")
         expect(responsesDefault.map((tool) => tool.id)).toContain("bash")
         expect(responsesDefault.map((tool) => tool.id)).not.toContain("exec")
