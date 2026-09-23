@@ -352,6 +352,7 @@ export const Event = {
       scope: z.enum(["request", "live-step", "max-candidate", "max-judge"]),
       reason: z.string(),
       nextDelayMs: z.number().int().nonnegative(),
+      hostCode: z.string().optional(),
     }),
   ),
   TryBestDetected: BusEvent.define(

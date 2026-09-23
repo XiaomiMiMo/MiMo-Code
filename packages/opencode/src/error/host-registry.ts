@@ -1,6 +1,7 @@
 import z from "zod"
 import fs from "node:fs"
 import path from "node:path"
+import { isNamedErrorCreateName } from "@mimo-ai/shared/util/error"
 
 /**
  * Generic host error registry: hosts inject a declarative birth-identity →
@@ -31,6 +32,9 @@ const HostErrorRuleSchema = z.object({
   retryClass: z.enum(RETRY_CLASSES),
 })
 
+// hostFieldShape is the additive data envelope for NamedError/APIError payloads.
+// Catalog rules use HostErrorRuleSchema above; both share RETRY_CLASSES.
+
 const HostErrorCatalogSchema = z.object({
   protocolVersion: z.literal(1),
   rules: z.record(z.string(), HostErrorRuleSchema),
@@ -51,6 +55,44 @@ export const hostFieldShape = {
   hostCode: z.string().min(1).optional(),
   hostRetryClass: z.enum(RETRY_CLASSES).optional(),
 } as const
+
+/**
+ * Hard-terminal HTTP statuses — shared with decide() so stamp clamp and retry
+ * policy cannot drift. **404 is not unconditional**: decide() treats
+ * `metadata.allow404Retry === "true"` as retryable; clamp must not over-narrow.
+ */
+export function isHardTerminalStatus(status: number | undefined): boolean {
+  if (status === undefined) return false
+  return status === 400 || status === 401 || status === 402 || status === 403 || status === 422 || status === 501 || status === 505
+}
+
+/** True when a 404 may be retried (mirrors decide()). */
+export function isRetryableNotFound(error: unknown): boolean {
+  const data = (error as { data?: { statusCode?: unknown; metadata?: { allow404Retry?: unknown } } } | null)?.data
+  const status = data?.statusCode
+  return status === 404 && data?.metadata?.allow404Retry === "true"
+}
+
+/** NamedError.create names that are always terminal (abort / auth / overflow). */
+const INVARIANT_NAMED = new Set([
+  "MessageAbortedError",
+  "ProviderAuthError",
+  "ContextOverflowError",
+])
+
+/** ErrorName identities that are always terminal (usage-limit body signals without create names). */
+const INVARIANT_ERROR_NAME = new Set(["FreeUsageLimitError", "SubscriptionUsageLimitError"])
+
+export function isInvariantBirth(id: BirthIdentity): boolean {
+  const bare = id.slice(id.indexOf(":") + 1)
+  if (INVARIANT_NAMED.has(bare) || INVARIANT_ERROR_NAME.has(bare)) return true
+  if (id.startsWith("APIError:")) return isHardTerminalStatus(Number(bare))
+  return false
+}
+
+export function clampRetryClass(id: BirthIdentity, retryClass: RetryClass): RetryClass {
+  return isInvariantBirth(id) ? "terminal" : retryClass
+}
 
 let snapshot: HostErrorCatalog = { protocolVersion: 1, rules: {} }
 
@@ -129,38 +171,15 @@ export function birthIdentity(error: unknown): BirthIdentity | null {
 
   // 1) APIError + numeric status (APIError is a NamedError named "APIError").
   if (name === "APIError" && status !== undefined) return `APIError:${status}`
-  // 2) NamedError instance or serialized toObject shape (has structured `data`).
-  const hasNamedData = e.data !== undefined && typeof e.data === "object" && e.data !== null
-  if (name && hasNamedData) return `NamedError:${name}`
-  if (name && NAMED_ERROR_NAMES.has(name)) return `NamedError:${name}`
+  // 2) NamedError instance or registered create-name (single source: NamedError.create).
+  const isNamedInstance =
+    typeof (error as { toObject?: unknown }).toObject === "function" ||
+    (name !== null && isNamedErrorCreateName(name))
+  if (name && isNamedInstance) return `NamedError:${name}`
   // 3) Plain error.name (including TypeError and other host objects).
   if (name) return `ErrorName:${name}`
   return null
 }
-
-const NAMED_ERROR_NAMES = new Set([
-  "UnknownError",
-  "MessageOutputLengthError",
-  "MessageAbortedError",
-  "StructuredOutputError",
-  "ProviderAuthError",
-  "APIError",
-  "ContextOverflowError",
-  "InvalidOutputError",
-  "TextToolCallError",
-  "EmptyToolCallError",
-  "ContentFilterError",
-  "ModelError",
-  "NotGitError",
-  "NameGenerationFailedError",
-  "CreateFailedError",
-  "StartCommandFailedError",
-  "RemoveFailedError",
-  "ResetFailedError",
-  "InvalidError",
-  "NameMismatchError",
-  "ConfigDirectoryTypoError",
-])
 
 function finiteInt(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value
@@ -185,10 +204,18 @@ export function resolveHostRule(error: unknown): HostErrorRule | null {
   return snapshot.rules[id] ?? null
 }
 
+const malformedStampWarned = new Set<string>()
+
 export function hostRetryClass(error: unknown): RetryClass | null {
   const data = hostDataOf(error)
   if (data?.hostCode) {
-    return isRetryClass(data.hostRetryClass) ? data.hostRetryClass : "terminal"
+    if (isRetryClass(data.hostRetryClass)) return data.hostRetryClass
+    // hostCode present but missing/invalid class → terminal (deterministic) + warn once per code.
+    if (!malformedStampWarned.has(data.hostCode)) {
+      malformedStampWarned.add(data.hostCode)
+      console.warn(`[host-error-registry] malformed stamp ${data.hostCode}; class → terminal`)
+    }
+    return "terminal"
   }
   const rule = resolveHostRule(error)
   return rule?.retryClass ?? null
@@ -204,17 +231,33 @@ function hostDataOf(error: unknown): StampedErrorData | undefined {
 /**
  * Stamp host fields at construction/normalization. Idempotent if `hostCode` already set.
  * Accepts NamedError instances (sets instance fields for toObject merge) or plain `{name,data}`.
+ * Invariant identities are clamped to `terminal` with a one-line warn.
  */
 export function stampHostError<T extends object>(target: T, original?: unknown): T {
   const existing = hostDataOf(target)
   if (existing?.hostCode) return target
 
-  const source = original !== undefined ? original : target
-  const rule = resolveHostRule(source) ?? resolveHostRule(target)
-  if (!rule) return target
+  // Preserve stamp-once across fromError rebuilds: copy host fields from original first.
+  const origData = original !== undefined ? hostDataOf(original) : undefined
+  if (origData?.hostCode) {
+    applyStamp(target, origData.hostCode, isRetryClass(origData.hostRetryClass) ? origData.hostRetryClass : "terminal")
+    return target
+  }
 
-  // Invalid/missing class on an existing stamp is handled in decide(); here we write the rule as-is.
-  applyStamp(target, rule.code, rule.retryClass)
+  const source = original !== undefined ? original : target
+  const id = birthIdentity(source) ?? birthIdentity(target)
+  const rule = resolveHostRule(source) ?? resolveHostRule(target)
+  if (!rule || !id) return target
+
+  let cls = clampRetryClass(id, rule.retryClass)
+  // 404 + allow404Retry is the one conditional hard status: do not clamp to terminal.
+  if (id.startsWith("APIError:") && Number(id.slice("APIError:".length)) === 404 && isRetryableNotFound(source)) {
+    cls = rule.retryClass
+  }
+  if (cls !== rule.retryClass) {
+    console.warn(`[host-error-registry] clamped ${rule.code} (${id}) to terminal`)
+  }
+  applyStamp(target, rule.code, cls)
   return target
 }
 
@@ -241,17 +284,6 @@ function applyStamp(target: object, code: string, retryClass: RetryClass): void 
       configurable: true,
     })
   }
-}
-
-/** Merge instance-level host fields into serialized `data` (for NamedError.toObject). */
-export function mergeHostFields<T extends { data: Record<string, unknown> }>(
-  data: T["data"],
-  instance: { hostCode?: string; hostRetryClass?: RetryClass },
-): T["data"] {
-  const out: Record<string, unknown> = { ...data }
-  if (instance.hostCode) out.hostCode = instance.hostCode
-  if (instance.hostRetryClass && isRetryClass(instance.hostRetryClass)) out.hostRetryClass = instance.hostRetryClass
-  return out as T["data"]
 }
 
 export * as HostErrorRegistry from "./host-registry"

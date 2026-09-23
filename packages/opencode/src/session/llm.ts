@@ -905,6 +905,7 @@ const live: Layer.Layer<
                         scope: "request",
                         reason: decision.message,
                         nextDelayMs: wait,
+                        hostCode: decision.hostCode,
                       }),
                     )
                     yield* Effect.sleep(Duration.millis(wait))

@@ -1,5 +1,14 @@
 import z from "zod"
 
+/** Single source of NamedError.create name literals (for host birth-identity). */
+const NAMED_ERROR_CREATE_NAMES = new Set<string>(["UnknownError"])
+export function isNamedErrorCreateName(name: string): boolean {
+  return NAMED_ERROR_CREATE_NAMES.has(name)
+}
+export function namedErrorCreateNames(): readonly string[] {
+  return [...NAMED_ERROR_CREATE_NAMES]
+}
+
 export abstract class NamedError extends Error {
   abstract schema(): z.core.$ZodType
   abstract toObject(): { name: string; data: any }
@@ -14,6 +23,7 @@ export abstract class NamedError extends Error {
   }
 
   static create<Name extends string, Data extends z.core.$ZodType>(name: Name, data: Data) {
+    NAMED_ERROR_CREATE_NAMES.add(name)
     const schema = z
       .object({
         name: z.literal(name),

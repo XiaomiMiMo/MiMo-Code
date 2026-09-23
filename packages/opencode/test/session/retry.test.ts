@@ -4,7 +4,8 @@ import { APICallError, RetryError } from "ai"
 import { setTimeout as sleep } from "node:timers/promises"
 import { Effect, Schedule, Schema } from "effect"
 import { ConfigRetry } from "../../src/config/retry"
-import { SessionRetry, decide, isRetryableTransientError, retryable } from "../../src/session/retry"
+import { SessionRetry, decide, isRetryableTransientError, retryable, budgetFor } from "../../src/session/retry"
+import { loadHostErrorCatalog, stampHostError } from "../../src/error/host-registry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderID } from "../../src/provider/schema"
 import { ProviderError } from "../../src/provider"
@@ -971,5 +972,119 @@ describe("retry decision and coordinator budget", () => {
     expect(decide(auth)).toMatchObject({ retryable: false, kind: "terminal" })
     const overflow = new MessageV2.ContextOverflowError({ message: "too long" }).toObject()
     expect(decide(overflow)).toMatchObject({ retryable: false, kind: "terminal" })
+  })
+})
+
+describe("host registry budget and publish (R006/R011)", () => {
+  test("budgetFor selects host kind budgets by phase/scope", () => {
+    loadHostErrorCatalog({ protocolVersion: 1, rules: {} })
+    const cfg = {
+      request: { mode: "bounded", maxRetries: 4, maxElapsedMs: 30_000, initialDelayMs: 200, maxDelayMs: 30_000, jitterRatio: 0 },
+      stream: { mode: "bounded", maxRetries: 5, maxElapsedMs: 60_000, initialDelayMs: 2000, maxDelayMs: 30_000, jitterRatio: 0 },
+      maxCandidate: { mode: "bounded", maxRetries: 1, maxElapsedMs: 1, initialDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 },
+      maxJudge: { mode: "bounded", maxRetries: 1, maxElapsedMs: 1, initialDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 },
+      network: { mode: "persistent", maxRetries: 0, maxElapsedMs: 0, initialDelayMs: 2000, maxDelayMs: 30_000, jitterRatio: 0 },
+      server: { mode: "persistent", maxRetries: 0, maxElapsedMs: 0, initialDelayMs: 2000, maxDelayMs: 30_000, jitterRatio: 0 },
+      rateLimit: { mode: "persistent", maxRetries: 0, maxElapsedMs: 0, initialDelayMs: 2000, maxDelayMs: 30_000, jitterRatio: 0 },
+      unknown: { mode: "bounded", maxRetries: 8, maxElapsedMs: 900_000, initialDelayMs: 2000, maxDelayMs: 30_000, jitterRatio: 0 },
+      jitterRatio: 0,
+    } as never
+    const base = { retryable: true, message: "m", hostCode: "host.x" }
+    expect(budgetFor(cfg, { ...base, phase: "stream", scope: "live-step", kind: "network" }).mode).toBe("persistent")
+    expect(budgetFor(cfg, { ...base, phase: "request", scope: "request", kind: "rate_limit" }).mode).toBe("persistent")
+    expect(budgetFor(cfg, { ...base, phase: "stream", scope: "max-candidate", kind: "server" }).maxRetries).toBe(1)
+    expect(budgetFor(cfg, { ...base, phase: "request", scope: "request", kind: "unknown" }).maxRetries).toBe(4)
+    expect(budgetFor(cfg, { ...base, phase: "stream", scope: "live-step", kind: "unknown" }).maxRetries).toBe(8)
+    expect(budgetFor(cfg, { ...base, phase: "request", scope: "request", kind: "terminal" as never }).mode).toBe("bounded")
+  })
+
+  test("host RetryClass matrix drives decide kinds (network/server/stream/unknown)", () => {
+    loadHostErrorCatalog({
+      protocolVersion: 1,
+      rules: {
+        "NamedError:InvalidOutputError": { code: "h.term", retryClass: "terminal" },
+      },
+    })
+    const cases = [
+      ["network", "network"],
+      ["server", "server"],
+      ["stream", "stream"],
+      ["unknown", "unknown"],
+      ["rate_limit", "rate_limit"],
+      ["terminal", "terminal"],
+    ] as const
+    for (const [cls, kind] of cases) {
+      const d = decide({
+        name: "APIError",
+        data: { message: "x", isRetryable: true, hostCode: "h.x", hostRetryClass: cls },
+      })
+      expect(d.kind).toBe(kind)
+      expect(d.hostCode).toBe("h.x")
+      expect(d.retryable).toBe(cls !== "terminal")
+    }
+  })
+
+  test("RetryAttempt/policy set carries hostCode only when host-driven", () => {
+    loadHostErrorCatalog({ protocolVersion: 1, rules: {} })
+    const hostDriven = decide({
+      name: "APIError",
+      data: { message: "x", isRetryable: true, hostCode: "h.r", hostRetryClass: "rate_limit" },
+    })
+    expect(hostDriven.hostCode).toBe("h.r")
+    const heuristic = decide({
+      name: "APIError",
+      data: { message: "Too Many Requests", statusCode: 429, isRetryable: true },
+    })
+    expect(heuristic.retryable).toBe(true)
+    expect(heuristic.hostCode).toBeUndefined()
+  })
+})
+
+describe("policy set hostCode publish (R006/R011)", () => {
+  test("opts.set receives hostCode iff host-driven", async () => {
+    loadHostErrorCatalog({ protocolVersion: 1, rules: {} })
+    const captured: Array<{ hostCode?: string; message: string }> = []
+    const schedule = SessionRetry.policy({
+      parse: (err) => err as ReturnType<NamedError["toObject"]>,
+      set: (info) =>
+        Effect.sync(() => {
+          captured.push({ hostCode: info.hostCode, message: info.message })
+        }),
+      maxElapsedMs: 5,
+      initialDelayMs: 0,
+      jitterRatio: 0,
+      maxRetries: 1,
+    })
+    const hostErr = {
+      name: "APIError",
+      data: { message: "host-fail", isRetryable: true, hostCode: "h.r", hostRetryClass: "rate_limit" },
+    }
+    await expect(
+      Effect.runPromise(Effect.suspend(() => Effect.fail(hostErr)).pipe(Effect.retry(schedule))),
+    ).rejects.toBe(hostErr)
+    expect(captured.length).toBeGreaterThanOrEqual(1)
+    expect(captured[0]!.hostCode).toBe("h.r")
+
+    captured.length = 0
+    const heurSchedule = SessionRetry.policy({
+      parse: (err) => err as ReturnType<NamedError["toObject"]>,
+      set: (info) =>
+        Effect.sync(() => {
+          captured.push({ hostCode: info.hostCode, message: info.message })
+        }),
+      maxElapsedMs: 50,
+      initialDelayMs: 0,
+      jitterRatio: 0,
+      maxRetries: 1,
+    })
+    const heurErr = {
+      name: "APIError",
+      data: { message: "weird transient failure", isRetryable: true },
+    }
+    await expect(
+      Effect.runPromise(Effect.suspend(() => Effect.fail(heurErr)).pipe(Effect.retry(heurSchedule))),
+    ).rejects.toBe(heurErr)
+    expect(captured.length).toBeGreaterThanOrEqual(1)
+    expect(captured[0]!.hostCode).toBeUndefined()
   })
 })

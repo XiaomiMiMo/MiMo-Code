@@ -75,7 +75,7 @@ export const APIError = NamedError.create(
     responseBody: z.string().optional(),
     metadata: z.record(z.string(), z.string()).optional(),
     hostCode: z.string().optional(),
-    hostRetryClass: z.string().optional(),
+    hostRetryClass: z.enum(HostErrorRegistry.RETRY_CLASSES).optional(),
   }),
 )
 export type APIError = z.infer<typeof APIError.Schema>
@@ -98,7 +98,11 @@ export const ContextOverflowError = NamedError.create(
 )
 export const InvalidOutputError = NamedError.create(
   "InvalidOutputError",
-  z.object({ message: z.string(), hostCode: z.string().optional(), hostRetryClass: z.string().optional() }),
+  z.object({
+    message: z.string(),
+    hostCode: z.string().optional(),
+    hostRetryClass: z.enum(HostErrorRegistry.RETRY_CLASSES).optional(),
+  }),
 )
 export const TextToolCallError = NamedError.create("TextToolCallError", z.object({ message: z.string() }))
 export const ContentFilterError = NamedError.create("ContentFilterError", z.object({ message: z.string() }))

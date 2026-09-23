@@ -927,6 +927,7 @@ export const layer: Layer.Layer<
                         next: info.next,
                         phase: info.phase,
                         scope: info.scope,
+                        hostCode: info.hostCode,
                       })
                     }
                     yield* bus
@@ -941,6 +942,7 @@ export const layer: Layer.Layer<
                         scope: info.scope,
                         reason: info.message,
                         nextDelayMs: Math.max(0, info.next - Date.now()),
+                        hostCode: info.hostCode,
                       })
                       .pipe(Effect.ignore)
                   }),
@@ -991,6 +993,7 @@ export const layer: Layer.Layer<
                           next: Date.now(),
                           phase: "stream",
                           scope: "live-step",
+                          hostCode: decision.hostCode,
                         })
                         .pipe(Effect.ignore)
                     }

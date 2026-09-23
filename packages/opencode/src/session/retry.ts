@@ -1,6 +1,6 @@
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { Cause, Clock, Duration, Effect, Schedule } from "effect"
-import { isRetryClass, type RetryClass } from "@/error/host-registry"
+import { hostRetryClass, isHardTerminalStatus, type RetryClass } from "@/error/host-registry"
 import { MessageV2 } from "./message-v2"
 import { ProviderError } from "@/provider"
 import type { Budget as RetryBudgetConfig, Info as RetryConfig } from "@/config/retry"
@@ -252,10 +252,7 @@ function hostCodeOf(error: unknown): string | undefined {
 }
 
 function hostClassOf(error: unknown): RetryClass | "terminal" {
-  if (error === null || typeof error !== "object") return "terminal"
-  const data = (error as { data?: { hostRetryClass?: unknown } }).data
-  const cls = data?.hostRetryClass ?? (error as { hostRetryClass?: unknown }).hostRetryClass
-  return isRetryClass(cls) ? cls : "terminal"
+  return hostRetryClass(error) ?? "terminal"
 }
 
 function responseBodyOf(error: unknown): string | undefined {
@@ -366,12 +363,12 @@ export function decide(
     ...(hostCode ? { hostCode } : {}),
   })
 
-  // Explicit engine terminals (quota / 402 / 501 / 505 / hard 404) — cannot be host-retried.
+  // Explicit engine terminals (quota / hard HTTP statuses) — cannot be host-retried.
   if (signals.code === "FreeUsageLimitError" || responseBody?.includes("FreeUsageLimitError"))
     return terminal("Usage limit reached", GO_UPSELL_MESSAGE)
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
     return terminal()
-  if (status === 402 || status === 501 || status === 505) return terminal()
+  if (isHardTerminalStatus(status)) return terminal()
   if (status === 404 && (!MessageV2.APIError.isInstance(error) || error.data.metadata?.allow404Retry !== "true")) return terminal()
 
   // Host-stamped codes: class-only decision (no heuristic fall-through).
@@ -410,7 +407,6 @@ export function decide(
   if (status !== undefined && (RETRYABLE_HTTP_STATUS.has(status) || (status >= 500 && status <= 599 && status !== 501 && status !== 505)))
     return retry(status === 429 ? "rate_limit" : "server")
   if (MessageV2.APIError.isInstance(error)) {
-    if (status === 400 || status === 401 || status === 403 || status === 422) return terminal()
     if (error.data.isRetryable) return retry("unknown")
   }
   // UnknownError = fromError catch-all (including 5xx that lost statusCode).

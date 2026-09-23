@@ -21,6 +21,7 @@ export const Info = z
       next: z.number(),
       phase: z.enum(["request", "stream"]).optional(),
       scope: z.enum(["request", "live-step", "max-candidate", "max-judge"]).optional(),
+      hostCode: z.string().optional(),
     }),
     z.object({
       type: z.literal("notice"),
