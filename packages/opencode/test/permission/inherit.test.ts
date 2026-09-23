@@ -299,3 +299,48 @@ describe("skip-all inheritance for background subagents", () => {
     ),
   )
 })
+
+describe("Permission.reply reject source isolation", () => {
+  it.live(
+    "reject does not cascade to a different tool.messageID source",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        const askA = yield* perm
+          .ask({
+            permission: "bash" as never,
+            patterns: ["sudo ls"],
+            always: ["*"],
+            metadata: {},
+            sessionID: "ses_main" as never,
+            ruleset: [],
+            tool: { messageID: "msg_a" as never, callID: "c_a" },
+          })
+          .pipe(Effect.forkScoped)
+        const askB = yield* perm
+          .ask({
+            permission: "bash" as never,
+            patterns: ["sudo ls"],
+            always: ["*"],
+            metadata: {},
+            sessionID: "ses_main" as never,
+            ruleset: [],
+            tool: { messageID: "msg_b" as never, callID: "c_b" },
+          })
+          .pipe(Effect.forkScoped)
+        while ((yield* perm.list()).length < 2) {
+          yield* Effect.promise(() => Bun.sleep(10))
+        }
+        const pending = yield* perm.list()
+        const a = pending.find((x) => x.tool?.callID === "c_a")!
+        yield* perm.reply({ requestID: a.id, reply: "reject" })
+        // R20: reject A 不得连坐 B — B 仍留在 pending
+        const left = yield* perm.list()
+        expect(left.length).toBe(1)
+        expect(left[0]!.tool?.callID).toBe("c_b")
+        yield* Fiber.interrupt(askA).pipe(Effect.ignore)
+        yield* Fiber.interrupt(askB).pipe(Effect.ignore)
+      }),
+    ),
+  )
+})

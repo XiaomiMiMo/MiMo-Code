@@ -207,7 +207,8 @@ export function evaluate(permission: string, pattern: string, ...rulesets: Rules
 // perform an irreversible action must be recorded in-band, not inherited from
 // a broad blanket rule. Explicit deny still wins; the tool-side delete exemption
 // (dedicated or enabled by dangerous startup mode) is the only bypass.
-const FORCED_ASK = new Set(["bash_delete"])
+// computer is desktop-side UI control — never auto-allow via inherit/approved/skip-all.
+const FORCED_ASK = new Set(["bash_delete", "computer"])
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
 
@@ -459,8 +460,13 @@ export const layer = Layer.effect(
           input.message ? new CorrectedError({ feedback: input.message }) : new RejectedError(),
         )
 
+        // Cascade reject only within the same source (tool.messageID). Shared
+        // sessionID actor subagents must not see A's reject kill B's pending asks (R20).
+        const src = existing.info.tool?.messageID
         for (const [id, item] of pending.entries()) {
           if (item.info.sessionID !== existing.info.sessionID) continue
+          const itemSrc = item.info.tool?.messageID
+          if (src && itemSrc && src !== itemSrc) continue
           pending.delete(id)
           yield* bus.publish(Event.Replied, {
             sessionID: item.info.sessionID,
