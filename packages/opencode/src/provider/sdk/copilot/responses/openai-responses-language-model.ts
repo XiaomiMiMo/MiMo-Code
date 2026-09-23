@@ -1357,7 +1357,10 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                 type: "reasoning-delta",
                 id: `${activeItem.canonicalId}:${value.summary_index}`,
                 delta: value.delta,
-                providerMetadata: { openai: { itemId: activeItem.canonicalId } },
+                providerMetadata: { openai: {
+                  itemId: activeItem.canonicalId,
+                  ...(activeItem.encryptedContent != null ? { reasoningEncryptedContent: activeItem.encryptedContent } : {}),
+                } },
               })
             } else if (isResponseFinishedChunk(value)) {
               finishReason = {

@@ -72,11 +72,13 @@ test("reasoning encryption survives a sparse end event and a stream without an e
   for (const done of [true, false]) {
     const sdk = createOpenaiCompatible({ name: "openai", fetch: (async () => new Response([
       { type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_sparse", encrypted_content: "synthetic-encrypted" } },
+      { type: "response.reasoning_text.delta", output_index: 0, item_id: "rs_sparse", content_index: 0, delta: "partial reasoning" },
       ...(done ? [{ type: "response.output_item.done", output_index: 0, item: { type: "reasoning", id: "rs_sparse" } }] : []),
       { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } },
     ].map(e => `data: ${JSON.stringify(e)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch });
     const stream = await sdk.responses("mimo-test").doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "test" }] }] });
     const parts = await read(stream.stream);
+    expect(parts.find(p => p.type === "reasoning-delta")?.providerMetadata?.openai).toMatchObject({ reasoningEncryptedContent: "synthetic-encrypted" });
     expect(parts.filter(p => p.type === "reasoning-end")).toHaveLength(1);
     expect(parts.find(p => p.type === "reasoning-end")?.providerMetadata?.openai).toEqual({ itemId: "rs_sparse", reasoningEncryptedContent: "synthetic-encrypted" });
   }
