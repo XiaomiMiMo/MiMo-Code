@@ -19,6 +19,7 @@ import {
   postJsonToApi,
 } from "@ai-sdk/provider-utils"
 import { z } from "zod/v4"
+import { isMimoModel } from "../../../mimo-model"
 import type { OpenAIConfig } from "./openai-config"
 import { openaiFailedResponseHandler } from "./openai-error"
 import { codeInterpreterInputSchema, codeInterpreterOutputSchema } from "./tool/code-interpreter"
@@ -1844,7 +1845,7 @@ function getResponsesModelConfig(modelId: string): ResponsesModelConfig {
     supportsPriorityProcessing,
   }
 
-  if (/(?:^|\/)mimo(?:[.-]|$)/i.test(modelId)) return { ...defaults, isReasoningModel: true }
+  if (isMimoModel(modelId)) return { ...defaults, isReasoningModel: true }
 
   // gpt-5-chat models are non-reasoning
   if (modelId.startsWith("gpt-5-chat")) {

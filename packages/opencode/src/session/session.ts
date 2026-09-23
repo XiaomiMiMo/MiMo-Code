@@ -827,7 +827,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
     const resolvePrompt = Effect.fn("Session.resolvePrompt")(function (input: {
       sessionID: SessionID
       fallback?: Partial<PromptConfig>
-    replace?: boolean
+      replace?: boolean
     }) {
       return promptLock(input.sessionID).withPermits(1)(
         Effect.gen(function* () {

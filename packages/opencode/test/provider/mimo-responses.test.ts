@@ -83,3 +83,28 @@ test("reasoning encryption survives a sparse end event and a stream without an e
     expect(parts.find(p => p.type === "reasoning-end")?.providerMetadata?.openai).toEqual({ itemId: "rs_sparse", reasoningEncryptedContent: "synthetic-encrypted" });
   }
 });
+
+// [TP-R7-06] Explicitly registered MiMo aliases use both the Codex transport and reasoning options.
+test("v2.6-flash-test is a MiMo Responses alias without changing its API model ID", async () => {
+  const { Provider, ProviderTransform } = await import("../../src/provider")
+  const { ProviderTest } = await import("../fake/provider")
+  const { ModelID, ProviderID } = await import("../../src/provider/schema")
+  const model = ProviderTest.model({ id: ModelID.make("v2.6-flash-test"), providerID: ProviderID.make("test"), api: { id: "v2.6-flash-test", npm: "@ai-sdk/openai-compatible", url: "https://example.test/v1" } })
+  expect(Provider.isMimoOrSmartModel("v2.6-flash-test")).toBe(true)
+  expect(Provider.isMimoOrSmartModel("test/v2.6-flash-test")).toBe(true)
+  expect(Provider.isMimoOrSmartModel("v2.6-pro-test")).toBe(false)
+  expect(Provider.isMimoOrSmartModel("v2.6-flash-test-other")).toBe(false)
+  const resolved = Provider.forHarness(model, "codex")
+  expect(resolved.api.npm).toBe("@mimo/responses")
+  expect(resolved.api.id).toBe("v2.6-flash-test")
+  expect(Provider.forHarness(model, "default")).toBe(model)
+  const sdk = createOpenaiCompatible({ name: "openai", baseURL: "https://example.test/v1", fetch: (async (_url, init) => {
+    const body = JSON.parse(String(init?.body))
+    expect(body.model).toBe("v2.6-flash-test")
+    expect(body.reasoning.summary).toBe("auto")
+    expect(body.store).toBe(false)
+    expect(body.include).toContain("reasoning.encrypted_content")
+    return new Response('data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n', { headers: { "content-type": "text/event-stream" } })
+  }) as typeof fetch })
+  await read((await sdk.responses(resolved.api.id).doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "test" }] }], providerOptions: ProviderTransform.providerOptions(resolved, {}) })).stream)
+})

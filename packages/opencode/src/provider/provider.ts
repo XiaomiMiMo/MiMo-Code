@@ -1,4 +1,5 @@
 import { usesGPTToolset, type HarnessMode } from "../tool/gpt"
+import { isMimoModel } from "./mimo-model"
 import { HostModelTransport } from "./host-transport"
 import z from "zod"
 import os from "os"
@@ -1137,7 +1138,7 @@ const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 // MiMo catalog models use stock Chat by default; forHarness selects Responses
 // per request without mutating provider configuration or its cached model metadata.
 export function isMimoOrSmartModel(id: string) {
-  return /(^|[/_-])mimo(?:[.-]|$)/i.test(id)
+  return isMimoModel(id)
 }
 
 /** Request-only transport view; model and provider identities remain unchanged. */
