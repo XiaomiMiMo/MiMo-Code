@@ -5635,3 +5635,33 @@ describe("trailing-user resume integration", () => {
     ),
   )
 })
+
+// [TP-R9-02] Desktop must not change a busy session's harness; the next idle turn can change it.
+it.live("Desktop refreshes the primary prompt only while idle", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const before = process.env.MIMOCODE_CLIENT
+      process.env.MIMOCODE_CLIENT = "desktop"
+      try {
+        const sessions = yield* Session.Service
+        const prompt = yield* SessionPrompt.Service
+        const status = yield* SessionStatus.Service
+        const session = yield* sessions.create({ title: "test desktop modes" })
+        yield* sessions.resolvePrompt({ sessionID: session.id, fallback: { system: "initial system", harness: "default", systemMode: "replace-agent" } })
+        yield* status.set(session.id, { type: "busy" })
+        yield* llm.text("busy result")
+        yield* prompt.prompt({ sessionID: session.id, agent: "build", model: ref, system: "next system", systemMode: "replace-agent", harness: "codex", parts: [{ type: "text", text: "busy input" }] })
+        expect((yield* sessions.get(session.id)).prompt?.harness).toBe("default")
+        yield* status.set(session.id, { type: "idle" })
+        yield* llm.text("idle result")
+        yield* prompt.prompt({ sessionID: session.id, agent: "build", model: ref, system: "next system", systemMode: "replace-agent", harness: "codex", parts: [{ type: "text", text: "idle input" }] })
+        expect((yield* sessions.get(session.id)).prompt).toEqual({ system: "next system", systemMode: "replace-agent", harness: "codex" })
+      } finally {
+        if (before === undefined) delete process.env.MIMOCODE_CLIENT
+        else process.env.MIMOCODE_CLIENT = before
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  30_000,
+)
