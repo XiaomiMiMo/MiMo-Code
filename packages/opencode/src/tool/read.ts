@@ -11,19 +11,18 @@ import { Instance } from "../project/instance"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { SessionCwd } from "./session-cwd"
 import { Instruction } from "../session/instruction"
-import { ModelCapability, Provider } from "@/provider"
+import { Provider } from "@/provider"
+import { ReadMedia } from "./read-media"
 import { shrinkAttachment } from "@/provider/image"
 import { builtinSkillRoot } from "@/skill/builtin/extract"
 import {
   classifyAttachment,
-  fitsMediaBase64,
   isReadAudioMime,
   isReadImageMime,
   isReadPdfMime,
   isReadVideoMime,
   looksLikeMediaMime,
   oversizedAttachmentNotice,
-  oversizedMediaNotice,
   READ_AUDIO_MIMES,
   READ_IMAGE_MIMES,
   READ_VIDEO_MIMES,
@@ -94,6 +93,7 @@ export const ReadTool = Tool.define(
     const instruction = yield* Instruction.Service
     const lsp = yield* LSP.Service
     const provider = yield* Provider.Service
+    const readMedia = yield* ReadMedia
     const scope = yield* Scope.Scope
 
     const miss = Effect.fn("ReadTool.miss")(function* (filepath: string) {
@@ -425,65 +425,11 @@ export const ReadTool = Tool.define(
       }
 
       if (inAudio || inVideo) {
-        // Audio and video are opaque to the read tool: the bytes go to the model
-        // as an inline `data:` attachment, or nowhere. Gate on the model first,
-        // then on the encoded size, so a file the model cannot take is never
-        // read and an oversized one never becomes base64.
-        const kind = inAudio ? "audio" : "video"
-        const supported = model?.capabilities.input[kind] ?? false
-        if (!supported) {
-          const warning = [
-            `Cannot attach ${kind} "${path.basename(filepath)}" — the current model has no ${kind} input support, so the file was not read.`,
-            `Ask the user to switch to a model with ${kind} input, or use a shell tool (e.g. ffprobe) to inspect its metadata instead.`,
-          ].join("\n")
-          return {
-            title,
-            output: warning,
-            metadata: { preview: warning, truncated: false, loaded: loaded.map((item) => item.filepath) },
-          }
-        }
-        // The model may take the media kind while the finite read allowlist is still
-        // the outer gate. After that, the adapter declaration can narrow further
-        // (rare); refuse rather than attaching bytes tool-attachment.ts would
-        // later replace with a placeholder.
-        const declared = model ? ModelCapability.modelDeclaration(model, kind) : undefined
-        if (declared?.support === "supported" && declared.mimeTypes !== "any" && !declared.mimeTypes.includes(mime)) {
-          const warning = [
-            `Cannot attach ${kind} "${path.basename(filepath)}" (${mime}) — the current provider only accepts ${declared.mimeTypes.join(", ")}, so the file was not read.`,
-            `Convert it first (e.g. ffmpeg -i "${filepath}" /tmp/example.${kind === "audio" ? "wav" : "mp4"}) and read the converted file.`,
-          ].join("\n")
-          return {
-            title,
-            output: warning,
-            metadata: { preview: warning, truncated: false, loaded: loaded.map((item) => item.filepath) },
-          }
-        }
-        if (!fitsMediaBase64(Number(stat.size))) {
-          const warning = oversizedMediaNotice({
-            label: `"${path.basename(filepath)}" (${mime})`,
-            size: Number(stat.size),
-            hint: "It was not read.",
-          })
-          return {
-            title,
-            output: warning,
-            metadata: { preview: warning, truncated: false, loaded: loaded.map((item) => item.filepath) },
-          }
-        }
-        const bytes = yield* fs.readFile(filepath)
-        const output = `${kind === "audio" ? "Audio" : "Video"} read successfully and attached for the model to analyze`
+        const result = yield* readMedia({ filepath, mime, size: Number(stat.size), kind: inAudio ? "audio" : "video", model })
         return {
           title,
-          output,
-          metadata: { preview: output, truncated: false, loaded: loaded.map((item) => item.filepath) },
-          attachments: [
-            {
-              type: "file" as const,
-              mime,
-              filename: path.basename(filepath),
-              url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
-            },
-          ],
+          ...result,
+          metadata: { preview: result.output, truncated: false, loaded: loaded.map((item) => item.filepath) },
         }
       }
 

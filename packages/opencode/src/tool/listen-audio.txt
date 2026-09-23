@@ -1,0 +1,7 @@
+Listen to a local WAV or MP3 audio file by attaching its content for the model to analyze.
+
+Usage:
+- The `path` parameter identifies the audio file. Relative paths resolve from the current session directory.
+- Requires a model and provider that support audio input. You can then transcribe, summarize, or answer questions about the attached audio in the same turn.
+- Supports WAV and MP3. Convert other formats to WAV or MP3 first with a shell tool such as ffmpeg.
+- Files must fit the 50 MB base64 limit (about 37.5 MB on disk). Split or compress larger recordings before listening to them.
