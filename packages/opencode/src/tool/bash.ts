@@ -17,7 +17,6 @@ import { Flag } from "@/flag/flag"
 import { Shell } from "@/shell/shell"
 
 import { SessionCwd } from "./session-cwd"
-import * as IsolatedGit from "./isolated-git-guard"
 import * as MergeConflict from "./merge-conflict-notice"
 import { BashArity } from "@/permission/arity"
 import * as Truncate from "./truncate"
@@ -918,24 +917,6 @@ export const BashTool = Tool.define(
               const timeout = params.timeout ?? DEFAULT_TIMEOUT
               const ps = PS.has(name)
               const root = yield* parse(params.command, ps)
-              // Cross-branch git guard for isolated children. Sits on the SAME
-              // parsed AST the permission scan uses, so every command node in a
-              // pipeline / `&&` chain / subshell is checked, and it runs BEFORE
-              // ask() so a rejected command never prompts and never spawns.
-              // Keyed on Instance.directory (the session's own worktree), not on
-              // `cwd` — a child that `cd`s into the main checkout and rebases
-              // there is exactly the accident this exists to stop.
-              const own = Instance.directory
-              if (IsolatedGit.isIsolatedWorktree(own)) {
-                IsolatedGit.assertIsolatedGitAllowed({
-                  commands: commands(root).map((node) => parts(node).map((item) => item.text)),
-                  sources: commands(root).map((node) => source(node)),
-                  directory: own,
-                  isolated: true,
-                  branch: IsolatedGit.ownBranch(own),
-                  isPath: (arg) => existsSync(path.resolve(cwd, arg)),
-                })
-              }
               const scan = yield* collect(root, cwd, ps, shell)
               if (!Instance.containsPath(cwd)) scan.dirs.add(cwd)
               // Delete-containing commands normally use askDelete alone — the

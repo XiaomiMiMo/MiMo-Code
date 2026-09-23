@@ -112,10 +112,10 @@ export const DEFAULT_LIVENESS_STALL_MS = 6 * 60_000
 
 // Abandonment bound: how long a row may keep CLAIMING `running`/`pending` before
 // we stop believing it. `progressing` and `stalled` both read as "in progress" to
-// every consumer (the orchestrator roster, `session list`, the fleet table) — they
-// mark a child as routable and imply something is already in flight. That claim
-// needs an upper bound for routing. This derived inactivity signal neither
-// changes the persisted outcome nor proves the executor has terminated.
+// every consumer (session lists, subagent panels) — they mark a child as routable
+// and imply something is already in flight. That claim needs an upper bound for
+// routing. This derived inactivity signal neither changes the persisted outcome
+// nor proves the executor has terminated.
 //
 // 10 minutes. This replaces a 30-minute bound that existed only because the old
 // signal was step-grained: a single legitimate step in this repo can run 20+

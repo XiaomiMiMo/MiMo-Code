@@ -193,7 +193,7 @@ export function nextSessionStatus(status: SessionStatus) {
 // transcript. Everything that still reaches it is a session the product has
 // already decided to show. Measured on the live DB, the 1313 sessions this arm
 // serves split 1302 checkpoint-writer hosts (refused upstream, never arrive
-// here) and 11 `session ask` fork-query hosts whose buckets are build-1 ×7,
+// here) and 11 HTTP `/ask` fork-query hosts whose buckets are build-1 ×7,
 // compose-1 ×3, general-1 ×1 — those 11 are model-spawned read-only transcripts
 // and a blank pane for them is the original bug (#1964). Those counts are one
 // read-only local-DB snapshot and they drift — this arm's population grew
@@ -985,25 +985,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
           applySessions(list)
         },
-        // Resolve THE root session of the directory the client currently talks
-        // to, creating one only when the server really has none.
-        //
-        // Reading store.session for this is a race: bootstrap issues session.list
-        // as a NON-BLOCKING request (it only joins blockingRequests for
-        // `--continue`), so `await bootstrap()` resolves BEFORE the list lands. A
-        // caller that reads the store right after it sees an empty (or pre-switch)
-        // list, concludes there is no root, and mints another one — entering
-        // Orchestrator three times produced three roots. Refreshing from the
-        // server first makes the decision depend on data instead of on timing.
-        async resolveRoot() {
-          await result.session.refresh()
-          const existing = store.session
-            .filter((x) => x.parentID === undefined)
-            .toSorted((a, b) => b.time.updated - a.time.updated)
-            .at(0)
-          if (existing) return { id: existing.id, created: false }
-          return { id: (await sdk.client.session.create({})).data?.id, created: true }
-        },
         status(sessionID: string) {
           const current = store.session_status[sessionID]
           if (current) return current.type === "idle" ? "idle" : "working"
@@ -1040,7 +1021,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             // session dialog can show the current session's child sessions.
             // visible: true returns only peer children, dropping the two other
             // kinds of child session that exist — the checkpoint-writer host
-            // (session/checkpoint.ts:851) and the `session ask` fork-query host
+            // (session/checkpoint.ts:851) and the HTTP `/ask` fork-query host
             // (tool/session.ts:128). See Session.children for why "workflow
             // subagent sessions" is not a third kind.
             sdk.client.session.children({ sessionID, visible: true }).catch(() => undefined),

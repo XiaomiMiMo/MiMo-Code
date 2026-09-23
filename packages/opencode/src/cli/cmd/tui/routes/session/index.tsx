@@ -126,7 +126,7 @@ const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
 const QUEUE_TOKEN_PLAN_LAST_SEEN_AT = "queue_token_plan_last_seen_at"
 const QUEUE_TOKEN_PLAN_WINDOW = 86_400_000 // 24 hrs
 
-const context = createContext<{
+export const sessionViewContext = createContext<{
   width: number
   sessionID: string
   conceal: () => boolean
@@ -143,7 +143,7 @@ const context = createContext<{
 }>()
 
 function use() {
-  const ctx = useContext(context)
+  const ctx = useContext(sessionViewContext)
   if (!ctx) throw new Error("useContext must be used within a Session component")
   return ctx
 }
@@ -1385,7 +1385,7 @@ export function Session() {
   )
 
   return (
-    <context.Provider
+    <sessionViewContext.Provider
       value={{
         get width() {
           return contentWidth()
@@ -1508,7 +1508,7 @@ export function Session() {
                       <></>
                     </Match>
                     <Match when={message.role === "user"}>
-                      <UserMessage
+                      <UserMessageView
                         index={index()}
                         onMouseUp={() => {
                           if (renderer.getSelection()?.getSelectedText()) return
@@ -1607,7 +1607,7 @@ export function Session() {
           </Switch>
         </Show>
       </box>
-    </context.Provider>
+    </sessionViewContext.Provider>
   )
 }
 
@@ -1621,7 +1621,7 @@ const MIME_BADGE: Record<string, string> = {
   "application/x-directory": "dir",
 }
 
-function UserMessage(props: {
+export function UserMessageView(props: {
   message: UserMessage
   parts: Part[]
   onMouseUp: () => void
@@ -1644,12 +1644,10 @@ function UserMessage(props: {
     })[0]
   })
   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
-  // Orchestrator actor-notifications arrive as a synthetic user text part whose
-  // text is the pre-rendered <actor-notification> wrapper (inbox/render.ts).
-  // Detect + parse it into a compact status card instead of showing raw XML.
-  // Gated on the orchestrator flag so non-orchestrator sessions are untouched.
+  // Actor-notifications arrive as a synthetic user text part whose text is the
+  // pre-rendered <actor-notification> wrapper (inbox/render.ts). Detect + parse
+  // it into a compact status card instead of showing raw XML.
   const actorNotification = createMemo(() => {
-    if (!Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR) return undefined
     return props.parts.flatMap((x) => {
       if (x.type !== "text" || !x.synthetic) return []
       const parsed = parseActorNotification(x.text)

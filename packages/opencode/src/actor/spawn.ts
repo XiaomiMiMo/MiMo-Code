@@ -795,8 +795,8 @@ export const layer = Layer.effect(
       // actor_id === child.id, mode "peer") SYNCHRONOUSLY here — before spawn
       // resolves and before the child's first turn. This is the single
       // spawn-time registration that makes a child addressable the instant
-      // `session create` returns: Inbox.send's ESRCH pre-check (reg.get) and
-      // `session send` both resolve against this row without waiting for the
+      // spawn returns: Inbox.send's ESRCH pre-check (reg.get) and
+      // any later relay both resolve against this row without waiting for the
       // child to arm anything on its first turn. turn_count/status start at 0/
       // "pending"; the per-step turn heartbeat (registry.updateTurn) advances
       // them later. No double-registration: nothing on the first-turn path

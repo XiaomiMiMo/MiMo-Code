@@ -248,25 +248,35 @@ describe("tool.bash git identity floor", () => {
       GIT_COMMITTER_EMAIL: undefined,
     })
     try {
-      // outsideGit -> a truly non-git project -> Instance.worktree === "/".
-      await using tmp = await tmpdir({ outsideGit: true })
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          expect(Instance.worktree).toBe("/")
-          const bash = await initBash()
-          const result = await Effect.runPromise(
-            bash.execute({ command: printGitEnv, description: "print git env" }, ctx),
-          )
-          // There is no project repo to inherit from, so injecting anything would
-          // override the config of whatever repo the command actually runs in
-          // (GIT_AUTHOR_*/GIT_COMMITTER_* env outrank `user.name`/`user.email`).
-          for (const key of ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"]) {
-            const line = result.metadata.output.split("\n").find((l) => l.trim().startsWith(`${key}=`))
-            expect(line?.trim()).toBe(`${key}=`)
-          }
-        },
-      })
+      // A truly non-git project outside ANY git tree. `outsideGit` alone is not
+      // enough on machines where /tmp itself is a git repo (Instance.worktree
+      // then becomes that repo root, not "/"). HOME is isolated by test/preload
+      // and is not a git worktree.
+      const fs = await import("fs/promises")
+      const path = await import("path")
+      const os = await import("os")
+      const dir = await fs.mkdtemp(path.join(process.env.HOME || os.homedir(), "bash-nongit-"))
+      try {
+        await Instance.provide({
+          directory: dir,
+          fn: async () => {
+            expect(Instance.worktree).toBe("/")
+            const bash = await initBash()
+            const result = await Effect.runPromise(
+              bash.execute({ command: printGitEnv, description: "print git env" }, ctx),
+            )
+            // There is no project repo to inherit from, so injecting anything would
+            // override the config of whatever repo the command actually runs in
+            // (GIT_AUTHOR_*/GIT_COMMITTER_* env outrank `user.name`/`user.email`).
+            for (const key of ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"]) {
+              const line = result.metadata.output.split("\n").find((l) => l.trim().startsWith(`${key}=`))
+              expect(line?.trim()).toBe(`${key}=`)
+            }
+          },
+        })
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true })
+      }
     } finally {
       restoreEnv(saved)
     }

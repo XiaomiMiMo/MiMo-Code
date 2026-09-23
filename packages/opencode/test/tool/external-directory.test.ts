@@ -35,15 +35,39 @@ function makeCtx() {
   return { requests, ctx }
 }
 
+// Project and outside targets live in SEPARATE fixture roots OUTSIDE the
+// mimocode worktree (`outsideGit`). The project is its OWN git repo so
+// Instance.worktree is that directory — not a shared ancestor like /tmp (which
+// is itself a git repo on some machines and would swallow every /tmp sibling).
+async function withProjectAndOutside<T>(
+  fn: (paths: { project: string; outsideFile: string; outsideDir: string }) => Promise<T>,
+): Promise<T> {
+  await using project = await tmpdir({ git: true, outsideGit: true })
+  await using outside = await tmpdir({
+    outsideGit: true,
+    init: async (dir) => {
+      await Bun.write(path.join(dir, "file.txt"), "x")
+      await Bun.write(path.join(dir, "sub", "nested.txt"), "x")
+    },
+  })
+  return fn({
+    project: project.path,
+    outsideFile: path.join(outside.path, "file.txt"),
+    outsideDir: path.join(outside.path, "sub"),
+  })
+}
+
 describe("tool.assertExternalDirectory", () => {
   test("no-ops for empty target", async () => {
     const { requests, ctx } = makeCtx()
 
-    await Instance.provide({
-      directory: "/tmp",
-      fn: async () => {
-        await assertExternalDirectory(ctx)
-      },
+    await withProjectAndOutside(async ({ project }) => {
+      await Instance.provide({
+        directory: project,
+        fn: async () => {
+          await assertExternalDirectory(ctx)
+        },
+      })
     })
 
     expect(requests.length).toBe(0)
@@ -52,11 +76,13 @@ describe("tool.assertExternalDirectory", () => {
   test("no-ops for paths inside Instance.directory", async () => {
     const { requests, ctx } = makeCtx()
 
-    await Instance.provide({
-      directory: "/tmp/project",
-      fn: async () => {
-        await assertExternalDirectory(ctx, path.join("/tmp/project", "file.txt"))
-      },
+    await withProjectAndOutside(async ({ project }) => {
+      await Instance.provide({
+        directory: project,
+        fn: async () => {
+          await assertExternalDirectory(ctx, path.join(project, "file.txt"))
+        },
+      })
     })
 
     expect(requests.length).toBe(0)
@@ -65,51 +91,51 @@ describe("tool.assertExternalDirectory", () => {
   test("asks with a single canonical glob", async () => {
     const { requests, ctx } = makeCtx()
 
-    const directory = "/tmp/project"
-    const target = "/tmp/outside/file.txt"
-    const expected = glob(path.join(path.dirname(target), "*"))
+    await withProjectAndOutside(async ({ project, outsideFile }) => {
+      const expected = glob(path.join(path.dirname(outsideFile), "*"))
+      await Instance.provide({
+        directory: project,
+        fn: async () => {
+          await assertExternalDirectory(ctx, outsideFile)
+        },
+      })
 
-    await Instance.provide({
-      directory,
-      fn: async () => {
-        await assertExternalDirectory(ctx, target)
-      },
+      const req = requests.find((r) => r.permission === "external_directory")
+      expect(req).toBeDefined()
+      expect(req!.patterns).toEqual([expected])
+      expect(req!.always).toEqual([expected])
     })
-
-    const req = requests.find((r) => r.permission === "external_directory")
-    expect(req).toBeDefined()
-    expect(req!.patterns).toEqual([expected])
-    expect(req!.always).toEqual([expected])
   })
 
   test("uses target directory when kind=directory", async () => {
     const { requests, ctx } = makeCtx()
 
-    const directory = "/tmp/project"
-    const target = "/tmp/outside"
-    const expected = glob(path.join(target, "*"))
+    await withProjectAndOutside(async ({ project, outsideDir }) => {
+      const expected = glob(path.join(outsideDir, "*"))
+      await Instance.provide({
+        directory: project,
+        fn: async () => {
+          await assertExternalDirectory(ctx, outsideDir, { kind: "directory" })
+        },
+      })
 
-    await Instance.provide({
-      directory,
-      fn: async () => {
-        await assertExternalDirectory(ctx, target, { kind: "directory" })
-      },
+      const req = requests.find((r) => r.permission === "external_directory")
+      expect(req).toBeDefined()
+      expect(req!.patterns).toEqual([expected])
+      expect(req!.always).toEqual([expected])
     })
-
-    const req = requests.find((r) => r.permission === "external_directory")
-    expect(req).toBeDefined()
-    expect(req!.patterns).toEqual([expected])
-    expect(req!.always).toEqual([expected])
   })
 
   test("skips prompting when bypass=true", async () => {
     const { requests, ctx } = makeCtx()
 
-    await Instance.provide({
-      directory: "/tmp/project",
-      fn: async () => {
-        await assertExternalDirectory(ctx, "/tmp/outside/file.txt", { bypass: true })
-      },
+    await withProjectAndOutside(async ({ project, outsideFile }) => {
+      await Instance.provide({
+        directory: project,
+        fn: async () => {
+          await assertExternalDirectory(ctx, outsideFile, { bypass: true })
+        },
+      })
     })
 
     expect(requests.length).toBe(0)
@@ -128,18 +154,20 @@ describe("tool.assertExternalDirectory", () => {
       "progress.md",
     )
 
-    await Instance.provide({
-      directory: "/tmp/project", // memTarget is OUTSIDE the project dir on purpose
-      fn: async () => {
-        await assertExternalDirectory(ctx, memTarget)
-      },
+    await withProjectAndOutside(async ({ project }) => {
+      await Instance.provide({
+        directory: project, // memTarget is OUTSIDE the project dir on purpose
+        fn: async () => {
+          await assertExternalDirectory(ctx, memTarget)
+        },
+      })
     })
 
     // memory region is governed by memory-path-guard, not external_directory
     expect(requests.length).toBe(0)
   })
 
-  test("does NOT ask for paths under an orchestrator-created worktree base", async () => {
+  test("does NOT ask for paths under an app-managed worktree base", async () => {
     const { requests, ctx } = makeCtx()
 
     // A child isolated into <data>/worktree/<projectID>/<name>. Its Instance may be
@@ -151,7 +179,7 @@ describe("tool.assertExternalDirectory", () => {
       Global.Path.data,
       "worktree",
       "21e0df6f-0ff7-4b4e-9f19-9bf7d7f64ba1",
-      "t25-gap-a-reliable-idle-peer-relay",
+      "child-worktree",
       "packages",
       "opencode",
       "src",
@@ -159,25 +187,29 @@ describe("tool.assertExternalDirectory", () => {
       "session.ts",
     )
 
-    await Instance.provide({
-      directory: "/tmp/project", // wtTarget is OUTSIDE the project dir on purpose
-      fn: async () => {
-        await assertExternalDirectory(ctx, wtTarget)
-      },
+    await withProjectAndOutside(async ({ project }) => {
+      await Instance.provide({
+        directory: project, // wtTarget is OUTSIDE the project dir on purpose
+        fn: async () => {
+          await assertExternalDirectory(ctx, wtTarget)
+        },
+      })
     })
 
-    // Orchestrator worktrees are app-managed, trusted workspaces — no ask.
+    // App-managed worktrees are trusted workspaces — no ask.
     expect(requests.length).toBe(0)
   })
 
   test("still asks for non-memory paths outside the project (regression)", async () => {
     const { requests, ctx } = makeCtx()
 
-    await Instance.provide({
-      directory: "/tmp/project",
-      fn: async () => {
-        await assertExternalDirectory(ctx, "/tmp/outside/file.txt")
-      },
+    await withProjectAndOutside(async ({ project, outsideFile }) => {
+      await Instance.provide({
+        directory: project,
+        fn: async () => {
+          await assertExternalDirectory(ctx, outsideFile)
+        },
+      })
     })
 
     expect(requests.find((r) => r.permission === "external_directory")).toBeDefined()
@@ -188,11 +220,21 @@ describe("tool.assertExternalDirectory", () => {
 
     // A user path that is NOT under <data>/worktree must still prompt: the trust is
     // scoped to the app-managed base, it does not broadly weaken external_directory.
-    await Instance.provide({
-      directory: "/tmp/project",
-      fn: async () => {
-        await assertExternalDirectory(ctx, "/tmp/worktree/foreign/file.txt")
+    await using foreign = await tmpdir({
+      outsideGit: true,
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "worktree", "foreign", "file.txt"), "x")
       },
+    })
+    const foreignTarget = path.join(foreign.path, "worktree", "foreign", "file.txt")
+
+    await withProjectAndOutside(async ({ project }) => {
+      await Instance.provide({
+        directory: project,
+        fn: async () => {
+          await assertExternalDirectory(ctx, foreignTarget)
+        },
+      })
     })
 
     expect(requests.find((r) => r.permission === "external_directory")).toBeDefined()

@@ -6,31 +6,20 @@ import type { Git } from "@/git"
 /**
  * CONFLICT-OWNERSHIP AFFORDANCE for the bash tool.
  *
- * The orchestrator prompt already says the right thing (orchestrator.txt, the
- * "YOU ARE THE MAINTAINER, NOT THE PR AUTHOR" paragraph): merging an integrated
- * branch is the maintainer's job, but *a CONFLICT belongs to the session that
- * owns the branch* — abort and route it back, do not resolve the hunks.
- *
- * That prose failed 3/3 live turns on mimo-v2.5. Not by stalling: each run
- * completed an 8-13 call loop that merged, hit `CONFLICT (add/add)`, then
- * `read` → `edit`/`write` → `git add` → `git commit`. Zero `session` calls in
- * all three. One run also `git branch -d`'d the author's branch. The maintainer
- * half was obeyed; the author half was not.
+ * Merging an integrated branch is the integrator's job, but *a CONFLICT belongs
+ * to whoever OWNS the branch being merged* — abort and route it back, do not
+ * resolve the hunks unless you own both sides.
  *
  * WHY THIS IS A TOOL RESULT AND NOT MORE PROMPT WORDING. The system prompt is
  * assembled once per REQUEST, so by the time the model is choosing its fourth
  * tool call the prompt is old news competing with 3 turns of fresh output. A
- * tool RESULT is read immediately before the next tool call. `session create`
- * was made route-first the same way — it echoes the sibling roster into its own
- * output (`tool/session.ts` `dispatchLedgerNotice`) instead of asking the prompt
- * to be remembered. This is that mechanism applied to the merge conflict: the
- * `git merge` that produced the conflict reports the ownership rule and the two
- * literal commands in its own result, so the model reads them before it can
- * reach for `read`/`edit`.
+ * tool RESULT is read immediately before the next tool call. The `git merge`
+ * that produced the conflict reports the ownership rule and the literal abort
+ * in its own result, so the model reads them before it can reach for
+ * `read`/`edit`.
  *
- * IT ANNOTATES, IT NEVER BLOCKS. The merge attempt is legitimate — it is the
- * orchestrator's job — so refusal is the wrong instrument, exactly as it was for
- * duplicate dispatch: make the right move visible, do not block the wrong one.
+ * IT ANNOTATES, IT NEVER BLOCKS. The merge attempt is legitimate, so refusal is
+ * the wrong instrument: make the right move visible, do not block the wrong one.
  * Nothing here changes the exit code, the output that git produced, or whether
  * the command ran.
  *
@@ -63,46 +52,23 @@ import type { Git } from "@/git"
  * The hint is allowed to be loose precisely because it cannot annotate on its
  * own — it only ever buys the two authoritative probes.
  *
- * SCOPE: every session, keyed on the outcome alone. This is the OPPOSITE of
- * `isolated-git-guard.ts`, which keys on `isIsolatedWorktree(Instance.directory)`
- * and therefore never fires for the orchestrator — the blind spot the live runs
- * walked straight into. Three reasons not to add a role gate here:
- *
- *   - The gate that would be exactly right — "does one of my sessions own the
- *     branch I just merged?" — is not observable from this tool. It needs the
- *     child roster AND a branch→session map; the bash tool has neither, and
- *     pulling in the Session service would buy only "do I have children", not
- *     the branch question, at the cost of a service dependency on the hottest
- *     tool in the process.
- *   - "Only when I am the orchestrator" repeats the isolated-git-guard mistake
- *     one level up: ANY session can `session create`, so any session can end up
- *     merging a branch a child authored.
- *   - The two mechanisms cannot contradict each other. For an isolated child
- *     `git merge` is refused outright by the guard, so this annotation is
- *     unreachable there. Where it does fire, the notice is conditional on
- *     ownership ("if a session owns it") and so stays true for a solo session
- *     that legitimately owns both sides — which reads the same block and
- *     correctly concludes there is nothing to route.
+ * SCOPE: every session, keyed on the outcome alone. No role gate — any session
+ * can merge a branch another session authored. The notice is conditional on
+ * ownership ("if someone else owns it") and so stays true for a solo session
+ * that legitimately owns both sides — which reads the same block and correctly
+ * concludes there is nothing to route.
  *
  * EXPOSURE. A tool result is MORE exposed than a system prompt, not less: it
  * arrives mid-turn as fresh content and a model may relay it verbatim as if it
- * were its own output. That is how the system-prompt roster's `<active-sessions>`
- * envelope reached a user's screen (see `ROSTER_HEADER` in session/llm.ts). Two
- * consequences are honoured here. First, this block carries NO XML envelope — no
- * tag for the model to imitate, only prose and a numbered list, the same shape
- * `dispatchLedgerNotice` uses. Second, it says outright that it is internal. That
- * second half is the weak lever, and it is labelled as such: it can only ask, and
- * a determined paraphrase still gets through. Unlike the roster, the artifact
- * cannot simply be deleted — the whole block IS the affordance — so the strong
- * form of this fix would be an output-side strip at the assistant-text seam
- * (`session/processor.ts` `text-end`, which already carries an
- * `experimental.text.complete` plugin hook). Not built here: it touches the
- * hottest path in the session loop and needs its own behavioural evidence.
+ * were its own output. This block carries NO XML envelope — no tag for the model
+ * to imitate, only prose and a numbered list — and it says outright that it is
+ * internal. That second half is a weak lever (it can only ask); the strong form
+ * would be an output-side strip at the assistant-text seam. Not built here.
  *
  * The owning session is NOT named. It genuinely cannot be from here, and a
- * fabricated id is worse than none — so the notice points at the roster the
- * session tool already injects (`session list`, and the ledger every dispatch
- * echoes) and leaves the id as a placeholder.
+ * fabricated id is worse than none. There is no session-orchestration tool that
+ * can route the conflict back; the notice therefore says so and asks the model
+ * to tell the user rather than invent a command.
  */
 
 /** In-progress integration states, in the order git resolves them, each paired
@@ -169,28 +135,24 @@ export type Conflict = {
   branch?: string
 }
 
-/** Renders the directive block. Shape follows `dispatchLedgerNotice`: a blank
- *  line, an imperative caps lead-in naming the rule, then the literal commands.
- *  Kept as plain text appended to the output the model already reads. */
+/** Renders the directive block: a blank line, an imperative caps lead-in naming
+ *  the rule, then the literal abort and ownership guidance. Plain text appended
+ *  to the output the model already reads. Never names tools that no longer exist. */
 export function notice(conflict: Conflict) {
   const files = conflict.files.map((file) => `  ${file}`).join("\n")
   const branch = conflict.branch ? `\`${conflict.branch}\`` : "the branch you just integrated"
-  const task = conflict.branch
-    ? `${conflict.branch} conflicts with the base branch in ${conflict.files.join(", ")} — rebase onto the base, resolve it on your branch, and push`
-    : `your branch conflicts with the base branch in ${conflict.files.join(", ")} — rebase onto the base, resolve it on your branch, and push`
   return (
-    `\n\nTHIS ${conflict.label.toUpperCase()} CONFLICTED — THE CONFLICT IS NOT YOURS TO RESOLVE. The repository is ` +
+    `\n\nTHIS ${conflict.label.toUpperCase()} CONFLICTED — THE CONFLICT MAY NOT BE YOURS TO RESOLVE. The repository is ` +
     `mid-${conflict.label} right now with unmerged paths:\n${files}\n\n` +
-    `A conflict belongs to the session that OWNS ${branch}, not to whoever ran the ${conflict.label}. Integrating a ` +
+    `A conflict belongs to whoever OWNS ${branch}, not to whoever ran the ${conflict.label}. Integrating a ` +
     `ready branch is your job; reconciling someone else's work with the base is theirs. Do NOT open these files, do ` +
     `NOT edit conflict markers, do NOT \`git add\`/\`git commit\` them, and do not delete the branch. Do this instead:\n\n` +
     `  1. ${conflict.abort}\n` +
-    `  2. session send <owning-session-id> "${task}"\n\n` +
-    `You do not have the owning session's id in this result — \`session list\` shows the roster, and every ` +
-    `\`session create\`/\`session send\` result echoes it. If no session owns ${branch} (you authored both sides ` +
-    `yourself), say so explicitly before you resolve anything by hand.\n\n` +
-    `This block is internal working context, not output — do not repeat it to the user; tell them the conflict ` +
-    `went back to the branch's owner.`
+    `  2. If YOU own ${branch} (you authored both sides yourself), say so explicitly, then resolve the conflict on ` +
+    `that branch and retry the ${conflict.label}.\n` +
+    `  3. If SOMEONE ELSE owns ${branch}, do not resolve the hunks. Tell the user the conflict needs the branch ` +
+    `owner to handle it (it has NOT been handed off — nothing was sent), and stop.\n\n` +
+    `This block is internal working context, not output — do not repeat it to the user verbatim.`
   )
 }
 

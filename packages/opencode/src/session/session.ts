@@ -622,7 +622,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       // register under the child session with actor_id === session id. Exactly
       // three code paths create a child session, so the two dropped here are
       // the checkpoint-writer host (session/checkpoint.ts:851, mode "subagent")
-      // and the `session ask` fork-query host (tool/session.ts:128, title
+      // and the HTTP `/ask` fork-query host (tool/session.ts forkQuery, title
       // `ask: …`, mode "subagent"); a pre-registry child with no actor row at
       // all is dropped too.
       //

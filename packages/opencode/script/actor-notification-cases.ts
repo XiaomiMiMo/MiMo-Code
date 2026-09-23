@@ -17,7 +17,6 @@ const env = {
   MIMOCODE_TEST_MANAGED_CONFIG_DIR: path.join(root, "managed"),
   MIMOCODE_MODELS_PATH: path.resolve(import.meta.dir, "../test/tool/fixtures/models-api.json"),
   MIMOCODE_DISABLE_DEFAULT_PLUGINS: "true",
-  MIMOCODE_EXPERIMENTAL_ORCHESTRATOR: "true",
 }
 Object.assign(process.env, env)
 delete process.env.MIMOCODE_HOME

@@ -195,41 +195,4 @@ describe("tui bootstrap directory race", () => {
       app.renderer.destroy()
     }
   })
-
-  test("entering the orchestrator repeatedly resolves the one existing root instead of creating more", async () => {
-    // The launch directory has no root sessions, which is what the live repro
-    // looked like: the store is empty at the moment the entry effect reads it.
-    const http = createFetch({
-      sessions: { [DIR_A]: [], [DIR_B]: ["ses_orch"] },
-      // The session list is a NON-blocking bootstrap request, so `await
-      // bootstrap()` returns before it lands. Delaying it makes that ordering
-      // explicit rather than incidental.
-      delay: { "/session": 30 },
-    })
-    const { app, sdk, sync } = await mount(http)
-
-    try {
-      const resolved: { id?: string; created: boolean }[] = []
-      for (let i = 0; i < 3; i++) {
-        // The entry effect's sequence: switch into the orchestrator workspace,
-        // bootstrap it, then resolve the root it must land on.
-        sdk.switchDirectory(DIR_B)
-        await sync.bootstrap({ fatal: false })
-        resolved.push(await sync.session.resolveRoot())
-        // Leaving orchestrator again, so the next iteration is a real re-entry:
-        // wait until the store actually describes the launch directory, which is
-        // the state every entry starts from.
-        sdk.switchDirectory(DIR_A)
-        await sync.bootstrap({ fatal: false })
-        await wait(() => sync.data.session.length === 0)
-      }
-
-      expect(resolved.map((x) => x.id)).toEqual(["ses_orch", "ses_orch", "ses_orch"])
-      expect(resolved.every((x) => x.created === false)).toBe(true)
-      expect(http.count("POST", "/session")).toBe(0)
-      expect(http.roots(DIR_B)).toEqual(["ses_orch"])
-    } finally {
-      app.renderer.destroy()
-    }
-  })
 })
