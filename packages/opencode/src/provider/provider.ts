@@ -1,3 +1,4 @@
+import { usesGPTToolset, type HarnessMode } from "../tool/gpt"
 import { HostModelTransport } from "./host-transport"
 import z from "zod"
 import os from "os"
@@ -259,6 +260,8 @@ const BUNDLED_PROVIDERS: Record<string, () => Promise<(opts: any) => BundledSDK>
   "@ai-sdk/alibaba": () => import("@ai-sdk/alibaba").then((m) => m.createAlibaba),
   "gitlab-ai-provider": () => import("gitlab-ai-provider").then((m) => m.createGitLab),
   "@ai-sdk/github-copilot": () => import("./sdk/copilot").then((m) => m.createOpenaiCompatible),
+  "@mimo/responses": () => import("./sdk/copilot").then((m) => (options: Record<string, unknown>) =>
+    m.createOpenaiCompatible({ ...options, name: "openai", customToolNames: ["exec"] })),
   "venice-ai-sdk-provider": () => import("venice-ai-sdk-provider").then((m) => m.createVenice),
 }
 
@@ -1131,11 +1134,17 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
-// MiMo models (and the `mimo-auto` smart alias) only speak the OpenAI-compatible Chat
-// Completions API. Whatever npm a catalog entry or mimocode.json declares for such an
-// id, the model is pinned to @ai-sdk/openai-compatible.
+// MiMo catalog models use stock Chat by default; forHarness selects Responses
+// per request without mutating provider configuration or its cached model metadata.
 export function isMimoOrSmartModel(id: string) {
   return /(^|[/_-])mimo(?:-|$)/i.test(id) || id === "mimo-auto"
+}
+
+/** Request-only transport view; model and provider identities remain unchanged. */
+export function forHarness(model: Model, harness?: HarnessMode): Model {
+  if (![model.id, model.api.id, model.family ?? ""].some(isMimoOrSmartModel) ||
+      !usesGPTToolset(model.id, harness, model.api.id, model.family)) return model
+  return { ...model, api: { ...model.api, npm: "@mimo/responses" } }
 }
 
 function resolveModelNpm(npm: string, ...ids: string[]) {
@@ -1791,7 +1800,7 @@ const layer: Layer.Layer<
       }
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
-      const key = `${model.providerID}/${model.id}`
+      const key = `${model.providerID}/${model.id}/${model.api.npm}`
       if (s.models.has(key)) return s.models.get(key)!
 
       return yield* Effect.promise(async () => {
@@ -1799,7 +1808,9 @@ const layer: Layer.Layer<
         const sdk = await resolveSDK(model, s, envs)
 
         try {
-          const language = s.modelLoaders[model.providerID]
+          const language = model.api.npm === "@mimo/responses"
+            ? (sdk as unknown as import("./sdk/copilot/copilot-provider").OpenaiCompatibleProvider).responses(model.api.id)
+            : s.modelLoaders[model.providerID]
             ? await s.modelLoaders[model.providerID](sdk, model.api.id, {
                 ...provider.options,
                 ...model.options,

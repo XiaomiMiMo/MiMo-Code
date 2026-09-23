@@ -3236,9 +3236,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return { info, parts: [] }
       }
 
+      // Desktop owns the model-specific primary prompt. Refresh only between runs;
+      // steers keep the active prompt and CLI retains first-query pinning.
+      const replacePrompt = Flag.MIMOCODE_CLIENT === "desktop" &&
+        !input.noReply && (input.agentID ?? "main") === "main" &&
+        input.systemMode === "replace-agent" && !!input.system &&
+        (input.harness === "codex" || input.harness === "default") &&
+        (yield* status.get(input.sessionID)).type === "idle"
       const prompt = yield* sessions.resolvePrompt({
         sessionID: input.sessionID,
-        ...(parts.some((part) => !("synthetic" in part) || !part.synthetic)
+        replace: replacePrompt,
+        ...(replacePrompt || parts.some((part) => !("synthetic" in part) || !part.synthetic)
           ? { fallback: { system: input.system, systemMode: input.systemMode, harness: input.harness } }
           : {}),
       })

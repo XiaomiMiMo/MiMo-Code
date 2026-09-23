@@ -472,6 +472,7 @@ export interface Interface {
   readonly resolvePrompt: (input: {
     sessionID: SessionID
     fallback?: Partial<PromptConfig>
+    replace?: boolean
   }) => Effect.Effect<PromptConfig>
   readonly setRevert: (input: {
     sessionID: SessionID
@@ -826,10 +827,20 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
     const resolvePrompt = Effect.fn("Session.resolvePrompt")(function (input: {
       sessionID: SessionID
       fallback?: Partial<PromptConfig>
+    replace?: boolean
     }) {
       return promptLock(input.sessionID).withPermits(1)(
         Effect.gen(function* () {
           const session = yield* get(input.sessionID)
+          if (input.replace && input.fallback) {
+            const prompt: PromptConfig = {
+              system: input.fallback.system,
+              systemMode: input.fallback.systemMode ?? "append",
+              harness: input.fallback.harness ?? "auto",
+            }
+            yield* patch(input.sessionID, { prompt })
+            return prompt
+          }
           if (session.prompt) return session.prompt
           const firstUser = (yield* messages({ sessionID: input.sessionID })).find(
             (message) =>

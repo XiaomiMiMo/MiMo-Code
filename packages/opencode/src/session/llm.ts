@@ -459,6 +459,7 @@ const live: Layer.Layer<
     })
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
+      input = { ...input, model: Provider.forHarness(input.model, input.user.harness) }
       const correlationID = input.requestID ?? input.sessionID
       const l = log
         .clone()

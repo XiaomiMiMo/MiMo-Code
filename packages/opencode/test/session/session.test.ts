@@ -179,3 +179,23 @@ describe("Session", () => {
     expect(missing).toBe(true)
   })
 })
+
+// [TP-R9-01][TP-R9-03] Replace is opt-in; normal/CLI first-query pinning is unchanged.
+test("explicit prompt replacement updates a legacy session without rewriting history or other sessions", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({ directory: tmp.path, fn: async () => {
+    const first = await create({ title: "test first" })
+    const second = await create({ title: "test second" })
+    const resolve = (id: SessionID, harness: "codex" | "default", replace = false) =>
+      AppRuntime.runPromise(SessionNs.Service.use(svc => svc.resolvePrompt({ sessionID: id, replace, fallback: { system: harness, systemMode: "replace-agent", harness } })))
+    await resolve(first.id, "default")
+    await resolve(second.id, "default")
+    expect((await resolve(first.id, "codex")).harness).toBe("default")
+    expect((await resolve(first.id, "codex", true)).harness).toBe("codex")
+    expect((await get(first.id)).prompt).toEqual({ system: "codex", systemMode: "replace-agent", harness: "codex" })
+    expect((await get(second.id)).prompt?.harness).toBe("default")
+    expect((await resolve(first.id, "default", true)).system).toBe("default")
+    await remove(first.id)
+    await remove(second.id)
+  } })
+})

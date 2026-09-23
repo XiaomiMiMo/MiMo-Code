@@ -3144,7 +3144,7 @@ mcpIt.live(
 )
 
 mcpIt.live(
-  "keeps the Codex prompt and tool schema for GPT models with the default harness",
+  "honors the default prompt and tool schema for GPT models with explicit default harness",
   () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -3164,9 +3164,9 @@ mcpIt.live(
         yield* prompt.loop({ sessionID: session.id })
 
         const request = (yield* llm.inputs)[0]
-        expect((request.tools as Array<Record<string, unknown>>).map(wireToolName)).toEqual(["exec"])
-        expect(JSON.stringify(request)).toContain("You are Codex")
-        expect(JSON.stringify(request)).toContain("tools.apply_patch")
+        expect((request.tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("exec")
+        expect(JSON.stringify(request)).not.toContain("You are Codex")
+        expect(JSON.stringify(request)).not.toContain("tools.apply_patch")
       }),
       { git: true, config: gptProviderCfg },
     ),
