@@ -109,7 +109,7 @@ New keys across all 7 languages (en/zh/zht/ru/ja/fr/es):
 - `autoApproveDelete` mechanism (already an independent toggle).
 - `--dangerously-skip-permissions` CLI flag behavior (injects allow-all via config ruleset, bypasses skipAll runtime toggle).
 - `FORCED_ASK` permission set definition.
-- Parent-grant inheritance or orchestrator-peer forward timeout logic (`FORWARD_DENY_TIMEOUT_MS` remains independent).
+- Parent-grant inheritance.
 - Persisting `permissionAskTimeoutMs` to the database (runtime-only, same as skipAll).
 
 ## Tasks

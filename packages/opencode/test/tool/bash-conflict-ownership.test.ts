@@ -71,8 +71,7 @@ async function bash(dir: string, command: string) {
 }
 
 /** A repo whose `feature` branch and base branch both touch the same file, so
- *  merging conflicts. Mirrors the live fixture's shape exactly
- *  (`orchestrator-live-behavior.test.ts`, `conflictWith`). */
+ *  merging conflicts. */
 const conflicting = (base: string) => async (dir: string) => {
   const branch = (await $`git rev-parse --abbrev-ref HEAD`.cwd(dir).quiet().text()).trim()
   await $`git checkout -b feature`.cwd(dir).quiet()

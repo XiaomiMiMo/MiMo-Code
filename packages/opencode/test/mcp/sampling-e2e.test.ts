@@ -1375,10 +1375,10 @@ describe("sampling deadlines and liveness", () => {
 
   test("an unanswered approval is NOT timed out: the prompt stays pending and a late answer still succeeds", async () => {
     // THE BOUND THIS REPLACES. A 30 s wall-clock bound used to end the approval
-    // wait and report `phase: "approval"`. `permission/index.ts` has no such bound
-    // for an ordinary interactive ask — only a FORWARDED ask
-    // (FORWARD_DENY_TIMEOUT_MS) and a skip-all forced ask are bounded, and this ask
-    // is neither — so a TUI prompt waits indefinitely while sampling gave up.
+    // wait and report `phase: "approval"`. Sampling no longer applies that bound.
+    // This case runs with `permissionAskTimeoutMs` unset, so the Permission ask
+    // wait is unbounded and a TUI prompt can take as long as the operator takes
+    // while sampling used to give up.
     //
     // PROVING AN ABSENCE needs a positive observation, not a longer wait: the
     // request must still be ALIVE after a stretch in which the old bound (had it

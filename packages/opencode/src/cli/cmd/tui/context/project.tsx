@@ -41,7 +41,7 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
         sdk.client.project.current({ workspace }),
       ])
 
-      // A directory switch (worktree dialog, orchestrator entry) disposes the old
+      // A directory switch (worktree dialog) disposes the old
       // instance and bootstraps the new one, and the resulting
       // server.instance.disposed event fires a SECOND bootstrap whose requests
       // were built from the pre-switch client. That stale run can resolve last

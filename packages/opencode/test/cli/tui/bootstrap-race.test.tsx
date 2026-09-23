@@ -9,8 +9,8 @@ import { ProjectProvider, useProject } from "../../../src/cli/cmd/tui/context/pr
 import { SDKProvider, useSDK } from "../../../src/cli/cmd/tui/context/sdk"
 import { SyncProvider, useSync } from "../../../src/cli/cmd/tui/context/sync"
 
-// DIR_A stands in for the launch directory, DIR_B for the globally-unique
-// Orchestrator workspace the entry effect switches into.
+// DIR_A stands in for the launch directory, DIR_B for a directory the entry
+// effect switches into.
 const DIR_A = "/tmp/bootrace-a"
 const DIR_B = "/tmp/bootrace-b"
 
