@@ -4,7 +4,7 @@ import fs from "fs"
 import path from "path"
 import ts from "typescript"
 import { Effect } from "effect"
-import type { Tool as AiTool } from "ai"
+import { asSchema, type Tool as AiTool } from "ai"
 import { EffectBridge, InstanceState } from "@/effect"
 import { Log, Filesystem, ToolCompat } from "@/util"
 import { Agent } from "@/agent/agent"
@@ -155,39 +155,50 @@ function schemaToTs(schema: any): string {
   }
 }
 
-/** Render the `tools` API declaration block appended to the tool description. */
-export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
+/** One metadata source for the model-facing declaration and the exec guest. */
+function toolScriptCatalog(defs: Tool.Def[]) {
   const aliases = new Set(Object.keys(TOOL_SCRIPT_ALIASES))
   const aliasTargets = new Set<string>(Object.values(TOOL_SCRIPT_ALIASES))
-  const lines = defs
+  const entries = defs
     .filter(
       (def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && !DIRECT_ONLY_MCP_TOOLS.has(def.id) && !aliases.has(def.id) && !aliasTargets.has(def.id),
     )
-    .map((def) => {
-      const summary = def.description.split("\n").find((l) => l.trim()) ?? ""
-      const input = schemaToTs(z.toJSONSchema(def.parameters))
-      return `  /** ${summary.trim().slice(0, 200)} */\n  ${def.id}(input: ${input}): Promise<ToolResult>`
-    })
-  const aliasLines = Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([alias, target]) => {
+    .map((def) => ({
+      name: def.id,
+      description: def.description,
+      inputSchema: z.toJSONSchema(def.parameters, { io: "input" }),
+    }))
+  const aliasEntries = Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([alias, target]) => {
     const def = defs.find((item) => item.id === target)
     if (!def) return []
-    const summary = alias === "exec_command"
-      ? EXEC_COMMAND_DESCRIPTION
-      : def.description.split("\n").find((line) => line.trim()) ?? ""
-    const input = schemaToTs(z.toJSONSchema(alias === "exec_command" ? ExecCommandParameters : def.parameters))
-    return [`  /** Alias for ${target}. ${summary.trim().slice(0, 180)} */\n  ${alias}(input: ${input}): Promise<ToolResult>`]
+    return [{
+      name: alias,
+      description: alias === "exec_command" ? EXEC_COMMAND_DESCRIPTION : `Alias for ${target}. ${def.description}`,
+      inputSchema: z.toJSONSchema(alias === "exec_command" ? ExecCommandParameters : def.parameters, { io: "input" }),
+    }]
+  })
+  return [...entries, ...aliasEntries]
+}
+
+/** Full JSON schemas are authoritative; TS signatures are a calling convenience. */
+export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
+  const catalog = toolScriptCatalog(defs)
+  const lines = catalog.map((entry) => {
+    const target = TOOL_SCRIPT_ALIASES[entry.name as keyof typeof TOOL_SCRIPT_ALIASES]
+    const summary = entry.description.split("\n").find((line) => line.trim()) ?? ""
+    const comment = `${target ? `Alias for ${target}. ` : ""}${summary.trim().slice(0, 200)}`.replaceAll("*/", "* /")
+    return `  /** ${comment} */\n  ${entry.name}(input: ${schemaToTs(entry.inputSchema)}): Promise<ToolResult>`
   })
   return [
     "```ts",
     "type ToolResult = { title: string; output: string; metadata: Record<string, unknown>; structured?: unknown }",
     "declare const tools: {",
     ...lines,
-    ...aliasLines,
     "  /** Request-authorized MCP tools are callable by their exact ALL_TOOLS catalog name. */",
     "  [mcpToolName: string]: (input: Record<string, unknown>) => Promise<ToolResult>",
     "}",
-    "/** Every tool callable in this execution. Search names and descriptions to discover tools without mcp_tool_search. */",
-    "declare const ALL_TOOLS: ReadonlyArray<{ name: string; description: string }>",
+    "/** Every callable tool, with its full description and input JSON Schema. */",
+    "declare const ALL_TOOLS: ReadonlyArray<{ name: string; description: string; inputSchema: Record<string, unknown> }>",
     "// Raw file IO for machine-to-machine data (pipelines across executions).",
     "declare const files: {",
     "  /** Raw file contents — no line numbers, no truncation. null if missing. Paths: worktree or OS tmp. */",
@@ -195,6 +206,11 @@ export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
     "  /** Write raw text; parent dirs auto-created. OS tmp dir ONLY — project writes go through tools.apply_patch. */",
     "  writeText(path: string, content: string): Promise<void>",
     "}",
+    "```",
+    "",
+    "Full tool descriptions and input JSON Schemas follow. These schemas are authoritative, including field descriptions, defaults, bounds, and nested constraints; the TypeScript signatures above are only a convenience. MCP schemas are available through ALL_TOOLS.",
+    "```json",
+    JSON.stringify(catalog),
     "```",
   ].join("\n")
 }
@@ -630,20 +646,16 @@ export const ToolScriptTool = Tool.define(
           const mcpById = new Map(
             Object.entries(mcpTools).filter(([id]) => !byId.has(id) && !DIRECT_ONLY_MCP_TOOLS.has(id) && (!whitelist || whitelist.has(id))),
           )
-          const allTools = [
-            ...[...byId.values()]
-              .filter((def) => !Object.values(TOOL_SCRIPT_ALIASES).some((target) => target === def.id))
-              .map((def) => ({ name: def.id, description: def.description })),
-            ...Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([name, target]) => {
-              const def = byId.get(target)
-              if (!def) return []
-              return [{
+          const mcpCatalog = yield* Effect.promise(() =>
+            Promise.all(
+              [...mcpById.entries()].map(async ([name, tool]) => ({
                 name,
-                description: name === "exec_command" ? EXEC_COMMAND_DESCRIPTION : `Alias for ${target}. ${def.description}`,
-              }]
-            }),
-            ...[...mcpById.entries()].map(([name, tool]) => ({ name, description: tool.description ?? "" })),
-          ]
+                description: tool.description ?? "",
+                inputSchema: await asSchema(tool.inputSchema).jsonSchema,
+              })),
+            ),
+          )
+          const allTools = [...toolScriptCatalog([...byId.values()]), ...mcpCatalog]
           // Non-git projects report worktree === "/" (see Instance.containsPath) —
           // "/" as a jail root would allow EVERYTHING. Fall back to the project
           // directory in that case. Relative guest paths resolve against roots[0].

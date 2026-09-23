@@ -4,7 +4,7 @@
 
 ## 摘要
 
-MiMoCode 在共享 Session 引擎上运行 GPT/Codex 模型，同时向它们暴露一套更小的 Codex 风格工具 ABI：`bash`、`apply_patch`、`view_image` 和 `exec`。`exec` 在 QuickJS 中组合经过授权的宿主工具；权限、路径、子进程、取消、持久化和 UI 始终由宿主控制。
+MiMoCode 在共享 Session 引擎上运行 Codex harness，模型通过顶层 `exec` 在 QuickJS 中组合经过授权的宿主工具；CUA 的两个 MCP 入口保持顶层调用。`wait` 是预留的顶层工具名。权限、路径、子进程、取消、持久化和 UI 始终由宿主控制。
 
 ## 核心设计
 
@@ -17,7 +17,7 @@ MiMoCode 没有为 GPT 新建一套 Agent 引擎，而是在统一 Session runti
 ```mermaid
 flowchart LR
     Model[GPT / Codex] --> Registry[SystemPrompt + ToolRegistry]
-    Registry --> Direct[bash / apply_patch / view_image]
+    Registry --> Direct[CUA MCP entry points]
     Registry --> Exec[exec / QuickJS]
     Exec --> Tools[Filtered host tools]
     Direct --> Host[Permission + path guards]
@@ -32,14 +32,12 @@ flowchart LR
 
 ## GPT 工具 ABI
 
-[`ToolRegistry.available()`](../../packages/opencode/src/tool/registry.ts#L363) 当前通过模型 ID 判断是否启用 GPT profile：ID 包含 `gpt-`，同时排除 `oss` 和 `gpt-4`。
+[`usesGPTToolset()`](../../packages/opencode/src/tool/gpt.ts) 优先采纳显式会话 harness，再读取进程 Codex 开关和模型标识；自动识别包含 `gpt` 且不含 `gpt-oss` 的模型。
 
 | GPT 可见工具 | 作用 |
 | --- | --- |
-| `bash` | 使用 `rg`、`sed` 等检查和搜索文件，并执行命令 |
-| `apply_patch` | 以结构化 patch 修改文本文件 |
-| `view_image` | 将本地 JPEG、PNG、GIF、WebP 转为模型附件 |
 | `exec` | 在 QuickJS 中批量调用和聚合宿主工具 |
+| `cua_repl_js` / `cua_repl_js_reset` | 已授权时直接提供，保留 CUA 的持久运行时和多模态输出 |
 
 GPT profile 会隐藏能力重叠的 `read`、`write`、`edit`、`multiedit`、`grep`、`glob` 和 `notebook_edit`。其他工具仍按 provider、agent allowlist 和运行时 permission 治理。
 
@@ -58,7 +56,15 @@ GPT profile 会隐藏能力重叠的 `read`、`write`、`edit`、`multiedit`、`
 - MCP 子调用仍逐次执行 `ctx.ask()`；
 - `exec_command` 只是 `bash` 的别名，权限和执行路径相同。
 
-`task`、`actor`、`question`、`skill`、`workflow`、`cron`、`session` 等控制流工具被排除，因为它们改变对话或调度状态，不适合隐藏在一次脚本调用中。
+`exec`、`mcp_tool_search`、`invalid`、`workflow`、`session` 不可在脚本内调用；`task`、`actor`、`question`、`skill`、`cron` 等按授权结果提供。CUA 入口仅顶层调用。
+
+### 子工具描述与输入约束
+
+`Tool.Def → toolScriptCatalog → exec description / ALL_TOOLS` 是本地工具元数据的单一生成链路。每项包含 `name`、完整 `description` 和 `inputSchema`。参数通过 Zod 的输入视图生成 JSON Schema，保留字段说明、默认值、范围、字符串/数组约束与嵌套定义；具有默认值的入参仍可省略。
+
+`exec` description 同时提供简明 TypeScript 调用签名与完整 JSON 目录；JSON Schema 是参数语义的权威来源，不能只根据 TypeScript 类型推断约束。完整描述不受首行或长度截断。代价是提示词长度增加，不通过字段白名单省略约束。`exec_command` 使用自身参数 schema，而不是宿主 Bash 的入参。
+
+QuickJS 内的 `ALL_TOOLS` 复用同一目录，并附请求已授权的 MCP 工具及其输入 schema；MCP schema 经 AI SDK 规范化读取，不再做字段投影。`$ref`、组合约束和扩展字段原样保留。目录不扩大授权面，CUA 及被排除工具不进入脚本目录。
 
 ### 两层安全边界
 
