@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { NamedTool } from "@/tool/names"
+import type { Tool as AITool } from "ai"
 import { jsonSchema, tool } from "ai"
 import { asSchema } from "@ai-sdk/provider-utils"
 import { Effect } from "effect"
@@ -48,18 +48,18 @@ export function systemHash(system: string[]) {
   return hash(system)
 }
 
-export function toolsHash(tools: Record<string, NamedTool>, activeTools: string[]) {
+export function toolsHash(tools: Record<string, AITool>, activeTools: string[]) {
   return hash(
     activeTools.toSorted().flatMap((name) => {
       const item = tools[name]
       return item
-        ? [{ name, modelName: item.modelName, description: item.description, inputSchema: item.inputSchema }]
+        ? [{ name, description: item.description, inputSchema: item.inputSchema }]
         : []
     }),
   )
 }
 
-export async function snapshotTools(tools: Record<string, NamedTool>, activeTools: string[]) {
+export async function snapshotTools(tools: Record<string, AITool>, activeTools: string[]) {
   return Promise.all(
     activeTools.flatMap((name) => {
       const item = tools[name]
@@ -68,7 +68,6 @@ export async function snapshotTools(tools: Record<string, NamedTool>, activeTool
         Promise.resolve(asSchema(item.inputSchema).jsonSchema).then(
           (input_schema): SessionPrefixToolSnapshot => ({
             name,
-            ...(item.modelName ? { model_name: item.modelName } : {}),
             description: item.description,
             input_schema,
           }),
@@ -82,13 +81,10 @@ export function restoreTools(items: SessionPrefixToolSnapshot[]) {
   return Object.fromEntries(
     items.map((item) => [
       item.name,
-      {
-        ...tool({
-          description: item.description,
-          inputSchema: jsonSchema(item.input_schema),
-        }),
-        ...(item.model_name ? { modelName: item.model_name } : {}),
-      },
+      tool({
+        description: item.description,
+        inputSchema: jsonSchema(item.input_schema),
+      }),
     ]),
   )
 }

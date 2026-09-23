@@ -93,14 +93,6 @@ const cases = [
     disable,
     runs: true,
   })),
-  {
-    title: "flooding opt-out leaves failure cascade enabled",
-    first: edit,
-    next: bash,
-    error: "String to replace not found",
-    flooding: "1",
-    runs: false,
-  },
 ] satisfies Array<{
   title: string
   first: { name: string; args: Record<string, unknown> }
@@ -108,7 +100,6 @@ const cases = [
   error: string
   runs: boolean
   disable?: string
-  flooding?: string
   hook?: boolean
   mcp?: boolean
 }>
@@ -120,18 +111,13 @@ for (const entry of cases)
       Effect.gen(function* () {
         const previous = {
           cascade: process.env.MIMOCODE_DISABLE_FAIL_CASCADE,
-          flooding: process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT,
         }
         delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
-        delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
         if ("disable" in entry) process.env.MIMOCODE_DISABLE_FAIL_CASCADE = entry.disable
-        if ("flooding" in entry) process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT = entry.flooding
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             if (previous.cascade == null) delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
             else process.env.MIMOCODE_DISABLE_FAIL_CASCADE = previous.cascade
-            if (previous.flooding == null) delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
-            else process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT = previous.flooding
           }),
         )
         const server = startScriptedLLMServer([

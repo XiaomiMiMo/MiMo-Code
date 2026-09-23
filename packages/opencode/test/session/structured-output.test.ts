@@ -21,17 +21,13 @@ for (const disabled of [false, true])
       Effect.gen(function* () {
         const previous = {
           cascade: process.env.MIMOCODE_DISABLE_FAIL_CASCADE,
-          flooding: process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT,
         }
         delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
-        delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
         if (disabled) process.env.MIMOCODE_DISABLE_FAIL_CASCADE = "1"
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             if (previous.cascade == null) delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
             else process.env.MIMOCODE_DISABLE_FAIL_CASCADE = previous.cascade
-            if (previous.flooding == null) delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
-            else process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT = previous.flooding
           }),
         )
         const server = startScriptedLLMServer([

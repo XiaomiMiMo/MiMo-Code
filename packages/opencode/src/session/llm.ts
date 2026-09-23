@@ -39,8 +39,6 @@ import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
-import { toolCallFloodingMiddleware, ToolCallFloodingError } from "./toolcall-flooding"
-import { toolSurface } from "@/tool/names"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -597,9 +595,8 @@ const live: Layer.Layer<
         },
       )
 
-      const surface = toolSurface(input.tools)
-      const tools = surface.tools(resolveTools(input))
-      const requestedActiveTools = new Set((input.activeTools ?? Object.keys(input.tools)).map(surface.name))
+      const tools = resolveTools(input)
+      const requestedActiveTools = new Set(input.activeTools ?? Object.keys(input.tools))
       const activeTools = Object.keys(tools).filter((name) => name !== "invalid" && requestedActiveTools.has(name))
 
       // LiteLLM and some Anthropic proxies require the tools parameter to be present
@@ -826,11 +823,10 @@ const live: Layer.Layer<
         // Keep one SDK-level retry for a failure before response headers. The
         // processor owns the persistent stream retry budget below this layer.
         maxRetries: input.retries ?? 0,
-        messages: surface.messages(messages),
+        messages,
         model: wrapLanguageModel({
           model: language,
           middleware: [
-            toolCallFloodingMiddleware,
             {
               specificationVersion: "v3" as const,
               wrapStream: ({ doStream }) => HostModelTransport.modelCall({
@@ -864,7 +860,7 @@ const live: Layer.Layer<
           },
         },
       })
-      return { result, surface }
+      return { result }
     })
 
     const stream: Interface["stream"] = (input) => {
@@ -904,19 +900,7 @@ const live: Layer.Layer<
                       if (SessionRetry.decide(normalized, "request").retryable) return yield* Effect.fail(event.error)
                     }
                     if (event.type !== "start" && event.type !== "error") hasProviderOutput = true
-                    if (event.type === "error" && event.error instanceof ToolCallFloodingError) {
-                      return {
-                        ...event,
-                        error: new ToolCallFloodingError(
-                          event.error.calls.map((call) => ({
-                            ...call,
-                            name: result.surface.id(call.name),
-                          })),
-                          event.error.releasedCallID,
-                        ),
-                      }
-                    }
-                    return result.surface.restore(event)
+                    return event
                   }),
                 ),
               )

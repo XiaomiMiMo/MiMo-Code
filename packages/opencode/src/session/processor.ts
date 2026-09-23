@@ -12,8 +12,7 @@ import * as Session from "./session"
 import { LLM } from "./llm"
 import { MessageV2 } from "./message-v2"
 import { isOverflow } from "./overflow"
-import { MessageID, PartID } from "./schema"
-import { ToolCallFloodingError, TOOLCALL_FLOODING_ERROR, TOOLCALL_FLOODING_REMINDER } from "./toolcall-flooding"
+import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
@@ -599,8 +598,6 @@ export const layer: Layer.Layer<
           }
 
           case "error":
-            // Flooding recovery must retain the cancelled batch, not replay it.
-            if (value.error instanceof ToolCallFloodingError) ctx.retrySafe = false
             throw value.error
 
           case "start-step":
@@ -874,25 +871,12 @@ export const layer: Layer.Layer<
             ctx.textNgramRepeat = false
             ctx.textNgramMonitor = createTextNgramMonitor()
             const stream = llm.stream({ ...streamInput, assistantMessageID: ctx.assistantMessage.id })
-            let flooding: ToolCallFloodingError | undefined
 
             yield* stream.pipe(
-              Stream.tap((event) => {
-                if (event.type === "error" && event.error instanceof ToolCallFloodingError) {
-                  ctx.retrySafe = false
-                  flooding = event.error
-                  return Effect.void
-                }
-                // The SDK drains the admitted tool after the provider closes.
-                // Do not recover until its real result arrives, or invent usage
-                // from the SDK's finish event without a provider finish.
-                if (flooding && event.type === "finish-step") return Effect.void
-                return handleEvent(event)
-              }),
+              Stream.tap(handleEvent),
               Stream.takeUntil(() => ctx.needsOverflowHandling || ctx.textNgramRepeat || ctx.blocked),
               Stream.runDrain,
             )
-            if (flooding) yield* Effect.fail(flooding)
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {
@@ -973,47 +957,6 @@ export const layer: Layer.Layer<
                 // User abort (cancel / interrupt) is terminal: never auto-resume.
                 if (aborted) {
                   yield* halt(e)
-                  return
-                }
-                if (e instanceof ToolCallFloodingError) {
-                  for (const call of e.calls) {
-                    if (call.id === e.releasedCallID) continue
-                    const match = yield* readToolCall(call.id)
-                    const parsed = yield* Effect.try({
-                      try: () => JSON.parse(call.input) as unknown,
-                      catch: () => undefined,
-                    }).pipe(Effect.catch(() => Effect.succeed({})))
-                    yield* session.updatePart({
-                      ...match?.part,
-                      id: match?.part.id ?? PartID.ascending(),
-                      messageID: ctx.assistantMessage.id,
-                      sessionID: ctx.sessionID,
-                      type: "tool",
-                      tool: call.name,
-                      callID: call.id,
-                      state: MessageV2.abortedToolState(
-                        { status: "pending", input: isRecord(parsed) ? parsed : {}, raw: call.input },
-                        TOOLCALL_FLOODING_ERROR,
-                      ),
-                    })
-                    yield* settleToolCall(call.id)
-                  }
-                  ctx.assistantMessage.finish = "tool-calls"
-                  ctx.assistantMessage.error = undefined
-                  if (ctx.blocked) return
-                  const reminder = yield* session.updateMessage({
-                    ...streamInput.user,
-                    id: MessageID.ascending(),
-                    time: { created: Date.now() },
-                  })
-                  yield* session.updatePart({
-                    id: PartID.ascending(),
-                    messageID: reminder.id,
-                    sessionID: ctx.sessionID,
-                    type: "text",
-                    synthetic: true,
-                    text: TOOLCALL_FLOODING_REMINDER,
-                  })
                   return
                 }
                 if (!ctx.retrySafe) {

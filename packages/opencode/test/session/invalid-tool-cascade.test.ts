@@ -30,17 +30,15 @@ const calls = [
 ]
 
 for (const entry of [
-  ...calls.map((call) => ({ ...call, disable: undefined, flooding: undefined, prefix: false })),
-  ...["1", "true"].map((disable) => ({ ...calls[1], disable, flooding: undefined, prefix: false })),
-  { ...calls[1], disable: undefined, flooding: "1", prefix: false },
-  { ...calls[1], disable: undefined, flooding: undefined, prefix: true },
-  { ...calls[1], disable: undefined, flooding: undefined, prefix: false, whitelist: true },
-  { name: "read", args: { file_path: 123 }, disable: undefined, flooding: undefined, prefix: false, whitelist: true },
+  ...calls.map((call) => ({ ...call, disable: undefined, prefix: false })),
+  ...["1", "true"].map((disable) => ({ ...calls[1], disable, prefix: false })),
+  { ...calls[1], disable: undefined, prefix: true },
+  { ...calls[1], disable: undefined, prefix: false, whitelist: true },
+  { name: "read", args: { file_path: 123 }, disable: undefined, prefix: false, whitelist: true },
   {
     name: "read",
     args: { file_path: 123 },
     disable: undefined,
-    flooding: undefined,
     prefix: false,
     whitelist: true,
     deny: true,
@@ -49,23 +47,18 @@ for (const entry of [
   it.live(
     entry.disable
       ? `cascade opt-out ${entry.disable} preserves the invalid ${entry.name} result and executes the following write`
-      : `invalid ${entry.name} handles later calls${"whitelist" in entry ? " with an actor whitelist" : ""}${"deny" in entry ? " excluding read" : ""}${entry.flooding ? " with flooding protection disabled" : ""}${entry.prefix ? " and preserves earlier successful writes" : ""}`,
+      : `invalid ${entry.name} handles later calls${"whitelist" in entry ? " with an actor whitelist" : ""}${"deny" in entry ? " excluding read" : ""}${entry.prefix ? " and preserves earlier successful writes" : ""}`,
     () =>
       Effect.gen(function* () {
         const previous = {
           cascade: process.env.MIMOCODE_DISABLE_FAIL_CASCADE,
-          flooding: process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT,
         }
         delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
-        delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
         if (entry.disable) process.env.MIMOCODE_DISABLE_FAIL_CASCADE = entry.disable
-        if (entry.flooding) process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT = entry.flooding
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             if (previous.cascade == null) delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
             else process.env.MIMOCODE_DISABLE_FAIL_CASCADE = previous.cascade
-            if (previous.flooding == null) delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
-            else process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT = previous.flooding
           }),
         )
         const server = startScriptedLLMServer([
@@ -183,16 +176,12 @@ it.live(
     Effect.gen(function* () {
       const previous = {
         cascade: process.env.MIMOCODE_DISABLE_FAIL_CASCADE,
-        flooding: process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT,
       }
       delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
-      delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           if (previous.cascade == null) delete process.env.MIMOCODE_DISABLE_FAIL_CASCADE
           else process.env.MIMOCODE_DISABLE_FAIL_CASCADE = previous.cascade
-          if (previous.flooding == null) delete process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT
-          else process.env.MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT = previous.flooding
         }),
       )
       let controller!: ReadableStreamDefaultController<Uint8Array>

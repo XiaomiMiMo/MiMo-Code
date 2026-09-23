@@ -1,5 +1,4 @@
 import { HostModelTransport } from "../provider/host-transport"
-import type { NamedTool } from "@/tool/names"
 import path from "path"
 import os from "os"
 import z from "zod"
@@ -1749,7 +1748,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // Share the step's gate with processor cleanup so cancellation reasons
       // survive an early stream stop, including a rejected permission request.
       const gate = input.processor.toolGate
-      const tools: Record<string, NamedTool> = {}
+      const tools: Record<string, AITool> = {}
       const activeTools = new Set<string>()
       const loadedMcpTools = new Set<string>()
       const execMcpTools: Record<string, AITool> = {}
@@ -2015,7 +2014,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             )
           },
         })
-        tools[item.id].modelName = item.modelName
         if (item.id !== MCP_TOOL_SEARCH_ID && (!useGPTTools || GPT_TOP_LEVEL_TOOLS.has(item.id))) {
           activeTools.add(item.id)
         }

@@ -1,6 +1,5 @@
 import { Effect } from "effect"
-import { tool, jsonSchema } from "ai"
-import type { NamedTool } from "@/tool/names"
+import { tool, jsonSchema, type Tool as AITool } from "ai"
 import z from "zod"
 import { MessageV2 } from "./message-v2"
 import type { SessionID } from "./schema"
@@ -99,14 +98,13 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
     agent: input.agent,
     harness: lastUser.harness,
   })
-  const tools: Record<string, NamedTool> = {}
+  const tools: Record<string, AITool> = {}
   for (const item of toolDefs) {
     const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
     tools[item.id] = tool({
       description: item.description,
       inputSchema: jsonSchema(schema),
     })
-    tools[item.id].modelName = item.modelName
   }
 
   return { system, tools, inheritedMessages }

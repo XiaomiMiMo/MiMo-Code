@@ -146,10 +146,6 @@ export const Flag = {
   get MIMOCODE_DISABLE_FAIL_CASCADE() {
     return truthy("MIMOCODE_DISABLE_FAIL_CASCADE")
   },
-  // Defaults to protection on. Opt out to execute tools while the model streams.
-  get MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT() {
-    return truthy("MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT")
-  },
   MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
   // Default compaction trigger, used when `compaction.max_context` is not set in
   // config. Same grammar as that config field: an absolute token count
@@ -179,12 +175,6 @@ export const Flag = {
   get MIMOCODE_CODEX_MODE() {
     if (truthy("MIMOCODE_CODEX_MODE")) return true
     if (falsy("MIMOCODE_CODEX_MODE")) return false
-    return undefined
-  },
-  // Unset selects MiMo v2.6 automatically; explicit values override that default.
-  get MIMOCODE_PASCAL_CASE_TOOLS() {
-    if (truthy("MIMOCODE_PASCAL_CASE_TOOLS")) return true
-    if (falsy("MIMOCODE_PASCAL_CASE_TOOLS")) return false
     return undefined
   },
   MIMOCODE_DISABLE_MOUSE: truthy("MIMOCODE_DISABLE_MOUSE"),
