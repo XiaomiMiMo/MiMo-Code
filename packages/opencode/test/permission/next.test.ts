@@ -437,9 +437,9 @@ test("disabled - disables edit/write/apply_patch/multiedit when edit denied", ()
   expect(result.has("bash")).toBe(false)
 })
 
-test("disabled - disables view_image when read is denied", () => {
+test("disabled - disables media readers when read is denied", () => {
   const result = Permission.disabled(
-    ["read", "view_image", "glob"],
+    ["read", "view_image", "watch_video", "listen_audio", "glob"],
     [
       { permission: "*", pattern: "*", action: "allow" },
       { permission: "read", pattern: "*", action: "deny" },
@@ -447,6 +447,8 @@ test("disabled - disables view_image when read is denied", () => {
   )
   expect(result.has("read")).toBe(true)
   expect(result.has("view_image")).toBe(true)
+  expect(result.has("watch_video")).toBe(true)
+  expect(result.has("listen_audio")).toBe(true)
   expect(result.has("glob")).toBe(false)
 })
 

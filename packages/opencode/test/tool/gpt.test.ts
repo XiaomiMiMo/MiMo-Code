@@ -52,7 +52,7 @@ describe("isMcpToolSearchEnabled", () => {
   test("does not force MCP tool search for GPT models when process Codex mode is disabled", () => {
     process.env.MIMOCODE_CODEX_MODE = "false"
     expect(isMcpToolSearchEnabled(false, undefined, "gpt-5.2")).toBe(false)
-    expect(isMcpToolSearchEnabled(false, "codex", "claude-opus-4-6")).toBe(false)
+    expect(isMcpToolSearchEnabled(false, "codex", "claude-opus-4-6")).toBe(true)
     expect(isMcpToolSearchEnabled(true, undefined, "gpt-5.2")).toBe(true)
   })
 
@@ -68,7 +68,7 @@ describe("isMcpToolSearchEnabled", () => {
     expect(isMcpToolSearchEnabled(false, "auto", "mimo-v2.6-ptc")).toBe(true)
     expect(isMcpToolSearchEnabled(false, "default", "claude-opus-4-6")).toBe(false)
     expect(isMcpToolSearchEnabled(false, "default", "mimo-v2.6")).toBe(false)
-    expect(isMcpToolSearchEnabled(false, "default", "gpt-5.2")).toBe(true)
+    expect(isMcpToolSearchEnabled(false, "default", "gpt-5.2")).toBe(false)
     expect(isMcpToolSearchEnabled(true, "default", "mimo-v2.6")).toBe(true)
   })
 })
@@ -96,7 +96,7 @@ describe("usesGPTToolset", () => {
     process.env.MIMOCODE_CODEX_MODE = "false"
     expect(usesGPTToolset("gpt-5.2")).toBe(false)
     expect(usesGPTToolset("deployment-primary", undefined, "gpt-5.2", "gpt")).toBe(false)
-    expect(usesGPTToolset("claude-opus-4-6", "codex")).toBe(false)
+    expect(usesGPTToolset("claude-opus-4-6", "codex")).toBe(true)
   })
 
   test("allows the resolved session mode to override the process mode", () => {
@@ -114,6 +114,17 @@ describe("usesGPTToolset", () => {
     expect(usesGPTToolset("mimo-v2.6-ptc", "auto")).toBe(true)
     expect(usesGPTToolset("claude-opus-4-6", "default")).toBe(false)
     expect(usesGPTToolset("mimo-v2.6", "default")).toBe(false)
-    expect(usesGPTToolset("gpt-5.2", "default")).toBe(true)
+    expect(usesGPTToolset("gpt-5.2", "default")).toBe(false)
   })
+})
+
+// [TP-R10-02] Explicit MiMo selection overrides a process default in both directions.
+test("MiMo explicit harness wins over the process default", () => {
+  process.env.MIMOCODE_CODEX_MODE = "false"
+  for (const id of ["mimo-v2.5", "mimo-v2.6", "mimo-flash", "mimo-pro"]) {
+    expect(usesGPTToolset(id, "codex")).toBe(true)
+    expect(isMcpToolSearchEnabled(false, "codex", id)).toBe(true)
+  }
+  process.env.MIMOCODE_CODEX_MODE = "true"
+  expect(usesGPTToolset("mimo-v2.6", "default")).toBe(false)
 })

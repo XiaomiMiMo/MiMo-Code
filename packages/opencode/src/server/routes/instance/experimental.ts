@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import { describeRoute, validator, resolver } from "hono-openapi"
 import z from "zod"
 import { ProviderID, ModelID } from "@/provider/schema"
-import { ToolRegistry } from "@/tool"
+import { Tool, ToolRegistry } from "@/tool"
 import { Worktree } from "@/worktree"
 import { Instance } from "@/project/instance"
 import { Project } from "@/project"
@@ -245,7 +245,7 @@ export const ExperimentalRoutes = lazy(() =>
           tools.map((t) => ({
             id: t.id,
             description: t.description,
-            parameters: z.toJSONSchema(t.parameters),
+            parameters: Tool.jsonSchema(t.parameters),
           })),
         )
       },

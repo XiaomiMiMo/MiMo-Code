@@ -10,7 +10,9 @@ import { Filesystem } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 import type { Permission } from "../../src/permission"
 import { Agent } from "../../src/agent/agent"
-import { Truncate } from "../../src/tool"
+import { Truncate, Tool } from "../../src/tool"
+import { ToolScriptTool } from "../../src/tool/tool-script"
+import { toolScriptRegistry } from "../../src/tool/tool-script-ref"
 import { SessionID, MessageID } from "../../src/session/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
@@ -187,6 +189,91 @@ describe("tool.bash", () => {
         )
         expect(result.metadata.exit).toBe(0)
         expect(result.metadata.output).toContain("test")
+      },
+    })
+  })
+})
+
+describe("exec echo guard", () => {
+  async function run(code: string, context: Tool.Context) {
+    const bash = await initBash()
+    const previous = toolScriptRegistry.current
+    toolScriptRegistry.current = () => Effect.succeed([{ ...bash, id: "bash" }])
+    try {
+      const exec = await runtime.runPromise(ToolScriptTool.pipe(Effect.flatMap(Tool.init)))
+      return await runtime.runPromise(exec.execute({ code }, context))
+    } finally {
+      toolScriptRegistry.current = previous
+    }
+  }
+
+  test.each(["exec_command", "bash"])("rejects echo through tools.%s before shell execution", async (tool) => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        const result = await run(
+          `await tools.${tool}(${JSON.stringify({
+            [tool === "exec_command" ? "cmd" : "command"]: "echo repeated-message > marker.txt",
+            description: "Print a message",
+          })}); return "continued"`,
+          capture(requests),
+        )
+        expect(result.metadata.status).toBe("code_error")
+        expect(result.output).toContain("echo is not supported inside exec")
+        expect(result.output).toContain("Reply directly to the user")
+        expect(result.output).not.toContain("repeated-message")
+        expect(result.output).not.toContain("continued")
+        expect(result.metadata.counts[tool]).toEqual({ n: 1, errors: 1 })
+        expect(requests).toEqual([])
+        expect(await fs.access(path.join(tmp.path, "marker.txt")).then(() => true, () => false)).toBe(false)
+      },
+    })
+  })
+
+  test.skipIf(process.platform === "win32").each([
+    "touch marker.txt; echo repeated-message",
+    "true && echo repeated-message",
+    "false || echo repeated-message",
+    "echo repeated-message | cat",
+    "true\necho repeated-message",
+    "(echo repeated-message)",
+    "printf '%s' \"$(echo repeated-message)\"",
+    "for item in one two; do echo repeated-message; done",
+    "VALUE=test echo repeated-message",
+    "'echo' repeated-message",
+    '"echo" repeated-message',
+    "/bin/echo repeated-message",
+    "command echo repeated-message",
+    "builtin echo repeated-message",
+  ])("rejects echo command syntax: %s", async (command) => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const result = await run(`return await tools.exec_command({ cmd: ${JSON.stringify(command)} })`, ctx)
+        expect(result.metadata.status).toBe("code_error")
+        expect(result.output).toContain("echo is not supported inside exec")
+        expect(result.output).not.toContain("repeated-message")
+        expect(await fs.access(path.join(tmp.path, "marker.txt")).then(() => true, () => false)).toBe(false)
+      },
+    })
+  })
+
+  test.skipIf(process.platform === "win32").each([
+    "printf '%s' echo",
+    "printf '%s' 'echo repeated-message'",
+    "printf '%s' ok # echo repeated-message",
+    "cat <<'EOF'\necho repeated-message\nEOF",
+  ])("allows echo in shell data: %s", async (command) => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const result = await run(`return await tools.exec_command({ cmd: ${JSON.stringify(command)} })`, ctx)
+        expect(result.metadata.status).toBe("completed")
+        expect(result.metadata.counts.exec_command).toEqual({ n: 1, errors: 0 })
       },
     })
   })

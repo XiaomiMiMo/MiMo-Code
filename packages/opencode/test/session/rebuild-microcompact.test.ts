@@ -119,7 +119,7 @@ describe("rebuild microcompact", () => {
         // insertRebuildBoundary uses boundaryCreatedAt + 1 for the marker time.
         // Anything strictly newer than that time is the post-boundary tail.
         const boundaryTime = t0 + 10
-        // Post-boundary, compactable: read + bash + edit → all 3 must be cleared.
+        // Post-boundary, compactable: file/media reads, bash, and edit are cleared.
         const postRead = yield* Effect.promise(() =>
           seedAssistantWithTool(info.id, boundaryTime + 5, "read", "POST_READ_BODY"),
         )
@@ -128,6 +128,12 @@ describe("rebuild microcompact", () => {
         )
         const postEdit = yield* Effect.promise(() =>
           seedAssistantWithTool(info.id, boundaryTime + 7, "edit", "POST_EDIT_BODY"),
+        )
+        const postVideo = yield* Effect.promise(() =>
+          seedAssistantWithTool(info.id, boundaryTime + 7, "watch_video", "POST_VIDEO_BODY"),
+        )
+        const postAudio = yield* Effect.promise(() =>
+          seedAssistantWithTool(info.id, boundaryTime + 7, "listen_audio", "POST_AUDIO_BODY"),
         )
         // Post-boundary, non-compactable: actor + task + todowrite → preserved.
         const postActor = yield* Effect.promise(() =>
@@ -172,6 +178,8 @@ describe("rebuild microcompact", () => {
         expect(compactedOf(postReadTool)).toBeGreaterThan(0)
         expect(compactedOf(postBashTool)).toBeGreaterThan(0)
         expect(compactedOf(postEditTool)).toBeGreaterThan(0)
+        expect(compactedOf(findPart(postVideo.msg.id))).toBeGreaterThan(0)
+        expect(compactedOf(findPart(postAudio.msg.id))).toBeGreaterThan(0)
         // Post-boundary non-compactable: NOT cleared.
         expect(compactedOf(postActorTool)).toBeUndefined()
         expect(compactedOf(postTaskTool)).toBeUndefined()

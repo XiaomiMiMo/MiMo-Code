@@ -80,9 +80,11 @@ describe("tool.registry", () => {
           Bun.write(
             file,
             [
+              `import z from ${JSON.stringify(import.meta.resolve("zod"))}`,
               "export default async () => ({",
               "  tool: {",
               "    example: { description: 'example tool', args: {}, execute: async () => 'example' },",
+              "    owned: { description: 'owned schema', args: {}, parameters: z.object({ count: z.number().min(1).max(10) }), execute: async () => 'owned' },",
               "    mcp_tool_search: { description: 'replacement', args: {}, execute: async () => 'replacement' },",
               "  },",
               "})",
@@ -96,6 +98,11 @@ describe("tool.registry", () => {
         const registry = yield* ToolRegistry.Service
         const tools = yield* registry.all()
         expect(tools.find((tool) => tool.id === "example")?.description).toBe("example tool")
+        // Desktop engine-runtime [TP-R5-04]: supplied owner schema takes precedence over raw args.
+        const owned = tools.find((tool) => tool.id === "owned")!
+        expect(owned.parameters.safeParse({}).success).toBe(false)
+        expect(owned.parameters.safeParse({ count: 5 }).success).toBe(true)
+        expect(owned.parameters.safeParse({ count: 11 }).success).toBe(false)
         const matches = tools.filter((tool) => tool.id === "mcp_tool_search")
         expect(matches).toHaveLength(1)
         expect(matches[0].description).toContain("Search locally available MCP tools")

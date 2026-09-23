@@ -1,0 +1,8 @@
+Read a local MP4 video file and attach its content for the model to analyze.
+
+Usage:
+- The `path` parameter identifies the video file. Relative paths resolve from the current session directory.
+- Requires a model and provider that support video input. Analyze the attached video in the same turn.
+- Supports MP4 (video/mp4). Convert other formats to MP4 first with a shell tool such as ffmpeg.
+- Files must fit the 50 MB base64 limit (about 37.5 MB on disk). Trim or compress larger videos before reading them.
+- This tool attaches the video bytes; it does not extract frames or transcribe audio separately.

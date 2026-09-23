@@ -1878,6 +1878,7 @@ test("xiaomi models stay on Chat Completions regardless of version", async () =>
   })
 })
 
+// [TP-R11-03] Default MiMo Chat retains the stock reasoning_content parser.
 test("xiaomi chat streams reasoning_content as reasoning parts", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

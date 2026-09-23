@@ -216,12 +216,14 @@ const FIRST_CHECKPOINT_WAIT_MS = "5 minutes"
 // survive into the rebuild context. Their tool_use parts are kept (so the
 // LLM still sees what action was taken), but for tools in this whitelist
 // the tool_result content is replaced with a placeholder. Result is either
-// large-and-regeneratable (read/view_image/bash/grep/glob/webfetch/websearch) or
+// large-and-regeneratable (file/media reads, shell commands, and searches) or
 // essentially a "done" confirmation (edit/write/multiedit). Tools NOT here
 // carry state the LLM references later (actor/task/question/skill/memory).
 const COMPACTABLE_TOOL_NAMES = new Set<string>([
   "read",
   "view_image",
+  "watch_video",
+  "listen_audio",
   "bash",
   "grep",
   "glob",

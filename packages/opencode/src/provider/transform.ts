@@ -44,6 +44,7 @@ function sdkKey(npm: string): string | undefined {
       return "copilot"
     case "@ai-sdk/azure":
       return "azure"
+    case "@mimo/responses":
     case "@ai-sdk/openai":
       return "openai"
     case "@ai-sdk/amazon-bedrock":
@@ -1875,6 +1876,9 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
     return result
   }
 
+  if (model.api.npm === "@mimo/responses") {
+    return { openai: { ...options, store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } }
+  }
   const key = sdkKey(model.api.npm) ?? model.providerID
   // @ai-sdk/azure delegates to OpenAIChatLanguageModel which reads from
   // providerOptions["openai"], but OpenAIResponsesLanguageModel checks

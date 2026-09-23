@@ -1,6 +1,7 @@
 import { describe, expect, test, afterAll } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import z from "zod"
+import { jsonSchema } from "ai"
 import os from "os"
 import fs from "fs/promises"
 import path from "path"
@@ -961,6 +962,54 @@ return r.output;`,
 })
 
 describe("renderToolScriptDeclarations", () => {
+  // Desktop engine-runtime [TP-R5-04]: retain semantic input constraints, not just TS shapes.
+  test("preserves full input JSON Schema in declarations and the guest catalog", async () => {
+    const parameters = z.object({
+      count: z.number().int().min(1).max(500).default(20).describe("Maximum number of results."),
+      label: z.string().min(2).max(40).regex(/^[a-z]+$/).describe("Lowercase label."),
+      tags: z.array(z.object({ value: z.enum(["a", "b"]).describe("Tag value.") })).min(1).max(3),
+      enabled: z.boolean().default(false),
+      note: z.string().nullable().optional(),
+    })
+    const description = "Catalog tool.\n" + "Detailed parameter guidance. ".repeat(15) + "Literal */ and ``` stay data."
+    const def: Tool.Def = { ...fakeDef("catalog_probe", async () => "ok"), description, parameters }
+    const rendered = renderToolScriptDeclarations([def])
+    const catalog = JSON.parse(rendered.match(/```json\n([\s\S]*?)\n```/)?.[1] ?? "null")
+    expect(catalog).not.toBeNull()
+    expect(catalog[0].description).toBe(description)
+    expect(catalog[0].inputSchema).toMatchObject({
+      type: "object",
+      required: ["label", "tags"],
+      properties: {
+        count: { type: "integer", minimum: 1, maximum: 500, default: 20, description: "Maximum number of results." },
+        label: { minLength: 2, maxLength: 40, pattern: "^[a-z]+$", description: "Lowercase label." },
+        tags: { minItems: 1, maxItems: 3, items: { properties: { value: { enum: ["a", "b"], description: "Tag value." } } } },
+        enabled: { default: false },
+      },
+    })
+    expect(catalog[0].inputSchema).toEqual(z.toJSONSchema(parameters, { io: "input" }))
+    expect(rendered).toContain("count?: number")
+    const result = await runToolScript("return ALL_TOOLS", [def])
+    expect(result.metadata.status).toBe("completed")
+    const actual = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
+    expect(actual).toEqual(catalog)
+  })
+
+  // Desktop engine-runtime [TP-R5-05]: alias schemas describe the public alias input.
+  test("preserves exec_command descriptions and bounds without exposing bash input", async () => {
+    const defs = [fakeDef("bash", async () => "ok"), fakeDef("exec", async () => "unused")]
+    const rendered = renderToolScriptDeclarations(defs)
+    const catalog = JSON.parse(rendered.match(/```json\n([\s\S]*?)\n```/)?.[1] ?? "null")
+    expect(catalog).not.toBeNull()
+    expect(catalog.map((item: { name: string }) => item.name)).toEqual(["exec_command"])
+    expect(catalog[0].inputSchema.properties.cmd.description).toBe("Shell command to execute.")
+    expect(catalog[0].inputSchema.properties.yield_time_ms).toMatchObject({ minimum: 1 })
+    expect(catalog[0].inputSchema.properties).not.toHaveProperty("command")
+    const result = await runToolScript("return ALL_TOOLS", defs)
+    expect(result.metadata.status).toBe("completed")
+    expect(JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])).toEqual(catalog)
+  })
+
   test("renders TS signatures and skips excluded tools", () => {
     const defs = [
       fakeDef("read", async () => "x"),
@@ -1005,6 +1054,58 @@ describe("renderToolScriptDeclarations", () => {
 })
 
 describe("exec MCP dispatch", () => {
+  // Desktop engine-runtime [TP-R5-05]: request schemas cross QuickJS without lossy projection.
+  test("preserves complete MCP JSON Schema and filters unavailable catalog entries", async () => {
+    const inputSchema = {
+      type: "object" as const,
+      properties: { value: { $ref: "#/$defs/value" } },
+      required: ["value"],
+      $defs: { value: { type: "number" as const, minimum: 0, exclusiveMaximum: 10, multipleOf: 0.5, default: 0, description: "Value */ ```." } },
+      allOf: [{ properties: { value: { maximum: 9 } } }],
+      additionalProperties: false,
+      "x-tool-hint": { example: 0 },
+    }
+    const mcp = {
+      "example-probe": { ...fakeMcpTool(async () => ({ output: "ok" })), inputSchema: jsonSchema(inputSchema) },
+      hidden: fakeMcpTool(async () => ({ output: "unused" })),
+      cua_repl_js: fakeMcpTool(async () => ({ output: "unused" })),
+    }
+    const result = await runToolScript("return ALL_TOOLS", [], undefined, {
+      mcp, toolWhitelist: ["example-probe", "cua_repl_js"],
+    })
+    expect(result.metadata.status).toBe("completed")
+    const catalog = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
+    expect(catalog).toEqual([{ name: "example-probe", description: "fake mcp tool", inputSchema }])
+  })
+
+  test("CUA tools are direct-only, including guessed nested calls", async () => {
+    const calls: string[] = []
+    const mcp = Object.fromEntries(["cua_repl_js", "cua_repl_js_reset", "node_repl_js", "search_lookup"].map((name) => [
+      name, fakeMcpTool(async () => {
+        calls.push(name)
+        return { output: "ok", metadata: {} }
+      }),
+    ]))
+    const result = await runToolScript(`
+      const names = ALL_TOOLS.map(t => t.name);
+      const errors = [];
+      for (const name of ["cua_repl_js", "cua_repl_js_reset"]) {
+        try { await tools[name]({code: "1+1"}); } catch (error) { errors.push(error.message); }
+      }
+      await tools.node_repl_js({code: "1+1"});
+      return { names, errors };
+    `, [], undefined, { mcp })
+    expect(result.metadata.status).toBe("completed")
+    const output = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
+    expect(output.names).toEqual(["node_repl_js", "search_lookup"])
+    expect(result.output).toContain("Call cua_repl_js directly as a top-level tool")
+    expect(result.output).toContain("Call cua_repl_js_reset directly as a top-level tool")
+    expect(calls).toEqual(["node_repl_js"])
+    const declarations = renderToolScriptDeclarations([fakeDef("cua_repl_js", async () => ""), fakeDef("cua_repl_js_reset", async () => "")])
+    expect(declarations).not.toContain("cua_repl_js(input:")
+    expect(declarations).not.toContain("cua_repl_js_reset(input:")
+  })
+
   // Mimics the SessionPrompt-wrapped MCP execute: resolves with the normalized
   // {output, metadata, attachments} shape (permission/hooks/truncation already
   // applied by the wrapper), rejects on tool failure.

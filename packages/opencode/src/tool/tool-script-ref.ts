@@ -29,6 +29,10 @@ export const toolScriptRegistry: {
 // model. `wait` is reserved for the standalone tool once it is available.
 export const GPT_TOP_LEVEL_TOOLS = new Set(["exec", "wait"])
 
+// CUA already owns a persistent script environment and multimodal output.
+// Keep its public MCP entry points outside the text-only exec sandbox.
+export const DIRECT_ONLY_MCP_TOOLS = new Set(["cua_repl_js", "cua_repl_js_reset"])
+
 // Recursive orchestration and internal sentinel tools stay outside scripts.
 // Other control-flow tools are intentionally callable through `tools.<id>` so
 // the GPT/Codex toolset can expose a single outer `exec` surface.

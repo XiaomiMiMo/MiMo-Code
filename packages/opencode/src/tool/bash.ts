@@ -918,6 +918,23 @@ export const BashTool = Tool.define(
               const timeout = params.timeout ?? DEFAULT_TIMEOUT
               const ps = PS.has(name)
               const root = yield* parse(params.command, ps)
+              // Reject echo before permissions or spawning so its text cannot
+              // feed back into the model through exec's tool result.
+              if (
+                ctx.extra?.fromExec &&
+                commands(root).some((node) => {
+                  const tokens = parts(node).map((item) => unquote(item.text))
+                  const command = ["command", "builtin"].includes(tokens[0])
+                    ? tokens.slice(1).find((token) => !token.startsWith("-"))
+                    : tokens[0]
+                  if (!command) return false
+                  return (ps ? path.win32.basename(command).toLowerCase() : path.posix.basename(command)) === "echo"
+                })
+              ) {
+                throw new Error(
+                  "echo is not supported inside exec. Reply directly to the user instead of printing messages through shell commands.",
+                )
+              }
               // Cross-branch git guard for isolated children. Sits on the SAME
               // parsed AST the permission scan uses, so every command node in a
               // pipeline / `&&` chain / subshell is checked, and it runs BEFORE

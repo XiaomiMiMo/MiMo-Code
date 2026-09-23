@@ -1,6 +1,9 @@
 import { describe, test, expect } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import z from "zod"
+import path from "path"
+import { fileURLToPath } from "url"
+import { tmpdir } from "../fixture/fixture"
 import { Agent } from "../../src/agent/agent"
 import { Tool } from "../../src/tool"
 import { Truncate } from "../../src/tool"
@@ -8,6 +11,33 @@ import { Truncate } from "../../src/tool"
 const runtime = ManagedRuntime.make(Layer.mergeAll(Truncate.defaultLayer, Agent.defaultLayer))
 
 const params = z.object({ input: z.string() })
+
+// Desktop engine-runtime [TP-R5-04]: a separately bundled plugin owns a different Zod registry.
+test("tool JSON Schema preserves metadata from a separately bundled Zod instance", async () => {
+  await using tmp = await tmpdir()
+  const entry = path.join(tmp.path, "plugin.ts")
+  await Bun.write(entry, `import z from ${JSON.stringify(fileURLToPath(import.meta.resolve("zod")))};
+export default z.object({
+  count: z.number().int().min(1).max(10).default(3).meta({ id: "Count", description: "Result count", examples: [3] }),
+  nested: z.object({ label: z.string().describe("Nested label") }).describe("Options")
+}).describe("Plugin arguments");`)
+  const build = await Bun.build({ entrypoints: [entry], outdir: path.join(tmp.path, "bundle"), target: "bun" })
+  expect(build.success).toBe(true)
+  const foreign = (await import(build.outputs[0].path)).default as z.ZodObject<{
+    count: z.ZodType
+    nested: z.ZodType
+  }>
+  expect(z.globalRegistry.get(foreign.shape.count)).toBeUndefined()
+  expect(z.toJSONSchema(foreign, { io: "input" }).description).toBeUndefined()
+  const schema = Tool.jsonSchema(foreign, "input")
+  expect(schema).toMatchObject({
+    description: "Plugin arguments",
+    required: ["nested"],
+    properties: { nested: { description: "Options", properties: { label: { description: "Nested label" } } } },
+    $defs: { Count: { description: "Result count", minimum: 1, maximum: 10, default: 3, examples: [3] } },
+  })
+  expect(z.globalRegistry.get(foreign.shape.count)).toBeUndefined()
+})
 
 function makeTool(id: string, executeFn?: () => void) {
   return {

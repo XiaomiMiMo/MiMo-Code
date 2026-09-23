@@ -10,6 +10,8 @@ import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
 import { ReadTool, describeMedia } from "./read"
 import { ViewImageTool } from "./view-image"
+import { WatchVideoTool } from "./watch-video"
+import { ListenAudioTool } from "./listen-audio"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"
 import { CronTool } from "./cron"
@@ -154,6 +156,8 @@ export const layer = Layer.effect(
     const actor = yield* ActorTool
     const read = yield* ReadTool
     const viewimage = yield* ViewImageTool
+    const watchvideo = yield* WatchVideoTool
+    const listenaudio = yield* ListenAudioTool
     const question = yield* QuestionTool
     const lsptool = yield* LspTool
     const planexit = yield* PlanExitTool
@@ -187,7 +191,7 @@ export const layer = Layer.effect(
         function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
           return {
             id,
-            parameters: z.object(def.args),
+            parameters: def.parameters ?? z.object(def.args),
             description: def.description,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {
@@ -231,6 +235,8 @@ export const layer = Layer.effect(
           bash: Tool.init(bash),
           read: Tool.init(read),
           viewimage: Tool.init(viewimage),
+          watchvideo: Tool.init(watchvideo),
+          listenaudio: Tool.init(listenaudio),
           glob: Tool.init(globtool),
           grep: Tool.init(greptool),
           edit: Tool.init(edit),
@@ -265,6 +271,8 @@ export const layer = Layer.effect(
             tool.bash,
             tool.read,
             tool.viewimage,
+            tool.watchvideo,
+            tool.listenaudio,
             tool.glob,
             tool.grep,
             tool.edit,
@@ -360,7 +368,13 @@ export const layer = Layer.effect(
           return input.providerID === ProviderID.opencode || Flag.MIMOCODE_ENABLE_EXA
         }
 
-        if (tool.id === ApplyPatchTool.id || tool.id === ViewImageTool.id) return useGPTTools
+        if (
+          tool.id === ApplyPatchTool.id ||
+          tool.id === ViewImageTool.id ||
+          tool.id === WatchVideoTool.id ||
+          tool.id === ListenAudioTool.id
+        )
+          return useGPTTools
         if (
           tool.id === EditTool.id ||
           tool.id === MultiEditTool.id ||

@@ -1539,3 +1539,41 @@ describe("session.llm.stream", () => {
     })
   })
 })
+
+// [TP-R11-04] Request headers follow the effective mode, even when a language SDK is reused.
+for (const modelID of ["v2.6-flash-test", "gpt-5-test"]) {
+  test(`Codex lite header follows mode changes for ${modelID}`, async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+    const providerID = ProviderID.make("test-codex-header")
+    await using tmp = await tmpdir({ config: {
+      provider: { [providerID]: {
+        npm: "@ai-sdk/openai",
+        options: { baseURL: `${server.url.origin}/v1`, apiKey: "test-key" },
+        models: { [modelID]: { name: "Test model", tool_call: true, limit: { context: 8192, output: 1024 } } },
+      } },
+    } })
+    await Instance.provide({ directory: tmp.path, fn: async () => {
+      const model = await getModel(providerID, ModelID.make(modelID))
+      const sessionID = SessionID.make("session-codex-header")
+      const agent = { name: "test", mode: "primary", options: {}, permission: [{ permission: "*", pattern: "*", action: "allow" }] } satisfies Agent.Info
+      const modes = ["default", "codex", "default", "codex"] as const
+      for (const [index, harness] of modes.entries()) {
+        const responses = modelID.startsWith("gpt") || harness === "codex"
+        const request = waitRequest(responses ? "/responses" : "/chat/completions", responses
+          ? createEventResponse([{ type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } }], true)
+          : new Response(createChatStream("OK"), { headers: { "Content-Type": "text/event-stream" } }))
+        await drain({
+          user: { id: MessageID.make(`user-header-${index}`), sessionID, role: "user", time: { created: Date.now() }, agent: agent.name, model: { providerID, modelID: model.id }, harness },
+          sessionID,
+          model: { ...model, headers: { ...model.headers, "x-test-header": "preserved", ...(index === 3 ? { "X-OpenAI-Internal-Codex-Responses-Lite": "false" } : {}) } },
+          agent, system: ["Test system"], messages: [{ role: "user", content: "test" }], tools: {},
+        })
+        const captured = await request
+        expect(captured.headers.get("x-openai-internal-codex-responses-lite")).toBe(harness === "codex" ? "true" : null)
+        expect(captured.headers.get("authorization")).toBe("Bearer test-key")
+        expect(captured.headers.get("x-test-header")).toBe("preserved")
+      }
+    } })
+  }, 30000)
+}

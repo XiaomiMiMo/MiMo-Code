@@ -67,8 +67,8 @@ describe("session.system", () => {
 
   test("the explicit harness selects the prompt for MiMo regardless of API transport", () => {
     const gpt = ProviderTest.model({ id: ModelID.make("gpt-5.2"), api: { id: "gpt-5.2" } as never })
-    expect(SystemPrompt.provider(gpt, "default")[0]).toContain("You are Codex")
-    expect(SystemPrompt.provider(gpt, "default")[0]).toContain("tools.apply_patch")
+    expect(SystemPrompt.provider(gpt, "default")[0]).not.toContain("You are Codex")
+    expect(SystemPrompt.provider(gpt, "default")[0]).not.toContain("tools.apply_patch")
 
     const mimo = ProviderTest.model({ id: ModelID.make("mimo-v2.6"), api: { id: "mimo-v2.6" } as never })
     expect(SystemPrompt.provider(mimo, "codex")[0]).toContain("You are Codex")

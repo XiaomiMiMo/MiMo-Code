@@ -48,6 +48,8 @@ import type { GrepTool } from "@/tool/grep"
 import type { EditTool } from "@/tool/edit"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
 import type { ViewImageTool } from "@/tool/view-image"
+import type { WatchVideoTool } from "@/tool/watch-video"
+import type { ListenAudioTool } from "@/tool/listen-audio"
 import type { WebFetchTool } from "@/tool/webfetch"
 import type { CodeSearchTool } from "@/tool/codesearch"
 import type { WebSearchTool } from "@/tool/websearch"
@@ -2348,6 +2350,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "view_image"}>
           <ViewImage {...toolprops} />
         </Match>
+        <Match when={props.part.tool === "watch_video" || props.part.tool === "listen_audio"}>
+          <ReadMedia {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "grep"}>
           <Grep {...toolprops} />
         </Match>
@@ -3412,6 +3417,22 @@ function ViewImage(props: ToolProps<typeof ViewImageTool>) {
       part={props.part}
     >
       View image {normalizePath(props.input.path!)} {input(props.input, ["path"])}
+    </InlineTool>
+  )
+}
+
+function ReadMedia(props: ToolProps<typeof WatchVideoTool | typeof ListenAudioTool>) {
+  const isRunning = createMemo(() => props.part.state.status === "running")
+  const audio = () => props.part.tool === "listen_audio"
+  return (
+    <InlineTool
+      icon={audio() ? "♪" : "◉"}
+      pending={audio() ? "Listening to audio..." : "Reading video..."}
+      complete={props.input.path}
+      spinner={isRunning()}
+      part={props.part}
+    >
+      {audio() ? "Listen to audio" : "Read video"} {normalizePath(props.input.path!)}
     </InlineTool>
   )
 }

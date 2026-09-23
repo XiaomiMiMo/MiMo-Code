@@ -8,12 +8,84 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
 import { provideTmpdirInstance } from "../fixture/fixture"
+import { ProviderTest } from "../fake/provider"
+import { SessionID, MessageID } from "../../src/session/schema"
+import { viewExecSubtools } from "../../src/tool/tool-script"
 
 const it = testEffect(
   Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer),
 )
 
 describe("ToolRegistry.tools: invocation style resolution", () => {
+  it.live("reads video and audio through the Codex exec gateway and preserves their attachments", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const bytes = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42"), Buffer.alloc(12)])
+        const wav = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WAVEfmt "), Buffer.alloc(24)])
+        yield* Effect.promise(() => fs.writeFile(path.join(dir, "clip.mp4"), bytes))
+        yield* Effect.promise(() => fs.writeFile(path.join(dir, "clip.wav"), wav))
+        const reg = yield* ToolRegistry.Service
+        const agents = yield* Agent.Service
+        const model = ProviderTest.model({
+          id: ModelID.make("model"),
+          providerID: ProviderID.make("test"),
+          api: { id: "model", url: "https://example.com", npm: "@ai-sdk/openai-compatible" },
+          capabilities: {
+            ...ProviderTest.model().capabilities,
+            input: { text: true, image: false, audio: true, video: true, pdf: false },
+          },
+        })
+        const defs = yield* reg.tools({
+          providerID: model.providerID,
+          modelID: model.id,
+          agent: yield* agents.get("build"),
+          harness: "codex",
+        })
+        const exec = defs.find((tool) => tool.id === "exec")!
+        expect(exec.description).toContain("watch_video(input:")
+        expect(exec.description).toContain("listen_audio(input:")
+        const result = yield* exec.execute(
+          {
+            code: 'return await Promise.all([tools.watch_video({ path: "clip.mp4" }), tools.listen_audio({ path: "clip.wav" })])',
+          },
+          {
+            sessionID: SessionID.make("ses_test"),
+            messageID: MessageID.make("msg_test"),
+            callID: "call_test",
+            agent: "build",
+            abort: AbortSignal.any([]),
+            messages: [],
+            extra: { model, harness: "codex" },
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+        expect(result.output).toContain("Video read successfully")
+        expect(result.output).toContain("Audio read successfully")
+        const video = viewExecSubtools(result.metadata).find((part) => part.tool === "watch_video")
+        expect(video?.state.status).toBe("completed")
+        expect(video?.state.attachments).toEqual([
+          {
+            type: "file",
+            mime: "video/mp4",
+            filename: "clip.mp4",
+            url: `data:video/mp4;base64,${bytes.toString("base64")}`,
+          },
+        ])
+        const audio = viewExecSubtools(result.metadata).find((part) => part.tool === "listen_audio")
+        expect(audio?.state.status).toBe("completed")
+        expect(audio?.state.attachments).toEqual([
+          {
+            type: "file",
+            mime: "audio/wav",
+            filename: "clip.wav",
+            url: `data:audio/wav;base64,${wav.toString("base64")}`,
+          },
+        ])
+      }),
+    ),
+  )
+
   it.live("advertises only exec in Codex mode while keeping hidden tools registered", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -35,6 +107,8 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
           "bash",
           "apply_patch",
           "view_image",
+          "watch_video",
+          "listen_audio",
           "actor",
           "task",
           "question",
@@ -49,6 +123,8 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
 
         expect(ids).toEqual(["exec"])
         expect(registered.map((tool) => tool.id)).toContain("webfetch")
+        expect(registered.map((tool) => tool.id)).toContain("watch_video")
+        expect(registered.map((tool) => tool.id)).toContain("listen_audio")
         nested.forEach((id) => expect(ids).not.toContain(id))
 
         const description = tools.find((tool) => tool.id === "exec")?.description ?? ""
@@ -92,6 +168,8 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
 
         expect(normalDefault.map((tool) => tool.id)).toContain("bash")
         expect(normalDefault.map((tool) => tool.id)).not.toContain("exec")
+        expect(normalDefault.map((tool) => tool.id)).not.toContain("watch_video")
+        expect(normalDefault.map((tool) => tool.id)).not.toContain("listen_audio")
         expect(responsesDefault.map((tool) => tool.id)).toContain("bash")
         expect(responsesDefault.map((tool) => tool.id)).not.toContain("exec")
         expect(normalCodex.map((tool) => tool.id)).toEqual(["exec"])
