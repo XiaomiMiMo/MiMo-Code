@@ -11,7 +11,7 @@ import { Agent } from "@/agent/agent"
 import type { ModelID, ProviderID } from "../provider/schema"
 import { MessageV2 } from "../session/message-v2"
 import { evalScript, type HostFn } from "../workflow/sandbox"
-import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, TOOL_SCRIPT_EXCLUDED } from "./tool-script-ref"
+import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, TOOL_SCRIPT_EXCLUDED, DIRECT_ONLY_MCP_TOOLS } from "./tool-script-ref"
 import type { HarnessMode } from "./gpt"
 import DESCRIPTION from "./tool-script.txt"
 import * as Tool from "./tool"
@@ -161,7 +161,7 @@ export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
   const aliasTargets = new Set<string>(Object.values(TOOL_SCRIPT_ALIASES))
   const lines = defs
     .filter(
-      (def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && !aliases.has(def.id) && !aliasTargets.has(def.id),
+      (def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && !DIRECT_ONLY_MCP_TOOLS.has(def.id) && !aliases.has(def.id) && !aliasTargets.has(def.id),
     )
     .map((def) => {
       const summary = def.description.split("\n").find((l) => l.trim()) ?? ""
@@ -618,7 +618,7 @@ export const ToolScriptTool = Tool.define(
                   }
                 : undefined,
             )
-          ).filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && (!whitelist || whitelist.has(def.id)))
+          ).filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && !DIRECT_ONLY_MCP_TOOLS.has(def.id) && (!whitelist || whitelist.has(def.id)))
           const byId = new Map(defs.map((def) => [def.id, def]))
           // Request-authorized MCP tools (delivered via ctx.extra.execMcp and
           // filled by SessionPrompt's resolveTools for THIS request). Tool Search
@@ -628,7 +628,7 @@ export const ToolScriptTool = Tool.define(
           // Builtin ids win on collision — an MCP server must not shadow `read`.
           const mcpTools = (ctx.extra?.execMcp as { current?: Record<string, AiTool> } | undefined)?.current ?? {}
           const mcpById = new Map(
-            Object.entries(mcpTools).filter(([id]) => !byId.has(id) && (!whitelist || whitelist.has(id))),
+            Object.entries(mcpTools).filter(([id]) => !byId.has(id) && !DIRECT_ONLY_MCP_TOOLS.has(id) && (!whitelist || whitelist.has(id))),
           )
           const allTools = [
             ...[...byId.values()]
@@ -773,6 +773,9 @@ export const ToolScriptTool = Tool.define(
 
           const callTool: HostFn = (name: unknown, args: unknown) => {
             const id = String(name)
+            if (DIRECT_ONLY_MCP_TOOLS.has(id)) {
+              return Promise.reject(new Error(`Call ${id} directly as a top-level tool, not inside exec. Use its declared input schema; CUA scripts and screenshots have their own runtime.`))
+            }
             const alias = TOOL_SCRIPT_ALIASES[id as keyof typeof TOOL_SCRIPT_ALIASES]
             const def = byId.get(alias ?? id)
             const mcpDef = def ? undefined : mcpById.get(id)

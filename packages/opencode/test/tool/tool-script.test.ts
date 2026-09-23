@@ -1005,6 +1005,34 @@ describe("renderToolScriptDeclarations", () => {
 })
 
 describe("exec MCP dispatch", () => {
+  test("CUA tools are direct-only, including guessed nested calls", async () => {
+    const calls: string[] = []
+    const mcp = Object.fromEntries(["cua_repl_js", "cua_repl_js_reset", "node_repl_js", "search_lookup"].map((name) => [
+      name, fakeMcpTool(async () => {
+        calls.push(name)
+        return { output: "ok", metadata: {} }
+      }),
+    ]))
+    const result = await runToolScript(`
+      const names = ALL_TOOLS.map(t => t.name);
+      const errors = [];
+      for (const name of ["cua_repl_js", "cua_repl_js_reset"]) {
+        try { await tools[name]({code: "1+1"}); } catch (error) { errors.push(error.message); }
+      }
+      await tools.node_repl_js({code: "1+1"});
+      return { names, errors };
+    `, [], undefined, { mcp })
+    expect(result.metadata.status).toBe("completed")
+    const output = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
+    expect(output.names).toEqual(["node_repl_js", "search_lookup"])
+    expect(result.output).toContain("Call cua_repl_js directly as a top-level tool")
+    expect(result.output).toContain("Call cua_repl_js_reset directly as a top-level tool")
+    expect(calls).toEqual(["node_repl_js"])
+    const declarations = renderToolScriptDeclarations([fakeDef("cua_repl_js", async () => ""), fakeDef("cua_repl_js_reset", async () => "")])
+    expect(declarations).not.toContain("cua_repl_js(input:")
+    expect(declarations).not.toContain("cua_repl_js_reset(input:")
+  })
+
   // Mimics the SessionPrompt-wrapped MCP execute: resolves with the normalized
   // {output, metadata, attachments} shape (permission/hooks/truncation already
   // applied by the wrapper), rejects on tool failure.

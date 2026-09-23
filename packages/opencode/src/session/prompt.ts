@@ -174,7 +174,7 @@ import {
   type McpToolSearchMetadata,
 } from "@/tool/mcp-tool-search"
 import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
-import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
+import { DIRECT_ONLY_MCP_TOOLS, GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
 
 // @ts-ignore
@@ -2048,14 +2048,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           !disabledMcpTools.has(key) &&
           (!agentToolAllowlist || agentToolAllowlist.has(key))
         const searchable = available && (!whitelist || whitelist.has(key))
-        if (searchable && useMcpToolSearch) {
+        const directOnly = DIRECT_ONLY_MCP_TOOLS.has(key)
+        if (searchable && useMcpToolSearch && !directOnly) {
           mcpSearchEntries.push({
             name: key,
             description: item.description ?? "",
             parameters: transformed as unknown as JSONObject,
           })
         }
-        if (searchable && !useMcpToolSearch && input.model.capabilities.toolcall && !useGPTTools) {
+        if (searchable && input.model.capabilities.toolcall && (directOnly || (!useMcpToolSearch && !useGPTTools))) {
           activeTools.add(key)
         }
         const executeMcp = (
@@ -2074,12 +2075,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 sessionID: input.session.id,
               })
               const ctx = context(args, opts)
-              if (!useMcpToolSearch && (!available || !input.model.capabilities.toolcall)) {
+              if ((!useMcpToolSearch || directOnly) && (!available || !input.model.capabilities.toolcall)) {
                 return yield* Effect.fail(
                   new RecoverableError(`The MCP tool "${key}" is unavailable for this request.`),
                 )
               }
-              if (modelFacing && useMcpToolSearch && !loadedMcpTools.has(key)) {
+              if (modelFacing && useMcpToolSearch && !directOnly && !loadedMcpTools.has(key)) {
                 return yield* Effect.fail(
                   new RecoverableError(
                     `The MCP tool "${key}" is not loaded for this request. Call ${MCP_TOOL_SEARCH_ID} first, then retry on the next step.`,
@@ -2229,7 +2230,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
         item.execute = (args, opts) => executeMcp(args, opts, true)
         tools[key] = item
-        if (searchable && input.model.capabilities.toolcall) {
+        if (searchable && input.model.capabilities.toolcall && !directOnly) {
           execMcpTools[key] = {
             ...item,
             execute: (args, opts) => executeMcp(args, opts, false),
@@ -2303,7 +2304,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
       // MCP Tool Search keeps full schemas out of the outer model tool list;
       // it is a context-budget optimization, not an authorization boundary.
-      // exec therefore receives every request-authorized MCP tool so Codex can
+      // exec therefore receives request-authorized MCP tools except direct-only
+      // CUA entry points, so the model can
       // call a catalogued tool in the same step without a redundant search
       // round-trip. These wrappers still run the ordinary permission, plugin,
       // metrics, normalization, and truncation pipeline above.

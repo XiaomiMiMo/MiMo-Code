@@ -11,6 +11,8 @@ return results.map((result) => result.output)
 
 Use `exec` for every tool declared below, including one small call. JavaScript can also batch multiple independent calls, programmatically transform their results, or keep large intermediate outputs out of the conversation. Run independent calls with `Promise.all` or `Promise.allSettled`, but keep dependent operations sequential.
 
+CUA tools `cua_repl_js` and `cua_repl_js_reset`, when exposed separately, must be called directly as top-level tools. They are not available inside `exec` or `ALL_TOOLS`. Send CUA code in the direct tool's `code` field so screenshots return to the model through its native image output.
+
 MCP tools inside `exec` are called through the same global `tools` object as built-in tools. MCP catalog names are opaque: they may use underscores, hyphens, or a server-specific prefix, and are not guaranteed to start with `mcp__`. Use the exact `name` from `ALL_TOOLS` and bracket notation:
 
 ```ts
