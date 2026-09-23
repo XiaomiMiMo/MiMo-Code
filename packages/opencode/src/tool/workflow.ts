@@ -8,6 +8,7 @@ import { InstanceState } from "@/effect"
 import { workflowRef } from "@/workflow/runtime-ref"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ActorRegistry } from "@/actor/registry"
+import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import type { SessionID } from "../session/schema"
 
 const id = "workflow"
@@ -216,18 +217,16 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
             ),
           )
         }
-        // Is a human attached to answer the workflow's up-front manifest
-        // permission ask? A workflow launched from an interactive session actor
-        // (foreground turn, no registered background actor) can prompt the human;
-        // one launched from a BACKGROUND subagent/system actor cannot, so the
-        // engine must ask non-interactively (fail closed) or it would hang forever
-        // on a reply no one can give. Mirrors decideAskRouting's `!askActor.background`:
-        // resolve the launching actor and treat a background actor as non-interactive.
-        // Absent actorID (the main foreground turn) => no background actor => interactive.
+        // Is a human/desktop attached to answer the workflow's up-front manifest
+        // permission ask? System-spawned actors (checkpoint-writer/dream/distill)
+        // have no attached approver — fail closed. Agent-spawned run/spawn actors
+        // (including background) stay interactive so the desktop harness can run
+        // 帮我审批 / model-judge / cards (R20 / decideAskRouting).
+        // Absent actorID (the main foreground turn) => interactive.
         const askActor = ctx.actorID
           ? yield* actorRegistry.get(ctx.sessionID as SessionID, ctx.actorID).pipe(Effect.orElseSucceed(() => undefined))
           : undefined
-        const interactive = !askActor?.background
+        const interactive = !askActor || !SYSTEM_SPAWNED_AGENT_TYPES.has(askActor.agent)
         const started = yield* runtime.start({
           script,
           sessionID: ctx.sessionID as SessionID,
