@@ -1198,7 +1198,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                       providerMetadata: {
                         openai: {
                           itemId: activeReasoningPart.canonicalId,
-                          reasoningEncryptedContent: value.item.encrypted_content ?? null,
+                          reasoningEncryptedContent: value.item.encrypted_content ?? activeReasoningPart.encryptedContent ?? null,
                         },
                       },
                     })

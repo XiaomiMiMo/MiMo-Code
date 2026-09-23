@@ -1137,7 +1137,7 @@ const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 // MiMo catalog models use stock Chat by default; forHarness selects Responses
 // per request without mutating provider configuration or its cached model metadata.
 export function isMimoOrSmartModel(id: string) {
-  return /(^|[/_-])mimo(?:-|$)/i.test(id) || id === "mimo-auto"
+  return /(?:^|\/)mimo(?:[.-]|$)/i.test(id)
 }
 
 /** Request-only transport view; model and provider identities remain unchanged. */

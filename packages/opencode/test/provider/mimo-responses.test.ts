@@ -25,7 +25,7 @@ for (const type of ["response.reasoning_summary_text.delta", "response.reasoning
         { type: "response.output_text.delta", item_id: "msg_test", delta: "answer" },
         { type: "response.completed", response: { usage: { input_tokens: 4, output_tokens: 6 } } },
       ]
-      const bodies: any[] = []
+      const bodies: Array<{ input: unknown }> = []
       const sdk = createOpenaiCompatible({ name: "openai", baseURL: "https://example.test/v1", fetch: (async (url, init) => {
         expect(String(url)).toBe("https://example.test/v1/responses")
         bodies.push(JSON.parse(String(init?.body)))
@@ -66,3 +66,18 @@ test("MiMo Responses transport view keeps identity and original metadata", async
   expect(model.api.npm).toBe("@ai-sdk/openai-compatible")
   expect(ProviderTransform.providerOptions(codex, {})).toEqual({ openai: { store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } })
 })
+
+// [TP-R11-03] A sparse terminal event must not erase encrypted reasoning from the start.
+test("reasoning encryption survives a sparse end event and a stream without an end item", async () => {
+  for (const done of [true, false]) {
+    const sdk = createOpenaiCompatible({ name: "openai", fetch: (async () => new Response([
+      { type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_sparse", encrypted_content: "synthetic-encrypted" } },
+      ...(done ? [{ type: "response.output_item.done", output_index: 0, item: { type: "reasoning", id: "rs_sparse" } }] : []),
+      { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } },
+    ].map(e => `data: ${JSON.stringify(e)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch });
+    const stream = await sdk.responses("mimo-test").doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "test" }] }] });
+    const parts = await read(stream.stream);
+    expect(parts.filter(p => p.type === "reasoning-end")).toHaveLength(1);
+    expect(parts.find(p => p.type === "reasoning-end")?.providerMetadata?.openai).toEqual({ itemId: "rs_sparse", reasoningEncryptedContent: "synthetic-encrypted" });
+  }
+});
