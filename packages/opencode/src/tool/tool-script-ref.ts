@@ -49,3 +49,10 @@ export const TOOL_SCRIPT_EXCLUDED = new Set([
 export const TOOL_SCRIPT_ALIASES = {
   exec_command: "bash",
 } as const
+
+// Request-scoped lifecycle supplied by SessionPrompt, never a global dispatcher.
+export type BuiltinExecutor = (
+  definition: Tool.Def,
+  args: unknown,
+  context: Tool.Context,
+) => Promise<Tool.ExecuteResult>

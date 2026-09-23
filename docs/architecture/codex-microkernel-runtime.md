@@ -147,3 +147,7 @@ MiMoCode 将 provider metadata 写入消息并在下一轮回放，使无状态 
 - [`workflow/sandbox.ts`](../../packages/opencode/src/workflow/sandbox.ts)：QuickJS sandbox；
 - [`session/prompt.ts`](../../packages/opencode/src/session/prompt.ts)：工具执行上下文和 permission routing；
 - [`provider/transform.ts`](../../packages/opencode/src/provider/transform.ts)：Responses reasoning round-trip。
+
+### Shared tool execution lifecycle
+
+SessionPrompt supplies a request-scoped builtin executor to exec. Both direct calls and nested calls run the same authorization, before/after hooks, attachment metadata and metrics handling. A nested call keeps its own metadata sink and call ID; permission requests bind to that child ID. Only model-facing calls enter the batch gate and signature deduplication: exec already holds that gate, and scripts own their ordering and error-catching semantics. Nested completion never attempts to complete a nonexistent standalone processor part. Standalone tool unit tests without a session executor retain direct Tool.Def execution.

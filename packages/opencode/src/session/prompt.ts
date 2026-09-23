@@ -174,7 +174,7 @@ import {
   type McpToolSearchMetadata,
 } from "@/tool/mcp-tool-search"
 import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
-import { DIRECT_ONLY_MCP_TOOLS, GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
+import { DIRECT_ONLY_MCP_TOOLS, GPT_TOP_LEVEL_TOOLS, type BuiltinExecutor } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
 
 // @ts-ignore
@@ -1764,6 +1764,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // ctx.extra — NOT a module-level ref, which concurrent sessions in the
       // same process would overwrite (request state must never live in a
       // global; see toolWhitelist/mcpToolSearch precedent).
+      const execBuiltin: { current?: BuiltinExecutor } = {}
       const execMcp: { current: Record<string, AITool> } = { current: {} }
       const useMcpToolSearch = isMcpToolSearchEnabled(
         Flag.MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH,
@@ -1843,6 +1844,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           ...(whitelist ? { toolWhitelist: [...whitelist] } : {}),
           mcpToolSearch: mcpCatalog.current,
           execMcp,
+          execBuiltin,
         },
         agent: input.agent.name,
         actorID: input.agentID,
@@ -1886,6 +1888,138 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         autoApproveDelete: () => permission.autoApproveDelete(),
       })
 
+      // Direct tools and exec children share hooks, permissions and metrics.
+      // Exec already owns the model-facing gate; children retain script ordering
+      // and catch semantics without recursively acquiring the outer gate.
+      const executeBuiltin = (
+        item: Pick<Tool.Def, "id" | "parameters" | "execute">,
+        args: any,
+        options: ToolExecutionOptions,
+        nested?: Tool.Context,
+      ) => {
+        const gateTool =
+          PARALLEL_READONLY_TOOLS.has(item.id) && !item.parameters.safeParse(args).success ? "invalid" : item.id
+        return Effect.gen(function* () {
+          const startTs = Date.now()
+          const callID = options?.toolCallId ?? "?"
+          log.debug("tool execute start", {
+            tool: item.id,
+            callID,
+            sessionID: input.session.id,
+          })
+          const base = context(args, options)
+          const ctx = nested ? { ...base, ...nested, ask: base.ask } : base
+          if (
+            whitelist &&
+            !whitelist.has(item.id) &&
+            item.id !== "invalid" &&
+            item.id !== MCP_TOOL_SEARCH_ID &&
+            !(item.id === "exec" && execAllowedByWhitelist)
+          ) {
+            const output = rejectionFor(item.id)
+            if (!nested) gate.fail(gateTool)
+            log.debug("tool execute rejected", {
+              tool: item.id,
+              callID,
+              durationMs: Date.now() - startTs,
+            })
+            if (!nested) yield* input.processor.completeToolCall(options.toolCallId, output)
+            return output
+          }
+          const beforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
+          yield* plugin.trigger(
+            "tool.execute.before",
+            { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
+            beforeOutput,
+          )
+          if (beforeOutput.cancel) {
+            if (!nested) gate.fail(gateTool)
+            const cancelOutput = {
+              title: "Cancelled",
+              output: beforeOutput.cancelReason || "Tool call cancelled by hook",
+              metadata: { cancelled: true },
+            }
+            yield* bus
+              .publish(Metrics.ToolCall, {
+                sessionID: ctx.sessionID,
+                tool_name: item.id,
+                input_bytes: Metrics.jsonByteLength(beforeOutput.args),
+                output_bytes: 0,
+                tool_call_id: options.toolCallId,
+                tool_call_status: "cancelled",
+              })
+              .pipe(Effect.ignore)
+            if (!nested) yield* input.processor.completeToolCall(options.toolCallId, cancelOutput)
+            return cancelOutput
+          }
+          const result = yield* item.execute(beforeOutput.args, ctx)
+          log.debug("tool execute done", {
+            tool: item.id,
+            callID,
+            durationMs: Date.now() - startTs,
+            ok: true,
+          })
+          const output = {
+            ...result,
+            attachments: result.attachments?.map((attachment) => ({
+              ...attachment,
+              id: PartID.ascending(),
+              sessionID: ctx.sessionID,
+              messageID: input.processor.message.id,
+            })),
+          }
+          yield* plugin.trigger(
+            "tool.execute.after",
+            { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
+            output,
+          )
+          // These tools report failures as structured results rather than throwing.
+          if (item.id === "bash" && typeof output.metadata.exit === "number" && output.metadata.exit !== 0) {
+            if (!nested) gate.fail(gateTool)
+          }
+          if (item.id === "workflow" && args.operation === "run" && output.metadata.status === "failed") {
+            if (!nested) gate.fail(gateTool)
+          }
+          if (
+            (item.id === "write" || item.id === "edit") &&
+            beforeOutput.args?.file_path &&
+            isExtensionPath(beforeOutput.args.file_path)
+          ) {
+            yield* registry.reload().pipe(
+              Effect.tapError((err) => Effect.sync(() => log.warn("extension reload failed", { error: err }))),
+              Effect.ignore,
+            )
+          }
+          yield* bus
+            .publish(Metrics.ToolCall, {
+              sessionID: ctx.sessionID,
+              tool_name: item.id,
+              input_bytes: Metrics.jsonByteLength(beforeOutput.args),
+              output_bytes: Buffer.byteLength(output.output ?? "", "utf8"),
+              tool_call_id: options.toolCallId,
+              tool_call_status: "success",
+            })
+            .pipe(Effect.ignore)
+          if (options.abortSignal?.aborted) {
+            if (!nested) yield* input.processor.completeToolCall(options.toolCallId, output)
+          }
+          return output
+        })
+      }
+      execBuiltin.current = (definition, args, ctx) =>
+        run.promise(
+          executeBuiltin(
+            definition,
+            args,
+            {
+              toolCallId: ctx.callID!,
+              messages: [],
+              abortSignal: ctx.abort,
+            },
+            ctx,
+          ),
+        )
+
       // Keep every authorized definition in the AI SDK tool map so an unadvertised
       // direct call still resolves. `activeTools` below is the separate provider-
       // facing schema allowlist and stays compact in Codex mode.
@@ -1903,119 +2037,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           inputSchema: jsonSchema(schema),
           execute(args, options) {
             if (!claimToolSignature(item.id, args)) return rejectToolCallDuplicate()
-            // Invalid arguments never receive the read/search failure exemption.
             const gateTool =
               PARALLEL_READONLY_TOOLS.has(item.id) && !item.parameters.safeParse(args).success ? "invalid" : item.id
             return run.promise(
-              Effect.gen(function* () {
-                const startTs = Date.now()
-                const callID = options?.toolCallId ?? "?"
-                log.debug("tool execute start", {
-                  tool: item.id,
-                  callID,
-                  sessionID: input.session.id,
-                })
-                const ctx = context(args, options)
-                if (
-                  whitelist &&
-                  !whitelist.has(item.id) &&
-                  item.id !== "invalid" &&
-                  item.id !== MCP_TOOL_SEARCH_ID &&
-                  !(item.id === "exec" && execAllowedByWhitelist)
-                ) {
-                  const output = rejectionFor(item.id)
-                  gate.fail(gateTool)
-                  log.debug("tool execute rejected", {
-                    tool: item.id,
-                    callID,
-                    durationMs: Date.now() - startTs,
-                  })
-                  yield* input.processor.completeToolCall(options.toolCallId, output)
-                  return output
-                }
-                const beforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
-                yield* plugin.trigger(
-                  "tool.execute.before",
-                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
-                  beforeOutput,
-                )
-                if (beforeOutput.cancel) {
-                  gate.fail(gateTool)
-                  const cancelOutput = {
-                    title: "Cancelled",
-                    output: beforeOutput.cancelReason || "Tool call cancelled by hook",
-                    metadata: { cancelled: true },
-                  }
-                  yield* bus
-                    .publish(Metrics.ToolCall, {
-                      sessionID: ctx.sessionID,
-                      tool_name: item.id,
-                      input_bytes: Metrics.jsonByteLength(beforeOutput.args),
-                      output_bytes: 0,
-                      tool_call_id: options.toolCallId,
-                      tool_call_status: "cancelled",
-                    })
-                    .pipe(Effect.ignore)
-                  yield* input.processor.completeToolCall(options.toolCallId, cancelOutput)
-                  return cancelOutput
-                }
-                const result = yield* item.execute(beforeOutput.args, ctx)
-                log.debug("tool execute done", {
-                  tool: item.id,
-                  callID,
-                  durationMs: Date.now() - startTs,
-                  ok: true,
-                })
-                const output = {
-                  ...result,
-                  attachments: result.attachments?.map((attachment) => ({
-                    ...attachment,
-                    id: PartID.ascending(),
-                    sessionID: ctx.sessionID,
-                    messageID: input.processor.message.id,
-                  })),
-                }
-                yield* plugin.trigger(
-                  "tool.execute.after",
-                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
-                  output,
-                )
-                // These tools report failures as structured results rather than throwing.
-                if (item.id === "bash" && typeof output.metadata.exit === "number" && output.metadata.exit !== 0) {
-                  gate.fail(gateTool)
-                }
-                if (item.id === "workflow" && args.operation === "run" && output.metadata.status === "failed") {
-                  gate.fail(gateTool)
-                }
-                if (
-                  (item.id === "write" || item.id === "edit") &&
-                  beforeOutput.args?.file_path &&
-                  isExtensionPath(beforeOutput.args.file_path)
-                ) {
-                  yield* registry.reload().pipe(Effect.tapError((err) => Effect.sync(() => log.warn("extension reload failed", { error: err }))), Effect.ignore)
-                }
-                yield* bus
-                  .publish(Metrics.ToolCall, {
-                    sessionID: ctx.sessionID,
-                    tool_name: item.id,
-                    input_bytes: Metrics.jsonByteLength(beforeOutput.args),
-                    output_bytes: Buffer.byteLength(output.output ?? "", "utf8"),
-                    tool_call_id: options.toolCallId,
-                    tool_call_status: "success",
-                  })
-                  .pipe(Effect.ignore)
-                if (options.abortSignal?.aborted) {
-                  yield* input.processor.completeToolCall(options.toolCallId, output)
-                }
-                return output
-              }).pipe((body) =>
-                gate.run(
-                  gateTool,
-                  options?.toolCallId ?? "?",
-                  body,
-                  { signal: options.abortSignal },
-                ),
-              ),
+              gate.run(gateTool, options.toolCallId, executeBuiltin(item, args, options), {
+                signal: options.abortSignal,
+              }),
             )
           },
         })

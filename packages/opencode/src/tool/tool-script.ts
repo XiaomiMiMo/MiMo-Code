@@ -11,7 +11,7 @@ import { Agent } from "@/agent/agent"
 import type { ModelID, ProviderID } from "../provider/schema"
 import { MessageV2 } from "../session/message-v2"
 import { evalScript, type HostFn } from "../workflow/sandbox"
-import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, TOOL_SCRIPT_EXCLUDED, DIRECT_ONLY_MCP_TOOLS } from "./tool-script-ref"
+import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, TOOL_SCRIPT_EXCLUDED, DIRECT_ONLY_MCP_TOOLS, type BuiltinExecutor } from "./tool-script-ref"
 import type { HarnessMode } from "./gpt"
 import DESCRIPTION from "./tool-script.txt"
 import * as Tool from "./tool"
@@ -889,16 +889,25 @@ export const ToolScriptTool = Tool.define(
                   }
                 }),
               )
+            const builtinExecutor = (ctx.extra?.execBuiltin as { current?: BuiltinExecutor } | undefined)?.current
             const executeBuiltin = def
-              ? def.execute(toolArgs, subCtx).pipe(
-                  Effect.map((result): ExecNestedResult => ({
-                    title: result.title,
-                    output: result.output,
-                    metadata: result.metadata,
-                    attachments: normalizeAttachments(result.attachments),
-                    providerOutput: (result as { providerOutput?: unknown }).providerOutput,
-                    providerMetadata: (result as { providerMetadata?: Record<string, unknown> }).providerMetadata,
-                  })),
+              ? (builtinExecutor
+                  ? Effect.tryPromise({
+                      try: () => builtinExecutor(def, toolArgs, subCtx),
+                      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+                    })
+                  : def.execute(toolArgs, subCtx)
+                ).pipe(
+                  Effect.map(
+                    (result): ExecNestedResult => ({
+                      title: result.title,
+                      output: result.output,
+                      metadata: result.metadata,
+                      attachments: normalizeAttachments(result.attachments),
+                      providerOutput: (result as { providerOutput?: unknown }).providerOutput,
+                      providerMetadata: (result as { providerMetadata?: Record<string, unknown> }).providerMetadata,
+                    }),
+                  ),
                 )
               : executeMcp(mcpDef!)
             return withSlot(() =>
