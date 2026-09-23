@@ -343,4 +343,65 @@ describe("Permission.reply reject source isolation", () => {
       }),
     ),
   )
+
+  it.live(
+    "reject cascades only within the same tool.messageID",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        const askA = yield* perm
+          .ask({
+            permission: "bash" as never, patterns: ["sudo ls"], always: ["*"], metadata: {},
+            sessionID: "ses_main" as never, ruleset: [],
+            tool: { messageID: "msg_a" as never, callID: "c_a" },
+          })
+          .pipe(Effect.forkScoped)
+        const askA2 = yield* perm
+          .ask({
+            permission: "bash" as never, patterns: ["sudo ls"], always: ["*"], metadata: {},
+            sessionID: "ses_main" as never, ruleset: [],
+            tool: { messageID: "msg_a" as never, callID: "c_a2" },
+          })
+          .pipe(Effect.forkScoped)
+        while ((yield* perm.list()).length < 2) yield* Effect.promise(() => Bun.sleep(10))
+        const pending = yield* perm.list()
+        const a = pending.find((x) => x.tool?.callID === "c_a")!
+        yield* perm.reply({ requestID: a.id, reply: "reject" })
+        expect((yield* perm.list()).length).toBe(0)
+        yield* Fiber.interrupt(askA).pipe(Effect.ignore)
+        yield* Fiber.interrupt(askA2).pipe(Effect.ignore)
+      }),
+    ),
+  )
+
+  it.live(
+    "reject does not cascade when either side lacks tool.messageID",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        const askNamed = yield* perm
+          .ask({
+            permission: "bash" as never, patterns: ["sudo ls"], always: ["*"], metadata: {},
+            sessionID: "ses_main" as never, ruleset: [],
+            tool: { messageID: "msg_a" as never, callID: "c_a" },
+          })
+          .pipe(Effect.forkScoped)
+        const askAnon = yield* perm
+          .ask({
+            permission: "bash" as never, patterns: ["sudo ls"], always: ["*"], metadata: {},
+            sessionID: "ses_main" as never, ruleset: [],
+          })
+          .pipe(Effect.forkScoped)
+        while ((yield* perm.list()).length < 2) yield* Effect.promise(() => Bun.sleep(10))
+        const pending = yield* perm.list()
+        const a = pending.find((x) => x.tool?.callID === "c_a")!
+        yield* perm.reply({ requestID: a.id, reply: "reject" })
+        const left = yield* perm.list()
+        expect(left.length).toBe(1)
+        expect(left[0]!.tool?.callID ?? "no-tool").toBe("no-tool")
+        yield* Fiber.interrupt(askNamed).pipe(Effect.ignore)
+        yield* Fiber.interrupt(askAnon).pipe(Effect.ignore)
+      }),
+    ),
+  )
 })
