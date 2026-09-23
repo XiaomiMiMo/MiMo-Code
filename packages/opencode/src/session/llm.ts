@@ -36,6 +36,7 @@ import { isRetryableTransientError } from "./retry"
 import * as SessionRetry from "./retry"
 import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
+import { usesGPTToolset } from "@/tool/gpt"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
@@ -762,6 +763,17 @@ const live: Layer.Layer<
         )
         .pipe(Effect.ignore)
 
+      const requestHeaders = new Headers({
+        ...(!input.ephemeral ? { "x-session-affinity": input.sessionID } : {}),
+        ...(!input.ephemeral && input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+        ...input.model.headers,
+        ...headers,
+        "User-Agent": `mimocode/${InstallationVersion}`,
+      })
+      if (usesGPTToolset(input.model.id, input.user.harness, input.model.api.id, input.model.family)) {
+        requestHeaders.set("x-openai-internal-codex-responses-lite", "true")
+      }
+
       const result = streamText({
         onError(error) {
           l.debug("streamText error", {
@@ -814,13 +826,7 @@ const live: Layer.Layer<
         toolChoice: input.toolChoice,
         maxOutputTokens: params.maxOutputTokens,
         abortSignal: input.abort,
-        headers: {
-          ...(!input.ephemeral ? { "x-session-affinity": input.sessionID } : {}),
-          ...(!input.ephemeral && input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
-          ...input.model.headers,
-          ...headers,
-          "User-Agent": `mimocode/${InstallationVersion}`,
-        },
+        headers: Object.fromEntries(requestHeaders),
         // Keep one SDK-level retry for a failure before response headers. The
         // processor owns the persistent stream retry budget below this layer.
         maxRetries: input.retries ?? 0,
