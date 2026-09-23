@@ -146,9 +146,13 @@ export const Flag = {
   get MIMOCODE_DISABLE_FAIL_CASCADE() {
     return truthy("MIMOCODE_DISABLE_FAIL_CASCADE")
   },
-  // Defaults to protection on. Opt out to execute tools while the model streams.
+  // Defaults to protection on. Opt out to stop aborting generation on the ninth call.
   get MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT() {
     return truthy("MIMOCODE_DISABLE_TOOLCALL_FLOODING_DETECT")
+  },
+  // Defaults to protection on. Opt out to allow exact same-step tool repeats.
+  get MIMOCODE_DISABLE_TOOLCALL_DUPLICATE_DETECT() {
+    return truthy("MIMOCODE_DISABLE_TOOLCALL_DUPLICATE_DETECT")
   },
   MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
   // Default compaction trigger, used when `compaction.max_context` is not set in

@@ -39,7 +39,7 @@ import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
-import { toolCallFloodingMiddleware, ToolCallFloodingError } from "./toolcall-flooding"
+import { toolCallFloodingMiddleware } from "./toolcall-flooding"
 import { toolSurface } from "@/tool/names"
 
 const log = Log.create({ service: "llm" })
@@ -904,18 +904,6 @@ const live: Layer.Layer<
                       if (SessionRetry.decide(normalized, "request").retryable) return yield* Effect.fail(event.error)
                     }
                     if (event.type !== "start" && event.type !== "error") hasProviderOutput = true
-                    if (event.type === "error" && event.error instanceof ToolCallFloodingError) {
-                      return {
-                        ...event,
-                        error: new ToolCallFloodingError(
-                          event.error.calls.map((call) => ({
-                            ...call,
-                            name: result.surface.id(call.name),
-                          })),
-                          event.error.releasedCallID,
-                        ),
-                      }
-                    }
                     return result.surface.restore(event)
                   }),
                 ),

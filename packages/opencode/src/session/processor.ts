@@ -13,7 +13,7 @@ import { LLM } from "./llm"
 import { MessageV2 } from "./message-v2"
 import { isOverflow } from "./overflow"
 import { MessageID, PartID } from "./schema"
-import { ToolCallFloodingError, TOOLCALL_FLOODING_ERROR, TOOLCALL_FLOODING_REMINDER } from "./toolcall-flooding"
+import { ToolCallFloodingError } from "./toolcall-flooding"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
@@ -976,44 +976,10 @@ export const layer: Layer.Layer<
                   return
                 }
                 if (e instanceof ToolCallFloodingError) {
-                  for (const call of e.calls) {
-                    if (call.id === e.releasedCallID) continue
-                    const match = yield* readToolCall(call.id)
-                    const parsed = yield* Effect.try({
-                      try: () => JSON.parse(call.input) as unknown,
-                      catch: () => undefined,
-                    }).pipe(Effect.catch(() => Effect.succeed({})))
-                    yield* session.updatePart({
-                      ...match?.part,
-                      id: match?.part.id ?? PartID.ascending(),
-                      messageID: ctx.assistantMessage.id,
-                      sessionID: ctx.sessionID,
-                      type: "tool",
-                      tool: call.name,
-                      callID: call.id,
-                      state: MessageV2.abortedToolState(
-                        { status: "pending", input: isRecord(parsed) ? parsed : {}, raw: call.input },
-                        TOOLCALL_FLOODING_ERROR,
-                      ),
-                    })
-                    yield* settleToolCall(call.id)
-                  }
+                  // The ninth call never became a part. Earlier calls already
+                  // streamed out; continue without a reminder or rewrite.
                   ctx.assistantMessage.finish = "tool-calls"
                   ctx.assistantMessage.error = undefined
-                  if (ctx.blocked) return
-                  const reminder = yield* session.updateMessage({
-                    ...streamInput.user,
-                    id: MessageID.ascending(),
-                    time: { created: Date.now() },
-                  })
-                  yield* session.updatePart({
-                    id: PartID.ascending(),
-                    messageID: reminder.id,
-                    sessionID: ctx.sessionID,
-                    type: "text",
-                    synthetic: true,
-                    text: TOOLCALL_FLOODING_REMINDER,
-                  })
                   return
                 }
                 if (!ctx.retrySafe) {

@@ -32,7 +32,9 @@ for (const disableFlooding of [false, true]) {
               else process.env.MIMOCODE_DISABLE_FAIL_CASCADE = previous.cascade
             }),
           )
-          const batches = [17, 3].map((count, batch) =>
+          // Batch 0 overflows the ninth-call abort when flooding is on (first eight remain).
+          // Batch 1 stays under the limit. Both have a failing exclusive edit at index 1.
+          const batches = [9, 3].map((count, batch) =>
             Array.from({ length: count }, (_, index) => ({
               id: `batch-${batch}-call-${index}`,
               name: index === 1 ? "edit" : "write",
@@ -63,31 +65,21 @@ for (const disableFlooding of [false, true]) {
                 const tools = (yield* sessions.messages({ sessionID: session.id }))
                   .flatMap((message) => message.parts)
                   .filter((part) => part.type === "tool")
-                expect(tools).toHaveLength(20)
+                const flooded = !disableFlooding
+                expect(tools).toHaveLength(flooded ? 11 : 12)
                 for (const batch of [0, 1]) {
                   const parts = tools.filter((part) => part.callID.startsWith(`batch-${batch}-`))
-                  const flooded = batch === 0 && !disableFlooding
+                  const expected = batch === 0 && flooded ? 8 : batches[batch].length
+                  expect(parts).toHaveLength(expected)
+                  expect(parts[0].state.status).toBe("completed")
                   expect(
                     yield* Effect.promise(() => Bun.file(path.join(dir, `batch-${batch}-file-0.txt`)).exists()),
                   ).toBe(true)
-                  expect(
-                    yield* Effect.promise(() => Bun.file(path.join(dir, `batch-${batch}-file-2.txt`)).exists()),
-                  ).toBe(!flooded && disableCascade)
-                  expect(parts[0].state.status).toBe("completed")
-                  if (flooded) {
-                    expect(
-                      parts
-                        .slice(1)
-                        .every(
-                          (part) =>
-                            part.state.status === "error" &&
-                            part.state.error === "Tool call cancelled because tool-call flooding was detected.",
-                        ),
-                    ).toBe(true)
-                    continue
-                  }
                   expect(parts[1].state.status).toBe("error")
                   expect(parts[1].state.status === "error" && parts[1].state.error).toContain("not found")
+                  expect(
+                    yield* Effect.promise(() => Bun.file(path.join(dir, `batch-${batch}-file-2.txt`)).exists()),
+                  ).toBe(disableCascade)
                   expect(
                     parts
                       .slice(2)
