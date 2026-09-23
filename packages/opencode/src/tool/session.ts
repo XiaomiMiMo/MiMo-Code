@@ -1,8 +1,5 @@
-import * as Tool from "./tool"
-import z from "zod"
 import { Effect, Deferred } from "effect"
 import { Session } from "@/session"
-import { sanitizeGeneratedTitle, truncateTitle } from "@/session/prompt"
 import { Provider } from "@/provider"
 import { prefixCaptureRef } from "@/session/prefix-capture-ref"
 import type { ForkContext, Interface as ActorInterface } from "@/actor/spawn"
@@ -126,33 +123,3 @@ export function forkQuery(deps: {
   })
 }
 
-type Metadata = {
-  changed?: boolean
-  sessionID?: string
-}
-
-const setTitleOperation = z.strictObject({
-  action: z.literal("set-title"),
-  title: z.string().min(1),
-  sessionID: z.string().optional().describe("Omit for the current session; another session cannot be renamed here."),
-})
-const titleParameters = z.strictObject({ operation: setTitleOperation })
-const TITLE_DESCRIPTION = `Set a semantic session title with operation.action=set-title. Omit sessionID for the current session. This is a generated title, never a manual rename: user-protected titles cannot change. Use after understanding an attachment or when the substantive task changes, not for ordinary progress. Never infer a task from a filename alone. Do not retry to force an overwrite.`
-
-function setSessionTitle(sessions: Session.Interface, input: z.infer<typeof setTitleOperation>, ctx: Tool.Context<Metadata>) {
-  return Effect.gen(function* () {
-    const rejected = { title: "Session title unchanged", output: "Title unchanged: protected, stale, invalid, or ineligible session.", metadata: { changed: false } }
-    if (ctx.abort.aborted || (ctx.actorID && ctx.actorID !== "main") || (input.sessionID && input.sessionID !== ctx.sessionID)) return rejected
-    const current = yield* sessions.get(ctx.sessionID)
-    if (current.parentID || current.titleSource === "user") return rejected
-    const title = sanitizeGeneratedTitle(input.title)
-    if (!title) return rejected
-    const result = yield* sessions.setGeneratedTitle({ sessionID: current.id, title: truncateTitle(title), expectedRevision: current.titleRevision })
-    return result ? { title: "Session title updated", output: JSON.stringify(result), metadata: { changed: true } } : rejected
-  })
-}
-
-export const SessionTitleTool = Tool.define<typeof titleParameters, Metadata, Session.Service>("session", Effect.gen(function* () {
-  const sessions = yield* Session.Service
-  return { description: TITLE_DESCRIPTION, parameters: titleParameters, execute: (input, ctx) => setSessionTitle(sessions, input.operation, ctx) }
-}))
