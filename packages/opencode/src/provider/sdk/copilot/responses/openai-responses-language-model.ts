@@ -881,6 +881,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
 
     // Track current active reasoning output_index for correlating summary events
     let currentReasoningOutputIndex: number | null = null
+    let nextSyntheticReasoningIndex = -1
 
     // Track a stable text part id for the current assistant message.
     // Copilot may change item_id across text deltas; normalize to one id.
@@ -1341,7 +1342,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
               // directly. Deltas can arrive without output_item.added.
               const index = value.output_index ?? (known ? Number(known[0]) :
                 providerOptionsKey === "copilot" && currentReasoningOutputIndex !== null
-                  ? currentReasoningOutputIndex : -(Object.keys(activeReasoning).length + 1))
+                  ? currentReasoningOutputIndex : nextSyntheticReasoningIndex--)
               const activeItem = activeReasoning[index] ??= {
                 canonicalId: value.item_id,
                 summaryParts: [],

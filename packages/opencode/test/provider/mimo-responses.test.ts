@@ -108,3 +108,17 @@ test("v2.6-flash-test is a MiMo Responses alias without changing its API model I
   }) as typeof fetch })
   await read((await sdk.responses(resolved.api.id).doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "test" }] }], providerOptions: ProviderTransform.providerOptions(resolved, {}) })).stream)
 })
+
+// [TP-R11-03] Completing one orphan reasoning item must not reuse another live item's index.
+test("interleaved reasoning deltas without start frames retain separate identities", async () => {
+  const delta = (id: string, text: string) => ({ type: "response.reasoning_summary_text.delta", item_id: id, summary_index: 0, delta: text })
+  const done = (id: string, index: number) => ({ type: "response.output_item.done", output_index: index, item: { type: "reasoning", id } })
+  const events = [delta("a", "A"), delta("b", "B"), done("a", 0), delta("c", "C"), delta("b", "2"), done("b", 1), done("c", 2)]
+  const sdk = createOpenaiCompatible({ name: "openai", fetch: (async () => new Response(events.map(e => `data: ${JSON.stringify(e)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })) as unknown as typeof fetch })
+  const result = await sdk.responses("mimo-test").doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "test" }] }] })
+  const parts = await read(result.stream)
+  const output: Record<string, string> = {}
+  for (const part of parts) if (part.type === "reasoning-delta") output[part.id] = (output[part.id] ?? "") + part.delta
+  expect(output).toEqual({ "a:0": "A", "b:0": "B2", "c:0": "C" })
+  expect(parts.filter(p => p.type === "reasoning-end").map(p => p.id)).toEqual(["a:0", "b:0", "c:0"])
+})
