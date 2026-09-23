@@ -217,11 +217,11 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
             ),
           )
         }
-        // Is a human/desktop attached to answer the workflow's up-front manifest
-        // permission ask? System-spawned actors (checkpoint-writer/dream/distill)
-        // have no attached approver — fail closed. Agent-spawned run/spawn actors
-        // (including background) stay interactive so the desktop harness can run
-        // 帮我审批 / model-judge / cards (R20 / decideAskRouting).
+        // Is a human or interactive client attached to answer the workflow's
+        // up-front manifest permission ask? System-spawned actors
+        // (checkpoint-writer/dream/distill) have no attached approver — fail
+        // closed. Agent-spawned run/spawn actors (including background) stay
+        // interactive so an attached client can approve (decideAskRouting).
         // Absent actorID (the main foreground turn) => interactive.
         const askActor = ctx.actorID
           ? yield* actorRegistry.get(ctx.sessionID as SessionID, ctx.actorID).pipe(Effect.orElseSucceed(() => undefined))
