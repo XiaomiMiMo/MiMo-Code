@@ -283,7 +283,8 @@ export const layer = Layer.effect(
       // Dangerous startup mode and the dedicated delete exemption may bypass
       // the human confirmation, but only after every explicit bash_delete deny
       // above has had a chance to reject the request.
-      if (needsAsk && forced && s.autoApproveDelete) {
+      // Delete exemption applies only to bash_delete — not other FORCED_ASK (computer).
+      if (needsAsk && request.permission === "bash_delete" && s.autoApproveDelete) {
         log.info("auto-approve-delete active, auto-allowing", {
           permission: request.permission,
           patterns: request.patterns,
@@ -465,8 +466,10 @@ export const layer = Layer.effect(
         const src = existing.info.tool?.messageID
         for (const [id, item] of pending.entries()) {
           if (item.info.sessionID !== existing.info.sessionID) continue
+          // Strict: cascade only when both sides carry the same source id.
+          // Missing messageID must not inherit another actor's reject (R20).
           const itemSrc = item.info.tool?.messageID
-          if (src && itemSrc && src !== itemSrc) continue
+          if (!(src && itemSrc && src === itemSrc)) continue
           pending.delete(id)
           yield* bus.publish(Event.Replied, {
             sessionID: item.info.sessionID,
