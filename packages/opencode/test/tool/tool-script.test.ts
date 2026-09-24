@@ -1052,15 +1052,16 @@ describe("renderToolScriptDeclarations", () => {
     expect(text.match(/<tool>/g)).toHaveLength(1)
     const catalog = parseXmlCatalog(text)
     expect(catalog).toEqual([{ name: def.id, description, schema: expect.stringContaining("<parameters />") }])
+    const constrained = { ...def, parameters: z.object({ value: z.string().default('<>& "$& $$').describe(description) }) }
+    const xml = parseXmlCatalog(renderToolScriptDeclarations([constrained]))[0].schema
+    expect(xml).toContain('<default valueType="string">&lt;&gt;&amp; "$&amp; $$</default>')
+    expect(xml).toContain("&lt;tool&gt;")
     const result = await runToolScript(`return { catalog: ALL_TOOLS, result: await tools[${JSON.stringify(def.id)}]({}) }`, [def])
     expect(result.metadata.status).toBe("completed")
     const returned = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
     expect(returned.catalog).toEqual([{ name: def.id, description, inputSchema: z.toJSONSchema(def.parameters, { io: "input" }) }])
     expect(returned.result.output).toBe("ok")
-    const constrained = { ...def, parameters: z.object({ value: z.string().default('<>& "').describe(description) }) }
-    const xml = parseXmlCatalog(renderToolScriptDeclarations([constrained]))[0].schema
-    expect(xml).toContain('<default valueType="string">&lt;&gt;&amp; "</default>')
-    expect(xml).toContain("&lt;tool&gt;")
+
   })
 
   // Desktop engine-runtime [TP-R5-06]: references, composition and typed literal values remain XML.

@@ -142,7 +142,7 @@ function xmlValue(value: unknown, name: string, depth: number, attributes: Recor
   }
   const type = value === null ? "null" : typeof value
   const rendered = xmlElement(tag, { ...attrs, valueType: type }, [], depth)
-  return rendered.replace(" />", `>${value === null ? "" : escapeXmlText(String(value))}</${tag}>`)
+  return rendered.replace(" />", () => `>${value === null ? "" : escapeXmlText(String(value))}</${tag}>`)
 }
 
 /** JSON Schema is the source of truth; XML is its model-facing parameter notation. */
