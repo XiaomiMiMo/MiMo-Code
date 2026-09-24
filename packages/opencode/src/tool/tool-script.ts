@@ -123,6 +123,67 @@ function escapeXmlText(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\r", "&#13;")
 }
 
+function xmlElement(tag: string, attributes: Record<string, string>, body: string[], depth: number): string {
+  const pad = "  ".repeat(depth)
+  const attrs = Object.entries(attributes).map(([key, value]) => ` ${key}="${escapeXmlText(value).replaceAll('"', "&quot;").replaceAll("\n", "&#10;").replaceAll("\t", "&#9;")}"`).join("")
+  if (!body.length) return `${pad}<${tag}${attrs} />`
+  return `${pad}<${tag}${attrs}>\n${body.join("\n")}\n${pad}</${tag}>`
+}
+
+/** Typed XML literals preserve defaults, enums and extension values without a JSON body. */
+function xmlValue(value: unknown, name: string, depth: number, attributes: Record<string, string> = {}): string {
+  const tag = /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(name) ? name : "constraint"
+  const attrs = { ...(tag !== name ? { name } : {}), ...attributes }
+  if (value !== null && typeof value === "object") {
+    const array = Array.isArray(value)
+    return xmlElement(tag, { ...attrs, valueType: array ? "array" : "object" },
+      array ? value.map((item) => xmlValue(item, "item", depth + 1))
+        : Object.entries(value).map(([key, item]) => xmlValue(item, "field", depth + 1, { name: key })), depth)
+  }
+  const type = value === null ? "null" : typeof value
+  const rendered = xmlElement(tag, { ...attrs, valueType: type }, [], depth)
+  return rendered.replace(" />", `>${value === null ? "" : escapeXmlText(String(value))}</${tag}>`)
+}
+
+/** JSON Schema is the source of truth; XML is its model-facing parameter notation. */
+function schemaXml(value: unknown, tag = "schema", depth = 2, attributes: Record<string, string> = {}): string {
+  if (typeof value === "boolean") return xmlElement(tag, { ...attributes, allowed: String(value) }, [], depth)
+  if (!value || typeof value !== "object" || Array.isArray(value)) return xmlValue(value, tag, depth, attributes)
+  const schema = value as Record<string, unknown>
+  const properties = schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+    ? schema.properties as Record<string, unknown> : undefined
+  const required = Array.isArray(schema.required) ? schema.required : []
+  return xmlElement(tag, { ...attributes, ...(typeof schema.type === "string" ? { type: schema.type } : {}) },
+    Object.entries(schema).flatMap(([key, item]): string[] => {
+      if (key === "type" && typeof item === "string") return []
+      if (key === "properties" && properties) {
+        const entries = Object.entries(properties)
+        return entries.length ? entries.map(([name, child]) => schemaXml(child, "parameter", depth + 1, { name, required: String(required.includes(name)) }))
+          : [xmlElement("parameters", {}, [], depth + 1)]
+      }
+      if (key === "required" && properties) {
+        const remaining = required.filter((name) => typeof name !== "string" || !Object.hasOwn(properties, name))
+        return remaining.length ? [xmlValue(remaining, key, depth + 1)] : []
+      }
+      if ((key === "description" || key === "$ref") && typeof item === "string") {
+        const name = key === "description" ? "desc" : "ref"
+        return [`${"  ".repeat(depth + 1)}<${name}>${escapeXmlText(item)}</${name}>`]
+      }
+      if (["$defs", "definitions", "patternProperties", "dependentSchemas"].includes(key) && item && typeof item === "object" && !Array.isArray(item)) {
+        return [xmlElement(key === "$defs" ? "defs" : key, {}, Object.entries(item).map(([name, child]) => schemaXml(child, "definition", depth + 2, { name })), depth + 1)]
+      }
+      if (["anyOf", "oneOf", "allOf", "prefixItems"].includes(key) && Array.isArray(item)) {
+        return [xmlElement(key, {}, item.map((child) => schemaXml(child, "option", depth + 2)), depth + 1)]
+      }
+      if (["items", "additionalItems", "additionalProperties", "unevaluatedItems", "unevaluatedProperties", "contains", "propertyNames", "not", "if", "then", "else", "contentSchema"].includes(key)) {
+        return [Array.isArray(item)
+          ? xmlElement(key, { mode: "tuple" }, item.map((child) => schemaXml(child, "option", depth + 2)), depth + 1)
+          : schemaXml(item, key, depth + 1)]
+      }
+      return [xmlValue(item, key, depth + 1)]
+    }), depth)
+}
+
 /** One metadata source for the model-facing declaration and the exec guest. */
 function toolScriptCatalog(defs: Tool.Def[]) {
   const aliases = new Set(Object.keys(TOOL_SCRIPT_ALIASES))
@@ -148,7 +209,7 @@ function toolScriptCatalog(defs: Tool.Def[]) {
   return [...entries, ...aliasEntries]
 }
 
-/** XML tool entries carry the full descriptions and authoritative JSON Schemas. */
+/** XML tool entries carry full descriptions and parameter constraints. */
 export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
   const catalog = toolScriptCatalog(defs)
   return [
@@ -169,13 +230,13 @@ export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
     "}",
     "```",
     "",
-    "Each XML tool entry contains its name, full description (desc), and authoritative input JSON Schema (schema), including field descriptions, defaults, bounds, and nested constraints. MCP schemas are available through ALL_TOOLS.",
+    "Each XML tool entry contains name, desc, and schema. Parameters declare name, type, and required; nested XML nodes preserve descriptions, defaults, bounds, and composition constraints. Literal valueType distinguishes strings, numbers, booleans, null, arrays, and objects. Boolean schemas use allowed. ALL_TOOLS retains the original input JSON Schemas, including MCP schemas.",
     "<tools>",
     ...catalog.map((entry) => [
       "  <tool>",
       `    <name>${escapeXmlText(entry.name)}</name>`,
       `    <desc>${escapeXmlText(entry.description)}</desc>`,
-      `    <schema>${escapeXmlText(JSON.stringify(entry.inputSchema, null, 2))}</schema>`,
+      schemaXml(entry.inputSchema),
       "  </tool>",
     ].join("\n")),
     "</tools>",

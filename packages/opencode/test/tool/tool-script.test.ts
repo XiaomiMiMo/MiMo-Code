@@ -965,10 +965,10 @@ function parseXmlCatalog(text: string) {
   const xml = text.match(/<tools>[\s\S]*<\/tools>/)?.[0]
   expect(xml).toBeDefined()
   const decode = (value: string) => value.replaceAll("&#13;", "\r").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&")
-  return [...xml!.matchAll(/<tool>\s*<name>([^<]*)<\/name>\s*<desc>([^<]*)<\/desc>\s*<schema>([^<]*)<\/schema>\s*<\/tool>/g)].map((match) => ({
+  return [...xml!.matchAll(/<tool>\s*<name>([^<]*)<\/name>\s*<desc>([^<]*)<\/desc>\s*([\s\S]*?)\s*<\/tool>/g)].map((match) => ({
     name: decode(match[1]),
     description: decode(match[2]),
-    inputSchema: JSON.parse(decode(match[3])),
+    schema: match[3],
   }))
 }
 
@@ -988,23 +988,25 @@ describe("renderToolScriptDeclarations", () => {
     const catalog = parseXmlCatalog(rendered)
     expect(catalog).not.toBeNull()
     expect(catalog[0].description).toBe(description)
-    expect(catalog[0].inputSchema).toMatchObject({
-      type: "object",
-      required: ["label", "tags"],
-      properties: {
-        count: { type: "integer", minimum: 1, maximum: 500, default: 20, description: "Maximum number of results." },
-        label: { minLength: 2, maxLength: 40, pattern: "^[a-z]+$", description: "Lowercase label." },
-        tags: { minItems: 1, maxItems: 3, items: { properties: { value: { enum: ["a", "b"], description: "Tag value." } } } },
-        enabled: { default: false },
-      },
-    })
-    expect(catalog[0].inputSchema).toEqual(z.toJSONSchema(parameters, { io: "input" }))
+    expect(catalog[0].schema).toContain('<schema type="object">')
+    expect(catalog[0].schema).toContain('<parameter name="count" required="false" type="integer">')
+    expect(catalog[0].schema).toContain('<parameter name="label" required="true" type="string">')
+    expect(catalog[0].schema).toContain('<parameter name="tags" required="true" type="array">')
+    expect(catalog[0].schema).toContain('<parameter name="value" required="true" type="string">')
+    expect(catalog[0].schema).toContain('<desc>Maximum number of results.</desc>')
+    for (const [key, value] of Object.entries({ minimum: 1, maximum: 500, default: 20, minLength: 2, maxLength: 40, minItems: 1, maxItems: 3 })) {
+      expect(catalog[0].schema).toContain(`<${key} valueType="number">${value}</${key}>`)
+    }
+    expect(catalog[0].schema).toContain('<pattern valueType="string">^[a-z]+$</pattern>')
+    expect(catalog[0].schema).toContain('<item valueType="string">a</item>')
+    expect(catalog[0].schema).toContain('<default valueType="boolean">false</default>')
+    expect(catalog[0].schema).toContain('<option type="null" />')
     expect(rendered).not.toContain("catalog_probe(input:")
     expect(rendered).not.toContain("```json")
     const result = await runToolScript("return ALL_TOOLS", [def])
     expect(result.metadata.status).toBe("completed")
     const actual = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
-    expect(actual).toEqual(catalog)
+    expect(actual).toEqual([{ name: def.id, description, inputSchema: z.toJSONSchema(parameters, { io: "input" }) }])
   })
 
   // Desktop engine-runtime [TP-R5-05]: alias schemas describe the public alias input.
@@ -1014,12 +1016,16 @@ describe("renderToolScriptDeclarations", () => {
     const catalog = parseXmlCatalog(rendered)
     expect(catalog).not.toBeNull()
     expect(catalog.map((item: { name: string }) => item.name)).toEqual(["exec_command"])
-    expect(catalog[0].inputSchema.properties.cmd.description).toBe("Shell command to execute.")
-    expect(catalog[0].inputSchema.properties.yield_time_ms).toMatchObject({ minimum: 1 })
-    expect(catalog[0].inputSchema.properties).not.toHaveProperty("command")
+    expect(catalog[0].schema).toContain('<parameter name="cmd" required="true" type="string">')
+    expect(catalog[0].schema).toContain('<desc>Shell command to execute.</desc>')
+    expect(catalog[0].schema).toContain('<minimum valueType="number">1</minimum>')
+    expect(catalog[0].schema).not.toContain('name="command"')
     const result = await runToolScript("return ALL_TOOLS", defs)
     expect(result.metadata.status).toBe("completed")
-    expect(JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])).toEqual(catalog)
+    const runtime = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
+    expect(runtime[0].name).toBe("exec_command")
+    expect(runtime[0].inputSchema.properties.cmd.description).toBe("Shell command to execute.")
+    expect(runtime[0].inputSchema.properties).not.toHaveProperty("command")
   })
 
   // Desktop engine-runtime [TP-R5-06]: one XML entry per available tool, with only name/desc/schema.
@@ -1045,15 +1051,46 @@ describe("renderToolScriptDeclarations", () => {
     expect(text).toContain("&#13;\n")
     expect(text.match(/<tool>/g)).toHaveLength(1)
     const catalog = parseXmlCatalog(text)
-    expect(catalog).toEqual([{ name: def.id, description, inputSchema: z.toJSONSchema(def.parameters, { io: "input" }) }])
+    expect(catalog).toEqual([{ name: def.id, description, schema: expect.stringContaining("<parameters />") }])
     const result = await runToolScript(`return { catalog: ALL_TOOLS, result: await tools[${JSON.stringify(def.id)}]({}) }`, [def])
     expect(result.metadata.status).toBe("completed")
     const returned = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
-    expect(returned.catalog).toEqual(catalog)
+    expect(returned.catalog).toEqual([{ name: def.id, description, inputSchema: z.toJSONSchema(def.parameters, { io: "input" }) }])
     expect(returned.result.output).toBe("ok")
     const constrained = { ...def, parameters: z.object({ value: z.string().default('<>& "').describe(description) }) }
-    expect(parseXmlCatalog(renderToolScriptDeclarations([constrained]))[0].inputSchema)
-      .toEqual(z.toJSONSchema(constrained.parameters, { io: "input" }))
+    const xml = parseXmlCatalog(renderToolScriptDeclarations([constrained]))[0].schema
+    expect(xml).toContain('<default valueType="string">&lt;&gt;&amp; "</default>')
+    expect(xml).toContain("&lt;tool&gt;")
+  })
+
+  // Desktop engine-runtime [TP-R5-06]: references, composition and typed literal values remain XML.
+  test("renders complex constraints, definitions and literal values without JSON bodies", () => {
+    const schema = {
+      type: "object", required: ["nested", "missing"],
+      properties: { nested: { type: "array", items: { $ref: "#/$defs/item" }, default: [{ enabled: false }] } },
+      $defs: { item: { anyOf: [{ type: "string" }, { type: "null" }] } },
+      additionalProperties: false,
+      allOf: [{ required: ["nested"] }],
+      "x:hint": { "key<&\"\n\t": [0, false, null, "null", "false", {}, []] },
+    }
+    const parameters = Object.assign(z.object({}), { toJSONSchema: () => schema })
+    const xml = parseXmlCatalog(renderToolScriptDeclarations([{ ...fakeDef("probe", async () => "ok"), parameters }]))[0].schema
+    expect(xml).toContain('<ref>#/$defs/item</ref>')
+    expect(xml).toContain('<definition name="item">')
+    expect(xml).toContain('<anyOf>')
+    expect(xml).toContain('<option type="null" />')
+    expect(xml).toContain('<additionalProperties allowed="false" />')
+    expect(xml).toContain('<default valueType="array">')
+    expect(xml).toContain('<field name="enabled" valueType="boolean">false</field>')
+    expect(xml).toContain('<constraint name="x:hint" valueType="object">')
+    expect(xml).toContain('name="key&lt;&amp;&quot;&#10;&#9;"')
+    expect(xml).toContain('<item valueType="null"></item>')
+    expect(xml).toContain('<item valueType="string">null</item>')
+    expect(xml).toContain('<item valueType="object" />')
+    expect(xml).toContain('<item valueType="array" />')
+    expect(xml).toContain('<item valueType="string">missing</item>')
+    expect(xml).not.toContain('{')
+    expect(xml).not.toContain('[')
   })
 
   // Desktop engine-runtime [TP-R5-06]: empty and fully filtered tool sets still form a valid empty catalog.
@@ -1076,9 +1113,11 @@ describe("renderToolScriptDeclarations", () => {
   test("exposes exec_command instead of bash in code mode", () => {
     const catalog = parseXmlCatalog(renderToolScriptDeclarations([fakeDef("bash", async () => "x")]))
     expect(catalog.map((tool) => tool.name)).toEqual(["exec_command"])
-    expect(catalog[0].inputSchema.required).toEqual(["cmd"])
-    expect(Object.keys(catalog[0].inputSchema.properties)).toEqual(["cmd", "yield_time_ms", "max_output_tokens", "workdir", "description"])
-    expect(catalog[0].inputSchema.properties.description.type).toBe("string")
+    expect(catalog[0].schema.match(/required="true"/g)).toHaveLength(1)
+    for (const name of ["yield_time_ms", "max_output_tokens", "workdir", "description"]) {
+      expect(catalog[0].schema).toContain(`<parameter name="${name}" required="false"`)
+    }
+    expect(catalog[0].schema).not.toContain('name="timeout"')
   })
 
 })
