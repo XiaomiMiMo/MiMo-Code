@@ -165,7 +165,8 @@ test("SDK serializes resume titleLocale in the query string", async () => {
 describe("recovery candidate predicate", () => {
   async function setupAssistant(overrides: Partial<{ finish: string; completed: boolean; error: boolean }>) {
     await using tmp = await tmpdir({ git: true })
-    return Instance.provide({
+    // Await so `await using` disposal (rm -rf tmpdir) cannot race provide's setup writes.
+    return await Instance.provide({
       directory: tmp.path,
       fn: async () => AppRuntime.runPromise(Effect.gen(function* () {
         const sessions = yield* Session.Service
