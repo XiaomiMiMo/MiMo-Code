@@ -146,7 +146,7 @@ describe("[TP-R20-04] computer permission isolation", () => {
     "skip-all",
     "full-access",
     "inherit-approved",
-    "inherit-grant",
+    "inherit-ruleset",
   ]) {
     it.live(
       `${scenario}: computer asks, accepts an explicit reply, and never remembers always`,
@@ -159,18 +159,12 @@ describe("[TP-R20-04] computer permission isolation", () => {
           yield* perm.setSkipAll(scenario === "skip-all" || scenario === "full-access")
           const inherit = scenario.startsWith("inherit-")
           if (inherit) {
-            if (scenario === "inherit-approved") {
-              forwardRef.setParentGrants("ses_computer_parent", {
-                ruleset: [],
-                approved: [{ permission: "*", pattern: "*", action: "allow" }],
-              })
-            }
-            if (scenario === "inherit-grant") forwardRef.setGrant("ses_computer_parent", "ses_test")
+            forwardRef.setParentGrants("ses_computer_parent", {
+              ruleset: scenario === "inherit-ruleset" ? [{ permission: "*", pattern: "*", action: "allow" }] : [],
+              approved: scenario === "inherit-approved" ? [{ permission: "*", pattern: "*", action: "allow" }] : [],
+            })
             yield* Effect.addFinalizer(() =>
-              Effect.sync(() => {
-                forwardRef.parentGrants.delete("ses_computer_parent")
-                forwardRef.clearGrantsForParent("ses_computer_parent")
-              }),
+              Effect.sync(() => forwardRef.parentGrants.delete("ses_computer_parent")),
             )
           }
           const ruleset: Permission.Ruleset =

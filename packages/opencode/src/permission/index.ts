@@ -129,14 +129,9 @@ export const AskInput = Schema.Struct({
   // (SYSTEM_SPAWNED_AGENT_TYPES) which have no attached human to reply. Default
   // (undefined/true) preserves all existing interactive behavior.
   interactive: Schema.optional(Schema.Boolean),
-  // Parent-grant inheritance for background peers and subagents with a real
-  // parent session edge (see decideAskRouting). When
-  // present, an ask that would block is NOT auto-denied outright: it is first
-  // checked against the PARENT session's approved ruleset (published process-
-  // wide via forwardRef.parentGrants). If the parent already holds a matching
-  // grant for every pattern, the child is auto-allowed with no human round-trip;
-  // otherwise it fails closed (DeniedError) — never hangs, never blocks on a
-  // human.
+  // Matching parent grants are a fast path, subject to deny and forced-ask
+  // precedence. A miss leaves the normal ask path intact: interactive:false
+  // fails closed; true/undefined waits for a reply.
   inherit: Schema.optional(Schema.Struct({ parentSessionID: Schema.String })),
 })
   .annotate({ identifier: "PermissionAskInput" })

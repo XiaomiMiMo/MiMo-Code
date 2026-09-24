@@ -1,12 +1,7 @@
-// Process-global parent-grant snapshot ref for background-subagent permission
-// inheritance. A plain module singleton (no Effect Layer), mirroring
-// actor/spawn-ref.ts, so it crosses per-Instance boundaries: an ordinary
-// background subagent may run in a different Instance/directory than its
-// parent, yet must reuse the exact directories/permissions the parent already
-// holds a grant for, WITHOUT a human round-trip and WITHOUT blocking. An
-// ungranted path simply isn't in the snapshot → the child fails closed.
-// Snapshot is refreshed by the parent's Permission instance on load and on
-// every persisted approval.
+// Process-global snapshots let permission inheritance cross Instance boundaries.
+// This ref only stores parent grants; on a miss, the Permission caller's
+// interactive setting determines whether to ask or fail closed. The parent's
+// Permission instance refreshes the snapshot on load and persisted approval.
 
 type Rule = { permission: string; pattern: string; action: "allow" | "ask" | "deny" }
 

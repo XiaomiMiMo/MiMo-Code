@@ -24,7 +24,7 @@ const bus = Bus.layer
 const env = Layer.mergeAll(Permission.layer.pipe(Layer.provide(bus)), bus, CrossSpawnSpawner.defaultLayer)
 const it = testEffect(env)
 
-// A background subagent's ask that would otherwise fail closed (interactive:false).
+// Direct service requests default to non-interactive for fail-closed coverage.
 function childAsk(patterns: string[], extra?: Partial<Parameters<Permission.Interface["ask"]>[0]>) {
   return {
     permission: "edit" as never,
@@ -78,7 +78,7 @@ describe("Permission.ask parent-grant inheritance", () => {
   }
 
   it.live(
-    "ordinary background subagent auto-allowed for a dir the parent granted",
+    "non-interactive child request auto-allowed for a dir the parent granted",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const perm = yield* Permission.Service
@@ -102,7 +102,7 @@ describe("Permission.ask parent-grant inheritance", () => {
   )
 
   it.live(
-    "ordinary background subagent still fails closed for an ungranted dir",
+    "non-interactive child request still fails closed for an ungranted dir",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const perm = yield* Permission.Service
@@ -125,7 +125,7 @@ describe("Permission.ask parent-grant inheritance", () => {
   )
 
   it.live(
-    "same-session actor subagent inherits parent always-grant",
+    "same-session non-interactive request inherits parent always-grant",
     provideTmpdirInstance(() =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -150,8 +150,7 @@ describe("Permission.ask parent-grant inheritance", () => {
           yield* perm.reply({ requestID: pending.id, reply: "always" })
           yield* Fiber.await(fiber)
 
-          // Same-session subagent: decideAskRouting inherits under the shared
-          // session id. Still non-interactive; the always-grant auto-allows.
+          // A persisted grant also allows a non-interactive request in this session.
           const result = yield* perm
             .ask({
               permission: "bash" as never,
@@ -225,12 +224,7 @@ describe("Permission.ask parent-grant inheritance", () => {
   )
 })
 
-/**
- * Background subagent ask shape after decideAskRouting:
- * interactive:false, inherit: { parentSessionID: current session } when the
- * actor row is a background subagent with a session id.
- */
-function subagentAsk(extra?: Partial<Parameters<Permission.Interface["ask"]>[0]>) {
+function nonInteractiveInheritAsk(extra?: Partial<Parameters<Permission.Interface["ask"]>[0]>) {
   return {
     permission: "bash" as never,
     patterns: ["wc -l /tmp/foo"],
@@ -245,9 +239,9 @@ function subagentAsk(extra?: Partial<Parameters<Permission.Interface["ask"]>[0]>
   }
 }
 
-describe("skip-all inheritance for background subagents", () => {
+describe("Permission service non-interactive inheritance with skip-all", () => {
   it.live(
-    "skipAll=true + production inherit shape → auto-allow, no human ask",
+    "skipAll=true + non-interactive inherit → auto-allow, no human ask",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const perm = yield* Permission.Service
@@ -256,9 +250,8 @@ describe("skip-all inheritance for background subagents", () => {
         const unsub = Bus.subscribe(Permission.Event.Asked, () => {
           asked += 1
         })
-        // Production routing always attaches inherit. skip-all must still win
-        // even when the parent snapshot has no matching allow.
-        const result = yield* perm.ask(subagentAsk()).pipe(Effect.exit)
+        // skip-all must win even when the parent snapshot has no matching allow.
+        const result = yield* perm.ask(nonInteractiveInheritAsk()).pipe(Effect.exit)
         unsub()
         expect(result._tag).toBe("Success")
         expect(asked).toBe(0)
@@ -281,7 +274,7 @@ describe("skip-all inheritance for background subagents", () => {
         })
         const result = yield* perm
           .ask(
-            subagentAsk({
+            nonInteractiveInheritAsk({
               inherit: { parentSessionID: "ses_parent" },
             }),
           )
@@ -301,7 +294,7 @@ describe("skip-all inheritance for background subagents", () => {
         const perm = yield* Permission.Service
         // No prior always-grant under ses_main. The child's own ask() publishes
         // an empty snapshot first, then inherit finds nothing to allow.
-        const result = yield* perm.ask(subagentAsk()).pipe(Effect.exit)
+        const result = yield* perm.ask(nonInteractiveInheritAsk()).pipe(Effect.exit)
         expect(result._tag).toBe("Failure")
       }),
     ),
@@ -329,7 +322,7 @@ describe("skip-all inheritance for background subagents", () => {
         // Child with inherit only (skip-all OFF) must NOT be saved by inherit,
         // because full access never wrote an allow into the parent snapshot.
         yield* perm.setSkipAll(false)
-        const child = yield* perm.ask(subagentAsk()).pipe(Effect.exit)
+        const child = yield* perm.ask(nonInteractiveInheritAsk()).pipe(Effect.exit)
         expect(child._tag).toBe("Failure")
       }),
     ),
