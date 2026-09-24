@@ -42,13 +42,22 @@ function detectType(key: string): MemoryType {
   return "free"
 }
 
+function isScope(value: string): value is Exclude<Scope, "cc"> {
+  return value === "global" || value === "projects" || value === "sessions"
+}
+
+function normalizeSeparators(absPath: string) {
+  return absPath.replaceAll("\\", "/")
+}
+
 export function parsePath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
+  const m = normalizeSeparators(absPath).match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
   if (!m) return null
   const [, scope, idMaybe, keyRaw] = m
+  if (!isScope(scope)) return null
   const scope_id = scope === "global" ? "" : (idMaybe ?? "")
   const key = keyRaw
-  return { scope: scope as Scope, scope_id, type: detectType(key), key }
+  return { scope, scope_id, type: detectType(key), key }
 }
 
 // Match: <anything>/.claude/projects/<slug>/memory/<key>.md
@@ -57,7 +66,7 @@ export function parsePath(absPath: string): MemoryLocator | null {
 const CC_PATH_RE = /\/\.claude\/projects\/([^/]+)\/memory\/(.+)\.md$/
 
 export function parseCcPath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(CC_PATH_RE)
+  const m = normalizeSeparators(absPath).match(CC_PATH_RE)
   if (!m) return null
   const [, slug, keyRaw] = m
   return {
@@ -83,6 +92,10 @@ const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n/
 // shadow `metadata.type` and need a real parser.
 const METADATA_TYPE_RE = /^[ \t]+type:[ \t]*(\w+)[ \t]*$/m
 
+function isCcType(value: string): value is CcType {
+  return CC_TYPES.some((type) => type === value)
+}
+
 export function parseCcFrontmatterType(body: string): CcType | null {
   const fm = body.match(FRONTMATTER_RE)
   if (!fm) return null
@@ -90,7 +103,7 @@ export function parseCcFrontmatterType(body: string): CcType | null {
   const t = inner.match(METADATA_TYPE_RE)
   if (!t) return null
   const value = t[1]
-  return (CC_TYPES as readonly string[]).includes(value) ? (value as CcType) : null
+  return isCcType(value) ? value : null
 }
 
 function assertSafeComponent(value: string) {

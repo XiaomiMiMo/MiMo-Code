@@ -46,6 +46,15 @@ describe("parseCcPath", () => {
     })
   })
 
+  test("Windows CC memory path parses", () => {
+    expect(parseCcPath(String.raw`C:\Users\测试用户\.claude\projects\-foo\memory\sub\file.md`)).toEqual({
+      scope: "cc",
+      scope_id: "-foo",
+      type: "free",
+      key: "sub/file",
+    })
+  })
+
   test("non-CC path returns null", () => {
     expect(parseCcPath("/data/memory/global/x.md")).toBeNull()
   })
