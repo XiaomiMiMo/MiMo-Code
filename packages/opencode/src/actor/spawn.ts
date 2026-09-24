@@ -9,7 +9,6 @@ import { SessionPrompt } from "@/session/prompt"
 import { SessionRunState } from "@/session/run-state"
 import { ActorRegistry } from "@/actor/registry"
 import { TaskRegistry } from "@/task/registry"
-import { TaskGate, MAX_TASK_GATE_SUBAGENT_REACT } from "@/task/gate"
 import { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import type { SpawnMode, ContextMode, ToolWhitelist, Lifecycle } from "@/actor/schema"
@@ -103,13 +102,9 @@ export type AgentOutcome =
       // format, the validated object is surfaced here and takes precedence over
       // finalText (DW spec P3).
       structured?: unknown
-      // Subagent's self-reported header status (parsed from finalText), possibly
-      // overridden by the completion gate (DB truth wins — see onSuccess).
+      // Subagent's self-reported header status (parsed from finalText).
       reportedStatus?: ReturnStatus
       reportedSummary?: string
-      // Task IDs the subagent left non-terminal after the gate's cap. Present
-      // only when reportedStatus was downgraded to "partial"/"blocked".
-      incompleteTasks?: string[]
       warnings?: string[]
     }
   | { status: "failure"; error: string; failure?: FailureInfo; finalText?: string; structured?: unknown }
@@ -364,10 +359,6 @@ export const layer = Layer.effect(
       model?: { providerID: ProviderID; modelID: ModelID }
       lifecycle: "ephemeral" | "persistent"
       task_id?: string
-      // True for non-specialized subagents (those that received
-      // RETURN_FORMAT_INSTRUCTION). Only these are subject to the completion
-      // gate; specialized/system agents and peers create no user tasks.
-      gateEligible?: boolean
       format?: MessageV2.OutputFormat
       // When set, the child's work fiber runs under this InstanceContext (via
       // InstanceRef) instead of inheriting the spawner's. Used by peers placed
@@ -411,7 +402,6 @@ export const layer = Layer.effect(
             ...(input.execution.groupAbort ? { wake: false as const } : {}),
           })
         const warnings: string[] = []
-        let gateFailed = false
         let lastResult: { finalText?: string; structured?: unknown } = {}
 
         // Derive actor mode from spawn shape: peer creates a new session, subagent shares parent's
@@ -513,48 +503,11 @@ export const layer = Layer.effect(
           }).pipe(
             Effect.flatMap(({ finalText, structured }) =>
               Effect.gen(function* () {
-                // === COMPLETION GATE (B) + structured parse (A) ===
-                // Delegates the list/decide step to TaskGate.decide.
-                // We retain the runTurn re-entry + delivered-text update here
-                // because that is gate-policy, not list-policy.
-                let deliveredText = finalText
-                if (input.gateEligible) {
-                  let gateIter = 0
-                  while (true) {
-                    const decision = yield* TaskGate.decide({
-                      session_id: input.parentSessionID,
-                      owner: input.actorID,
-                      reactCount: gateIter,
-                      maxReact: MAX_TASK_GATE_SUBAGENT_REACT,
-                    }).pipe(Effect.provideService(TaskRegistry.Service, taskRegistry))
-                    if (!decision.needReentry) break
-                    gateIter++
-                    const gateExit = yield* runAgentLoop({
-                      ...input,
-                      task: decision.reentryText,
-                      source: "hook",
-                      provenance: { hookPhase: "post", hookIteration: gateIter, pluginNames: [], hookIDs: [] },
-                    }).pipe(Effect.exit)
-                    if (Exit.isFailure(gateExit)) {
-                      if (Cause.hasInterruptsOnly(gateExit.cause)) return yield* Effect.failCause(gateExit.cause)
-                      warnings.push(`completion gate: ${Cause.pretty(gateExit.cause)}`)
-                      gateFailed = true
-                      break
-                    }
-                    const gateTurn = gateExit.value
-                    lastResult = gateTurn
-                    // The gate re-run's re-emitted text updates the delivered body
-                    // (and structured, if it produced one) so the reconciliation +
-                    // delivery below see the latest turn.
-                    if (gateTurn.finalText !== undefined) deliveredText = gateTurn.finalText
-                    if (gateTurn.structured !== undefined) structured = gateTurn.structured
-                  }
-                }
-
-                // === postStop ReAct loop ===
-                // Keep the execution running until hooks and their re-entries settle.
+                // postStop ReAct loop — keep the execution running until hooks settle.
                 // NOTE: parallel structure to preStop loop above — pre runs turn THEN checks,
                 // post checks THEN runs turn. Both give 1 (delivery) + MAX_POST_REACT re-entries.
+                // Task completion is NOT gated here: no `task done` nudge, no re-emit.
+                const deliveredText = finalText
                 let postIter = 0
                 let lastFinalText = deliveredText
                 let postReentry:
@@ -631,42 +584,16 @@ export const layer = Layer.effect(
                   lastFinalText = newTurn.finalText
                 }
 
-                // Reconcile the preserved main result with task truth after hooks settle.
-                const remaining = input.gateEligible
-                  ? yield* taskRegistry.list({
-                      session_id: input.parentSessionID,
-                      owner: input.actorID,
-                      include_terminal: false,
-                    })
-                  : []
-                const actionable = remaining.filter((t) => t.status === "open" || t.status === "in_progress")
-                const downgrade: ReturnStatus | undefined = actionable.length
-                  ? "partial"
-                  : remaining.length
-                    ? "blocked"
-                    : undefined
+                // Deliver the preserved main result. postStop may re-enter for
+                // housekeeping but must NOT replace the delivery body.
                 const parsed = parseReturnHeader(deliveredText)
-                const reportedStatus =
-                  downgrade ??
-                  (gateFailed && (parsed.status === undefined || parsed.status === "success")
-                    ? "partial"
-                    : parsed.status)
-                const incompleteTasks = remaining.map((t) => t.id)
-                const reconciledText =
-                  downgrade && incompleteTasks.length
-                    ? `${deliveredText ?? ""}\n\n**Incomplete tasks**: ${incompleteTasks.join(", ")}`
-                    : deliveredText
-                const actorResult = {
-                  ...(reconciledText !== undefined ? { finalText: reconciledText } : {}),
-                  ...(structured !== undefined ? { structured } : {}),
-                  ...(reportedStatus ? { reportedStatus } : {}),
-                  ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
-                  ...(warnings.length ? { warnings } : {}),
-                }
                 return {
                   status: "success" as const,
-                  ...actorResult,
-                  ...(incompleteTasks.length ? { incompleteTasks } : {}),
+                  ...(deliveredText !== undefined ? { finalText: deliveredText } : {}),
+                  ...(structured !== undefined ? { structured } : {}),
+                  ...(parsed.status ? { reportedStatus: parsed.status } : {}),
+                  ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
+                  ...(warnings.length ? { warnings } : {}),
                 }
               }),
             ),
@@ -858,7 +785,9 @@ export const layer = Layer.effect(
 
             // Auto-inject return-format instruction for lifecycle-managed subagents.
             // Agents with an explicit completionGate keep this behavior even when
-            // they also provide a dedicated system prompt.
+            // they also provide a dedicated system prompt. (completionGate only
+            // controls the Status/Summary header instruction now — there is no
+            // task-completion re-entry or incomplete-task downgrade.)
             const agentInfo = yield* agents.get(input.agentType)
             const gateEligible =
               agentInfo?.mode === "subagent" &&
@@ -878,7 +807,6 @@ export const layer = Layer.effect(
               model: input.model,
               lifecycle: input.lifecycle ?? "ephemeral",
               task_id: input.task_id,
-              gateEligible,
               format: input.format,
             })
             if (input.onReady) yield* Effect.ignore(input.onReady({ actorID, sessionID: input.sessionID }))

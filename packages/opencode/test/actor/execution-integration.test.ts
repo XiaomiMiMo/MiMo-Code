@@ -195,15 +195,19 @@ test("a pending wait receives a preStop failure's partial delivery before termin
 for (const scenario of [
   { reported: "failed", taskStatus: "done", expected: "failed" },
   { reported: "blocked", taskStatus: "done", expected: "blocked" },
-  { reported: "success", taskStatus: "done", expected: "partial" },
-  { reported: undefined, taskStatus: "done", expected: "partial" },
-  { reported: "success", taskStatus: "blocked", expected: "blocked" },
+  { reported: "success", taskStatus: "done", expected: "success" },
+  { reported: undefined, taskStatus: "done", expected: undefined },
+  { reported: "success", taskStatus: "blocked", expected: "success" },
+  { reported: "success", taskStatus: "open", expected: "success" },
+  { reported: "failed", taskStatus: "open", expected: "failed" },
 ] as const) {
-  test(`[TP-R14-07] gate failure preserves status priority: ${scenario.reported}/${scenario.taskStatus}`, async () => {
+  test(`[TP-R14-07] reported status is model-self-report only: ${scenario.reported}/${scenario.taskStatus}`, async () => {
     let settleTask: () => Promise<unknown> = async () => undefined
     const server = startScriptedLLMServer([
-      { lines: textStopResponse(`${scenario.reported ? `**Status**: ${scenario.reported}\n` : ""}MAIN-RESULT`) },
-      { lines: [], status: 400, beforeReply: () => settleTask() },
+      {
+        lines: textStopResponse(`${scenario.reported ? `**Status**: ${scenario.reported}\n` : ""}MAIN-RESULT`),
+        beforeReply: () => settleTask(),
+      },
     ])
     await using tmp = await tmpdir({
       git: true,
@@ -225,20 +229,24 @@ for (const scenario of [
               const sessions = yield* Session.Service
               const tasks = yield* TaskRegistry.Service
               const context = yield* Effect.context<Services>()
-              const parent = yield* sessions.create({ title: "gate priority" })
+              const parent = yield* sessions.create({ title: "no gate priority" })
               const task = yield* tasks.create({ session_id: parent.id, summary: "concurrently settled task" })
+              // Settle BEFORE the delivery turn returns. Task state must NOT
+              // affect reportedStatus — TaskGate/downgrade is gone.
               settleTask = () =>
-                Instance.provide({
-                  directory: tmp.path,
-                  fn: () =>
-                    Effect.runPromiseWith(context)(
-                      attach(
-                        scenario.taskStatus === "done"
-                          ? tasks.done({ session_id: parent.id, id: task.id })
-                          : tasks.block({ session_id: parent.id, id: task.id }),
-                      ),
-                    ),
-                })
+                scenario.taskStatus === "open"
+                  ? Promise.resolve()
+                  : Instance.provide({
+                      directory: tmp.path,
+                      fn: () =>
+                        Effect.runPromiseWith(context)(
+                          attach(
+                            scenario.taskStatus === "done"
+                              ? tasks.done({ session_id: parent.id, id: task.id })
+                              : tasks.block({ session_id: parent.id, id: task.id }),
+                          ),
+                        ),
+                    })
               const child = yield* actors.spawn({
                 mode: "subagent",
                 sessionID: parent.id,
@@ -253,8 +261,9 @@ for (const scenario of [
               expect(outcome.status).toBe("success")
               if (outcome.status === "success") {
                 expect(outcome.reportedStatus).toBe(scenario.expected)
-                expect(outcome.warnings?.join(" ")).toContain("completion gate")
+                // Original delivery preserved; no gate re-entry, no gate warning.
                 expect(outcome.finalText).toContain("MAIN-RESULT")
+                expect(outcome.warnings?.join(" ") ?? "").not.toContain("completion gate")
               }
             }),
           ),
@@ -265,9 +274,10 @@ for (const scenario of [
   }, 30000)
 }
 
-// Desktop tool-step-schema [TP-R14-07] [TP-R14-11].
-test("failed completion-gate reentry preserves the result without reporting task success", async () => {
-  const server = startScriptedLLMServer([{ lines: textStopResponse("MAIN-RESULT") }, { lines: [], status: 400 }])
+// Desktop tool-step-schema [TP-R14-11]: delivery body is never rewritten when
+// owned tasks remain open — no suffix, no re-emit.
+test("leftover owned task leaves delivery body untouched", async () => {
+  const server = startScriptedLLMServer([{ lines: textStopResponse("MAIN-RESULT") }])
   await using tmp = await tmpdir({
     git: true,
     config: {
@@ -287,7 +297,7 @@ test("failed completion-gate reentry preserves the result without reporting task
             const actors = yield* Actor.Service
             const sessions = yield* Session.Service
             const tasks = yield* TaskRegistry.Service
-            const parent = yield* sessions.create({ title: "gate failure" })
+            const parent = yield* sessions.create({ title: "no gate leftover" })
             const task = yield* tasks.create({ session_id: parent.id, summary: "unfinished work" })
             const child = yield* actors.spawn({
               mode: "subagent",
@@ -302,17 +312,14 @@ test("failed completion-gate reentry preserves the result without reporting task
             const outcome = yield* Deferred.await(child.outcome)
             expect(outcome.status).toBe("success")
             if (outcome.status === "success") {
-              expect(outcome.finalText).toContain("MAIN-RESULT")
-              expect(outcome.reportedStatus).toBe("partial")
-              expect(outcome.warnings?.join(" ")).toContain("completion gate")
-              expect(outcome.incompleteTasks).toContain(task.id)
+              expect(outcome.finalText).toBe("MAIN-RESULT")
+              expect(outcome.reportedStatus).toBeUndefined()
+              expect(outcome.warnings?.join(" ") ?? "").not.toContain("completion gate")
             }
             const waited = yield* ActorWaiter.Service.use((waiter) =>
               waiter.wait({ sessionID: child.sessionID, actor_id: child.actorID }),
             ).pipe(Effect.provide(ActorWaiter.defaultLayer))
-            expect(waited.result).toContain("MAIN-RESULT")
-            expect(waited.reportedStatus).toBe("partial")
-            expect(waited.warnings?.join(" ")).toContain("completion gate")
+            expect(waited.result).toBe("MAIN-RESULT")
           }),
         ),
     })

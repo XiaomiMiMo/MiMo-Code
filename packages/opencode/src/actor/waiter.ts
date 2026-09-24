@@ -37,7 +37,7 @@ export interface WaitResult {
   lastOutcome?: Actor["lastOutcome"]
   // Best-effort parse of the subagent's **Status**/**Summary** header. Used by
   // the `wait` polling path; the blocking `run` path reads the authoritative
-  // reconciled status from the spawn outcome Deferred instead.
+  // status from the spawn outcome Deferred instead.
   reportedStatus?: ReturnStatus
   reportedSummary?: string
   warnings?: string[]

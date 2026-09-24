@@ -530,10 +530,9 @@ export const ActorTool = Tool.define(
 
         // op.action ==="run": blocking path — await the authoritative
         // `outcome` Deferred. It is resolved in spawn's onSuccess AFTER the
-        // preStop loop AND the completion gate (but before the fire-and-forget
-        // postStop loop), so the parent sees the reconciled status/summary —
-        // unlike ActorWaiter, which resolves on the row's first `idle` and would
-        // miss the gate's downgrade.
+        // preStop loop (and before the fire-and-forget postStop loop), so the
+        // parent sees the settled status/summary — unlike ActorWaiter, which
+        // resolves on the row's first `idle`.
         function cancelHandler() {
           bridge.fork(actor.cancel(spawnResult.sessionID, spawnResult.actorID, "graceful"))
         }

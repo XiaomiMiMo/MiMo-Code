@@ -431,8 +431,8 @@ describe("Actor.spawn auto-starts bound task", () => {
   )
 })
 
-describe("Actor.spawn completion gate (B)", () => {
-  it.live("downgrades to partial and lists incomplete tasks when a gate-eligible subagent leaves work open", () =>
+describe("Actor.spawn incomplete-task reporting removed", () => {
+  it.live("does not downgrade or rewrite delivery when a subagent leaves work open", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
@@ -440,23 +440,19 @@ describe("Actor.spawn completion gate (B)", () => {
         const tasks = yield* TaskRegistry.Service
 
         const parent = yield* session.create({
-          title: "gate downgrade",
+          title: "no gate downgrade",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
 
-        // First general subagent in this session is allocated actorID "general-1".
-        // Pre-create an open task it owns so the gate finds leftover work.
+        // Pre-create an open task the subagent will own. TaskGate is gone: the
+        // leftover must NOT trigger a nudge turn, a status downgrade, or a rewrite.
         const task = yield* tasks.create({
           session_id: parent.id,
           summary: "the unfinished thing",
           owner: "general-1",
         })
 
-        // Initial turn + up to MAX_TASK_GATE_SUBAGENT_REACT (2) nudge turns; the model never
-        // calls task.done, so the task stays open and the gate caps out.
         yield* llm.text("**Status**: success\n**Summary**: thought I was done")
-        yield* llm.text("**Status**: success\n**Summary**: still nothing closed")
-        yield* llm.text("**Status**: success\n**Summary**: still nothing closed")
 
         const result = yield* actor.spawn({
           mode: "subagent",
@@ -473,11 +469,10 @@ describe("Actor.spawn completion gate (B)", () => {
         const outcome = yield* Deferred.await(result.outcome).pipe(Effect.timeout("20 seconds"))
         expect(outcome.status).toBe("success")
         if (outcome.status !== "success") throw new Error("unreachable")
-        // DB truth wins: model self-reported success, but the open task forces partial.
-        expect(outcome.reportedStatus).toBe("partial")
-        expect(outcome.incompleteTasks).toContain(task.id)
-        expect(outcome.finalText).toContain("**Incomplete tasks**")
-        expect(outcome.finalText).toContain(task.id)
+        // Model self-report stands; no DB-truth downgrade, no Incomplete tasks suffix.
+        expect(outcome.reportedStatus).toBe("success")
+        expect(outcome.finalText).toContain("thought I was done")
+        expect(outcome.finalText).not.toContain("**Incomplete tasks**")
 
         const after = yield* tasks.get({ session_id: parent.id, id: task.id })
         expect(after?.status).toBe("open")
@@ -498,8 +493,8 @@ describe("Actor.spawn completion gate (B)", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
 
-        // explore has a hardcoded prompt → not gate-eligible. An open task it owns
-        // must be ignored by the gate.
+        // explore has a hardcoded prompt → not format-gated. An open task it owns
+        // is ignored either way — no TaskGate remains.
         yield* tasks.create({
           session_id: parent.id,
           summary: "explore leftover",
@@ -522,9 +517,9 @@ describe("Actor.spawn completion gate (B)", () => {
         const outcome = yield* Deferred.await(result.outcome).pipe(Effect.timeout("20 seconds"))
         expect(outcome.status).toBe("success")
         if (outcome.status !== "success") throw new Error("unreachable")
-        // Parsed header preserved, no downgrade, no incomplete-task list.
+        // Parsed header preserved; no task-truth rewrite either way.
         expect(outcome.reportedStatus).toBe("success")
-        expect(outcome.incompleteTasks).toBeUndefined()
+        expect(outcome.finalText).not.toContain("**Incomplete tasks**")
       }),
       { git: true, config: providerCfg },
     ),
