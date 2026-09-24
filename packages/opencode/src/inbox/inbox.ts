@@ -91,10 +91,10 @@ export function resolveDrainSeed(
       }
     }
 
-    // Tier 2: turnCount-0 / empty peer slice. Agent from the registry row (recorded
+    // Tier 2: turnCount-0 / empty slice. Agent from the registry row (recorded
     // at spawn); model from the already-wired default resolver.
     const resolver = defaultModelRef.current
-    if (actor?.mode === "peer" && resolver) {
+    if (actor && resolver) {
       const model = yield* resolver.defaultModel()
       return { agent: actor.agent, model: { providerID: model.providerID, modelID: model.modelID } }
     }

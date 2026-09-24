@@ -5,6 +5,7 @@ import { Deferred, Effect, Exit, Fiber, Layer, Logger } from "effect"
 import { eq, and } from "drizzle-orm"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
+import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
 import { Command } from "../../src/command"
 import { Config } from "../../src/config"
 import { LSP } from "../../src/lsp"
@@ -34,6 +35,8 @@ import { SystemPrompt } from "../../src/session/system"
 import { Snapshot } from "../../src/snapshot"
 import { ToolRegistry } from "../../src/tool"
 import { Truncate } from "../../src/tool"
+import { ActorStatusChanged, InboxArrived } from "../../src/actor/events"
+import { ActorExecution, type Execution } from "../../src/actor/execution"
 import { ActorRegistry } from "../../src/actor/registry"
 import { ActorWaiter } from "../../src/actor/waiter"
 import { Actor } from "../../src/actor/spawn"
@@ -55,7 +58,7 @@ import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { TestLLMServer } from "../lib/llm-server"
 import { Inbox } from "../../src/inbox"
-import { InboxTable } from "../../src/inbox/inbox.sql"
+import { InboxTable, type InboxRow } from "../../src/inbox/inbox.sql"
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -257,16 +260,75 @@ const parentInboxRows = (parentID: SessionID, parentActorID = "main") =>
     ),
   )
 
+const captureParentInbox = (parentID: SessionID, parentActorID = "main") =>
+  Effect.gen(function* () {
+    const instance = Instance.current
+    const arrivals: { inboxID: string; senderActorID: string | undefined; row: InboxRow | undefined }[] = []
+    const onArrival = (event: GlobalEvent) => {
+      if (event.directory !== instance.directory || event.project !== instance.project.id || event.payload.type !== InboxArrived.type) return
+      const properties = InboxArrived.properties.parse(event.payload.properties)
+      if (properties.receiverSessionID !== parentID || properties.receiverActorID !== parentActorID) return
+      // GlobalBus emits synchronously inside publish, unlike Bus.subscribeCallback's
+      // queued fiber. Capture the persisted row before send forks auto-wake.
+      const row = Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.id, properties.inboxID)).get())
+      arrivals.push({ inboxID: properties.inboxID, senderActorID: properties.senderActorID, row })
+    }
+    yield* Effect.acquireRelease(
+      Effect.sync(() => GlobalBus.on("event", onArrival)),
+      () => Effect.sync(() => { GlobalBus.off("event", onArrival) }),
+    )
+    return (count: number, senderActorID?: string) => Effect.sync(() => {
+      const delivered = arrivals.filter((arrival) => !senderActorID || arrival.senderActorID === senderActorID)
+      expect(delivered).toHaveLength(count)
+      expect(new Set(delivered.map(({ inboxID }) => inboxID)).size).toBe(count)
+      return delivered.map(({ inboxID, senderActorID, row }) => {
+        expect(row).toBeDefined()
+        expect(row!.id).toBe(inboxID)
+        expect(row!.receiver_session_id).toBe(parentID)
+        expect(row!.receiver_actor_id).toBe(parentActorID)
+        expect(row!.sender_actor_id).toBe(senderActorID ?? null)
+        expect(row!.type).toBe("actor_notification")
+        return row!
+      })
+    })
+  })
+
+const observeWake = (sessionID: SessionID, actorID: string) => Effect.gen(function* () {
+  const executions = yield* ActorExecution.Service
+  const instance = Instance.current
+  const started = yield* Deferred.make<Execution | undefined>()
+  const onStatus = (event: GlobalEvent) => {
+    if (event.directory !== instance.directory || event.project !== instance.project.id || event.payload.type !== ActorStatusChanged.type) return
+    const properties = ActorStatusChanged.properties.parse(event.payload.properties)
+    if (properties.sessionID !== sessionID || properties.actorID !== actorID || properties.status !== "running") return
+    Effect.runSync(executions.current(sessionID, actorID).pipe(
+      Effect.flatMap((execution) => Deferred.succeed(started, execution)),
+    ))
+  }
+  yield* Effect.acquireRelease(
+    Effect.sync(() => GlobalBus.on("event", onStatus)),
+    () => Effect.sync(() => { GlobalBus.off("event", onStatus) }),
+  )
+  return Effect.gen(function* () {
+    // Initial idle is not evidence of a completed wake; wait for this turn to
+    // start, then for execution release before another notification can arrive.
+    const execution = yield* Deferred.await(started)
+    expect(execution).toBeDefined()
+    yield* Deferred.await(execution!.done)
+  })
+})
+
 describe("Actor cancel notification (T41 unified terminal-status bridge)", () => {
   it.live("[TP-R14-07] a spawn provider error produces one failed notification and a failed wait", () => provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {
       const actor = yield* Actor.Service
       const sessions = yield* Session.Service
       const parent = yield* sessions.create({ title: "provider failure" })
+      const notifications = yield* captureParentInbox(parent.id)
       yield* llm.error(401, { error: { message: "invalid credential", type: "authentication_error" } })
       const child = yield* actor.spawn({ mode: "subagent", sessionID: parent.id, agentType: "build", task: "fail", context: "none", tools: [], background: true, model: ref })
       expect((yield* Deferred.await(child.outcome)).status).toBe("failure")
-      const rows = yield* parentInboxRows(parent.id)
+      const rows = yield* notifications(1)
       const result = yield* ActorWaiter.Service.use(waiter => waiter.wait({ sessionID: child.sessionID, actor_id: child.actorID })).pipe(Effect.provide(ActorWaiter.defaultLayer))
       expect(result.lastOutcome).toBe("failure")
       expect(result.error).toBeDefined()
@@ -301,11 +363,17 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
           const prompt = yield* SessionPrompt.Service
           const parent = yield* sessions.create({ title: "continued child", permission: [{ permission: "*", pattern: "*", action: "allow" }] })
           yield* registry.register({ sessionID: parent.id, actorID: "owner", mode: "subagent", agent: "build", description: "creating parent", contextMode: "none", background: true, lifecycle: "ephemeral" })
+          const notifications = yield* captureParentInbox(parent.id, "owner")
+          const mainNotifications = yield* captureParentInbox(parent.id)
+          const firstWake = yield* observeWake(parent.id, "owner")
           yield* llm.text("first result")
           const spawned = yield* actor.spawn({ mode, sessionID: parent.id, parentActorID: "owner", agentType: "build", task: "first", context: "none", tools: ["read"], background: true, model: ref })
           yield* Deferred.await(spawned.outcome)
-          const initial = yield* parentInboxRows(parent.id, "owner")
-          expect(initial).toHaveLength(1)
+          const first = yield* notifications(1)
+          expect(first[0].content).toHaveProperty("text", expect.stringContaining("first result"))
+          expect(first[0].content).toHaveProperty("text", expect.stringContaining("completed"))
+          yield* firstWake
+          const continuedWake = yield* observeWake(parent.id, "owner")
           const before = yield* llm.calls
           if (terminal === "success") yield* llm.text("second result")
           if (terminal === "failure") yield* llm.error(401, { error: { message: "invalid credential", type: "authentication_error" } })
@@ -329,33 +397,36 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
           if (terminal === "success") expect(entry?.resultMessageID).toBeDefined()
           if (terminal === "failure") expect(entry?.resultMessageID).toBeUndefined()
           yield* actor.cancel(spawned.sessionID, spawned.actorID, "forced")
-          const rows = yield* parentInboxRows(parent.id, "owner")
-          expect(rows).toHaveLength(2)
-          expect(rows).toEqual(expect.arrayContaining(initial))
-          const added = rows.filter((row) => row.id !== initial[0].id)
+          const rows = yield* notifications(2)
+          expect(rows.slice(0, first.length)).toEqual(first)
+          const added = rows.filter((row) => !first.some((previous) => previous.id === row.id))
           expect(added).toHaveLength(1)
-          expect((yield* parentInboxRows(parent.id)).length).toBe(0)
-          expect(yield* sessions.messages({ sessionID: parent.id, agentID: "owner" })).toEqual([])
+          // owner may notify main after its own wake; only child misrouting is forbidden.
+          yield* mainNotifications(0, spawned.actorID)
           const content = added[0].content as { text?: string }
           expect(content.text).toContain(terminal === "success" ? "completed" : terminal === "failure" ? "failed" : "cancelled")
           if (terminal === "success") expect(content.text).toContain("second result")
+          yield* continuedWake
           if (terminal === "cancelled") {
+            const resumedWake = yield* observeWake(parent.id, "owner")
             yield* llm.textMatch(({ body }) => JSON.stringify(body.messages).includes('"content":"new turn"'), "after cancellation")
             yield* prompt.prompt({ sessionID: spawned.sessionID, agentID: spawned.actorID, agent: "build", model: ref, noReply: true, parts: [{ type: "text", text: "new turn" }] })
             yield* prompt.loop({ sessionID: spawned.sessionID, agentID: spawned.actorID, notifyParentOnComplete: true })
-            const next = yield* parentInboxRows(parent.id, "owner")
-            expect(next).toHaveLength(3)
-            expect(next).toEqual(expect.arrayContaining(rows))
-            const resumed = next.filter((row) => !rows.some((prior) => prior.id === row.id))
+            const next = yield* notifications(3)
+            expect(next.slice(0, rows.length)).toEqual(rows)
+            const resumed = next.filter((row) => !rows.some((previous) => previous.id === row.id))
             expect(resumed).toHaveLength(1)
-            expect((resumed[0].content as { text?: string }).text).toContain("after cancellation")
+            expect(resumed[0].content).toHaveProperty("text", expect.stringContaining("completed"))
+            expect(resumed[0].content).toHaveProperty("text", expect.stringContaining("after cancellation"))
+            yield* resumedWake
+            yield* mainNotifications(0, spawned.actorID)
           }
         }), { git: true, config: providerCfg },
       ))
     }
   }
 
-  // The empty main slice cannot consume notifications without its own model-bearing message.
+  // Delivery evidence must survive a real consumer deleting the inbox row.
   it.live("successful background subagent still notifies parent exactly once (completed)", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -367,6 +438,9 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
 
+        const notifications = yield* captureParentInbox(parent.id)
+        const prompt = yield* SessionPrompt.Service
+        yield* prompt.prompt({ sessionID: parent.id, agent: "build", model: ref, noReply: true, parts: [{ type: "text", text: "coordinate the child" }] })
         yield* llm.text("**Status**: success\n**Summary**: done")
 
         const result = yield* actor.spawn({
@@ -383,10 +457,21 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
 
         yield* Deferred.await(result.outcome)
 
-        const rows = yield* parentInboxRows(parent.id)
-        expect(rows.length).toBe(1)
+        const rows = yield* notifications(1)
         const content = rows[0].content as { text?: string }
         expect(content.text).toContain("completed")
+        expect(content.text).toContain("**Summary**: done")
+
+        // main's ensureRunning joins auto-wake instead of racing a second drain.
+        yield* prompt.loop({ sessionID: parent.id, agentID: "main", inboxWake: true })
+        expect(yield* parentInboxRows(parent.id)).toHaveLength(0)
+        expect(yield* notifications(1)).toEqual(rows)
+        const messages = yield* session.messages({ sessionID: parent.id, agentID: "main" })
+        const consumed = messages.flatMap((message) => message.parts
+          .filter((part) => part.type === "text" && part.synthetic && part.text === content.text)
+          .map((part) => ({ info: message.info, part })))
+        expect(consumed).toHaveLength(1)
+        expect(consumed[0].info).toMatchObject({ role: "user", agent: "build", model: ref })
       }),
       { git: true, config: providerCfg },
     ),
@@ -409,6 +494,7 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
 
+        const notifications = yield* captureParentInbox(parent.id)
         yield* llm.text("**Status**: failed\n**Summary**: could not complete")
 
         const result = yield* actor.spawn({
@@ -424,10 +510,8 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
         })
 
         yield* Deferred.await(result.outcome)
-        expect(yield* Inbox.Service.use((inbox) => inbox.drain(parent.id, "main"))).toBe(0)
-        expect(yield* session.messages({ sessionID: parent.id, agentID: "main" })).toEqual([])
 
-        const rows = yield* parentInboxRows(parent.id)
+        const rows = yield* notifications(1)
         expect(rows.length).toBe(1)
         expect(rows[0].type).toBe("actor_notification")
         const content = rows[0].content as { text?: string }
@@ -452,6 +536,7 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
 
+        const notifications = yield* captureParentInbox(parent.id)
         // Make the spawn turn hang so the actor stays running until we cancel.
         yield* llm.hang
 
@@ -483,7 +568,7 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
         expect(outcome.status).toBe("cancelled")
         yield* actor.cancel(result.sessionID, result.actorID, "forced")
 
-        const rows = yield* parentInboxRows(parent.id)
+        const rows = yield* notifications(1)
         expect(rows.length).toBe(1)
         expect(rows[0].type).toBe("actor_notification")
         const content = rows[0].content as { text?: string }
