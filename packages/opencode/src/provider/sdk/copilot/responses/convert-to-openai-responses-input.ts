@@ -1,6 +1,7 @@
 import { type LanguageModelV3Prompt, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
 import { z } from "zod/v4"
+import { reasoningItemSchema } from "./reasoning"
 import type { OpenAIResponsesInput, OpenAIResponsesReasoning, OpenAIResponsesToolOutput } from "./openai-responses-api-types"
 import { localShellInputSchema, localShellOutputSchema } from "./tool/local-shell"
 
@@ -134,6 +135,19 @@ export async function convertToOpenAIResponsesInput({
 
       case "assistant": {
         const reasoningMessages: Record<string, OpenAIResponsesReasoning> = {}
+        const canonicalReasoning = new Map<string, OpenAIResponsesReasoning>()
+        for (const part of content) {
+          if (part.type !== "reasoning") continue
+          const raw = (part.providerOptions?.[providerOptionsKey] ?? part.providerOptions?.openai)?.reasoningItem
+          if (raw == null) continue
+          const item = reasoningItemSchema.parse(raw)
+          canonicalReasoning.set(item.id, {
+            ...item,
+            summary: item.summary ?? [],
+            content: item.content ?? undefined,
+            status: item.status ?? undefined,
+          })
+        }
 
         for (const part of content) {
           switch (part.type) {
@@ -210,12 +224,21 @@ export async function convertToOpenAIResponsesInput({
 
             case "reasoning": {
               const providerOptions = await parseProviderOptions({
-                provider: providerOptionsKey,
+                // Responses metadata is emitted under openai, including by Copilot.
+                provider: part.providerOptions?.[providerOptionsKey] ? providerOptionsKey : "openai",
                 providerOptions: part.providerOptions,
                 schema: openaiResponsesReasoningProviderOptionsSchema,
               })
 
-              const reasoningId = providerOptions?.itemId
+              const reasoningId = providerOptions?.itemId ?? providerOptions?.reasoningItem?.id
+              const canonical = reasoningId != null ? canonicalReasoning.get(reasoningId) : undefined
+              if (canonical) {
+                if (!reasoningMessages[canonical.id]) {
+                  input.push(store ? { type: "item_reference", id: canonical.id } : canonical)
+                  reasoningMessages[canonical.id] = canonical
+                }
+                break
+              }
 
               if (reasoningId != null) {
                 const reasoningMessage = reasoningMessages[reasoningId]
@@ -233,33 +256,23 @@ export async function convertToOpenAIResponsesInput({
                     }
                   }
                 } else {
-                  const summaryParts: Array<{
-                    type: "summary_text"
-                    text: string
-                  }> = []
-
-                  if (part.text.length > 0) {
-                    summaryParts.push({
-                      type: "summary_text",
-                      text: part.text,
-                    })
-                  } else if (reasoningMessage !== undefined) {
-                    warnings.push({
-                      type: "other",
-                      message: `Cannot append empty reasoning part to existing reasoning sequence. Skipping reasoning part: ${JSON.stringify(part)}.`,
-                    })
+                  // A cancelled stream can have channel metadata without a final
+                  // canonical item. Keep the received text in its original channel.
+                  const message = reasoningMessage ?? {
+                    type: "reasoning" as const,
+                    id: reasoningId,
+                    encrypted_content: providerOptions?.reasoningEncryptedContent,
+                    summary: [],
                   }
-
                   if (reasoningMessage === undefined) {
-                    reasoningMessages[reasoningId] = {
-                      type: "reasoning",
-                      id: reasoningId,
-                      encrypted_content: providerOptions?.reasoningEncryptedContent,
-                      summary: summaryParts,
-                    }
-                    input.push(reasoningMessages[reasoningId])
-                  } else {
-                    reasoningMessage.summary.push(...summaryParts)
+                    reasoningMessages[reasoningId] = message
+                    input.push(message)
+                  }
+                  if (providerOptions?.reasoningChannel === "content") {
+                    message.content ??= []
+                    message.content.push({ type: "reasoning_text", text: part.text })
+                  } else if (providerOptions?.reasoningChannel !== "item" && part.text.length > 0) {
+                    message.summary.push({ type: "summary_text", text: part.text })
                   }
                 }
               } else {
@@ -385,6 +398,8 @@ export async function convertToOpenAIResponsesInput({
 
 const openaiResponsesReasoningProviderOptionsSchema = z.object({
   itemId: z.string().nullish(),
+  reasoningItem: reasoningItemSchema.optional(),
+  reasoningChannel: z.enum(["content", "summary", "item"]).optional(),
   reasoningEncryptedContent: z.string().nullish(),
 })
 

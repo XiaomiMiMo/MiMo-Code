@@ -20,6 +20,7 @@ import {
 } from "@ai-sdk/provider-utils"
 import { z } from "zod/v4"
 import { isMimoModel } from "../../../mimo-model"
+import { reasoningContent, reasoningItemSchema, reasoningStream } from "./reasoning"
 import type { OpenAIConfig } from "./openai-config"
 import { openaiFailedResponseHandler } from "./openai-error"
 import { codeInterpreterInputSchema, codeInterpreterOutputSchema } from "./tool/code-interpreter"
@@ -489,17 +490,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                 id: z.string(),
                 status: z.string().optional(),
               }),
-              z.object({
-                type: z.literal("reasoning"),
-                id: z.string(),
-                encrypted_content: z.string().nullish(),
-                summary: z.array(
-                  z.object({
-                    type: z.literal("summary_text"),
-                    text: z.string(),
-                  }),
-                ),
-              }),
+              reasoningItemSchema,
             ]),
           ),
           service_tier: z.string().nullish(),
@@ -534,23 +525,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     for (const part of response.output) {
       switch (part.type) {
         case "reasoning": {
-          // when there are no summary parts, we need to add an empty reasoning part:
-          if (part.summary.length === 0) {
-            part.summary.push({ type: "summary_text", text: "" })
-          }
-
-          for (const summary of part.summary) {
-            content.push({
-              type: "reasoning" as const,
-              text: summary.text,
-              providerMetadata: {
-                openai: {
-                  itemId: part.id,
-                  reasoningEncryptedContent: part.encrypted_content ?? null,
-                },
-              },
-            })
-          }
+          content.push(...reasoningContent(part))
           break
         }
 
@@ -875,20 +850,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     // flag that checks if there have been client-side tool calls (not executed by openai)
     let hasFunctionCall = false
 
-    // Track reasoning by output_index instead of item_id
-    // GitHub Copilot rotates encrypted item IDs on every event
-    const activeReasoning: Record<
-      number,
-      {
-        canonicalId: string // the item.id from output_item.added
-        encryptedContent?: string | null
-        summaryParts: number[]
-      }
-    > = {}
-
-    // Track current active reasoning output_index for correlating summary events
-    let currentReasoningOutputIndex: number | null = null
-    let nextSyntheticReasoningIndex = -1
+    const reasoning = reasoningStream(providerOptionsKey === "copilot")
 
     // Track a stable text part id for the current assistant message.
     // Copilot may change item_id across text deltas; normalize to one id.
@@ -921,6 +883,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
             }
 
             const value = chunk.value
+            if (reasoning.handle(chunk.rawValue, controller)) return
 
             if (isResponseOutputItemAddedChunk(value)) {
               if (value.item.type === "function_call") {
@@ -1020,24 +983,6 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                     openai: {
                       itemId: value.item.id,
                       ...(currentTextPhase != null ? { phase: currentTextPhase } : {}),
-                    },
-                  },
-                })
-              } else if (isResponseOutputItemAddedReasoningChunk(value)) {
-                activeReasoning[value.output_index] = {
-                  canonicalId: value.item.id,
-                  encryptedContent: value.item.encrypted_content,
-                  summaryParts: [0],
-                }
-                currentReasoningOutputIndex = value.output_index
-
-                controller.enqueue({
-                  type: "reasoning-start",
-                  id: `${value.item.id}:0`,
-                  providerMetadata: {
-                    openai: {
-                      itemId: value.item.id,
-                      reasoningEncryptedContent: value.item.encrypted_content ?? null,
                     },
                   },
                 })
@@ -1202,28 +1147,6 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                   currentTextId = null
                   currentTextPhase = undefined
                 }
-              } else if (isResponseOutputItemDoneReasoningChunk(value)) {
-                const reasoningIndex = activeReasoning[value.output_index] ? value.output_index :
-                  Number(Object.keys(activeReasoning).find(index => activeReasoning[Number(index)].canonicalId === value.item.id))
-                const activeReasoningPart = activeReasoning[reasoningIndex]
-                if (activeReasoningPart) {
-                  for (const summaryIndex of activeReasoningPart.summaryParts) {
-                    controller.enqueue({
-                      type: "reasoning-end",
-                      id: `${activeReasoningPart.canonicalId}:${summaryIndex}`,
-                      providerMetadata: {
-                        openai: {
-                          itemId: activeReasoningPart.canonicalId,
-                          reasoningEncryptedContent: value.item.encrypted_content ?? activeReasoningPart.encryptedContent ?? null,
-                        },
-                      },
-                    })
-                  }
-                  delete activeReasoning[reasoningIndex]
-                  if (currentReasoningOutputIndex === reasoningIndex) {
-                    currentReasoningOutputIndex = null
-                  }
-                }
               }
             } else if (isResponseFunctionCallArgumentsDeltaChunk(value)) {
               const toolCall = ongoingToolCalls[value.output_index]
@@ -1331,53 +1254,6 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
               if (options.providerOptions?.openai?.logprobs && value.logprobs) {
                 logprobs.push(value.logprobs)
               }
-            } else if (isResponseReasoningSummaryPartAddedChunk(value)) {
-              const activeItem =
-                currentReasoningOutputIndex !== null ? activeReasoning[currentReasoningOutputIndex] : null
-
-              // the first reasoning start is pushed in isResponseOutputItemAddedReasoningChunk.
-              if (activeItem && value.summary_index > 0) {
-                activeItem.summaryParts.push(value.summary_index)
-
-                controller.enqueue({
-                  type: "reasoning-start",
-                  id: `${activeItem.canonicalId}:${value.summary_index}`,
-                  providerMetadata: {
-                    openai: {
-                      itemId: activeItem.canonicalId,
-                      reasoningEncryptedContent: activeItem.encryptedContent ?? null,
-                    },
-                  },
-                })
-              }
-            } else if (isResponseReasoningSummaryTextDeltaChunk(value)) {
-              const known = Object.entries(activeReasoning).find(([, item]) => item.canonicalId === value.item_id)
-              // Copilot rotates item ids; standard Responses identifies each item
-              // directly. Deltas can arrive without output_item.added.
-              const index = value.output_index ?? (known ? Number(known[0]) :
-                providerOptionsKey === "copilot" && currentReasoningOutputIndex !== null
-                  ? currentReasoningOutputIndex : nextSyntheticReasoningIndex--)
-              const activeItem = activeReasoning[index] ??= {
-                canonicalId: value.item_id,
-                summaryParts: [],
-              }
-              if (!activeItem.summaryParts.includes(value.summary_index)) {
-                activeItem.summaryParts.push(value.summary_index)
-                controller.enqueue({
-                  type: "reasoning-start",
-                  id: `${activeItem.canonicalId}:${value.summary_index}`,
-                  providerMetadata: { openai: { itemId: activeItem.canonicalId } },
-                })
-              }
-              controller.enqueue({
-                type: "reasoning-delta",
-                id: `${activeItem.canonicalId}:${value.summary_index}`,
-                delta: value.delta,
-                providerMetadata: { openai: {
-                  itemId: activeItem.canonicalId,
-                  ...(activeItem.encryptedContent != null ? { reasoningEncryptedContent: activeItem.encryptedContent } : {}),
-                } },
-              })
             } else if (isResponseFinishedChunk(value)) {
               endTurn = value.response.end_turn ?? undefined
               finishReason = {
@@ -1426,12 +1302,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
               currentTextId = null
             }
 
-            for (const item of Object.values(activeReasoning)) {
-              for (const index of item.summaryParts) {
-                controller.enqueue({ type: "reasoning-end", id: `${item.canonicalId}:${index}`,
-                  providerMetadata: { openai: { itemId: item.canonicalId, reasoningEncryptedContent: item.encryptedContent ?? null } } })
-              }
-            }
+            reasoning.flush(controller)
             const providerMetadata: SharedV3ProviderMetadata = {
               openai: {
                 responseId,
@@ -1686,34 +1557,6 @@ const responseAnnotationAddedSchema = z.object({
   ]),
 })
 
-const responseReasoningSummaryPartAddedSchema = z.object({
-  type: z.literal("response.reasoning_summary_part.added"),
-  item_id: z.string(),
-  summary_index: z.number(),
-})
-
-const responseReasoningSummaryTextDeltaSchema = z.object({
-  type: z.literal("response.reasoning_summary_text.delta"),
-  output_index: z.number().optional(),
-  item_id: z.string(),
-  summary_index: z.number(),
-  delta: z.string(),
-})
-
-const responseReasoningTextDeltaSchema = z.object({
-  type: z.enum(["response.reasoning_text.delta", "response.reasoning_content.delta"]),
-  output_index: z.number().optional(),
-  item_id: z.string(),
-  content_index: z.number().default(0),
-  delta: z.string(),
-}).transform(value => ({
-  type: "response.reasoning_summary_text.delta" as const,
-  output_index: value.output_index,
-  item_id: value.item_id,
-  summary_index: value.content_index,
-  delta: value.delta,
-}))
-
 const openaiResponsesChunkSchema = z.union([
   textDeltaChunkSchema,
   responseFinishedChunkSchema,
@@ -1727,14 +1570,9 @@ const openaiResponsesChunkSchema = z.union([
   responseCodeInterpreterCallCodeDeltaSchema,
   responseCodeInterpreterCallCodeDoneSchema,
   responseAnnotationAddedSchema,
-  responseReasoningSummaryPartAddedSchema,
-  responseReasoningSummaryTextDeltaSchema,
-  responseReasoningTextDeltaSchema,
   errorChunkSchema,
   z.object({ type: z.string() }).loose(), // fallback for unknown chunks
 ])
-
-type ExtractByType<T, K extends T extends { type: infer U } ? U : never> = T extends { type: K } ? T : never
 
 function isTextDeltaChunk(
   chunk: z.infer<typeof openaiResponsesChunkSchema>,
@@ -1746,14 +1584,6 @@ function isResponseOutputItemDoneChunk(
   chunk: z.infer<typeof openaiResponsesChunkSchema>,
 ): chunk is z.infer<typeof responseOutputItemDoneSchema> {
   return chunk.type === "response.output_item.done"
-}
-
-function isResponseOutputItemDoneReasoningChunk(chunk: z.infer<typeof openaiResponsesChunkSchema>): chunk is z.infer<
-  typeof responseOutputItemDoneSchema
-> & {
-  item: ExtractByType<z.infer<typeof responseOutputItemDoneSchema>["item"], "reasoning">
-} {
-  return isResponseOutputItemDoneChunk(chunk) && chunk.item.type === "reasoning"
 }
 
 function isResponseFinishedChunk(
@@ -1809,30 +1639,10 @@ function isResponseOutputItemAddedChunk(
   return chunk.type === "response.output_item.added"
 }
 
-function isResponseOutputItemAddedReasoningChunk(chunk: z.infer<typeof openaiResponsesChunkSchema>): chunk is z.infer<
-  typeof responseOutputItemAddedSchema
-> & {
-  item: ExtractByType<z.infer<typeof responseOutputItemAddedSchema>["item"], "reasoning">
-} {
-  return isResponseOutputItemAddedChunk(chunk) && chunk.item.type === "reasoning"
-}
-
 function isResponseAnnotationAddedChunk(
   chunk: z.infer<typeof openaiResponsesChunkSchema>,
 ): chunk is z.infer<typeof responseAnnotationAddedSchema> {
   return chunk.type === "response.output_text.annotation.added"
-}
-
-function isResponseReasoningSummaryPartAddedChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseReasoningSummaryPartAddedSchema> {
-  return chunk.type === "response.reasoning_summary_part.added"
-}
-
-function isResponseReasoningSummaryTextDeltaChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseReasoningSummaryTextDeltaSchema> {
-  return chunk.type === "response.reasoning_summary_text.delta"
 }
 
 function isErrorChunk(chunk: z.infer<typeof openaiResponsesChunkSchema>): chunk is z.infer<typeof errorChunkSchema> {

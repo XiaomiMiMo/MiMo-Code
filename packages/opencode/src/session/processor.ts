@@ -491,6 +491,9 @@ export const layer: Layer.Layer<
             if (!(value.id in ctx.reasoningMap)) return
             // oxlint-disable-next-line no-self-assign -- reactivity trigger
             ctx.reasoningMap[value.id].text = ctx.reasoningMap[value.id].text
+            // The completed Responses item can fill or correct streamed text.
+            const finalReasoningText = value.providerMetadata?.openai?.reasoningText
+            if (typeof finalReasoningText === "string") ctx.reasoningMap[value.id].text = finalReasoningText
             ctx.reasoningMap[value.id].time = { ...ctx.reasoningMap[value.id].time, end: Date.now() }
             if (value.providerMetadata) ctx.reasoningMap[value.id].metadata = value.providerMetadata
             yield* session.updatePart(ctx.reasoningMap[value.id])

@@ -233,6 +233,8 @@ export type OpenAIResponsesTool =
     }
 
 export type OpenAIResponsesReasoning = {
+  content?: Array<{ type: "reasoning_text"; text: string }>
+  status?: "in_progress" | "completed" | "incomplete"
   type: "reasoning"
   id: string
   encrypted_content?: string | null

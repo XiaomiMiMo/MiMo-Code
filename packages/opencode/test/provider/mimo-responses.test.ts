@@ -46,7 +46,7 @@ for (const type of ["response.reasoning_summary_text.delta", "response.reasoning
         { role: "user", content: [{ type: "text", text: "continue" }] },
       ], providerOptions: { openai: { store: false } } })
       await read(next.stream)
-      expect(bodies[1].input).toContainEqual({ type: "reasoning", id: "rs_test", encrypted_content: "test-encrypted", summary: [{ type: "summary_text", text: "synthetic reasoning" }] })
+      expect(bodies[1].input).toContainEqual({ type: "reasoning", id: "rs_test", encrypted_content: "test-encrypted", summary: type === "response.reasoning_summary_text.delta" ? [{ type: "summary_text", text: "synthetic reasoning" }] : [], ...(type === "response.reasoning_summary_text.delta" ? {} : { content: [{ type: "reasoning_text", text: "synthetic reasoning" }] }) })
     })
   }
 }
@@ -80,7 +80,7 @@ test("reasoning encryption survives a sparse end event and a stream without an e
     const parts = await read(stream.stream);
     expect(parts.find(p => p.type === "reasoning-delta")?.providerMetadata?.openai).toMatchObject({ reasoningEncryptedContent: "synthetic-encrypted" });
     expect(parts.filter(p => p.type === "reasoning-end")).toHaveLength(1);
-    expect(parts.find(p => p.type === "reasoning-end")?.providerMetadata?.openai).toEqual({ itemId: "rs_sparse", reasoningEncryptedContent: "synthetic-encrypted" });
+    expect(parts.find(p => p.type === "reasoning-end")?.providerMetadata?.openai).toMatchObject({ itemId: "rs_sparse", reasoningEncryptedContent: "synthetic-encrypted", reasoningChannel: "content", reasoningText: "partial reasoning" });
   }
 });
 
