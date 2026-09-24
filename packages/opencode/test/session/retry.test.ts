@@ -1,13 +1,13 @@
 import { describe, expect, test, afterEach } from "bun:test"
 import { NamedError } from "@mimo-ai/shared/util/error"
-import { APICallError, RetryError } from "ai"
+import { APICallError, RetryError, generateText } from "ai"
 import { setTimeout as sleep } from "node:timers/promises"
 import { Clock, Effect, Exit, Fiber, Schedule, Schema } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { it } from "../lib/effect"
 import { ConfigRetry } from "../../src/config/retry"
 import { SessionRetry, decide, isRetryableTransientError, retryable, budgetFor } from "../../src/session/retry"
-import { loadHostErrorCatalog, bindHostError } from "../../src/error/host-registry"
+import { loadHostErrorCatalog, bindHostError, isSafetyTerminal } from "../../src/error/host-registry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderID } from "../../src/provider/schema"
 import { ProviderError } from "../../src/provider"
@@ -722,6 +722,138 @@ describe("session.message-v2.fromError unwraps AI_RetryError", () => {
     expect(MessageV2.APIError.isInstance(out)).toBe(true)
     expect((out as MessageV2.APIError).data.statusCode).toBe(502)
   })
+})
+
+describe("native retry facts", () => {
+  test("real SDK retry history cannot turn a final TypeError into persistent recovery", async () => {
+    let calls = 0
+    const model = {
+      specificationVersion: "v3" as const,
+      provider: "test-native",
+      modelId: "test",
+      supportedUrls: {},
+      async doGenerate(): Promise<never> {
+        if (++calls === 1) throw new APICallError({
+          message: "Request timed out", statusCode: 408, url: "https://example.com",
+          requestBodyValues: {}, isRetryable: true,
+        })
+        throw new TypeError("invalid content.map")
+      },
+      async doStream(): Promise<never> { throw new Error("Unexpected stream call") },
+    }
+    const raw = await generateText({ model, prompt: "test", maxRetries: 1 }).then(
+      () => { throw new Error("Expected SDK failure") },
+      (error: unknown) => error,
+    )
+    expect(RetryError.isInstance(raw)).toBe(true)
+    expect(calls).toBe(2)
+    const normalized = MessageV2.fromError(raw, { providerID })
+    for (const error of [normalized, JSON.parse(JSON.stringify(normalized))]) {
+      const decision = decide(error, "request")
+      expect(decision.kind).toBe("unknown")
+      expect(budgetFor(SessionRetry.resolve({ retry: { request: { maxRetries: 0, deadlineMs: 1 } } }), decision))
+        .toMatchObject({ mode: "bounded", maxRetries: 0, maxElapsedMs: 1 })
+    }
+    expect(normalized.data.metadata?.retryHistory).toContain("Request timed out")
+  })
+
+  test("real SDK retry preserves a single final safety fact through live and JSON normalization", async () => {
+    let calls = 0
+    const timeout = () => new APICallError({
+      message: "Request timed out", statusCode: 408, url: "https://example.com",
+      requestBodyValues: {}, isRetryable: true,
+    })
+    const model = {
+      specificationVersion: "v3" as const,
+      provider: "test-native",
+      modelId: "test",
+      supportedUrls: {},
+      async doGenerate(): Promise<never> {
+        if (++calls === 1) throw timeout()
+        throw Object.assign(new Error("Provider limit reached"), { name: "SubscriptionUsageLimitError" })
+      },
+      async doStream(): Promise<never> { throw new Error("Unexpected stream call") },
+    }
+    const sdk = await generateText({ model, prompt: "test", maxRetries: 1 }).then(
+      () => { throw new Error("Expected SDK failure") },
+      (error: unknown) => error,
+    )
+    expect(RetryError.isInstance(sdk)).toBe(true)
+    expect(calls).toBe(2)
+    for (const raw of [sdk, ...["FreeUsageLimitError", "ProviderAuthError", "ContextOverflowError"].map((name) =>
+      new RetryError({ message: "attempts failed", reason: "maxRetriesExceeded", errors: [
+        timeout(), Object.assign(new Error("Provider stopped"), { name }),
+      ] }),
+    )]) {
+      expect(decide(raw)).toMatchObject({ retryable: false, kind: "terminal" })
+      const live = MessageV2.fromLiveError(raw, { providerID })
+      expect(decide(live)).toMatchObject({ retryable: false, kind: "terminal" })
+      expect(live.data.metadata?.causeChain).toBeDefined()
+      expect(JSON.parse(live.data.metadata!.causeChain!)).toHaveLength(1)
+      expect(live.data.metadata?.retryHistory).toContain("Request timed out")
+      const restored = MessageV2.fromError(JSON.parse(JSON.stringify(live)), { providerID })
+      expect(decide(restored)).toMatchObject({ retryable: false, kind: "terminal" })
+    }
+  })
+
+  test("bare safety errors stay terminal through live normalization and idempotent restoration", () => {
+    for (const name of ["SubscriptionUsageLimitError", "FreeUsageLimitError", "ProviderAuthError", "ContextOverflowError"]) {
+      const raw = Object.assign(new Error("Provider stopped"), { name })
+      expect(isSafetyTerminal(raw)).toBe(true)
+      const live = MessageV2.fromLiveError(raw, { providerID })
+      expect(decide(live)).toMatchObject({ retryable: false, kind: "terminal" })
+      const restored = MessageV2.fromError(JSON.parse(JSON.stringify(live)), { providerID })
+      expect(decide(restored)).toMatchObject({ retryable: false, kind: "terminal" })
+      expect(restored).toEqual(live)
+      expect(MessageV2.fromError(restored, { providerID })).toEqual(restored)
+      expect(MessageV2.fromLiveError(restored, { providerID })).toEqual(restored)
+      expect(JSON.parse(restored.data.metadata!.causeChain!)).toHaveLength(1)
+      expect(restored.data.metadata?.retryHistory).toBeUndefined()
+    }
+  })
+
+  test("only the final SDK attempt and its actual causes supply retry facts", () => {
+    const api = (statusCode: number) => new APICallError({
+      message: "Provider failed", statusCode, url: "https://example.com", requestBodyValues: {}, isRetryable: true,
+    })
+    for (const earlier of [api(404), api(401), Object.assign(new Error("socket closed"), { code: "ECONNRESET" })]) {
+      const wrapped = new RetryError({ message: "attempts failed", reason: "maxRetriesExceeded", errors: [earlier, api(503)] })
+      const normalized = MessageV2.fromError(wrapped, { providerID })
+      expect(decide(normalized).kind).toBe("server")
+      expect(decide(JSON.parse(JSON.stringify(normalized))).kind).toBe("server")
+      expect(normalized.data.metadata?.retryHistory).toBeDefined()
+      expect(ProviderError.summarizeCause(wrapped).map((cause) => cause.statusCode)).toEqual([503])
+    }
+    const last = new TypeError("fetch failed", { cause: Object.assign(new Error("connect"), { code: "ETIMEDOUT" }) })
+    const wrapped = new RetryError({ message: "attempts failed", reason: "maxRetriesExceeded", errors: [api(401), last] })
+    const normalized = MessageV2.fromError(wrapped, { providerID })
+    expect(decide(normalized).kind).toBe("network")
+    expect(decide(JSON.parse(JSON.stringify(normalized))).kind).toBe("network")
+    expect(normalized.data.metadata?.causeChain).toContain("ETIMEDOUT")
+  })
+
+  for (const catalog of ["empty", "unmatched"] as const) {
+    test(`${catalog} catalog preserves native HTTP400 recovery signal precedence`, () => {
+      loadHostErrorCatalog({ protocolVersion: 2, rules: catalog === "empty" ? [] : [{
+        match: { providerID, response: { kind: "field", path: "/error/code", value: "host_only" } },
+        code: "host.only", retryClass: "terminal",
+      }] })
+      for (const [code, message, kind] of [
+        ["stream_read_error", "Upstream stream read failed", "stream"],
+        ["rate_limit_exceeded", "Too many requests", "rate_limit"],
+      ]) {
+        const raw = new APICallError({
+          message, statusCode: 400, responseBody: JSON.stringify({ error: { code, message } }),
+          url: "https://example.com", requestBodyValues: {}, isRetryable: false,
+        })
+        bindHostError(raw, { providerID })
+        const normalized = MessageV2.fromError(raw, { providerID })
+        expect(normalized.data.hostCode).toBeUndefined()
+        expect(decide(normalized)).toMatchObject({ retryable: true, kind })
+        expect(decide(JSON.parse(JSON.stringify(normalized)))).toMatchObject({ retryable: true, kind })
+      }
+    })
+  }
 })
 
 describe("isRetryableTransientError", () => {

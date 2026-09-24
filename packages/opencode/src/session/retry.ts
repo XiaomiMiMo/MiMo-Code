@@ -393,12 +393,11 @@ export function decide(
     return terminal("Usage limit reached", GO_UPSELL_MESSAGE)
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
     return terminal()
-  const constraint = retryConstraint(error)
-  if (constraint === "terminal") return terminal()
-  if (constraint === "network") return retry("network")
-
+  if (status === 402 || status === 501 || status === 505) return terminal()
+  if (status === 404 && (!MessageV2.APIError.isInstance(error) || error.data.metadata?.allow404Retry !== "true")) return terminal()
   if (signals.code === "stream_read_error" || signals.type === "upstream_error")
     return retry("stream", "stream", signals.message || "Upstream stream read failed")
+  if (ProviderError.isRetryableNetworkError(error)) return retry("network")
   if (
     signals.type === "too_many_requests" ||
     signals.type.includes("rate_limit") ||
@@ -410,6 +409,7 @@ export function decide(
   if (isRateLimitMessage(message)) return retry("rate_limit", phase, message)
   if (signals.code.includes("exhausted") || signals.code.includes("unavailable"))
     return retry("server", phase, "Provider is overloaded")
+  if (retryConstraint(error) === "terminal") return terminal()
   if (status !== undefined && (RETRYABLE_HTTP_STATUS.has(status) || (status >= 500 && status <= 599 && status !== 501 && status !== 505)))
     return retry(status === 429 ? "rate_limit" : "server")
   if (MessageV2.APIError.isInstance(error)) {

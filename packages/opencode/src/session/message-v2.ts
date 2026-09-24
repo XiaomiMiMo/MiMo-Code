@@ -46,7 +46,13 @@ function causeMetadata(error: unknown): Record<string, string> | undefined {
   const source = error as { cause?: unknown; errors?: unknown }
   if (source.cause === undefined && !Array.isArray(source.errors)) return undefined
   const causeChain = ProviderError.summarizeCause(error)
-  return causeChain.length > 1 ? { causeChain: JSON.stringify(causeChain) } : undefined
+  const history = ProviderError.summarizeCause(error, { includeRetryHistory: true })
+  const retryHistory = JSON.stringify(history) !== JSON.stringify(causeChain) ? JSON.stringify(history) : undefined
+  const metadata = {
+    ...(causeChain.length > 0 ? { causeChain: JSON.stringify(causeChain) } : {}),
+    ...(retryHistory ? { retryHistory } : {}),
+  }
+  return Object.keys(metadata).length > 0 ? metadata : undefined
 }
 
 export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached file(s) from tool result:"
@@ -1358,15 +1364,25 @@ function fromParsedStreamError(
   ).toObject()
 }
 
-export function fromError(
-  e: unknown,
-  ctx: { providerID: ProviderID; aborted?: boolean; allow404Retry?: boolean },
-): NonNullable<Assistant["error"]> {
+type ErrorContext = { providerID: ProviderID; aborted?: boolean; allow404Retry?: boolean }
+
+export function fromError(e: unknown, ctx: ErrorContext): NonNullable<Assistant["error"]> {
+  return normalizeError(e, ctx, false)
+}
+
+export function fromLiveError(e: unknown, ctx: ErrorContext): NonNullable<Assistant["error"]> {
+  return normalizeError(e, ctx, true)
+}
+
+function normalizeError(e: unknown, ctx: ErrorContext, requireBinding: boolean): NonNullable<Assistant["error"]> {
   HostErrorRegistry.inheritHostError(e, ctx)
   const error = fromErrorCore(e, ctx)
   const metadata = causeMetadata(e)
   if (metadata) error.data.metadata = { ...error.data.metadata, ...metadata }
-  return HostErrorRegistry.copyHostError(error, e, ctx)
+  if (HostErrorRegistry.isSafetyTerminal(e) && !HostErrorRegistry.isSafetyTerminal(error)) {
+    error.data.metadata = { ...error.data.metadata, causeChain: JSON.stringify(ProviderError.summarizeCause(e)) }
+  }
+  return HostErrorRegistry.copyHostError(error, e, ctx, { requireBinding })
 }
 
 function fromErrorCore(
@@ -1405,8 +1421,6 @@ function fromErrorCore(
       if (inner !== undefined && inner !== e) return fromErrorCore(inner, ctx, original)
       return new NamedError.Unknown({ message: e.message }, { cause: original }).toObject()
     }
-    case OutputLengthError.isInstance(e):
-      return e
     case LoadAPIKeyError.isInstance(e):
       return new AuthError(
         {

@@ -874,7 +874,7 @@ const live: Layer.Layer<
                       allowRequestRetry &&
                       !ProviderTransform.isAssistantPrefillRejection(event.error)
                     ) {
-                      const normalized = MessageV2.fromError(event.error, {
+                      const normalized = MessageV2.fromLiveError(event.error, {
                         providerID: input.model.providerID,
                         aborted: ctrl.signal.aborted,
                         allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model),
@@ -928,7 +928,7 @@ const live: Layer.Layer<
             source.pipe(
               Stream.catchCause((primaryCause) => {
                 const primaryError = inheritHostError(Cause.squash(primaryCause), { providerID: input.model.providerID })
-                const normalized = MessageV2.fromError(primaryError, { providerID: input.model.providerID, allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) })
+                const normalized = MessageV2.fromLiveError(primaryError, { providerID: input.model.providerID, allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) })
                 if (!normalized.data.hostCode && ProviderTransform.isAssistantPrefillRejection(primaryError)) {
                   if (prefillRepaired) return Stream.failCause(primaryCause)
                   return retryRequest(attempt(true, true), retryCount, startedAt, true)

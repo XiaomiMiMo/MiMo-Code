@@ -1,4 +1,4 @@
-import { APICallError } from "ai"
+import { APICallError, RetryError } from "ai"
 import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
 import type { ProviderID } from "./schema"
@@ -93,7 +93,7 @@ export function isAbortError(error: unknown): boolean {
   return (error as { name?: unknown }).name === "AbortError" || code === "ABORT_ERR"
 }
 
-export function summarizeCause(input: unknown): CauseSummary[] {
+export function summarizeCause(input: unknown, options: { includeRetryHistory?: boolean } = {}): CauseSummary[] {
   const seen = new Set<object>()
   const queue: Array<{ value: unknown; depth: number; source: CauseSummary["source"] }> = [
     { value: input, depth: 0, source: "root" },
@@ -103,6 +103,17 @@ export function summarizeCause(input: unknown): CauseSummary[] {
     const node = queue.shift()!
     if (typeof node.value !== "object" || node.value === null || seen.has(node.value)) continue
     seen.add(node.value)
+    if (!options.includeRetryHistory && RetryError.isInstance(node.value)) {
+      const inner = node.value.lastError ?? (Array.isArray(node.value.errors) ? node.value.errors.at(-1) : undefined)
+      if (inner !== undefined && inner !== node.value) {
+        if (node.depth < 8) {
+          queue.unshift({ value: inner, depth: node.depth + 1, source: node.source })
+          if (node.value.cause !== undefined && node.value.cause !== inner)
+            queue.push({ value: node.value.cause, depth: node.depth + 1, source: "cause" })
+        }
+        continue
+      }
+    }
     const object = node.value as {
       name?: unknown
       message?: unknown

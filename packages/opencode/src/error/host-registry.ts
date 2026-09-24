@@ -8,9 +8,10 @@ import { isRetryableNetworkError, summarizeCause } from "@/provider/error"
 
 export const RETRY_CLASSES = HOST_RETRY_CLASSES
 export type RetryClass = (typeof RETRY_CLASSES)[number]
+export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
 export type HostResponseMatch =
-  | { readonly kind: "field"; readonly path: "error.code" | "biz_code" | "error.biz_code"; readonly value: string | number }
-  | { readonly kind: "json"; readonly value: Readonly<Record<string, unknown>> }
+  | { readonly kind: "field"; readonly path: string; readonly value: string | number | boolean | null }
+  | { readonly kind: "json"; readonly value: JsonValue }
   | { readonly kind: "empty" }
 
 export interface HostErrorRule {
@@ -28,13 +29,34 @@ export interface HostErrorCatalog {
   readonly rules: readonly HostErrorRule[]
 }
 
+// Record schemas can strip or reject valid JSON members such as __proto__ and constructor.
+function isJsonValue(value: unknown, ancestors = new Set<object>()): value is JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true
+  if (typeof value === "number") return Number.isFinite(value)
+  if (typeof value !== "object" || ancestors.has(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return false
+  if (Array.isArray(value) && Array.from(value).includes(undefined)) return false
+  ancestors.add(value)
+  const valid = Object.values(value).every((item) => isJsonValue(item, ancestors))
+  ancestors.delete(value)
+  return valid
+}
+
 const HostErrorRuleSchema = z.strictObject({
   match: z.strictObject({
     providerID: z.string().min(1),
     statusCode: z.number().int().min(100).max(599).optional(),
     response: z.discriminatedUnion("kind", [
-      z.strictObject({ kind: z.literal("field"), path: z.enum(["error.code", "biz_code", "error.biz_code"]), value: z.union([z.string(), z.number()]) }),
-      z.strictObject({ kind: z.literal("json"), value: z.record(z.string(), z.json()) }),
+      z.strictObject({
+        kind: z.literal("field"),
+        path: z.string().refine((pointer) => (pointer === "" || pointer.startsWith("/")) && !/~(?:[^01]|$)/u.test(pointer), "invalid JSON Pointer"),
+        value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+      }),
+      z.strictObject({
+        kind: z.literal("json"),
+        value: z.custom<JsonValue>((value) => isJsonValue(value), "invalid JSON value").transform((value) => structuredClone(value)),
+      }),
       z.strictObject({ kind: z.literal("empty") }),
     ]),
   }).refine((match) => match.response.kind !== "empty" || match.statusCode !== undefined, "empty response requires statusCode"),
@@ -84,7 +106,7 @@ export function isTerminalError(error: unknown, allow404Retry = isRetryableNotFo
   const body = e.data?.responseBody ?? e.responseBody ?? e.data?.message
   if (typeof body !== "string") return false
   if (body.includes("FreeUsageLimitError") || body.includes("SubscriptionUsageLimitError")) return true
-  const parsed = json(body)
+  const parsed = record(json(body))
   const nested = record(parsed?.error)
   const code = nested?.code ?? nested?.type ?? parsed?.code
   return code === "insufficient_quota" || code === "usage_not_included"
@@ -110,12 +132,16 @@ export function hostErrorCatalog(): HostErrorCatalog {
 }
 
 export function loadHostErrorCatalog(doc: unknown): { ok: true } | { ok: false; reason: string } {
-  const parsed = HostErrorCatalogSchema.safeParse(doc)
-  if (!parsed.success) {
-    return { ok: false, reason: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") || "invalid catalog" }
+  try {
+    const parsed = HostErrorCatalogSchema.safeParse(doc)
+    if (!parsed.success) {
+      return { ok: false, reason: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") || "invalid catalog" }
+    }
+    snapshot = freeze(parsed.data)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) }
   }
-  snapshot = freeze(parsed.data)
-  return { ok: true }
 }
 
 export function loadHostErrorCatalogFile(filePath: string): { ok: true } | { ok: false; reason: string } {
@@ -143,13 +169,25 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-function json(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "string") return record(value)
+function json(value: unknown): unknown {
+  if (typeof value !== "string") return undefined
   try {
-    return record(JSON.parse(value))
+    return JSON.parse(value)
   } catch {
     return undefined
   }
+}
+
+function resolvePointer(value: unknown, pointer: string): unknown {
+  if (pointer === "") return value
+  for (const part of pointer.slice(1).split("/")) {
+    const token = part.replace(/~1/g, "/").replace(/~0/g, "~")
+    if (value === null || typeof value !== "object") return undefined
+    if (Array.isArray(value) && !/^(?:0|[1-9][0-9]*)$/.test(token)) return undefined
+    if (!Object.hasOwn(value, token)) return undefined
+    value = (value as Record<string, unknown>)[token]
+  }
+  return value
 }
 
 type APIResponse = { statusCode?: number; responseBody?: string }
@@ -159,7 +197,7 @@ const bindings = new WeakMap<object, Map<string, Binding>>()
 function apiResponse(error: unknown, seen = new Set<object>()): APIResponse | undefined {
   if (error === null || typeof error !== "object" || seen.has(error)) return
   seen.add(error)
-  if (RetryError.isInstance(error)) return apiResponse(error.lastError ?? error.errors.at(-1), seen)
+  if (RetryError.isInstance(error)) return apiResponse(error.lastError ?? (Array.isArray(error.errors) ? error.errors.at(-1) : undefined), seen)
   if (APICallError.isInstance(error)) {
     if (error.statusCode === undefined && error.responseBody === undefined) return
     return { statusCode: error.statusCode, responseBody: error.responseBody }
@@ -167,8 +205,8 @@ function apiResponse(error: unknown, seen = new Set<object>()): APIResponse | un
   if (error instanceof Error) return
   const body = record(error)
   const frame = record(body?.data)
-  const response = frame?.type === "error" ? frame : body
-  if (response?.type === "error" && (record(response.error) || typeof response.error === "string" || response.biz_code !== undefined)) {
+  const response = body?.type === "error" ? body : frame
+  if (response?.type === "error") {
     return { responseBody: JSON.stringify(response) }
   }
 }
@@ -183,8 +221,7 @@ export function bindHostError<T>(error: T, context: { providerID: string }, resp
     const match = rule.match.response
     if (match.kind === "empty") return !response.responseBody?.trim()
     if (match.kind === "json") return isDeepStrictEqual(body, match.value)
-    const value = match.path === "biz_code" ? body?.biz_code : record(body?.error)?.[match.path.slice(6)]
-    return value === match.value
+    return resolvePointer(body, match.path) === match.value
   }) ?? null : null
   const resolutions = bindings.get(error) ?? new Map<string, Binding>()
   resolutions.set(context.providerID, { rule, response })
@@ -197,7 +234,7 @@ export function inheritHostError<T>(error: T, context: { providerID: string }, s
   if (bindings.get(error)?.has(context.providerID)) return error
   seen.add(error)
   if (!RetryError.isInstance(error)) return error
-  const inner = inheritHostError(error.lastError ?? error.errors.at(-1), context, seen)
+  const inner = inheritHostError(error.lastError ?? (Array.isArray(error.errors) ? error.errors.at(-1) : undefined), context, seen)
   if (inner === null || typeof inner !== "object") return error
   const binding = bindings.get(inner)?.get(context.providerID)
   if (!binding) return error
@@ -213,11 +250,27 @@ export function boundAPIResponse(error: unknown, context: { providerID: string }
   return binding?.rule ? binding.response : undefined
 }
 
-export function copyHostError<T extends { name: string; data: { hostCode?: string; hostRetryClass?: string } }>(target: T, original: unknown, context: { providerID: string }): T {
-  if (target.name !== "APIError" || original === null || typeof original !== "object") return target
+export function copyHostError<T extends { name: string; data: { hostCode?: string; hostRetryClass?: string } }>(
+  target: T,
+  original: unknown,
+  context: { providerID: string },
+  options: { requireBinding?: boolean } = {},
+): T {
+  if (target.name !== "APIError" || original === null || typeof original !== "object") {
+    if (options.requireBinding) {
+      delete target.data.hostCode
+      delete target.data.hostRetryClass
+    }
+    return target
+  }
   const binding = bindings.get(original)?.get(context.providerID)
-  if (!binding) return target
-  if (binding.rule) {
+  if (!binding && !options.requireBinding) return target
+  if (binding) {
+    const resolutions = bindings.get(target) ?? new Map<string, Binding>()
+    resolutions.set(context.providerID, binding)
+    bindings.set(target, resolutions)
+  }
+  if (binding?.rule) {
     target.data.hostCode = binding.rule.code
     target.data.hostRetryClass = isSafetyTerminal(original) ? "terminal" : binding.rule.retryClass
     return target

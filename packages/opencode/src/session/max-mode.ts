@@ -83,7 +83,7 @@ function retryPolicy(input: MaxStepInput, scope: "max-candidate" | "max-judge", 
     scope,
     budget: (decision) => SessionRetry.budgetFor(retryConfig, decision),
     jitterRatio: retryConfig.jitterRatio,
-    parse: (error) => MessageV2.fromError(error, { providerID: input.model.providerID, aborted: aborted(), allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) }),
+    parse: (error) => MessageV2.fromLiveError(error, { providerID: input.model.providerID, aborted: aborted(), allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) }),
     set: (info) =>
       input.onRetry
         ? input.onRetry({ ...info, nextDelayMs: Math.max(0, info.next - Date.now()) })

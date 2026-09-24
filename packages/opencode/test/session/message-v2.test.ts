@@ -1714,6 +1714,25 @@ describe("session.message-v2.fromError", () => {
     }
   })
 
+  test("malformed output-length tags cannot bypass schema validation", () => {
+    for (const raw of [{ name: "MessageOutputLengthError" }, { name: "MessageOutputLengthError", data: null }]) {
+      for (const normalize of [MessageV2.fromLiveError, MessageV2.fromError]) {
+        expect(() => normalize(raw, { providerID })).not.toThrow()
+        const result = normalize(raw, { providerID })
+        expect(result.name).toBe("UnknownError")
+        expect(MessageV2.Assistant.shape.error.safeParse(result).success).toBe(true)
+      }
+    }
+  })
+
+  test("valid output-length instances and serialized objects retain their classification", () => {
+    const error = new MessageV2.OutputLengthError({})
+    for (const raw of [error, error.toObject()]) {
+      expect(MessageV2.fromLiveError(raw, { providerID })).toEqual(error.toObject())
+      expect(MessageV2.fromError(raw, { providerID })).toEqual(error.toObject())
+    }
+  })
+
   test("does not crash on a RetryError without an errors array", () => {
     const error = new RetryError({ message: "retry failed", reason: "maxRetriesExceeded", errors: [] })
     ;(error as any).errors = undefined

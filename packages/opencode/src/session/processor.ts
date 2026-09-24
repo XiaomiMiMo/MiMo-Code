@@ -289,7 +289,7 @@ export const layer: Layer.Layer<
       const slog = log.clone().tag("session.id", input.sessionID).tag("messageID", input.assistantMessage.id)
 
       const parse = (e: unknown) =>
-        MessageV2.fromError(e, {
+        MessageV2.fromLiveError(e, {
           providerID: input.model.providerID,
           aborted,
           allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model),

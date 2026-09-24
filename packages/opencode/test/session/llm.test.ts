@@ -334,7 +334,7 @@ describe("session.llm.stream", () => {
         HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [{
           match: { providerID, response: behavior === "terminal" && !withType
             ? { kind: "json", value: frame }
-            : { kind: "field", path: "error.code", value: code } },
+            : { kind: "field", path: "/error/code", value: code } },
           code: "host.compatible", retryClass: behavior === "terminal" ? "terminal" : "persistent",
         }] })
         try {
@@ -414,7 +414,7 @@ export default async () => ({ "chat.params": async () => { throw new APICallErro
         { type: "response.completed", response: { incomplete_details: null, usage: { input_tokens: 1, input_tokens_details: null, output_tokens: 1, output_tokens_details: null }, service_tier: null } },
       ], true)) : undefined
       HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [{
-        match: { providerID: ProviderID.openai, response: { kind: "field", path: "error.code", value: 90100 } },
+        match: { providerID: ProviderID.openai, response: { kind: "field", path: "/error/code", value: 90100 } },
         code: "host.provider_only", retryClass: "terminal",
       }] })
       try {
@@ -449,6 +449,48 @@ export default async () => ({ "chat.params": async () => { throw new APICallErro
     })
   }
 
+  for (const shape of ["object", "instance"] as const) {
+    test(`live plugin ${shape} APIError stamps cannot bypass provider binding`, async () => {
+      const server = state.server
+      if (!server) throw new Error("Server not initialized")
+      const source = await loadFixture("openai", "gpt-5.2")
+      await using tmp = await tmpdir({ init: async (dir) => {
+        const plugin = path.join(dir, "plugin.ts")
+        await Bun.write(plugin, `import { MessageV2 } from ${JSON.stringify(import.meta.resolve("../../src/session/message-v2"))};
+let attempts = 0;
+export default async () => ({ "chat.params": async () => {
+  const data = { message: "plugin failure", statusCode: 403, isRetryable: false,
+    hostCode: "host.forged", hostRetryClass: "bounded", metadata: { attempts: String(++attempts) } };
+  throw ${shape === "object" ? '{ name: "APIError", data }' : "new MessageV2.APIError(data)"};
+} });`)
+        await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({
+          enabled_providers: ["openai"], plugin: [pathToFileURL(plugin).href],
+          retry: { request: { maxRetries: 1, initialDelayMs: 1, jitterRatio: 0 } },
+          provider: { openai: { npm: "@ai-sdk/openai", options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` } } },
+        }))
+      } })
+      await Instance.provide({ directory: tmp.path, fn: async () => {
+        const model = await getModel(ProviderID.openai, ModelID.make(source.model.id))
+        const sessionID = SessionID.make("session-forged-stamp")
+        const agent = { name: "test", mode: "primary", options: {}, permission: [{ permission: "*", pattern: "*", action: "allow" }] } satisfies Agent.Info
+        const user = { id: MessageID.make("user-forged-stamp"), sessionID, role: "user", time: { created: Date.now() }, agent: agent.name,
+          model: { providerID: ProviderID.openai, modelID: model.id } } satisfies MessageV2.User
+        const exit = await llm.runPromise((svc) => svc.stream({
+          user, sessionID, model, agent, system: [], messages: [{ role: "user", content: "Hello" }],
+          tools: {}, retries: 0, quietRetryDiagnostics: true,
+        }).pipe(Stream.runCollect, Effect.exit))
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isSuccess(exit)) throw new Error("Expected plugin failure")
+        const raw = Cause.squash(exit.cause) as MessageV2.APIError
+        expect(raw.data.metadata?.attempts).toBe("1")
+        const normalized = MessageV2.fromLiveError(raw, { providerID: ProviderID.openai })
+        expect(normalized.data.hostCode).toBeUndefined()
+        expect(normalized.data.hostRetryClass).toBeUndefined()
+        expect(SessionRetry.decide(normalized).retryable).toBe(false)
+      } })
+    }, 30_000)
+  }
+
   test("host API binding survives a provider error after streamed output", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")
@@ -465,7 +507,7 @@ export default async () => ({ "chat.params": async () => { throw new APICallErro
       frame,
     ], true))
     HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [{
-      match: { providerID: ProviderID.openai, response: { kind: "field", path: "error.code", value: "90100" } },
+      match: { providerID: ProviderID.openai, response: { kind: "field", path: "/error/code", value: "90100" } },
       code: "host.stream_failure", retryClass: "terminal",
     }] })
     try {
@@ -531,7 +573,7 @@ export default async () => ({ "chat.params": async () => { throw new APICallErro
       }),
     })
     HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [408, 429, 503].map((statusCode) => ({
-      match: { providerID: ProviderID.openai, statusCode, response: { kind: "field", path: "error.code", value: 90100 } },
+      match: { providerID: ProviderID.openai, statusCode, response: { kind: "field", path: "/error/code", value: 90100 } },
       code: `host.${statusCode}`, retryClass: "persistent",
     })) })
     GlobalBus.on("event", onGlobal)
