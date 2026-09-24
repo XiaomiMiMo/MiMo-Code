@@ -230,7 +230,9 @@ function normalizeMessages(
   if (
     typeof model.capabilities.interleaved === "object" &&
     model.capabilities.interleaved.field &&
-    model.api.npm !== "@openrouter/ai-sdk-provider"
+    model.api.npm !== "@openrouter/ai-sdk-provider" &&
+    // MiMo Responses serializes reasoning items, not Chat's reasoning_content field.
+    !(model.api.npm === "@ai-sdk/openai" && [model.id, model.api.id, model.family ?? ""].some(isMimoModel))
   ) {
     const field = model.capabilities.interleaved.field
     return msgs.map((msg) => {

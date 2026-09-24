@@ -3511,3 +3511,47 @@ test("plugin config enabled and disabled providers are honored", async () => {
     },
   })
 })
+
+// [TP-R11-09] A shared provider can serve MiMo and standard OpenAI models.
+test("MiMo Responses normalization never leaks through the SDK cache to OpenAI models", async () => {
+  const events = [
+    { type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_test" } },
+    { type: "response.content_part.added", item_id: "rs_test", content_index: 0, part: { type: "reasoning_text", text: "" } },
+    { type: "response.reasoning_text.delta", item_id: "rs_test", content_index: 0, delta: "Synthetic reasoning." },
+    { type: "response.output_item.done", output_index: 0, item: { type: "reasoning", id: "rs_test" } },
+    { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } },
+  ]
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+      headers: { "content-type": "text/event-stream" },
+    }),
+  })
+  try {
+    for (const order of [["mimo-test", "gpt-test"], ["gpt-test", "mimo-test"]]) {
+      await using tmp = await tmpdir({ init: async dir => {
+        await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({
+          enabled_providers: ["example"],
+          provider: { example: {
+            npm: "@ai-sdk/openai",
+            options: { apiKey: "test-key", baseURL: `http://127.0.0.1:${server.port}/v1` },
+            models: { "mimo-test": {}, "gpt-test": {} },
+          } },
+        }))
+      } })
+      await Instance.provide({ directory: tmp.path, fn: async () => {
+        for (const id of order) {
+          const model = await getModel(ProviderID.make("example"), ModelID.make(id))
+          const language = await getLanguage(model)
+          const result = await language.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "test" }] }] })
+          const parts: import("@ai-sdk/provider").LanguageModelV3StreamPart[] = []
+          await result.stream.pipeTo(new WritableStream({ write(part) { parts.push(part) } }))
+          expect(parts.filter(part => part.type === "error")).toEqual([])
+          expect(parts.filter(part => part.type === "reasoning-delta").map(part => part.delta)).toEqual(id === "mimo-test" ? ["Synthetic reasoning."] : [])
+        }
+      } })
+    }
+  } finally {
+    server.stop(true)
+  }
+})

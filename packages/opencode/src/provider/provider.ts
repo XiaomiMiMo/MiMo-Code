@@ -8,6 +8,7 @@ import { Config } from "../config"
 import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
 import { NoSuchModelError, wrapLanguageModel, type Provider as SDK } from "ai"
 import { openAIExecMiddleware } from "./openai-exec"
+import { normalizeMimoResponse } from "./mimo-responses"
 import { Log } from "../util"
 import { Npm } from "../npm"
 import { Hash } from "@mimo-ai/shared/util/hash"
@@ -1667,10 +1668,12 @@ const layer: Layer.Layer<
             ...model.headers,
           }
 
+        const mimoResponses = model.api.npm === "@ai-sdk/openai" && [model.id, model.api.id, model.family ?? ""].some(isMimoModel)
         const key = Hash.fast(
           JSON.stringify({
             providerID: model.providerID,
             npm: model.api.npm,
+            mimoResponses,
             options,
           }),
         )
@@ -1726,8 +1729,8 @@ const layer: Layer.Layer<
           const bounded = requestTimeoutCtl
             ? wrapRequestTimeout(res, callerSignal, requestTimeoutCtl.signal, requestTimeoutCtl.clear)
             : res
-          if (!chunkAbortCtl) return bounded
-          return wrapSSE(bounded, chunkTimeout, chunkAbortCtl)
+          const streamed = chunkAbortCtl ? wrapSSE(bounded, chunkTimeout, chunkAbortCtl) : bounded
+          return mimoResponses ? normalizeMimoResponse(streamed) : streamed
         }
 
         const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
