@@ -150,6 +150,11 @@ export const Flag = {
   get MIMOCODE_DISABLE_TOOLCALL_DUPLICATE_DETECT() {
     return truthy("MIMOCODE_DISABLE_TOOLCALL_DUPLICATE_DETECT")
   },
+  // Rollback switch for the Deber pack/unpack tool surface (two-level collections).
+  // Default on for the non-GPT toolset; GPT/codex already uses exec/wait and skips Deber.
+  get MIMOCODE_DISABLE_DEBER() {
+    return truthy("MIMOCODE_DISABLE_DEBER")
+  },
   MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
   // Default compaction trigger, used when `compaction.max_context` is not set in
   // config. Same grammar as that config field: an absolute token count

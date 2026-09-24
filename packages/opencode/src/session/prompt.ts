@@ -175,6 +175,7 @@ import {
 } from "@/tool/mcp-tool-search"
 import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
 import { DIRECT_ONLY_MCP_TOOLS, GPT_TOP_LEVEL_TOOLS, type BuiltinExecutor } from "@/tool/tool-script-ref"
+import { isTopLevelKeep, pack as packDeberCollections, unpack as unpackDeberCall, type CollectionSpec } from "@/tool/deber"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
 
 // @ts-ignore
@@ -1802,6 +1803,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       })
       const whitelist = yield* whitelistFor()
       const useGPTTools = usesGPTToolset(input.model.id, input.harness, input.model.api.id, input.model.family)
+      // GPT/codex already collapses the surface to exec/wait; Deber only packs the
+      // default toolset. Flag is a hard rollback to the flat advertise surface.
+      const useDeber = !useGPTTools && !Flag.MIMOCODE_DISABLE_DEBER
       const execAllowedByWhitelist =
         useGPTTools &&
         !!whitelist &&
@@ -2036,7 +2040,63 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
       // Keep every authorized definition in the AI SDK tool map so an unadvertised
       // direct call still resolves. `activeTools` below is the separate provider-
-      // facing schema allowlist and stays compact in Codex mode.
+      // facing schema allowlist and stays compact in Codex mode — and, with Deber
+      // on, for the default toolset too (collections replace flat names).
+      const makeDeberCollectionTool = (spec: CollectionSpec, defById: Map<string, Tool.Def>): AITool => {
+        const parameters = z.object({
+          op: z.string().describe(`One of: ${spec.ops.join(", ")}`),
+          args: z
+            .record(z.string(), z.any())
+            .optional()
+            .describe("Original arguments for `op`. Prefer nesting here over flattening onto this tool."),
+        })
+        const schema = ProviderTransform.schema(input.model, Tool.jsonSchema(parameters))
+        return tool({
+          description: spec.description,
+          inputSchema: jsonSchema(schema),
+          execute(raw, options) {
+            const unpacked = unpackDeberCall(spec.id, raw)
+            if (!unpacked.ok) {
+              return run.promise(Effect.fail(new RecoverableError(unpacked.message)))
+            }
+            const item = defById.get(unpacked.id)
+            if (!item) {
+              return run.promise(
+                Effect.fail(
+                  new RecoverableError(
+                    `Tool "${unpacked.id}" (via ${spec.id}) is not available for this request.`,
+                  ),
+                ),
+              )
+            }
+            // Duplicate + gate identity use the original tool id and unwrapped args.
+            if (!claimToolSignature(item.id, unpacked.args)) return rejectToolCallDuplicate()
+            return run.promise(
+              Effect.gen(function* () {
+                // Persist/permission/desktop identity = original id + original args,
+                // not the packed collection envelope.
+                yield* input.processor.updateToolCall(options.toolCallId, (match) => ({
+                  ...match,
+                  tool: item.id,
+                  state: {
+                    ...match.state,
+                    input: unpacked.args as Record<string, unknown>,
+                  },
+                }))
+                const gateTool =
+                  PARALLEL_READONLY_TOOLS.has(item.id) && !item.parameters.safeParse(unpacked.args).success
+                    ? "invalid"
+                    : item.id
+                return yield* gate.run(gateTool, options.toolCallId, executeBuiltin(item, unpacked.args, options), {
+                  signal: options.abortSignal,
+                })
+              }),
+            )
+          },
+        })
+      }
+
+      const registeredDefs: Tool.Def[] = []
       for (const item of yield* registry.registered({
         modelID: input.model.id,
         apiModelID: input.model.api.id,
@@ -2045,6 +2105,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agent: input.agent,
         harness: input.harness,
       })) {
+        registeredDefs.push(item)
         const schema = ProviderTransform.schema(input.model, Tool.jsonSchema(item.parameters))
         tools[item.id] = tool({
           description: item.description,
@@ -2060,8 +2121,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             )
           },
         })
-        if (item.id !== MCP_TOOL_SEARCH_ID && (!useGPTTools || GPT_TOP_LEVEL_TOOLS.has(item.id))) {
-          activeTools.add(item.id)
+        if (item.id === MCP_TOOL_SEARCH_ID) continue
+        if (useGPTTools) {
+          if (GPT_TOP_LEVEL_TOOLS.has(item.id)) activeTools.add(item.id)
+          continue
+        }
+        if (useDeber) {
+          if (isTopLevelKeep(item.id)) activeTools.add(item.id)
+          continue
+        }
+        activeTools.add(item.id)
+      }
+
+      if (useDeber) {
+        const defById = new Map(registeredDefs.map((item) => [item.id, item]))
+        for (const spec of packDeberCollections(registeredDefs.map((item) => item.id))) {
+          tools[spec.id] = makeDeberCollectionTool(spec, defById)
+          activeTools.add(spec.id)
         }
       }
 
