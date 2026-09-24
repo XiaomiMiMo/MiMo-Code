@@ -1879,7 +1879,7 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
   }
 
   if (model.api.npm === "@mimo/responses") {
-    return { openai: { ...options, store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } }
+    return { openai: { ...options, forceReasoning: true, store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } }
   }
   const key = sdkKey(model.api.npm) ?? model.providerID
   // @ai-sdk/azure delegates to OpenAIChatLanguageModel which reads from

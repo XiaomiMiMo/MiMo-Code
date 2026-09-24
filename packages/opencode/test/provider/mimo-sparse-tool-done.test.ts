@@ -93,25 +93,31 @@ test("compatible Responses preserves explicit phase and turn boundaries", async 
   }
 })
 
-test("configured MiMo Pro and Flash Responses use the compatible parser without leaking to OpenAI", async () => {
+test("configured MiMo aliases use the compatible parser without leaking to OpenAI", async () => {
   const server = Bun.serve({
     port: 0,
-    fetch: () => new Response(events().map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+    fetch: async (request) => {
+      const body = await request.json()
+      expect(["deployment-example-a", "deployment-example-b", "mimo-test", "gpt-5.4"]).toContain(body.model)
+      if (body.model.startsWith("deployment-")) expect(body.reasoning.summary).toBe("auto")
+      return new Response(events().map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
       headers: { "content-type": "text/event-stream" },
-    }),
+      })
+    },
   })
   try {
     await using tmp = await tmpdir({ config: {
       provider: { "test-gateway": {
         npm: "@ai-sdk/openai",
         options: { apiKey: "test-key", baseURL: `http://127.0.0.1:${server.port}/v1` },
-        models: Object.fromEntries(["v2.6-pro-test", "v2.6-flash-test", "mimo-test", "gpt-5.4"].map((id) => [id, {
+        models: Object.fromEntries(["mimo-example-a", "mimo-example-b", "mimo-test", "gpt-5.4"].map((id) => [id, {
+          id: id.startsWith("mimo-example") ? id.replace("mimo-", "deployment-") : id,
           limit: { context: 8192, output: 2048 },
         }])),
       } },
     } })
     await Instance.provide({ directory: tmp.path, fn: async () => {
-      for (const id of ["v2.6-pro-test", "gpt-5.4", "v2.6-flash-test", "mimo-test"]) {
+      for (const id of ["mimo-example-a", "gpt-5.4", "mimo-example-b", "mimo-test"]) {
         const parts = await AppRuntime.runPromise(Effect.gen(function* () {
           const provider = yield* Provider.Service
           const model = yield* provider.getModel(ProviderID.make("test-gateway"), ModelID.make(id))

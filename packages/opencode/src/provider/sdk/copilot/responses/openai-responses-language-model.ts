@@ -175,7 +175,6 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     responseFormat,
   }: LanguageModelV3CallOptions) {
     const warnings: SharedV3Warning[] = []
-    const modelConfig = getResponsesModelConfig(this.modelId)
 
     if (topK != null) {
       warnings.push({ type: "unsupported", feature: "topK" })
@@ -208,6 +207,11 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
       providerOptions,
       schema: openaiResponsesProviderOptionsSchema,
     })
+    const modelConfig = {
+      ...getResponsesModelConfig(this.modelId),
+      // The local MiMo alias may map to an opaque API model ID.
+      ...(openaiOptions?.forceReasoning ? { isReasoningModel: true } : {}),
+    }
 
     const { input, warnings: inputWarnings } = await convertToOpenAIResponsesInput({
       prompt,
@@ -1934,6 +1938,7 @@ const openaiResponsesProviderOptionsSchema = z.object({
   promptCacheKey: z.string().nullish(),
   reasoningEffort: z.string().nullish(),
   reasoningSummary: z.string().nullish(),
+  forceReasoning: z.boolean().nullish(),
   safetyIdentifier: z.string().nullish(),
   serviceTier: z.enum(["auto", "flex", "priority"]).nullish(),
   store: z.boolean().nullish(),
