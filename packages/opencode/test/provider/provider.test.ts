@@ -1943,7 +1943,7 @@ test("xiaomi chat streams reasoning_content as reasoning parts", async () => {
   }
 })
 
-test("mimo model ids are pinned to @ai-sdk/openai-compatible in config", async () => {
+test("mimo model ids respect explicit @ai-sdk/openai in config", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -1973,18 +1973,18 @@ test("mimo model ids are pinned to @ai-sdk/openai-compatible in config", async (
     directory: tmp.path,
     fn: async () => {
       const models = (await list())[ProviderID.make("my-gateway")].models
-      expect(models["MiMo-V2.6"].api.npm).toBe("@ai-sdk/openai-compatible")
-      expect(models["alias-model"].api.npm).toBe("@ai-sdk/openai-compatible")
-      expect(models["mimo-auto"].api.npm).toBe("@ai-sdk/openai-compatible")
+      expect(models["MiMo-V2.6"].api.npm).toBe("@ai-sdk/openai")
+      expect(models["alias-model"].api.npm).toBe("@ai-sdk/openai")
+      expect(models["mimo-auto"].api.npm).toBe("@ai-sdk/openai")
       expect(models["gpt-5.4"].api.npm).toBe("@ai-sdk/openai")
       expect(models["mimosa-1"].api.npm).toBe("@ai-sdk/openai")
-      // Only the SDK is pinned; the provider stays as configured.
+      // Explicit SDK and provider identity both stay as configured.
       expect(models["MiMo-V2.6"].providerID).toBe(ProviderID.make("my-gateway"))
     },
   })
 })
 
-test("mimo model ids are pinned to @ai-sdk/openai-compatible from models.dev", () => {
+test("mimo model ids respect explicit @ai-sdk/openai from models.dev", () => {
   const model = (id: string, npm?: string) => ({
     id,
     name: id,
@@ -2007,7 +2007,7 @@ test("mimo model ids are pinned to @ai-sdk/openai-compatible from models.dev", (
   } as unknown as ModelsDev.Provider
 
   const models = Provider.fromModelsDevProvider(provider).models
-  expect(models["xiaomi/mimo-v2.5"].api.npm).toBe("@ai-sdk/openai-compatible")
+  expect(models["xiaomi/mimo-v2.5"].api.npm).toBe("@ai-sdk/openai")
   expect(models["XiaomiMiMo/MiMo-V2.5-Pro"].api.npm).toBe("@ai-sdk/openai-compatible")
   expect(models["gpt-5.4"].api.npm).toBe("@ai-sdk/openai")
   expect(models["xiaomi/mimo-v2.5"].providerID).toBe(ProviderID.make("test-provider"))

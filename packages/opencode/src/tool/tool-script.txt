@@ -42,6 +42,7 @@ The script environment provides JavaScript built-ins plus `tools`, `files`, and 
 - Use `await tools.exec_command({ cmd, yield_time_ms?, max_output_tokens?, workdir, description })` for shell commands. `workdir` defaults to the current session directory; prefer an absolute path if provided. `yield_time_ms` and `max_output_tokens` default to 10000. Output exceeding the token budget is truncated inline and saved to tool storage, with its full-output path appended to the result. The runtime maps the call to the `bash` tool, preserving its permissions and execution behavior; commands still running when the wait budget expires are terminated.
 - `echo` commands are not supported inside `exec`, including through `tools.bash`. They fail before shell execution. Reply directly to the user instead of printing messages through shell commands; do not retry with another shell output command.
 - MCP results carry parsed `structuredContent` in the `structured` field when the server provides it.
+- Images and other media returned by nested tools are automatically attached to the outer exec result, even when your script only returns text. They reach the model outside the script's JSON result; do not try to print base64 or decode images in JavaScript.
 - Use `Promise.all` or `Promise.allSettled` only for independent calls; at most 8 run concurrently.
 - Return a small JSON-serializable aggregate. Circular values, BigInt, and throwing getters fail execution.
 - Use `console.log` only for debugging; logs are included in the result.

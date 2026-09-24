@@ -21,7 +21,7 @@ function userInfo(id: string): MessageV2.User {
 
 function assistantInfo(
   id: string,
-  extra?: Partial<Pick<MessageV2.Assistant, "finish" | "error" | "summary" | "structured">>,
+  extra?: Partial<Pick<MessageV2.Assistant, "finish" | "error" | "summary" | "structured" | "endTurn">>,
 ): MessageV2.Assistant {
   return {
     id: MessageID.make(id),
@@ -503,5 +503,24 @@ describe("classifyAssistantStep", () => {
       })
       expect(result.type).toBe("continue")
     })
+  })
+})
+
+
+describe("[TP-R11-06] explicit Responses turn boundaries", () => {
+  for (const phase of ["existing-assistant", "after-process"] as const) {
+    test(`${phase}: explicit false continues despite text, true or missing completes`, () => {
+      for (const endTurn of [false, true, undefined]) {
+        expect(classifyAssistantStep({ phase, lastUser, assistant: assistantInfo("m-2", { finish: "stop", endTurn }), parts: [textPart("m-2", "Working on it.")] }))
+          .toEqual({ type: endTurn === false ? "continue" : "final" })
+      }
+    })
+  }
+  test("explicit false cannot override abort, structured output, or blocked processing", () => {
+    const base = { phase: "after-process" as const, lastUser, parts: [textPart("m-2", "Working on it.")] }
+    expect(classifyAssistantStep({ ...base, assistant: assistantInfo("m-2", { finish: "stop", endTurn: false, error: { name: "MessageAbortedError", data: { message: "Stopped" } } }) }).type).toBe("failed")
+    expect(classifyAssistantStep({ ...base, assistant: assistantInfo("m-2", { finish: "stop", endTurn: false, structured: { result: true } }) }).type).toBe("final")
+    expect(classifyAssistantStep({ ...base, processResult: "stop", assistant: assistantInfo("m-2", { finish: "stop", endTurn: false }) }).type).toBe("final")
+    expect(classifyAssistantStep({ ...base, assistant: assistantInfo("m-2", { finish: "error", endTurn: false }) }).type).toBe("failed")
   })
 })

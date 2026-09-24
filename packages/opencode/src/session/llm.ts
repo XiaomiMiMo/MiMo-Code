@@ -37,6 +37,7 @@ import * as SessionRetry from "./retry"
 import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { usesGPTToolset } from "@/tool/gpt"
+import { isMimoModel } from "@/provider/mimo-model"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
@@ -488,17 +489,30 @@ const live: Layer.Layer<
       // TODO: move this to a proper hook
       const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
 
-      const system =
-        input.prebuiltSystem ??
-        (yield* buildSystemArray({
-          agent: input.agent,
-          model: input.model,
-          system: input.system,
-          user: input.user,
-          sessionID: input.sessionID,
-          agentID: input.agentID,
-          ephemeral: input.ephemeral,
-        }))
+      const system = [
+        ...(input.prebuiltSystem ??
+          (yield* buildSystemArray({
+            agent: input.agent,
+            model: input.model,
+            system: input.system,
+            user: input.user,
+            sessionID: input.sessionID,
+            agentID: input.agentID,
+            ephemeral: input.ephemeral,
+          }))),
+      ]
+      if (
+        input.model.api.npm === "@ai-sdk/openai" &&
+        [input.model.id, input.model.api.id, input.model.family ?? ""].some(isMimoModel) &&
+        !input.ephemeral
+      ) {
+        system.push(
+          "Responses execution contract: a text-only response with no tool call can end this turn; do not assume a separate commentary channel keeps it running. " +
+          "When you announce an in-scope next action, execute the corresponding tool in the same response and continue from its result. " +
+          "Do not end with a promise to inspect, edit, verify, or continue later. Finish the requested work and verification before the final answer. " +
+          "Stop when the request is complete, the user asks you to stop, or you need user input/authorization or encounter a genuine blocker; explain that blocker instead of inventing progress.",
+        )
+      }
 
       const variant =
         !input.small && input.model.variants && input.user.model.variant

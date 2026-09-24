@@ -626,6 +626,8 @@ export const layer: Layer.Layer<
               metadata: value.providerMetadata,
             })
             ctx.assistantMessage.finish = value.finishReason
+            const endTurn = value.providerMetadata?.openai?.endTurn
+            ctx.assistantMessage.endTurn = typeof endTurn === "boolean" ? endTurn : undefined
             ctx.assistantMessage.cost += usage.cost
             ctx.assistantMessage.tokens = usage.tokens
             yield* session.updatePart({

@@ -1548,7 +1548,7 @@ for (const modelID of ["v2.6-flash-test", "gpt-5-test"]) {
     const providerID = ProviderID.make("test-codex-header")
     await using tmp = await tmpdir({ config: {
       provider: { [providerID]: {
-        npm: "@ai-sdk/openai",
+        npm: modelID.startsWith("gpt") ? "@ai-sdk/openai" : "@ai-sdk/openai-compatible",
         options: { baseURL: `${server.url.origin}/v1`, apiKey: "test-key" },
         models: { [modelID]: { name: "Test model", tool_call: true, limit: { context: 8192, output: 1024 } } },
       } },
@@ -1573,6 +1573,9 @@ for (const modelID of ["v2.6-flash-test", "gpt-5-test"]) {
         expect(captured.headers.get("x-openai-internal-codex-responses-lite")).toBe(harness === "codex" ? "true" : null)
         expect(captured.headers.get("authorization")).toBe("Bearer test-key")
         expect(captured.headers.get("x-test-header")).toBe("preserved")
+        // [TP-R11-08] Transport guidance must follow MiMo Responses, not leak
+        // into default Chat or a real GPT model when the cached SDK changes.
+        expect(JSON.stringify(captured.body).includes("Responses execution contract:")).toBe(!modelID.startsWith("gpt") && harness === "codex")
       }
     } })
   }, 30000)

@@ -1,0 +1,358 @@
+diff --git a/node_modules/@ai-sdk/openai/.bun-tag-a0027df753a0cfe5 b/.bun-tag-a0027df753a0cfe5
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index f2cf46c2b76ecd1c0c76d22efeac156bd8960eb0..1816d7c2aac3b44bcb4f9c87645d6b3d1b073fb1 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -1117,6 +1117,7 @@ declare const openaiLanguageModelResponsesOptionsSchema: _ai_sdk_provider_utils.
+     serviceTier?: "default" | "auto" | "flex" | "priority" | "fast" | null | undefined;
+     store?: boolean | null | undefined;
+     passThroughUnsupportedFiles?: boolean | undefined;
++    allowUnencryptedReasoning?: boolean | undefined;
+     strictJsonSchema?: boolean | null | undefined;
+     textVerbosity?: "low" | "medium" | "high" | null | undefined;
+     truncation?: "auto" | "disabled" | null | undefined;
+@@ -1264,6 +1265,7 @@ type ResponsesProviderMetadata = {
+     logprobs?: Array<OpenAIResponsesLogprobs>;
+     serviceTier?: string;
+     reasoningContext?: string;
++    endTurn?: boolean;
+ };
+ type ResponsesReasoningProviderMetadata = {
+     itemId: string;
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index f2cf46c2b76ecd1c0c76d22efeac156bd8960eb0..1816d7c2aac3b44bcb4f9c87645d6b3d1b073fb1 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -1117,6 +1117,7 @@ declare const openaiLanguageModelResponsesOptionsSchema: _ai_sdk_provider_utils.
+     serviceTier?: "default" | "auto" | "flex" | "priority" | "fast" | null | undefined;
+     store?: boolean | null | undefined;
+     passThroughUnsupportedFiles?: boolean | undefined;
++    allowUnencryptedReasoning?: boolean | undefined;
+     strictJsonSchema?: boolean | null | undefined;
+     textVerbosity?: "low" | "medium" | "high" | null | undefined;
+     truncation?: "auto" | "disabled" | null | undefined;
+@@ -1264,6 +1265,7 @@ type ResponsesProviderMetadata = {
+     logprobs?: Array<OpenAIResponsesLogprobs>;
+     serviceTier?: string;
+     reasoningContext?: string;
++    endTurn?: boolean;
+ };
+ type ResponsesReasoningProviderMetadata = {
+     itemId: string;
+diff --git a/dist/index.js b/dist/index.js
+index f7969b7aa4847d2fdb466bdd318aea642b139438..635260419bec38f7094f1c87c44be0b0991eb562 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -3302,6 +3302,7 @@ async function convertToOpenAIResponsesInput({
+   explicitMessageItemType = false,
+   fileIdPrefixes,
+   passThroughUnsupportedFiles = false,
++  allowUnencryptedReasoning = false,
+   store,
+   hasConversation = false,
+   hasPreviousResponseId = false,
+@@ -3733,7 +3734,7 @@ async function convertToOpenAIResponsesInput({
+                 }
+               } else {
+                 const encryptedContent = providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent;
+-                if (encryptedContent != null) {
++                if (encryptedContent != null || allowUnencryptedReasoning) {
+                   const summaryParts = [];
+                   if (part.text.length > 0) {
+                     summaryParts.push({
+@@ -4027,7 +4028,7 @@ ${text}`,
+       }
+     }
+   }
+-  if (!store && input.some(
++  if (!store && !allowUnencryptedReasoning && input.some(
+     (item) => "type" in item && item.type === "reasoning" && item.encrypted_content == null
+   )) {
+     warnings.push({
+@@ -4211,6 +4212,7 @@ var openaiResponsesChunkSchema = (0, import_provider_utils28.lazySchema)(
+       import_v422.z.object({
+         type: import_v422.z.enum(["response.completed", "response.incomplete"]),
+         response: import_v422.z.object({
++          end_turn: import_v422.z.boolean().nullish(),
+           incomplete_details: import_v422.z.object({ reason: import_v422.z.string() }).nullish(),
+           usage: openaiResponsesUsageSchema.nullish(),
+           reasoning: import_v422.z.object({
+@@ -4999,6 +5001,7 @@ var openaiResponsesResponseSchema = (0, import_provider_utils28.lazySchema)(
+       reasoning: import_v422.z.object({
+         context: import_v422.z.string().nullish()
+       }).nullish(),
++      end_turn: import_v422.z.boolean().nullish(),
+       incomplete_details: import_v422.z.object({ reason: import_v422.z.string() }).nullish(),
+       usage: openaiResponsesUsageSchema.nullish()
+     })
+@@ -5268,6 +5271,7 @@ var openaiLanguageModelResponsesOptionsSchema = (0, import_provider_utils29.lazy
+        * and defaults `systemMessageMode` to `developer` unless overridden.
+        */
+       forceReasoning: import_v423.z.boolean().optional(),
++      allowUnencryptedReasoning: import_v423.z.boolean().optional(),
+       /**
+        * Restrict the callable tools to a subset while keeping the full tools
+        * list intact, so prompt caching is preserved across requests with
+@@ -5899,6 +5903,7 @@ var OpenAIResponsesLanguageModel = class {
+       explicitMessageItemType: this.config.explicitMessageItemType,
+       fileIdPrefixes: this.config.fileIdPrefixes,
+       passThroughUnsupportedFiles: (_d = openaiOptions == null ? void 0 : openaiOptions.passThroughUnsupportedFiles) != null ? _d : false,
++      allowUnencryptedReasoning: openaiOptions?.allowUnencryptedReasoning,
+       store: (_e = openaiOptions == null ? void 0 : openaiOptions.store) != null ? _e : true,
+       hasConversation: (openaiOptions == null ? void 0 : openaiOptions.conversation) != null,
+       hasPreviousResponseId: (openaiOptions == null ? void 0 : openaiOptions.previousResponseId) != null,
+@@ -6585,6 +6590,7 @@ var OpenAIResponsesLanguageModel = class {
+     const providerMetadata = {
+       [providerOptionsName]: {
+         responseId: response.id,
++        ...response.end_turn != null ? { endTurn: response.end_turn } : {},
+         ...logprobs.length > 0 ? { logprobs } : {},
+         ...typeof response.service_tier === "string" ? { serviceTier: response.service_tier } : {},
+         ...((_B = response.reasoning) == null ? void 0 : _B.context) != null ? { reasoningContext: response.reasoning.context } : {}
+@@ -6669,6 +6675,7 @@ var OpenAIResponsesLanguageModel = class {
+     let hasFunctionCall = false;
+     const activeReasoning = {};
+     let serviceTier;
++    let endTurn;
+     let reasoningContext;
+     const hostedToolSearchCallIds = [];
+     let encounteredStreamError = false;
+@@ -7507,6 +7514,7 @@ var OpenAIResponsesLanguageModel = class {
+                 };
+               }
+               usage = (_A = value.response.usage) != null ? _A : void 0;
++              if (value.type === "response.completed") endTurn = value.response.end_turn ?? void 0;
+               if (typeof value.response.service_tier === "string") {
+                 serviceTier = value.response.service_tier;
+               }
+@@ -7634,6 +7642,7 @@ var OpenAIResponsesLanguageModel = class {
+                 responseId,
+                 ...logprobs.length > 0 ? { logprobs } : {},
+                 ...serviceTier !== void 0 ? { serviceTier } : {},
++                ...endTurn !== void 0 ? { endTurn } : {},
+                 ...reasoningContext !== void 0 ? { reasoningContext } : {}
+               }
+             };
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 416b1eb8d8e3e00b3375e131aeb03fb6d6a1d6a7..a523933c7af1661fc9bb3b874f08af910167eecd 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -3400,6 +3400,7 @@ async function convertToOpenAIResponsesInput({
+   explicitMessageItemType = false,
+   fileIdPrefixes,
+   passThroughUnsupportedFiles = false,
++  allowUnencryptedReasoning = false,
+   store,
+   hasConversation = false,
+   hasPreviousResponseId = false,
+@@ -3831,7 +3832,7 @@ async function convertToOpenAIResponsesInput({
+                 }
+               } else {
+                 const encryptedContent = providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent;
+-                if (encryptedContent != null) {
++                if (encryptedContent != null || allowUnencryptedReasoning) {
+                   const summaryParts = [];
+                   if (part.text.length > 0) {
+                     summaryParts.push({
+@@ -4125,7 +4126,7 @@ ${text}`,
+       }
+     }
+   }
+-  if (!store && input.some(
++  if (!store && !allowUnencryptedReasoning && input.some(
+     (item) => "type" in item && item.type === "reasoning" && item.encrypted_content == null
+   )) {
+     warnings.push({
+@@ -4312,6 +4313,7 @@ var openaiResponsesChunkSchema = lazySchema20(
+       z22.object({
+         type: z22.enum(["response.completed", "response.incomplete"]),
+         response: z22.object({
++          end_turn: z22.boolean().nullish(),
+           incomplete_details: z22.object({ reason: z22.string() }).nullish(),
+           usage: openaiResponsesUsageSchema.nullish(),
+           reasoning: z22.object({
+@@ -5100,6 +5102,7 @@ var openaiResponsesResponseSchema = lazySchema20(
+       reasoning: z22.object({
+         context: z22.string().nullish()
+       }).nullish(),
++      end_turn: z22.boolean().nullish(),
+       incomplete_details: z22.object({ reason: z22.string() }).nullish(),
+       usage: openaiResponsesUsageSchema.nullish()
+     })
+@@ -5372,6 +5375,7 @@ var openaiLanguageModelResponsesOptionsSchema = lazySchema21(
+        * and defaults `systemMessageMode` to `developer` unless overridden.
+        */
+       forceReasoning: z23.boolean().optional(),
++      allowUnencryptedReasoning: z23.boolean().optional(),
+       /**
+        * Restrict the callable tools to a subset while keeping the full tools
+        * list intact, so prompt caching is preserved across requests with
+@@ -6005,6 +6009,7 @@ var OpenAIResponsesLanguageModel = class {
+       explicitMessageItemType: this.config.explicitMessageItemType,
+       fileIdPrefixes: this.config.fileIdPrefixes,
+       passThroughUnsupportedFiles: (_d = openaiOptions == null ? void 0 : openaiOptions.passThroughUnsupportedFiles) != null ? _d : false,
++      allowUnencryptedReasoning: openaiOptions?.allowUnencryptedReasoning,
+       store: (_e = openaiOptions == null ? void 0 : openaiOptions.store) != null ? _e : true,
+       hasConversation: (openaiOptions == null ? void 0 : openaiOptions.conversation) != null,
+       hasPreviousResponseId: (openaiOptions == null ? void 0 : openaiOptions.previousResponseId) != null,
+@@ -6691,6 +6696,7 @@ var OpenAIResponsesLanguageModel = class {
+     const providerMetadata = {
+       [providerOptionsName]: {
+         responseId: response.id,
++        ...response.end_turn != null ? { endTurn: response.end_turn } : {},
+         ...logprobs.length > 0 ? { logprobs } : {},
+         ...typeof response.service_tier === "string" ? { serviceTier: response.service_tier } : {},
+         ...((_B = response.reasoning) == null ? void 0 : _B.context) != null ? { reasoningContext: response.reasoning.context } : {}
+@@ -6775,6 +6781,7 @@ var OpenAIResponsesLanguageModel = class {
+     let hasFunctionCall = false;
+     const activeReasoning = {};
+     let serviceTier;
++    let endTurn;
+     let reasoningContext;
+     const hostedToolSearchCallIds = [];
+     let encounteredStreamError = false;
+@@ -7613,6 +7620,7 @@ var OpenAIResponsesLanguageModel = class {
+                 };
+               }
+               usage = (_A = value.response.usage) != null ? _A : void 0;
++              if (value.type === "response.completed") endTurn = value.response.end_turn ?? void 0;
+               if (typeof value.response.service_tier === "string") {
+                 serviceTier = value.response.service_tier;
+               }
+@@ -7740,6 +7748,7 @@ var OpenAIResponsesLanguageModel = class {
+                 responseId,
+                 ...logprobs.length > 0 ? { logprobs } : {},
+                 ...serviceTier !== void 0 ? { serviceTier } : {},
++                ...endTurn !== void 0 ? { endTurn } : {},
+                 ...reasoningContext !== void 0 ? { reasoningContext } : {}
+               }
+             };
+diff --git a/src/responses/convert-to-openai-responses-input.ts b/src/responses/convert-to-openai-responses-input.ts
+index 4077ce6fdf51ddb040f0fc658a6074b82194981a..dad187953977f26566defcdabb5308d659f0f55b 100644
+--- a/src/responses/convert-to-openai-responses-input.ts
++++ b/src/responses/convert-to-openai-responses-input.ts
+@@ -300,6 +300,7 @@ export async function convertToOpenAIResponsesInput({
+   fileIdPrefixes,
+   passThroughUnsupportedFiles = false,
+   store,
++  allowUnencryptedReasoning = false,
+   hasConversation = false,
+   hasPreviousResponseId = false,
+   hasLocalShellTool = false,
+@@ -316,6 +317,7 @@ export async function convertToOpenAIResponsesInput({
+   fileIdPrefixes?: readonly string[];
+   passThroughUnsupportedFiles?: boolean;
+   store: boolean;
++  allowUnencryptedReasoning?: boolean;
+   hasConversation?: boolean; // when true, skip assistant messages that already have item IDs
+   hasPreviousResponseId?: boolean; // when true, skip reasoning and function-call items that already exist in the previous response chain
+   hasLocalShellTool?: boolean;
+@@ -959,7 +961,7 @@ export async function convertToOpenAIResponsesInput({
+                 const encryptedContent =
+                   providerOptions?.reasoningEncryptedContent;
+ 
+-                if (encryptedContent != null) {
++                if (encryptedContent != null || allowUnencryptedReasoning) {
+                   const summaryParts: Array<{
+                     type: 'summary_text';
+                     text: string;
+@@ -1328,7 +1330,7 @@ export async function convertToOpenAIResponsesInput({
+ 
+   // when store is false, remove reasoning parts without encrypted content
+   if (
+-    !store &&
++    !store && !allowUnencryptedReasoning &&
+     input.some(
+       item =>
+         'type' in item &&
+diff --git a/src/responses/openai-responses-api.ts b/src/responses/openai-responses-api.ts
+index 3ffcecb15708131929519bd545e8f577b7a92f9b..ba516bac482efd8e52ebaadd71eeaf824f6e2e71 100644
+--- a/src/responses/openai-responses-api.ts
++++ b/src/responses/openai-responses-api.ts
+@@ -720,6 +720,7 @@ export const openaiResponsesChunkSchema = lazySchema(() =>
+       z.object({
+         type: z.enum(['response.completed', 'response.incomplete']),
+         response: z.object({
++          end_turn: z.boolean().nullish(),
+           incomplete_details: z.object({ reason: z.string() }).nullish(),
+           usage: openaiResponsesUsageSchema.nullish(),
+           reasoning: z
+@@ -1578,6 +1579,7 @@ export const openaiResponsesResponseSchema = lazySchema(() =>
+           context: z.string().nullish(),
+         })
+         .nullish(),
++      end_turn: z.boolean().nullish(),
+       incomplete_details: z.object({ reason: z.string() }).nullish(),
+       usage: openaiResponsesUsageSchema.nullish(),
+     }),
+diff --git a/src/responses/openai-responses-language-model.ts b/src/responses/openai-responses-language-model.ts
+index bb4b92f9ec00204064323b132d26ffb2041a4797..eac0b256ffa2c590616709b5b37168e0c6737220 100644
+--- a/src/responses/openai-responses-language-model.ts
++++ b/src/responses/openai-responses-language-model.ts
+@@ -261,6 +261,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
+         passThroughUnsupportedFiles:
+           openaiOptions?.passThroughUnsupportedFiles ?? false,
+         store: openaiOptions?.store ?? true,
++        allowUnencryptedReasoning: openaiOptions?.allowUnencryptedReasoning,
+         hasConversation: openaiOptions?.conversation != null,
+         hasPreviousResponseId: openaiOptions?.previousResponseId != null,
+         hasLocalShellTool: hasOpenAITool('openai.local_shell'),
+@@ -1130,6 +1131,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
+     const providerMetadata: SharedV3ProviderMetadata = {
+       [providerOptionsName]: {
+         responseId: response.id,
++        ...(response.end_turn != null ? { endTurn: response.end_turn } : {}),
+         ...(logprobs.length > 0 ? { logprobs } : {}),
+         ...(typeof response.service_tier === 'string'
+           ? { serviceTier: response.service_tier }
+@@ -1278,6 +1280,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
+     > = {};
+ 
+     let serviceTier: string | undefined;
++    let endTurn: boolean | undefined;
+     let reasoningContext: ResponsesProviderMetadata['reasoningContext'];
+     const hostedToolSearchCallIds: string[] = [];
+     let encounteredStreamError = false;
+@@ -2302,6 +2305,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
+                 };
+               }
+               usage = value.response.usage ?? undefined;
++              if (value.type === 'response.completed') endTurn = value.response.end_turn ?? undefined;
+               if (typeof value.response.service_tier === 'string') {
+                 serviceTier = value.response.service_tier;
+               }
+@@ -2445,6 +2449,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
+                 responseId: responseId,
+                 ...(logprobs.length > 0 ? { logprobs } : {}),
+                 ...(serviceTier !== undefined ? { serviceTier } : {}),
++                ...(endTurn !== undefined ? { endTurn } : {}),
+                 ...(reasoningContext !== undefined ? { reasoningContext } : {}),
+               } satisfies ResponsesProviderMetadata,
+             };
+diff --git a/src/responses/openai-responses-options.ts b/src/responses/openai-responses-options.ts
+index 9c7f6ff183fb66de95c175e4dd3bae04f04374d4..2deea6f914117749ec6ff25623b1f7a567f65e47 100644
+--- a/src/responses/openai-responses-options.ts
++++ b/src/responses/openai-responses-options.ts
+@@ -377,6 +377,8 @@ export const openaiLanguageModelResponsesOptionsSchema = lazySchema(() =>
+        * and defaults `systemMessageMode` to `developer` unless overridden.
+        */
+       forceReasoning: z.boolean().optional(),
++      // Opt in only for compatible endpoints accepting plaintext reasoning history.
++      allowUnencryptedReasoning: z.boolean().optional(),
+ 
+       /**
+        * Restrict the callable tools to a subset while keeping the full tools
+diff --git a/src/responses/openai-responses-provider-metadata.ts b/src/responses/openai-responses-provider-metadata.ts
+index b4693147d3664908de20d796462110a3c9aadfc0..13d0abb853a4a4cf7e4302fc693aa775343ef318 100644
+--- a/src/responses/openai-responses-provider-metadata.ts
++++ b/src/responses/openai-responses-provider-metadata.ts
+@@ -16,6 +16,7 @@ export type ResponsesProviderMetadata = {
+   logprobs?: Array<OpenAIResponsesLogprobs>;
+   serviceTier?: string;
+   reasoningContext?: string;
++  endTurn?: boolean;
+ };
+ 
+ export type ResponsesReasoningProviderMetadata = {

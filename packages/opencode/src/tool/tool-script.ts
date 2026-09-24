@@ -839,8 +839,8 @@ export const ToolScriptTool = Tool.define(
             // truncation. Here we only adapt the wrapped result shape for the
             // guest: structuredContent (when the server sent it) crosses as a
             // parsed value under `structured` so scripts can filter/aggregate
-            // without re-parsing text; media attachments cannot cross the
-            // sandbox string boundary and are dropped with a note.
+            // without re-parsing text. Media stays on the host and is forwarded
+            // as outer tool attachments, outside the guest's JSON boundary.
             type ExecNestedResult = {
               title: string
               output: string
@@ -877,12 +877,9 @@ export const ToolScriptTool = Tool.define(
                     attachments?: unknown[]
                   }
                   const structured = r?.metadata?.mcp?.structuredContent
-                  const dropped = Array.isArray(r?.attachments) && r.attachments.length
-                    ? `\n[note: ${r.attachments.length} non-text attachment(s) dropped — binary content cannot cross the exec sandbox]`
-                    : ""
                   return {
                     title: id,
-                    output: String(r?.output ?? "") + dropped,
+                    output: String(r?.output ?? ""),
                     metadata: (r?.metadata ?? {}) as Record<string, unknown>,
                     attachments: normalizeAttachments(r?.attachments),
                     ...(structured !== undefined && { structured }),
@@ -1047,6 +1044,9 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
           )
           const logBlock = logs.length ? `<logs>\n${logs.join("\n")}\n</logs>\n` : ""
           const traceBlock = trace.length ? `<trace count="${trace.length}">\n${traceLines.join("\n")}\n</trace>\n` : ""
+          // Collect settled calls in invocation order, even if the script later
+          // fails or ignores their return values. Never serialize media into JS.
+          const attachments = subParts.flatMap((part) => part.state.attachments ?? [])
 
           if (outcome._tag === "Failure") {
             const message = outcome.failure instanceof Error ? outcome.failure.message : String(outcome.failure)
@@ -1068,6 +1068,7 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
             return {
               title: status,
               metadata: terminalMetadata(status),
+              attachments,
               output: `<exec status="${status}">\n<error_message>\n${explained}\n</error_message>\n${logBlock}${traceBlock}</exec>`,
             }
           }
@@ -1088,6 +1089,7 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
             return {
               title: "result too large",
               metadata: terminalMetadata("budget_exceeded"),
+              attachments,
               output: `<exec status="budget_exceeded">\n<error_message>\nreturned value is ${returnedBytes} bytes (max ${MAX_RESULT_BYTES}). Aggregate or slice the data before returning.\n</error_message>\n${warningsBlock}${logBlock}${traceBlock}</exec>`,
             }
           }
@@ -1096,6 +1098,7 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
           return {
             title: `${subParts.length} tool calls`,
             metadata: terminalMetadata("completed"),
+            attachments,
             output: `<exec status="completed">\n<return_value>\n${returnedText}\n</return_value>\n${warningsBlock}${logBlock}${traceBlock}</exec>`,
           }
         }).pipe(Effect.orDie),

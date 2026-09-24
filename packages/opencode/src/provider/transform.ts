@@ -1,3 +1,4 @@
+import { isMimoModel } from "./mimo-model"
 import type { ModelMessage } from "ai"
 import { mergeDeep, unique } from "remeda"
 import type { JSONSchema7 } from "@ai-sdk/provider"
@@ -44,7 +45,6 @@ function sdkKey(npm: string): string | undefined {
       return "copilot"
     case "@ai-sdk/azure":
       return "azure"
-    case "@mimo/responses":
     case "@ai-sdk/openai":
       return "openai"
     case "@ai-sdk/amazon-bedrock":
@@ -1876,8 +1876,8 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
     return result
   }
 
-  if (model.api.npm === "@mimo/responses") {
-    return { openai: { ...options, store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } }
+  if (model.api.npm === "@ai-sdk/openai" && [model.id, model.api.id, model.family ?? ""].some(isMimoModel)) {
+    return { openai: { forceReasoning: true, allowUnencryptedReasoning: true, systemMessageMode: "system", ...options, store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } }
   }
   const key = sdkKey(model.api.npm) ?? model.providerID
   // @ai-sdk/azure delegates to OpenAIChatLanguageModel which reads from

@@ -1074,6 +1074,7 @@ export type AssistantMessage = {
   }
   variant?: string
   finish?: string
+  endTurn?: boolean
 }
 
 export type Message = UserMessage | AssistantMessage

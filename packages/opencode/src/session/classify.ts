@@ -115,6 +115,11 @@ export function classifyAssistantStep(input: {
   if (assistant.finish === "content-filter") return { type: "filtered" }
   if (assistant.finish === "error") return { type: "failed", reason: "model error finish" }
 
+  // Honor an explicit provider continuation only after error/terminal guards.
+  // Commentary alone is not a continuation signal; missing endTurn is unchanged.
+  if (assistant.endTurn === false && assistant.finish === "stop" && input.processResult !== "stop")
+    return { type: "continue" }
+
   // 8. stop / length / other → inspect produced content. An "other" finish that
   // still produced usable text is a usable-but-abnormal completion: surface it as
   // `degraded` so runLoop can record it instead of silently treating it as clean.

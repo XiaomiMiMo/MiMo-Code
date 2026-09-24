@@ -1235,7 +1235,7 @@ describe("exec MCP dispatch", () => {
     expect(result.output).toContain("builtin version")
   })
 
-  test("attachments are dropped with a note", async () => {
+  test("[TP-R11-07] MCP attachments reach the outer result without crossing guest JSON", async () => {
     const mcp = {
       srv_img: fakeMcpTool(async () => ({
         output: "here is your chart",
@@ -1244,17 +1244,34 @@ describe("exec MCP dispatch", () => {
       })),
     }
     const result = await runToolScript(
-      `const r = await tools.srv_img({}); return r.output`,
+      `const r = await tools.srv_img({}); if (r.attachments) throw new Error("media leaked into guest"); return r.output`,
       [],
       undefined,
       { mcp },
     )
     expect(result.output).toContain("here is your chart")
-    expect(result.output).toContain("non-text attachment(s) dropped")
+    expect(result.output).not.toContain("attachment(s) dropped")
+    expect(result.output).not.toContain("base64")
+    expect(result.attachments).toEqual([
+      { type: "file", mime: "image/png", url: "data:image/png;base64,xxxx" },
+    ])
     expect(viewExecSubtools(result.metadata)[0]?.state.attachments).toEqual([
       { type: "file", mime: "image/png", url: "data:image/png;base64,xxxx" },
     ])
   })
+
+  for (const suffix of ["return 'done'", "throw new Error('after-image')", "return 'x'.repeat(300000)"]) {
+    test(`[TP-R11-07] builtin media survives script outcome: ${suffix}`, async () => {
+      const attachment = { type: "file" as const, mime: "image/png", url: "data:image/png;base64,aW1hZ2U=" }
+      const def: Tool.Def = {
+        ...fakeDef("image", async () => ""),
+        execute: () => Effect.succeed({ title: "Image", output: "Image viewed", metadata: {}, attachments: [attachment] }),
+      }
+      const result = await runToolScript(`await tools.image({}); ${suffix}`, [def])
+      expect(result.attachments).toEqual([attachment])
+      expect(result.output).not.toContain("aW1hZ2U=")
+    })
+  }
 
   test("MCP calls count against the tool call budget", async () => {
     const mcp = {

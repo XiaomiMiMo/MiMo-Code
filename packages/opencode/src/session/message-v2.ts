@@ -589,6 +589,8 @@ export const Assistant = Base.extend({
   }).optional(),
   variant: z.string().optional(),
   finish: z.string().optional(),
+  /** Explicit Responses turn boundary; absence preserves legacy termination. */
+  endTurn: z.boolean().optional(),
 }).meta({
   ref: "AssistantMessage",
 })
