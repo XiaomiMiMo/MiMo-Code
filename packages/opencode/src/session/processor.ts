@@ -548,10 +548,6 @@ export const layer: Layer.Layer<
             }))
 
             const parts = MessageV2.parts(ctx.assistantMessage.id)
-            // Same-step exact repeats are already cancelled before execution by
-            // the duplicate guard. Doom_loop's 3-identical window is the same
-            // shape; asking here would confirm a call that will not run.
-            if (!Flag.MIMOCODE_DISABLE_TOOLCALL_DUPLICATE_DETECT) return
             const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
 
             if (
