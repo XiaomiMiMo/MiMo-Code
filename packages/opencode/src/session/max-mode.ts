@@ -156,6 +156,7 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
       activeTools: input.activeTools,
       agentID: input.agentID,
       quietRetryDiagnostics: true,
+      retryScope: "max-candidate",
     })
 
     yield* Stream.runForEach(stream, (event: LLM.Event) => {
@@ -297,6 +298,7 @@ export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effe
       toolChoice: "none",
       agentID: input.agentID,
       quietRetryDiagnostics: true,
+      retryScope: "max-judge",
     })
 
     yield* Stream.runForEach(stream, (event: LLM.Event) => {

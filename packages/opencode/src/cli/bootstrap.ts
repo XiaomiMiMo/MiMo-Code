@@ -8,9 +8,7 @@ import { HostErrorRegistry } from "@/error/host-registry"
 const log = Log.create({ service: "cli.bootstrap" })
 
 export async function bootstrap<T>(directory: string, cb: () => Promise<T>) {
-  // Host error catalog (optional HOST_ERROR_CATALOG path) before session traffic.
-  const catalog = HostErrorRegistry.loadHostErrorCatalogFromEnv()
-  if (catalog && !catalog.ok) log.warn("host error catalog rejected", { reason: catalog.reason })
+  HostErrorRegistry.initializeHostErrorCatalog()
   return Instance.provide({
     directory,
     init: () => AppRuntime.runPromise(InstanceBootstrap),

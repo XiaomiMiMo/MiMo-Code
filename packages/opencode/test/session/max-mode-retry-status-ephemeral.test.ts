@@ -50,6 +50,7 @@ describe("max-mode ensemble stream input contract", () => {
     await Effect.runPromise(runCandidate(baseInput(llm), 0))
     expect(calls).toHaveLength(1)
     expect(calls[0]?.quietRetryDiagnostics).toBe(true)
+    expect(calls[0]?.retryScope).toBe("max-candidate")
     expect(calls[0]?.ephemeral).toBeFalsy()
   })
 
@@ -63,6 +64,7 @@ describe("max-mode ensemble stream input contract", () => {
     const judgeCall = calls.find((c) => c.toolChoice === "none")
     expect(judgeCall).toBeDefined()
     expect(judgeCall?.quietRetryDiagnostics).toBe(true)
+    expect(judgeCall?.retryScope).toBe("max-judge")
     expect(judgeCall?.ephemeral).toBeFalsy()
   })
 })

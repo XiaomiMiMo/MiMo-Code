@@ -1,6 +1,6 @@
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { Cause, Clock, Duration, Effect, Schedule } from "effect"
-import { hostRetryClass, isHardTerminalStatus, type RetryClass } from "@/error/host-registry"
+import { hostRetryClass, isSafetyTerminal, retryConstraint, type RetryClass } from "@/error/host-registry"
 import { MessageV2 } from "./message-v2"
 import { ProviderError } from "@/provider"
 import type { Budget as RetryBudgetConfig, Info as RetryConfig } from "@/config/retry"
@@ -143,6 +143,27 @@ function mergeBudget(base: RetryBudget, ...overrides: (RetryBudgetConfig | undef
   return result.mode === "persistent" ? { ...result, maxRetries: undefined } : result
 }
 
+function persistentNetwork(budget: RetryBudget): RetryBudget {
+  return { ...budget, mode: "persistent", maxRetries: undefined, maxElapsedMs: 0 }
+}
+
+function constrainBudget(budget: RetryBudget, decision: RetryDecision): RetryBudget {
+  if (decision.scope === "max-candidate" || decision.scope === "max-judge") return budget
+  if (decision.hostRetryClass === "bounded") {
+    const defaults = DEFAULT_RETRY_CONFIG[decision.phase]
+    return {
+      ...budget,
+      mode: "bounded",
+      maxRetries: budget.maxRetries !== undefined && Number.isFinite(budget.maxRetries) && budget.maxRetries >= 0
+        ? budget.maxRetries : defaults.maxRetries,
+      maxElapsedMs: Number.isFinite(budget.maxElapsedMs) && budget.maxElapsedMs > 0
+        ? budget.maxElapsedMs : defaults.maxElapsedMs,
+    }
+  }
+  if (decision.hostRetryClass === "persistent" || decision.kind === "network") return persistentNetwork(budget)
+  return budget
+}
+
 export function resolve(config: RetryConfigSource | undefined, providerID?: string): ResolvedRetryConfig {
   const global = config?.retry
   const provider = providerID ? config?.provider?.[providerID]?.retry : undefined
@@ -151,7 +172,7 @@ export function resolve(config: RetryConfigSource | undefined, providerID?: stri
     stream: mergeBudget(DEFAULT_RETRY_CONFIG.stream, global?.stream, provider?.stream),
     maxCandidate: mergeBudget(DEFAULT_RETRY_CONFIG.maxCandidate, global?.maxCandidate, provider?.maxCandidate),
     maxJudge: mergeBudget(DEFAULT_RETRY_CONFIG.maxJudge, global?.maxJudge, provider?.maxJudge),
-    network: mergeBudget(DEFAULT_RETRY_CONFIG.network, global?.network, provider?.network),
+    network: persistentNetwork(mergeBudget(DEFAULT_RETRY_CONFIG.network, global?.network, provider?.network)),
     server: mergeBudget(DEFAULT_RETRY_CONFIG.server, global?.server, provider?.server),
     rateLimit: mergeBudget(DEFAULT_RETRY_CONFIG.rateLimit, global?.rateLimit, provider?.rateLimit),
     unknown: mergeBudget(DEFAULT_RETRY_CONFIG.unknown, global?.unknown, provider?.unknown),
@@ -163,9 +184,10 @@ export function budgetFor(config: ResolvedRetryConfig, decision: RetryDecision):
   // max-mode candidate/judge keep their own budgets (not session transport retry).
   if (decision.scope === "max-candidate") return config.maxCandidate
   if (decision.scope === "max-judge") return config.maxJudge
+  if (decision.hostRetryClass) return constrainBudget(config[decision.phase], decision)
   // Product contract: network / rate_limit / server are recoverable — persistent exponential
   // backoff regardless of request vs stream phase. Waiting longer improves recovery odds.
-  if (decision.kind === "network") return config.network
+  if (decision.kind === "network") return persistentNetwork(config.network)
   if (decision.kind === "rate_limit") return config.rateLimit
   if (decision.kind === "server") return config.server
   if (decision.phase === "request") return config.request
@@ -187,10 +209,10 @@ export type RetryDecision = {
   retryAfterMs?: number
   /** Host registry code when the decision was host-driven (retry banner identity). */
   hostCode?: string
+  hostRetryClass?: RetryClass
 }
 
-const RETRYABLE_HTTP_STATUS = new Set([408, 425, 429])
-const SSE_TIMEOUT_MESSAGE = "SSE read timed out"
+const RETRYABLE_HTTP_STATUS = new Set([425, 429])
 
 export function isRateLimitMessage(message: string): boolean {
   const lower = message.toLowerCase()
@@ -251,10 +273,6 @@ function hostCodeOf(error: unknown): string | undefined {
   return typeof code === "string" && code.length > 0 ? code : undefined
 }
 
-function hostClassOf(error: unknown): RetryClass | "terminal" {
-  return hostRetryClass(error) ?? "terminal"
-}
-
 function responseBodyOf(error: unknown): string | undefined {
   if (MessageV2.APIError.isInstance(error)) return error.data.responseBody
   if (typeof error === "object" && error !== null) {
@@ -309,17 +327,20 @@ export function decide(
 ): RetryDecision {
   if (error === null || typeof error !== "object")
     return { retryable: false, phase, scope, kind: "terminal", message: String(error) }
+  const hostClass = hostRetryClass(error)
+  const hostCode = hostClass ? hostCodeOf(error) : undefined
   // Terminal invariants first (abort / auth / context overflow) — never host-overrideable to retryable.
   if (MessageV2.ContextOverflowError.isInstance(error)) {
-    return { retryable: false, phase, scope, kind: "terminal", message: "Context window exceeded" }
+    return { retryable: false, phase, scope, kind: "terminal", message: "Context window exceeded", ...(hostCode ? { hostCode, hostRetryClass: hostClass! } : {}) }
   }
   if (MessageV2.AbortedError.isInstance(error)) {
-    return { retryable: false, phase, scope, kind: "terminal", message: error.data.message }
+    return { retryable: false, phase, scope, kind: "terminal", message: error.data.message, ...(hostCode ? { hostCode, hostRetryClass: hostClass! } : {}) }
   }
   if (MessageV2.AuthError.isInstance(error)) {
-    return { retryable: false, phase, scope, kind: "terminal", message: error.data.message }
+    return { retryable: false, phase, scope, kind: "terminal", message: error.data.message, ...(hostCode ? { hostCode, hostRetryClass: hostClass! } : {}) }
   }
   if (
+    !hostCode &&
     !(error instanceof Error) &&
     !MessageV2.APIError.isInstance(error) &&
     !(typeof (error as { data?: { message?: unknown } }).data?.message === "string")
@@ -341,7 +362,6 @@ export function decide(
   const retryAfterMs = MessageV2.APIError.isInstance(error)
     ? (retryAfterFromHeaders(error) ?? retryAfterFromMessage(message))
     : retryAfterFromMessage(message)
-  const hostCode = hostCodeOf(error)
   const retry = (kind: RetryKind, retryPhase = phase, retryMessage = message): RetryDecision => ({
     retryable: true,
     phase: retryPhase,
@@ -350,7 +370,7 @@ export function decide(
     message: retryMessage || "Transient provider failure",
     statusCode: status,
     retryAfterMs,
-    ...(hostCode ? { hostCode } : {}),
+    ...(hostCode ? { hostCode, hostRetryClass: hostClass! } : {}),
   })
   const terminal = (terminalMessage = message, uiMessage?: string): RetryDecision => ({
     retryable: false,
@@ -360,39 +380,25 @@ export function decide(
     message: terminalMessage || "Provider request failed",
     ...(uiMessage ? { uiMessage } : {}),
     statusCode: status,
-    ...(hostCode ? { hostCode } : {}),
+    ...(hostCode ? { hostCode, hostRetryClass: hostClass! } : {}),
   })
 
-  // Explicit engine terminals (quota / hard HTTP statuses) — cannot be host-retried.
+  if (isSafetyTerminal(error)) return terminal()
+  if (hostClass) {
+    if (hostClass === "terminal") return terminal()
+    return retry(status === 429 ? "rate_limit" : status !== undefined && status >= 500 ? "server" : "unknown")
+  }
+
   if (signals.code === "FreeUsageLimitError" || responseBody?.includes("FreeUsageLimitError"))
     return terminal("Usage limit reached", GO_UPSELL_MESSAGE)
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
     return terminal()
-  if (isHardTerminalStatus(status)) return terminal()
-  if (status === 404 && (!MessageV2.APIError.isInstance(error) || error.data.metadata?.allow404Retry !== "true")) return terminal()
-
-  // Host-stamped codes: class-only decision (no heuristic fall-through).
-  // Missing/invalid class → terminal (deterministic).
-  if (hostCode) {
-    const cls = hostClassOf(error)
-    const kind: RetryKind = cls === "terminal" ? "terminal" : (cls as RetryKind)
-    if (cls === "terminal" || kind === "terminal") return terminal(message)
-    return retry(kind)
-  }
+  const constraint = retryConstraint(error)
+  if (constraint === "terminal") return terminal()
+  if (constraint === "network") return retry("network")
 
   if (signals.code === "stream_read_error" || signals.type === "upstream_error")
     return retry("stream", "stream", signals.message || "Upstream stream read failed")
-  if (ProviderError.isRetryableNetworkError(error)) return retry("network")
-  // fromError(ETIMEDOUT) → APIError("Request timed out")：cause 链可能在 JSON 往返后丢失，
-  // 此时 isRetryableNetworkError 认不出，会掉进 unknown(8 次/15min) 甚至 terminal。
-  // provider 超时必须 persist：按 message / metadata.code 钉回 network。
-  if (
-    MessageV2.APIError.isInstance(error) &&
-    error.data.metadata?.code === "ETIMEDOUT"
-  )
-    return retry("network", phase, error.data.message)
-  if (/\brequest timed out\b/i.test(message) || /\betimedout\b/i.test(message)) return retry("network", phase, message)
-  if (message === SSE_TIMEOUT_MESSAGE) return retry("stream", "stream", message)
   if (
     signals.type === "too_many_requests" ||
     signals.type.includes("rate_limit") ||
@@ -486,7 +492,7 @@ export function policy(opts: {
   const scope = opts.scope ?? (phase === "request" ? "request" : "live-step")
   let startedAt: number | undefined
   return Schedule.fromStepWithMetadata(
-    Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
+    Effect.succeed((meta: Schedule.InputMetadata<unknown>) => Effect.flatMap(Clock.currentTimeMillis, (now) => {
       const error = opts.parse(meta.input)
       const decision = decide(error, phase, scope)
       if (!decision.retryable) {
@@ -494,8 +500,13 @@ export function policy(opts: {
           ? Effect.flatMap(opts.onTerminal(decision), () => Cause.done(meta.attempt))
           : Cause.done(meta.attempt)
       }
-      const selected = opts.budget?.(decision)
-      const budget: RetryBudget = selected ?? {
+      const mandatoryNetwork = decision.kind === "network" && scope !== "max-candidate" && scope !== "max-judge"
+      const selected = opts.budget?.(decision) ?? (mandatoryNetwork ? {
+        ...DEFAULT_RETRY_CONFIG.network,
+        initialDelayMs: opts.initialDelayMs ?? NETWORK_INITIAL_DELAY_MS,
+        jitterRatio: opts.jitterRatio ?? 0,
+      } : undefined)
+      const configured: RetryBudget = selected ?? {
         mode: "bounded",
         maxRetries: opts.maxRetries ?? (phase === "request" ? REQUEST_MAX_RETRIES : STREAM_MAX_RETRIES),
         maxElapsedMs: opts.maxElapsedMs ?? (phase === "request" ? REQUEST_RETRY_DEADLINE_MS : STREAM_RETRY_DEADLINE_MS),
@@ -503,16 +514,16 @@ export function policy(opts: {
         maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
         jitterRatio: opts.jitterRatio ?? RETRY_JITTER_RATIO,
       }
+      const budget = constrainBudget(configured, decision)
       if (
         opts.replaySafe?.(decision) === false ||
         (budget.mode === "bounded" && budget.maxRetries !== undefined && meta.attempt > budget.maxRetries)
       )
         return Cause.done(meta.attempt)
-      const silent = opts.silentRetry?.(error) === true
+      const silent = !mandatoryNetwork && decision.hostRetryClass !== "persistent" && opts.silentRetry?.(error) === true
       if (silent && meta.attempt > GPT_OVERLOAD_RETRIES) return Cause.done(meta.attempt)
       if (silent && meta.attempt === 1)
         return Effect.succeed([meta.attempt, Duration.zero] as [number, Duration.Duration])
-      const now = Date.now()
       if (startedAt === undefined) startedAt = now
       const elapsed = now - startedAt
       const wait = retryDelay(meta.attempt, decision, budget.jitterRatio, budget.initialDelayMs, budget.maxDelayMs)
@@ -532,7 +543,7 @@ export function policy(opts: {
         })
         return [meta.attempt, Duration.millis(wait)] as [number, Duration.Duration]
       })
-    }),
+    })),
   )
 }
 

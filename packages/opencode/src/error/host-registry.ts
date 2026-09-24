@@ -1,289 +1,245 @@
 import z from "zod"
 import fs from "node:fs"
 import path from "node:path"
-import { isNamedErrorCreateName } from "@mimo-ai/shared/util/error"
+import { isDeepStrictEqual } from "node:util"
+import { APICallError, RetryError } from "ai"
+import { HOST_RETRY_CLASSES } from "@mimo-ai/shared/util/error"
+import { isRetryableNetworkError, summarizeCause } from "@/provider/error"
 
-/**
- * Generic host error registry: hosts inject a declarative birth-identity →
- * { code, retryClass } map. The engine stamps codes at error birth/normalization
- * and selects retry policy from the closed RetryClass set. Product copy stays
- * in the host. No host functions or message regex.
- */
-
-export const RETRY_CLASSES = ["terminal", "network", "rate_limit", "server", "stream", "unknown"] as const
+export const RETRY_CLASSES = HOST_RETRY_CLASSES
 export type RetryClass = (typeof RETRY_CLASSES)[number]
-
-export type BirthIdentity = `APIError:${number}` | `NamedError:${string}` | `ErrorName:${string}`
+export type HostResponseMatch =
+  | { readonly kind: "field"; readonly path: "error.code" | "biz_code" | "error.biz_code"; readonly value: string | number }
+  | { readonly kind: "json"; readonly value: Readonly<Record<string, unknown>> }
+  | { readonly kind: "empty" }
 
 export interface HostErrorRule {
-  code: string
-  retryClass: RetryClass
+  readonly match: {
+    readonly providerID: string
+    readonly statusCode?: number
+    readonly response: HostResponseMatch
+  }
+  readonly code: string
+  readonly retryClass: RetryClass
 }
 
 export interface HostErrorCatalog {
-  protocolVersion: 1
-  rules: Record<BirthIdentity, HostErrorRule>
+  readonly protocolVersion: 2
+  readonly rules: readonly HostErrorRule[]
 }
 
-const BirthIdentityRe = /^(APIError:\d+|NamedError:[A-Za-z0-9_]+|ErrorName:[A-Za-z0-9_]+)$/
-
-const HostErrorRuleSchema = z.object({
+const HostErrorRuleSchema = z.strictObject({
+  match: z.strictObject({
+    providerID: z.string().min(1),
+    statusCode: z.number().int().min(100).max(599).optional(),
+    response: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("field"), path: z.enum(["error.code", "biz_code", "error.biz_code"]), value: z.union([z.string(), z.number()]) }),
+      z.strictObject({ kind: z.literal("json"), value: z.record(z.string(), z.json()) }),
+      z.strictObject({ kind: z.literal("empty") }),
+    ]),
+  }).refine((match) => match.response.kind !== "empty" || match.statusCode !== undefined, "empty response requires statusCode"),
   code: z.string().min(1),
   retryClass: z.enum(RETRY_CLASSES),
 })
-
-// hostFieldShape is the additive data envelope for NamedError/APIError payloads.
-// Catalog rules use HostErrorRuleSchema above; both share RETRY_CLASSES.
-
-const HostErrorCatalogSchema = z.object({
-  protocolVersion: z.literal(1),
-  rules: z.record(z.string(), HostErrorRuleSchema),
-})
-
-const RETRY_CLASS_SET = new Set<string>(RETRY_CLASSES)
+const HostErrorCatalogSchema = z.strictObject({ protocolVersion: z.literal(2), rules: z.array(HostErrorRuleSchema) })
 
 export function isRetryClass(value: unknown): value is RetryClass {
-  return typeof value === "string" && RETRY_CLASS_SET.has(value)
+  return typeof value === "string" && RETRY_CLASSES.some((item) => item === value)
 }
 
-export function isBirthIdentity(value: unknown): value is BirthIdentity {
-  return typeof value === "string" && BirthIdentityRe.test(value)
-}
-
-/** Zod object extension for NamedError/APIError `data` payloads. */
 export const hostFieldShape = {
   hostCode: z.string().min(1).optional(),
   hostRetryClass: z.enum(RETRY_CLASSES).optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
 } as const
 
-/**
- * Hard-terminal HTTP statuses — shared with decide() so stamp clamp and retry
- * policy cannot drift. **404 is not unconditional**: decide() treats
- * `metadata.allow404Retry === "true"` as retryable; clamp must not over-narrow.
- */
 export function isHardTerminalStatus(status: number | undefined): boolean {
-  if (status === undefined) return false
-  return status === 400 || status === 401 || status === 402 || status === 403 || status === 422 || status === 501 || status === 505
+  return status === 400 || status === 401 || status === 402 || status === 403 || status === 413 || status === 422 || status === 501 || status === 505
 }
 
-/** True when a 404 may be retried (mirrors decide()). */
 export function isRetryableNotFound(error: unknown): boolean {
   const data = (error as { data?: { statusCode?: unknown; metadata?: { allow404Retry?: unknown } } } | null)?.data
-  const status = data?.statusCode
-  return status === 404 && data?.metadata?.allow404Retry === "true"
+  return data?.statusCode === 404 && data.metadata?.allow404Retry === "true"
 }
 
-/** NamedError.create names that are always terminal (abort / auth / overflow). */
-const INVARIANT_NAMED = new Set([
-  "MessageAbortedError",
-  "ProviderAuthError",
-  "ContextOverflowError",
+const INVARIANT_NAMES = new Set([
+  "MessageAbortedError", "ProviderAuthError", "ContextOverflowError", "AI_LoadAPIKeyError",
+  "FreeUsageLimitError", "SubscriptionUsageLimitError",
 ])
 
-/** ErrorName identities that are always terminal (usage-limit body signals without create names). */
-const INVARIANT_ERROR_NAME = new Set(["FreeUsageLimitError", "SubscriptionUsageLimitError"])
-
-export function isInvariantBirth(id: BirthIdentity): boolean {
-  const bare = id.slice(id.indexOf(":") + 1)
-  if (INVARIANT_NAMED.has(bare) || INVARIANT_ERROR_NAME.has(bare)) return true
-  if (id.startsWith("APIError:")) return isHardTerminalStatus(Number(bare))
-  return false
+export function isSafetyTerminal(error: unknown): boolean {
+  return summarizeCause(error).some((cause) =>
+    (cause.name === "AbortError" && cause.code !== "UND_ERR_ABORTED") || cause.code === "ABORT_ERR" ||
+    (cause.name !== undefined && INVARIANT_NAMES.has(cause.name)),
+  )
 }
 
-export function clampRetryClass(id: BirthIdentity, retryClass: RetryClass): RetryClass {
-  return isInvariantBirth(id) ? "terminal" : retryClass
+export function isTerminalError(error: unknown, allow404Retry = isRetryableNotFound(error)): boolean {
+  if (error === null || typeof error !== "object") return false
+  if (isSafetyTerminal(error)) return true
+  if (summarizeCause(error).some((cause) =>
+    isHardTerminalStatus(cause.statusCode) || (cause.statusCode === 404 && !allow404Retry),
+  )) return true
+  const e = error as { responseBody?: unknown; data?: { responseBody?: unknown; message?: unknown } }
+  const body = e.data?.responseBody ?? e.responseBody ?? e.data?.message
+  if (typeof body !== "string") return false
+  if (body.includes("FreeUsageLimitError") || body.includes("SubscriptionUsageLimitError")) return true
+  const parsed = json(body)
+  const nested = record(parsed?.error)
+  const code = nested?.code ?? nested?.type ?? parsed?.code
+  return code === "insufficient_quota" || code === "usage_not_included"
 }
 
-let snapshot: HostErrorCatalog = { protocolVersion: 1, rules: {} }
-
-function freezeCatalog(catalog: HostErrorCatalog): HostErrorCatalog {
-  return Object.freeze({
-    protocolVersion: 1,
-    rules: Object.freeze({ ...catalog.rules }),
-  })
+export function retryConstraint(error: unknown): "terminal" | "network" | null {
+  if (isTerminalError(error)) return "terminal"
+  return isRetryableNetworkError(error) ? "network" : null
 }
 
-/** Current immutable snapshot. */
+function freeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    Object.values(value).forEach(freeze)
+    Object.freeze(value)
+  }
+  return value
+}
+
+let snapshot: HostErrorCatalog = freeze({ protocolVersion: 2, rules: [] })
+
 export function hostErrorCatalog(): HostErrorCatalog {
   return snapshot
 }
 
-/**
- * Validate + atomic replace. On reject, previous snapshot is kept.
- * Empty `rules: {}` is valid (clears bindings).
- */
 export function loadHostErrorCatalog(doc: unknown): { ok: true } | { ok: false; reason: string } {
   const parsed = HostErrorCatalogSchema.safeParse(doc)
   if (!parsed.success) {
     return { ok: false, reason: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") || "invalid catalog" }
   }
-  const rules: Record<string, HostErrorRule> = {}
-  for (const [key, value] of Object.entries(parsed.data.rules)) {
-    if (!isBirthIdentity(key)) {
-      return { ok: false, reason: `invalid birth identity: ${key}` }
-    }
-    if (!isRetryClass(value.retryClass) || !value.code) {
-      return { ok: false, reason: `invalid rule for ${key}` }
-    }
-    rules[key] = { code: value.code, retryClass: value.retryClass }
-  }
-  snapshot = freezeCatalog({ protocolVersion: 1, rules: rules as HostErrorCatalog["rules"] })
+  snapshot = freeze(parsed.data)
   return { ok: true }
 }
 
-/** Load from an absolute JSON file path (child-process bootstrap). */
 export function loadHostErrorCatalogFile(filePath: string): { ok: true } | { ok: false; reason: string } {
   try {
-    const abs = path.resolve(filePath)
-    const text = fs.readFileSync(abs, "utf8")
-    return loadHostErrorCatalog(JSON.parse(text))
+    return loadHostErrorCatalog(JSON.parse(fs.readFileSync(path.resolve(filePath), "utf8")))
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) }
   }
 }
 
-/** Bootstrap helper: `HOST_ERROR_CATALOG` absolute path, if set. */
 export function loadHostErrorCatalogFromEnv(env: NodeJS.ProcessEnv = process.env): { ok: true } | { ok: false; reason: string } | null {
-  const file = env.HOST_ERROR_CATALOG
-  if (!file) return null
-  return loadHostErrorCatalogFile(file)
+  return env.HOST_ERROR_CATALOG ? loadHostErrorCatalogFile(env.HOST_ERROR_CATALOG) : null
 }
 
-/**
- * Fixed first-match birth identity from an original (pre-normalization) error
- * or an already-serialized `{name,data}` object.
- */
-export function birthIdentity(error: unknown): BirthIdentity | null {
-  if (error === null || typeof error !== "object") return null
-  const e = error as {
-    name?: unknown
-    data?: { statusCode?: unknown; hostCode?: unknown }
-    statusCode?: unknown
-    status?: unknown
+let environmentLoaded = false
+
+export function initializeHostErrorCatalog(): void {
+  if (environmentLoaded || !process.env.HOST_ERROR_CATALOG) return
+  environmentLoaded = true
+  const result = loadHostErrorCatalogFromEnv()
+  if (result && !result.ok) console.warn(`[host-error-registry] catalog rejected: ${result.reason}`)
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function json(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "string") return record(value)
+  try {
+    return record(JSON.parse(value))
+  } catch {
+    return undefined
   }
-
-  // Prefer structured data (serialized NamedError / APIError toObject shape).
-  const dataStatus = e.data?.statusCode
-  const rootStatus = e.statusCode ?? e.status
-  const status = finiteInt(dataStatus) ?? finiteInt(rootStatus)
-
-  const name = typeof e.name === "string" && e.name.length > 0 ? e.name : null
-
-  // 1) APIError + numeric status (APIError is a NamedError named "APIError").
-  if (name === "APIError" && status !== undefined) return `APIError:${status}`
-  // 2) NamedError instance or registered create-name (single source: NamedError.create).
-  const isNamedInstance =
-    typeof (error as { toObject?: unknown }).toObject === "function" ||
-    (name !== null && isNamedErrorCreateName(name))
-  if (name && isNamedInstance) return `NamedError:${name}`
-  // 3) Plain error.name (including TypeError and other host objects).
-  if (name) return `ErrorName:${name}`
-  return null
 }
 
-function finiteInt(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && /^\d+$/.test(value)) {
-    const n = Number.parseInt(value, 10)
-    return Number.isFinite(n) ? n : undefined
+type APIResponse = { statusCode?: number; responseBody?: string }
+type Binding = { rule: HostErrorRule | null; response?: APIResponse }
+const bindings = new WeakMap<object, Map<string, Binding>>()
+
+function apiResponse(error: unknown, seen = new Set<object>()): APIResponse | undefined {
+  if (error === null || typeof error !== "object" || seen.has(error)) return
+  seen.add(error)
+  if (RetryError.isInstance(error)) return apiResponse(error.lastError ?? error.errors.at(-1), seen)
+  if (APICallError.isInstance(error)) {
+    if (error.statusCode === undefined && error.responseBody === undefined) return
+    return { statusCode: error.statusCode, responseBody: error.responseBody }
   }
-  return undefined
+  if (error instanceof Error) return
+  const body = record(error)
+  const frame = record(body?.data)
+  const response = frame?.type === "error" ? frame : body
+  if (response?.type === "error" && (record(response.error) || typeof response.error === "string" || response.biz_code !== undefined)) {
+    return { responseBody: JSON.stringify(response) }
+  }
 }
 
-export interface StampedErrorData {
-  hostCode?: string
-  hostRetryClass?: RetryClass
+export function bindHostError<T>(error: T, context: { providerID: string }, response = apiResponse(error)): T {
+  if (error === null || typeof error !== "object") return error
+  if (bindings.get(error)?.has(context.providerID)) return error
+  const body = json(response?.responseBody)
+  const rule = response && !isSafetyTerminal(error) ? snapshot.rules.find((rule) => {
+    if (rule.match.providerID !== context.providerID) return false
+    if (rule.match.statusCode !== undefined && rule.match.statusCode !== response.statusCode) return false
+    const match = rule.match.response
+    if (match.kind === "empty") return !response.responseBody?.trim()
+    if (match.kind === "json") return isDeepStrictEqual(body, match.value)
+    const value = match.path === "biz_code" ? body?.biz_code : record(body?.error)?.[match.path.slice(6)]
+    return value === match.value
+  }) ?? null : null
+  const resolutions = bindings.get(error) ?? new Map<string, Binding>()
+  resolutions.set(context.providerID, { rule, response })
+  bindings.set(error, resolutions)
+  return error
 }
 
-/**
- * Resolve rule for an error / serialized object. Does not mutate.
- */
-export function resolveHostRule(error: unknown): HostErrorRule | null {
-  const id = birthIdentity(error)
-  if (!id) return null
-  return snapshot.rules[id] ?? null
+export function inheritHostError<T>(error: T, context: { providerID: string }, seen = new Set<object>()): T {
+  if (error === null || typeof error !== "object" || seen.has(error)) return error
+  if (bindings.get(error)?.has(context.providerID)) return error
+  seen.add(error)
+  if (!RetryError.isInstance(error)) return error
+  const inner = inheritHostError(error.lastError ?? error.errors.at(-1), context, seen)
+  if (inner === null || typeof inner !== "object") return error
+  const binding = bindings.get(inner)?.get(context.providerID)
+  if (!binding) return error
+  const resolutions = bindings.get(error) ?? new Map<string, Binding>()
+  resolutions.set(context.providerID, binding)
+  bindings.set(error, resolutions)
+  return error
+}
+
+export function boundAPIResponse(error: unknown, context: { providerID: string }): APIResponse | undefined {
+  if (error === null || typeof error !== "object") return
+  const binding = bindings.get(error)?.get(context.providerID)
+  return binding?.rule ? binding.response : undefined
+}
+
+export function copyHostError<T extends { name: string; data: { hostCode?: string; hostRetryClass?: string } }>(target: T, original: unknown, context: { providerID: string }): T {
+  if (target.name !== "APIError" || original === null || typeof original !== "object") return target
+  const binding = bindings.get(original)?.get(context.providerID)
+  if (!binding) return target
+  if (binding.rule) {
+    target.data.hostCode = binding.rule.code
+    target.data.hostRetryClass = isSafetyTerminal(original) ? "terminal" : binding.rule.retryClass
+    return target
+  }
+  delete target.data.hostCode
+  delete target.data.hostRetryClass
+  return target
 }
 
 const malformedStampWarned = new Set<string>()
 
 export function hostRetryClass(error: unknown): RetryClass | null {
-  const data = hostDataOf(error)
-  if (data?.hostCode) {
-    if (isRetryClass(data.hostRetryClass)) return data.hostRetryClass
-    // hostCode present but missing/invalid class → terminal (deterministic) + warn once per code.
-    if (!malformedStampWarned.has(data.hostCode)) {
-      malformedStampWarned.add(data.hostCode)
-      console.warn(`[host-error-registry] malformed stamp ${data.hostCode}; class → terminal`)
-    }
-    return "terminal"
+  const e = record(error)
+  if (e?.name !== "APIError") return null
+  const data = record(e.data)
+  if (typeof data?.hostCode !== "string" || !data.hostCode) return null
+  if (isRetryClass(data.hostRetryClass)) return data.hostRetryClass
+  if (!malformedStampWarned.has(data.hostCode)) {
+    malformedStampWarned.add(data.hostCode)
+    console.warn(`[host-error-registry] malformed stamp ${data.hostCode}; class → terminal`)
   }
-  const rule = resolveHostRule(error)
-  return rule?.retryClass ?? null
-}
-
-function hostDataOf(error: unknown): StampedErrorData | undefined {
-  if (error === null || typeof error !== "object") return undefined
-  const e = error as { data?: StampedErrorData } & StampedErrorData
-  if (e.data && typeof e.data === "object") return e.data
-  return e
-}
-
-/**
- * Stamp host fields at construction/normalization. Idempotent if `hostCode` already set.
- * Accepts NamedError instances (sets instance fields for toObject merge) or plain `{name,data}`.
- * Invariant identities are clamped to `terminal` with a one-line warn.
- */
-export function stampHostError<T extends object>(target: T, original?: unknown): T {
-  const existing = hostDataOf(target)
-  if (existing?.hostCode) return target
-
-  // Preserve stamp-once across fromError rebuilds: copy host fields from original first.
-  const origData = original !== undefined ? hostDataOf(original) : undefined
-  if (origData?.hostCode) {
-    applyStamp(target, origData.hostCode, isRetryClass(origData.hostRetryClass) ? origData.hostRetryClass : "terminal")
-    return target
-  }
-
-  const source = original !== undefined ? original : target
-  const id = birthIdentity(source) ?? birthIdentity(target)
-  const rule = resolveHostRule(source) ?? resolveHostRule(target)
-  if (!rule || !id) return target
-
-  let cls = clampRetryClass(id, rule.retryClass)
-  // 404 + allow404Retry is the one conditional hard status: do not clamp to terminal.
-  if (id.startsWith("APIError:") && Number(id.slice("APIError:".length)) === 404 && isRetryableNotFound(source)) {
-    cls = rule.retryClass
-  }
-  if (cls !== rule.retryClass) {
-    console.warn(`[host-error-registry] clamped ${rule.code} (${id}) to terminal`)
-  }
-  applyStamp(target, rule.code, cls)
-  return target
-}
-
-function applyStamp(target: object, code: string, retryClass: RetryClass): void {
-  const t = target as {
-    data?: Record<string, unknown>
-    hostCode?: string
-    hostRetryClass?: RetryClass
-  }
-  if (t.data && typeof t.data === "object") {
-    t.data.hostCode = code
-    t.data.hostRetryClass = retryClass
-    return
-  }
-  // Instance-style NamedError before toObject()
-  t.hostCode = code
-  t.hostRetryClass = retryClass
-  if (!t.data) {
-    // ensure toObject can merge
-    Object.defineProperty(t, "data", {
-      value: {},
-      enumerable: false,
-      writable: true,
-      configurable: true,
-    })
-  }
+  return "terminal"
 }
 
 export * as HostErrorRegistry from "./host-registry"

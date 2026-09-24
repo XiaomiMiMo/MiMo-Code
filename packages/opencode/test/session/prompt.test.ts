@@ -578,7 +578,9 @@ describe("session.prompt terminal model errors", () => {
             expect(assistant.parentID).toBe(messages[0]?.info.id)
             expect(assistant.providerID).toBe(providerID)
             expect(assistant.modelID).toBe(modelID)
-            expect(assistant.error?.data.message).toContain("Model not found: missing-provider/missing-model")
+            expect(assistant.error?.name).toBe("UnknownError")
+            if (assistant.error?.name !== "UnknownError") return
+            expect(assistant.error.data.message).toContain("Model not found: missing-provider/missing-model")
             expect(assistant.time.completed).toBeNumber()
           }),
         ),

@@ -1,9 +1,9 @@
 ---
 feature: host-error-registry
 status: in-progress
-updated: 2026-09-22
+updated: 2026-09-24
 branch: feat/host-error-registry
-commits: 
+commits:
 ---
 
 # Host Error Registry
@@ -12,219 +12,139 @@ commits:
 
 ## [S1] Problem
 
-Embedders and host applications need their own stable error identities and retry classification on engine failures, without patching the engine for every new code.
-
-Today the engine classifies failures only through internal heuristics (`NamedError` names, HTTP status, message fingerprints in `session/retry.ts`). Hosts that surface errors in their own UI must re-classify raw engine strings on their side. That duplicates retry semantics, drifts from `budgetFor`, and forces an engine source change whenever the host taxonomy grows.
-
-We need a **generic injection point**: the host supplies a declarative catalog that binds **structured engine birth identities** to **host codes** and **retry classes**; the engine loads it, attaches codes before the first retry decision, and drives retry from the injected class — without knowing any particular host product.
+Hosts need stable codes and explicit retry behavior for their own LLM API business failures, without teaching the engine product codes. Engine error names, broad HTTP statuses and message fingerprints cannot identify a particular host's API response safely.
 
 ## [S2] Design
 
-### Boundary
+### Trust and scope
 
-- Engine owns a **closed** `RetryClass` set, all retry / `budgetFor` policy, and **terminal invariants** (see below).
-- Hosts own **open** `code` strings and display copy. The engine never interprets code text and never carries product copy.
-- Injection is **data only** (JSON-serializable catalog). No host functions, free-form message regex matchers, or plugins execute inside the engine for classification.
-- White-box path: resolution runs from **structured birth identity** (`NamedError` name, `APIError.statusCode`, etc.), not from reverse-engineering display strings. Upstream black-box strings stay on existing heuristics when no rule matches.
+The catalog is data only. The engine matches at the LLM API boundary using the providerID from the selected model's trusted call context. It never infers source from response JSON, URLs, message text or error metadata. Hosts must reserve their providerID and prevent BYOK overrides. No product provider IDs or business codes are built into the engine.
 
-### Closed retry classes
+Only SDK API failures and structured provider error events are eligible. Tool errors, invalid output, aborts, programming errors and filesystem errors do not acquire host codes. Native transport failures without an API response remain on the engine's network path.
 
-Aligned with existing `RetryKind` / `budgetFor` so injected classes plug into the same coordinator. v1 has **no** `defer` class (deferred/local-resource wait is out of scope).
+### Catalog v2
 
-| `RetryClass` | `RetryDecision.kind` | Budget via `budgetFor` |
-|--------------|----------------------|-------------------------|
-| `terminal` | `terminal` | none (schedule completes) |
-| `network` | `network` | `config.network` |
-| `rate_limit` | `rate_limit` | `config.rateLimit` |
-| `server` | `server` | `config.server` |
-| `stream` | `stream` | then `budgetFor` uses **actual** `phase`/`scope` (not blindly `config.stream`) |
-| `unknown` | `unknown` | then `budgetFor` phase/scope as today |
+This replaces unpublished v1; no birth-identity compatibility layer is retained.
 
-- Budget **numbers** remain engine-owned. Mapping a class never invents host-supplied limits.
-- `budgetFor` still applies `scope` overrides first (e.g. `max-candidate` / `max-judge`), then phase. Class mapping must fill `RetryDecision.{kind,phase,scope,message,statusCode,retryAfterMs}` completely so Retry-After / status are not dropped on the host-rule path.
+```ts
+type RetryClass = "terminal" | "persistent" | "bounded"
+type HostResponseMatch =
+  | { readonly kind: "field"; readonly path: "error.code" | "biz_code" | "error.biz_code"; readonly value: string | number }
+  | { readonly kind: "json"; readonly value: Readonly<Record<string, unknown>> }
+  | { readonly kind: "empty" }
+interface HostErrorRule {
+  readonly match: {
+    readonly providerID: string
+    readonly statusCode?: number
+    readonly response: HostResponseMatch
+  }
+  readonly code: string
+  readonly retryClass: RetryClass
+}
+interface HostErrorCatalog {
+  readonly protocolVersion: 2
+  readonly rules: readonly HostErrorRule[]
+}
+```
 
-### Catalog contract (normative JSON map)
+Example (synthetic values):
 
 ```json
 {
-  "protocolVersion": 1,
-  "rules": {
-    "NamedError:InvalidOutputError": {
-      "code": "host.example.empty_output",
-      "retryClass": "terminal"
+  "protocolVersion": 2,
+  "rules": [
+    {
+      "match": {
+        "providerID": "test-host",
+        "response": { "kind": "field", "path": "error.code", "value": 90100 }
+      },
+      "code": "host.example.busy",
+      "retryClass": "persistent"
     },
-    "APIError:429": {
-      "code": "host.example.rate_limited",
-      "retryClass": "rate_limit"
+    {
+      "match": {
+        "providerID": "test-host",
+        "statusCode": 403,
+        "response": { "kind": "json", "value": { "error": "Example restricted account", "code": 403 } }
+      },
+      "code": "host.example.restricted",
+      "retryClass": "bounded"
+    },
+    {
+      "match": { "providerID": "test-host", "statusCode": 401, "response": { "kind": "empty" } },
+      "code": "host.example.unauthorized",
+      "retryClass": "terminal"
     }
-  }
+  ]
 }
 ```
 
-- `rules` is a **JSON object map**: key = **birth identity**, value = `{ code, retryClass }`.
-- **Birth identity** grammar (closed):
-  - `APIError:<statusCode>` — e.g. `APIError:429` (numeric status only)
-  - `NamedError:<ErrorName>` — e.g. `NamedError:InvalidOutputError` (includes `NamedError:APIError` when no status)
-  - `ErrorName:<ErrorName>` — instance `error.name` when not a `NamedError`
-- **Identity resolution is a fixed first-match order** (no multi-rule merge). Computed once at **normalization entry** from the **original** error (pre-rewrite):
-  1. `APIError` instance **and** `statusCode` is a finite number → `APIError:<statusCode>`
-  2. else `NamedError` instance (or `name` equals a `NamedError.create` name) → `NamedError:<name>` (so `APIError` without status is `NamedError:APIError`)
-  3. else non-empty `error.name` → `ErrorName:<name>`
-  4. else no identity (legacy heuristics only)
-- Prefer **original** error identity over any identity computed after `fromError` re-wrapping. If only a normalized object remains, use rule 1–3 on that object and document `origin: "normalized"` in logs only (not on the wire).
-- Duplicate keys are impossible in one JSON object. Same `code` may appear on multiple rules (display reuse).
-- `code`: non-empty string, opaque to the engine.
-- `retryClass`: must be one of the closed set above.
+All conditions within a rule are AND; the first matching rule wins. Fields use typed equality: numeric and string business codes are distinct. JSON matches compare the complete structure, ignoring object key order but rejecting additional keys. Empty matches only missing/whitespace response bodies and require a statusCode. No substring or regex matching is supported. An exact restricted-account 403 rule does not change unrelated 403 handling.
 
-**Document validation (all-or-nothing):**
+The schema rejects invalid versions, unknown keys, invalid classes, empty codes/provider IDs and malformed selectors as a whole. Rejected catalogs preserve the previous snapshot. Valid catalogs replace it atomically; an empty array disables new bindings. Snapshots are deeply frozen.
 
-| Condition | Load result | In effect |
-|-----------|-------------|-----------|
-| Schema / `protocolVersion` wrong | **reject whole doc** | keep **previous** immutable snapshot (or empty if none) |
-| Any rule has invalid `retryClass` / empty `code` / bad identity key | **reject whole doc** | same as above |
-| Valid doc | **atomic replace** | new snapshot visible to **new** resolutions only |
-| Empty `rules: {}` | valid | no host bindings; engine heuristics only |
+### Boundary and lifetime
 
-No partial apply. No “invalid class → terminal” on a single entry of an otherwise bad document (that mixed mode is forbidden). An **accepted** rule always carries a valid class; there is no per-entry fallback to `terminal` after load.
+`bindHostError(error, { providerID })` first matches only inside the actual provider `doStream()` invocation and its returned raw provider stream (error parts and stream-read failures). Host transport wrappers, plugin preparation, SDK tool repair and the surrounding attempt never create new bindings. The raw stream wrapper preserves backpressure and propagates cancellation upstream. Matches and misses are cached by raw object identity and trusted providerID.
 
-### Stamp / resolution timing (birth, not emit-after-retry)
+At the trusted doStream boundary, enable the SDK's existing includeRawChunks option. Some compatible adapters emit a raw frame followed immediately by an error part containing only the message string. Retain at most one raw error frame; restore structure only when the immediately following part is an error with the same string message. Both `{error: {...}}` and `{type: "error", error: {...}}` are supported. Matching uses the original complete raw JSON, not the normalization envelope. Intervening parts, normal raw frames, completion, cancellation and read errors clear the pending frame. Normal raw chunks never trigger catalog matching and internally requested raw parts are consumed before reaching the SDK fullStream/UI; an explicitly requested raw stream retains its requested visibility. No fetch or SSE parser is added.
 
-1. At **error construction / normalization entry**, resolve birth identity → rule from the **current immutable catalog snapshot**.
-2. If a rule matches, stamp `{ hostCode, hostRetryClass }` on the error **once**. In-flight errors **keep** their birth classification across later catalog reloads (no re-lookup on every retry).
-3. If no rule matches: no `hostCode`; `decide()` uses **legacy heuristics** (black-box path).
-4. If `hostCode` is present, `decide()` **must not** fall through to message heuristics for that failure (coded errors are deterministic).
+Outside that boundary, `inheritHostError` follows only the SDK RetryError last-error chain to an existing binding, including cached misses, without consulting the catalog. Earlier retry-history entries cannot donate a binding to an unbound last error. Normalization also performs this inheritance before unwrapping content; the same failure retains its binding across catalog reloads. SDK-flattened stream errors use their retained original data frame for structured matching.
 
-### Terminal invariants (cannot be overridden to retryable)
+Generic normalization and retry decisions do not match catalogs. They only propagate/read existing bindings. `NamedError` has no global enrichment hook. Direct construction does not stamp. `fromError` keeps native cause metadata regardless of whether any host rule matched; schema/JSON/SQLite/event round-trips preserve API host fields and cause facts. Real abort/context/load-key normalization remains native and does not gain a new host code.
 
-Host rules may only **narrow** retry (e.g. mark something `terminal`). Host rules **must not** make these retryable — engine ignores a rule that would, and keeps the invariant:
+### Behavior precedence
 
-- User / engine abort (`MessageAbortedError`, abort causes)
-- Auth / provider auth terminal (`ProviderAuthError`, 401/403 class already terminal in `decide()`)
-- Context overflow (`ContextOverflowError`)
-- Explicit engine terminal constructors (`terminal()` in `decide()` today: 402/501/505, usage-limit, etc.)
+1. User cancellation, actual context overflow, missing API keys and other true engine safety failures stop retry. Stream error code and type are checked independently for context overflow: a numeric business code cannot hide a context_length_exceeded/context_window_exceeded type. This applies to raw and SDK-flattened frames, with or without a catalog, and normalizes to an unstamped ContextOverflowError. Unsafe tool-side-effect replay remains forbidden.
+2. Explicit matched host behavior controls API errors. Terminal business failures cannot become network retries because their body/message mentions IO or because HTTP status is 5xx. Precisely matched host bounded errors can override broad HTTP400/403 heuristics.
+3. Unmatched native network/timeout errors retain mandatory persistent recovery (including HTTP408/504 legacy handling).
+4. Otherwise existing HTTP, quota and non-network heuristics apply.
 
-If a rule sets `retryClass: "network"` (etc.) on one of the above, load **succeeds** but stamping records `retryClass: "terminal"` (clamp), with a one-line warn log. Never flip abort/auth/overflow to retryable.
+The stored host class is behavioral, independent from the diagnostic RetryKind. RetryDecision carries hostCode and hostRetryClass; retry status/events continue carrying hostCode. Terminal decisions emit no retry event. Malformed persisted stamps with hostCode but no valid class fail closed as terminal; class without code is ignored.
 
-### Error payload (additive envelope)
+### Budgets
 
-Do **not** replace `NamedError.toObject() = { name, data }`. Add optional fields **inside `data`** (and mirror on `APIError.data`) so existing consumers keep working:
+max-candidate/max-judge retain their own isolation budgets. For normal request/live-step:
 
-```ts
-// inside NamedError / APIError data (zod optional)
-hostCode?: string
-hostRetryClass?: RetryClass
-```
+- Host persistent forces `mode: persistent`, no maxRetries, and maxElapsedMs=0. Neither global/provider configuration nor caller budgets may downgrade this. Exponential backoff, delay caps, Retry-After and jitter remain effective.
+- Host bounded uses the phase request/stream budget, never the default-persistent server/rateLimit budget. Force bounded mode; missing/nonfinite count and nonpositive/nonfinite deadline fall back to existing phase defaults: request 4 retries / 30 seconds, stream 5 retries / 10 minutes. Explicit finite configured limits remain valid.
+- Native network forces persistent, without attempts/deadlines, as before.
+- The schedule enforces these semantics even when supplied a custom budget callback. Persistent retries remain cancellable and respect replay safety. Silent-overload limits cannot cap host persistent recovery.
 
-- Constructors accept optional `hostCode` / `hostRetryClass`.
-- Normalization (`fromError` / `message-v2` error conversion) **round-trips** these fields when present; must not drop them when rebuilding `APIError` / `Unknown`.
-- Persistence and `session.error` events carry `data` as today → host fields survive for free if they live under `data`.
-- Legacy required fields unchanged (`APIError.data.message`, `isRetryable`, etc.). `isRetryable` remains; host class is additive for `decide()` precedence.
+### Persisted event ownership
 
-**Malformed stamp handling (deterministic):**
+Effect InstanceRef is authoritative over ambient instance ALS when both exist. `InstanceState.bind` captures that Fiber context first, falling back to ALS only when the Fiber has no instance reference; callbacks outside either context remain unchanged. This is the same precedence used by `InstanceState.context`.
 
-| `data` | `decide()` behavior |
-|--------|---------------------|
-| no `hostCode` | legacy heuristics |
-| `hostCode` + valid `hostRetryClass` | host class only (after invariants) |
-| `hostCode` + **missing / invalid** `hostRetryClass` | **`terminal`** (warn once per code); **never** fall through to heuristics |
-| `hostRetryClass` without `hostCode` | ignore class; treat as no stamp |
+Database transaction callbacks and deferred post-commit effects must restore the captured owner before invoking synchronous instance consumers. Persisting a message or part under conflicting ALS must publish both its project Bus event and GlobalBus ordinary/sync envelopes to the Fiber owner's directory and project, never to the ambient instance. The database write succeeding alone is not sufficient verification. This fixes the callback bridge without changing SyncEvent payloads, retry behavior, or host matching boundaries.
 
-**`decide()` precedence (coded errors):**
+### Bootstrap and API
 
-1. Abort / auth / context-overflow / explicit terminal invariants (hard).
-2. If `data.hostCode` present → build `RetryDecision` from `hostRetryClass` only (invalid/missing class → `terminal` per table) (+ status / Retry-After metadata from the same error).
-3. Else existing heuristics.
-
-### SDK surface (one cohesive module)
-
-`packages/opencode/src/error/host-registry.ts` (export via package entry as needed):
-
-```ts
-export type RetryClass = "terminal" | "network" | "rate_limit" | "server" | "stream" | "unknown"
-
-export type BirthIdentity = `APIError:${number}` | `NamedError:${string}` | `ErrorName:${string}`
-
-export interface HostErrorRule { code: string; retryClass: RetryClass }
-export interface HostErrorCatalog {
-  protocolVersion: 1
-  rules: Record<BirthIdentity, HostErrorRule>
-}
-
-/** Validate + atomic replace. On reject, previous snapshot kept. */
-export function loadHostErrorCatalog(doc: unknown): { ok: true } | { ok: false; reason: string }
-
-/** Load from absolute JSON path (child-process bootstrap). Same validate/replace rules. */
-export function loadHostErrorCatalogFile(path: string): { ok: true } | { ok: false; reason: string }
-
-/** Current snapshot (immutable). */
-export function hostErrorCatalog(): HostErrorCatalog
-
-/** Birth identity string from an error (pure). */
-export function birthIdentity(error: unknown): BirthIdentity | null
-
-/** Resolve + stamp once at construction/normalization. */
-export function stampHostError<T extends object>(error: T, target?: { name?: string; statusCode?: number }): T
-
-export function hostRetryClass(error: unknown): RetryClass | null
-```
-
-### Retry-status propagation (banner path)
-
-`session.status{type:"retry"}` and `RetryDecision` must carry host identity when the decision was host-driven (or class-only terminal was recorded):
-
-```ts
-// RetryDecision additive optional fields
-hostCode?: string
-// retry status payload additive optional fields (same names)
-hostCode?: string
-```
-
-- When `decide()` uses a stamped host class, copy `data.hostCode` onto `RetryDecision` and the published retry status.
-- When legacy heuristics run, omit `hostCode` (hosts may still fingerprint for display).
-- Acceptance: retry status for a host-stamped rate_limit/network/server failure includes `hostCode`; terminal host codes do not emit retry status.
-
-Bootstrap (concrete, v1):
-
-| Embed mode | Delivery | Barrier |
-|------------|----------|---------|
-| In-process embed | `loadHostErrorCatalog(parsedJson)` | must return **before** first prompt/session submit |
-| Child / spawned engine | host writes JSON to an absolute path and sets `HOST_ERROR_CATALOG` env **or** calls `loadHostErrorCatalogFile(path)` on the runtime bootstrap API | engine finishes load (ok or logged fail) **before** accepting session traffic |
-
-No HTTP control-plane API in v1. No env-based function eval. Load **failure** never replaces a good snapshot with empty; empty is only the initial state.
-
-### Error behavior summary
-
-| Situation | Behavior |
-|-----------|----------|
-| Malformed catalog doc | reject; keep previous/empty |
-| Reload success | atomic snapshot swap; in-flight stamps unchanged |
-| Birth identity hit | stamp `hostCode` + class (clamped if invariant) |
-| Birth identity miss | legacy heuristics |
-| Stamped error | no heuristic fall-through |
-| Host class vs abort/auth/overflow | invariant wins (`terminal`) |
-
-### Testing boundaries
-
-- Pure unit: catalog validate/reject/replace (no partial apply); birth identity **order** (APIError:status vs NamedError:APIError vs ErrorName); stamp once + stable across reload; decide() host path vs heuristics; invariant clamp; malformed stamp → terminal; `fromError` round-trip of `data.hostCode` / `hostRetryClass`.
-- `budgetFor` matrix: each `RetryClass` → decision kind + phase/scope keeps status/retryAfter.
-- Retry status includes `hostCode` iff host-driven decision.
-- No UI or product-copy tests in this package.
+Keep `loadHostErrorCatalog`, `loadHostErrorCatalogFile`, `hostErrorCatalog`, and `HOST_ERROR_CATALOG`. Load before accepting traffic in CLI/shared-server paths; initialization runs once and cannot overwrite later explicit reloads. No new HTTP control plane is introduced.
 
 ## [S3] Out of Scope
 
-- Product display copy, i18n, or any host UI wording.
-- Host function / plugin / free-form message-regex injection.
-- `defer` / condition-gated local-resource waits (no v1 class; engine `RetryKind` unchanged in v1).
-- Changing default `budgetFor` budget numbers or `RetryKind` set.
-- Automatic mapping of every historical `NamedError` name to host codes (hosts list the identities they care about).
-- Multi-catalog merge across independent hosts (single replace-all snapshot).
-- Separate HTTP bootstrap API (v1 is in-process `loadHostErrorCatalog`).
+Product codes, UI copy, source inference, BYOK ownership enforcement, regex/plugin matching, default budget number changes, and multi-host catalog merging.
 
 ## Tasks
 
-- [ ] T1: Add `error/host-registry.ts` with `RetryClass`, `BirthIdentity`, catalog schema, `loadHostErrorCatalog` (all-or-nothing + atomic snapshot), `birthIdentity`, `stampHostError`, `hostRetryClass` — acceptance: malformed/invalid-class docs rejected and previous snapshot kept; valid empty rules accepted; unit tests green (covers: S2)
-- [ ] T2: Add optional `data.hostCode` / `data.hostRetryClass` on structured errors and round-trip through constructors + `fromError` / normalization — acceptance: `toObject()` still `{name,data}`; host fields survive serialize/rebuild (covers: S2; depends: T1)
-- [ ] T3: Stamp at construction/normalization entry from catalog; in-flight classification stable across reload — acceptance: identity hit stamps once; miss → no hostCode; reload does not restamp live errors (covers: S2; depends: T2)
-- [ ] T4: `decide()`: terminal invariants first; if `hostCode` present use host class only and preserve status/Retry-After; clamp invariant violations to `terminal`; else legacy heuristics — acceptance: matrix unit tests for classes × invariants × metadata (covers: S2; depends: T3)
-- [ ] T5: Propagate `hostCode` on `RetryDecision` + retry status payload when host-driven — acceptance: retry event carries `hostCode`; heuristics path omits it (covers: S2; depends: T4)
-- [ ] T6: Package unit tests + typecheck from `packages/opencode` — acceptance: `bun typecheck` and registry/retry tests pass (covers: S2; depends: T5)
+- [x] Specify the v2 schema, boundary and behavior contract.
+- [x] Replace birth identity matching with API-bound response matching and remove global constructor stamping.
+- [x] Wire all provider error events/thrown failures and preserve normalized API bindings.
+- [x] Enforce behavior budgets with safety precedence and native network recovery.
+- [x] Verify malformed input, provider isolation, exact-body matching, reload stability, non-API exclusion, persisted envelopes, bounded exhaustion, terminal no-retry, cancellation and recovery beyond one virtual hour.
+- [x] Run package typecheck and focused/expanded regression suites; document results.
+- [x] Reproduce persisted message event cross-directory routing under conflicting ALS/Fiber contexts, align callback binding precedence, and verify database persistence plus owner/wrong-owner/GlobalBus delivery.
+
+## Delivery verification
+
+- Focused registry/retry/max-mode-input suite after boundary review: 120 pass, 0 fail (867 assertions).
+- Provider/LLM/max-mode/prompt/compaction regression suite after compatible-adapter review: 140 pass, 0 fail (490 assertions). The two max-mode-input cases overlap; 258 distinct tests passed across both runs.
+- Effect TestClock drives both request and stream host-persistent schedules through 70 failures and 71 virtual minutes to successful recovery despite bounded caller budgets and silent-overload predicates. The empty-catalog native network path also recovers after 70 failures. User interruption during a wait prevents further requests even after advancing two hours.
+- Exact restricted-account HTTP403 exhausts request/stream count budgets despite a persistent custom budget. Host persistent retains max-candidate/max-judge isolation and cannot cross unsafe replay boundaries. Synthetic terminal business responses with HTTP400/408/500/503/504 and network-looking messages never retry.
+- Real local HTTP/SDK integration preserves host codes on errors after output. The test first exposed SDK-flattened errors containing the original frame in data; matching now uses that structured frame. The existing HTTP408/429/503 recovery test still verifies correct-directory delivery, zero wrong-directory events and matching GlobalBus.directory.
+- Boundary review reproduced a plugin preparation APICallError incorrectly acquiring a host code, then fixed it by moving first binding from whole-attempt/fullStream to actual doStream/raw provider stream. A real tool-repair callback throwing the same API-shaped error remains native; HTTP and post-output SSE bindings plus provider cancellation still pass. SDK RetryError inherits only an already-bound last error, preserving reload identity and provider isolation.
+- Safety review reproduced a numeric business code masking context_length_exceeded in a stream error type. Independent code/type checks now keep raw/SDK-flattened frames and JSON round-trips terminal and unstamped, with and without a catalog.
+- Real @ai-sdk/openai-compatible post-output SSE tests first reproduced loss of structured error fields into a string. Six red-to-green cases cover terminal/persistent/context behavior with and without top-level type. Persistent retries the actual request to recovery despite a zero-retry caller budget; terminal/context stop after one request. Complete-JSON and field selectors both work; raw chunks never appear in returned fullStream events and schema/JSON normalization retains the result.
+- Production-routing follow-up: four regression cases failed on the old ALS-first binding. The real Session service test confirmed message/part rows persisted while the owner received neither event, the wrong instance received both, and all four ordinary/sync GlobalBus envelopes carried the wrong directory and project. Fiber-first binding makes the same test pass; additional cases cover deferred async callbacks, database use/transaction commit effects, Fiber-only, ALS-only and context-free binding.
+- Post-routing regression run: 216 pass, 0 fail (1161 assertions) across instance-state, run-service, database, storage, sync, three Bus suites, registry, retry and two LLM suites. Package `bun typecheck` and `git diff --check` pass.
+- Cross-repository validation used a fresh Node engine build and direct Electron build: all 17 Desktop cases passed (15 real-engine registry cases and 2 UI-only retry cases), followed by three successful HTTP503 recovery repeats. Real-engine checks cover official persistent recovery/cancellation, bounded exhaustion, terminal/empty-body SSO401, provider/code-only negatives, owning-directory event delivery and history reconstruction. This is local fixture validation, not a release build or a real external outage test.

@@ -34,7 +34,9 @@ export const Info = Schema.Struct({
   stream: Schema.optional(Budget),
   maxCandidate: Schema.optional(Budget),
   maxJudge: Schema.optional(Budget),
-  network: Schema.optional(Budget),
+  network: Schema.optional(Budget).annotate({
+    description: "Session network recovery is always persistent with no retry count or elapsed-time limit; only delay and jitter fields are configurable. Max-mode uses its own scope budgets.",
+  }),
   server: Schema.optional(Budget),
   rateLimit: Schema.optional(Budget),
   unknown: Schema.optional(Budget),

@@ -20,11 +20,23 @@ Retry 必须区分两个问题：错误是否可能恢复，以及当前 scope �
 | unknown    | 8 次，2s 起步，15min deadline |
 | terminal   | 0 次 |
 
-`budgetFor` 选择顺序：`max-candidate` / `max-judge` 自有预算 → **kind ∈ {network, rate_limit, server} 的 persistent 预算** → `phase=request` 的 request 预算 → 其余。因此 request 阶段的 DNS/连接失败、429、5xx **不会**掉进 4 次/30s 的 request 死窗口。
+`budgetFor` 选择顺序：`max-candidate` / `max-judge` 自有预算 → 宿主显式行为的 phase 预算 → kind ∈ {network, rate_limit, server} 的预算 → `phase=request` 的 request 预算 → 其余。无宿主覆盖时，request 阶段的 DNS/连接失败、429、5xx 默认不会掉进 4 次/30s 的 request 窗口；显式宿主 bounded 则必须使用有限的 request/stream 预算。
 
 Persistent network / rate_limit / server retry 只适用于 transport 或上游瞬态故障，不适用于 quota、auth、context overflow 或已经跨过 tool side-effect boundary 的 live step。每次等待只更新同一个 retry 状态，不能向 transcript 无限追加 Reconnecting 文本。
 
 网络指纹（`ProviderError`）**按形状判定，不是可重试码白名单**：① 用户 Abort 永不 transport；② `UND_ERR_*` 一律 undici transport；③ POSIX 形态 `E*` 系统码一律 transport，**除非**落在本地 fs/进程 deny-list（`ENOENT`/`EACCES`/`EINVAL`…）；④ message 族匹配 connect/fetch/socket/dns 语言。因此新出现的网络 errno / undici 码不必先补枚举即可落入 `kind=network`；本地文件系统错误不会误入重试。
+
+## 分类不变量与宿主目录
+
+分类顺序固定为：真正的用户 abort、context overflow、缺少 API key 等安全错误 → 已匹配宿主的 terminal/persistent/bounded 行为 → 未匹配错误的 HTTP/网络与既有启发式。精确匹配的宿主 bounded HTTP403 可以越过宽泛403终止规则，但不会使其他403可重试。宿主 terminal 业务响应即使带 HTTP5xx、408/504 或 IO/网络关键词也不重试；业务码、产品文案和 providerID 字面值不内置于引擎。
+
+宿主 v2 规则在 LLM API 边界用调用上下文的可信 providerID + 结构化 error.code/biz_code/error.biz_code、完整 JSON 或空 body + 可选 status 匹配。空 body 必须限定 status。首次匹配仅位于 provider 的实际 doStream 调用及其原始返回流（error part 与读取异常）；fullStream、插件准备、工具修复及 whole-attempt catch 不能创建绑定。原始流保持背压并将取消传回 provider。边界开启 SDK 现有 includeRawChunks；compatible 适配器若把错误压成字符串，仅用紧邻且 message 相同的 raw/error 配对恢复结构，支持有/无顶层 type 的错误帧。最多保留一个待配对错误帧，其他 part、正常 raw、结束和取消均清理；内部开启的 raw 不向 fullStream/UI 传播，正常 raw 不参与目录匹配。完整 JSON 匹配使用原始帧而非补充 type 的归一化对象，不增加 fetch/SSE 解析器。SDK 展平的流错误使用其 data 中保留的原始错误 frame。来源不从 body、metadata 或 URL 推断。规则和 miss 按原始对象与 providerID 缓存，reload 不改已有故障；外层只沿 SDK RetryError 的 last-error 链继承已有绑定，不从 earlier errors 借用、不重新匹配。非 API 的 invalid output、tool、abort 等错误不产生宿主码；NamedError 不再全局 enrichment，归一化/decide 不重新匹配目录。流帧的 error.code 与 error.type 独立检查 context overflow，业务码不能遮蔽安全终止；原始/SDK展平帧及持久化往返都保持无宿主码的 ContextOverflowError。
+
+宿主行为与 RetryKind 分开：RetryDecision.hostRetryClass 决定预算，hostCode 继续传递到事件。普通 request/live-step 的 host persistent 强制无次数和累计 deadline；host bounded 强制有限预算，即使 server/request/stream 配置为 persistent。有限 count 缺失或非有限时补 phase 默认值；deadline 非正或非有限时同样回落。request 默认4次/30秒，stream默认5次/10分钟。退避和 Retry-After 仍有效；schedule 最终再次约束调用者预算，silent overload 不得截断 host persistent。
+
+未匹配的 transport 包括 native/SDK cause 的网络 errno、fetch failed、HTTP408/504、SSE read timeout；归一化后的 message、metadata.code 和有界 causeChain 经 JSON 往返仍可判定。即使无目录或输入已符合 NamedError schema，fromError 也持久化原生 cause。普通 TypeError 编程错误或无状态 APIError 本身不等于网络故障。
+
+request/live-step 的原生 network 仍强制 persistent：无限次数、无累计 deadline，全局/provider network.mode/maxRetries/deadlineMs 不能降级；仅退避可配置。max-candidate/max-judge 隔离预算和 side-effect replaySafe 仍优先，取消可中断等待。server/rate_limit 默认 persistent 但允许配置；非网络 stream/unknown 保持有界默认。
 
 ## 配置
 
@@ -46,7 +58,7 @@ Persistent network / rate_limit / server retry 只适用于 transport 或上游�
       }
     }
 
-Persistent 可恢复类 retry 仍受 AbortSignal、进程退出和 provider chunkTimeout 约束。默认 provider chunkTimeout 为 8 分钟；provider 可以用 chunkTimeout 覆盖该单次 stream idle timeout。
+Persistent retry 可由 AbortSignal 或进程退出中断。provider chunkTimeout 约束单次 stream 的空闲等待（默认 8 分钟），超时后产生 network 故障并重新尝试；它不是整个 retry coordinator 的累计时间上限。network 配置只调整退避，mode/maxRetries/deadlineMs 不会使普通 session 的网络恢复提前退出。
 
 ## 退避
 
@@ -62,6 +74,7 @@ Persistent 可恢复类 retry 仍受 AbortSignal、进程退出和 provider chun
 
 - **processor stream 阶段**（`isMain`）：`status.setRetry` 同时维护 session 级 `retryAttempts` 计数并写入 `session.status{type:"retry"}` 的 `attempt`——该计数跨 request/stream 在 **processor 可见 status** 上连续，session 回到 idle 时清零。
 - **llm request 阶段**：只发 `RetryAttempt` 作诊断，**不**写 session.status；其 `attempt`/`phaseAttempt` 是 **phase 局部序号**（每个 processor 外层周期从 1 起），不是 session 全局连续序号。
+- request 事件必须在原 Effect fiber 内通过 `Bus.Service.publish` 发布。不能转到静态 `Bus.publish` Promise bridge：后者重新读取环境 ALS，当其与 fiber 的 InstanceRef 不同时会把整组 retry 事件投递到另一目录。跨 Instance 集成测试使用真实 HTTP408/429/503 后成功，严格检查归属目录收到全部事件、错误目录收到零事件以及 GlobalBus 的 directory。
 
 maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 session status notice，不伪装成 retry attempt。Persistent network retry 不重复创建 transcript message；UI 只更新当前状态。成功、终止、取消都必须清理 retry 状态并回到 idle。
 
@@ -71,7 +84,7 @@ maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 s
 
 **request 阶段对 TUI 更安静**：在 request 微退避期间没有 `session.status{retry}`，界面保持 busy，直到 processor stream 重试才出现重连/倒计时。这是 ownership 契约的刻意取舍（用户可见等待 = stream 阶梯），不是回归。
 
-max-mode propose-only ensemble（candidates/judge）共用 sessionID 并行跑 `llm.stream`：request 阶段已不写 session.status；ensemble 传 `quietRetryDiagnostics: true` 以抑制 N 路 request `RetryAttempt` 总线噪音。**不要**为此设置 `ephemeral`（还会跳过 plugin trigger、session-affinity 头、OTel functionId、system 组装）。ensemble 内部退避走 max-candidate / max-judge budget + `onRetry`。
+max-mode propose-only ensemble（candidates/judge）共用 sessionID 并行跑 `llm.stream`：request 阶段已不写 session.status；ensemble 显式传 `retryScope: max-candidate/max-judge`，使内部 request retry 同样受隔离预算约束，并传 `quietRetryDiagnostics: true` 以抑制 N 路 request `RetryAttempt` 总线噪音。**不要**为此设置 `ephemeral`（还会跳过 plugin trigger、session-affinity 头、OTel functionId、system 组装）。ensemble 内部退避走 max-candidate / max-judge budget + `onRetry`。
 
 ## 兼容性
 

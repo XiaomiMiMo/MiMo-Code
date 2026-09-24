@@ -16,6 +16,7 @@ export interface InstanceState<A, E = never, R = never> {
 export const bind = <F extends (...args: any[]) => any>(fn: F): F => {
   const fiber = Fiber.getCurrent()
   const ctx = fiber ? Context.getReferenceUnsafe(fiber.context, InstanceRef) : undefined
+  // Match context's precedence: resumed fibers can run under another instance's ALS.
   if (ctx) return ((...args: any[]) => Instance.restore(ctx, () => fn(...args))) as F
   try {
     return Instance.bind(fn)

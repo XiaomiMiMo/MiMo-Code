@@ -3,7 +3,7 @@ import { Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Context
 import { InstanceState } from "../../src/effect"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { Instance } from "../../src/project/instance"
-import { provideTmpdirInstance, tmpdir } from "../fixture/fixture"
+import { provideTmpdirInstance, tmpdir, tmpdirScoped } from "../fixture/fixture"
 import { Bus } from "../../src/bus"
 import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -151,6 +151,70 @@ it.live("SyncEvent routes message and part updates to the fiber instance despite
     }),
   ),
 )
+
+it.live("InstanceState.bind captures Fiber context ahead of conflicting ALS for deferred callbacks", () =>
+  Effect.gen(function* () {
+    const one = yield* tmpdirScoped()
+    const two = yield* tmpdirScoped()
+    const owner = yield* Effect.promise(() => Instance.provide({ directory: one, fn: () => Instance.current }))
+    const stale = yield* Effect.promise(() => Instance.provide({ directory: two, fn: () => Instance.current }))
+    const bound = yield* Effect.gen(function* () {
+      expect(yield* InstanceState.context).toBe(owner)
+      return Instance.restore(stale, () => {
+        expect(Instance.current).toBe(stale)
+        return InstanceState.bind(async (value: string) => {
+          await Promise.resolve()
+          return { context: Instance.current, value }
+        })
+      })
+    }).pipe(Effect.provideService(InstanceRef, owner))
+
+    const result = yield* Effect.promise(() =>
+      Instance.restore(stale, () => {
+        const pending = bound("deferred")
+        expect(Instance.current).toBe(stale)
+        return pending
+      }),
+    )
+    expect(result).toEqual({ context: owner, value: "deferred" })
+  }),
+)
+
+it.live("InstanceState.bind falls back to ALS when the Fiber has no InstanceRef", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const owner = yield* Effect.promise(() => Instance.provide({ directory: dir, fn: () => Instance.current }))
+    const bound = Instance.restore(owner, () => InstanceState.bind(() => Instance.current))
+    expect(bound()).toBe(owner)
+  }),
+)
+
+it.live("InstanceState.bind captures Fiber context without ALS", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const owner = yield* Effect.promise(() => Instance.provide({ directory: dir, fn: () => Instance.current }))
+    const bound = yield* Effect.sync(() => {
+      expect(() => Instance.current).toThrow()
+      return InstanceState.bind(() => Instance.current)
+    }).pipe(Effect.provideService(InstanceRef, owner))
+    expect(bound()).toBe(owner)
+  }),
+)
+
+test("InstanceState.bind captures ALS outside an Effect Fiber", async () => {
+  await using tmp = await tmpdir()
+  const { owner, bound } = await Instance.provide({
+    directory: tmp.path,
+    fn: () => ({ owner: Instance.current, bound: InstanceState.bind(() => Instance.current) }),
+  })
+  expect(bound()).toBe(owner)
+})
+
+test("InstanceState.bind preserves callbacks without any instance context", () => {
+  const fn = (value: string) => value
+  expect(InstanceState.bind(fn)).toBe(fn)
+  expect(InstanceState.bind(fn)("unbound")).toBe("unbound")
+})
 
 test("InstanceState caches values per directory", async () => {
   await using tmp = await tmpdir()

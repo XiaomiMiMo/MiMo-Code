@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { pathToFileURL } from "node:url"
 import path from "path"
-import { tool, type ModelMessage } from "ai"
+import { APICallError, tool, type ModelMessage } from "ai"
+import { ToolCompat } from "../../src/util"
 import { Cause, Effect, Exit, Stream } from "effect"
 import z from "zod"
 import { makeRuntime } from "../../src/effect/run-service"
@@ -14,10 +16,14 @@ import { Filesystem } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 import type { Agent } from "../../src/agent/agent"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionRetry } from "../../src/session/retry"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { Bus } from "../../src/bus"
 import { Session } from "../../src/session"
+import { InstanceRef } from "../../src/effect/instance-ref"
+import { GlobalBus } from "../../src/bus/global"
+import { HostErrorRegistry } from "../../src/error/host-registry"
 
 async function getModel(providerID: ProviderID, modelID: ModelID) {
   return AppRuntime.runPromise(
@@ -301,6 +307,268 @@ function createEventResponse(chunks: unknown[], includeDone = false) {
 }
 
 describe("session.llm.stream", () => {
+  for (const withType of [false, true]) {
+    for (const behavior of ["terminal", "persistent", "context"] as const) {
+      test(`compatible post-output ${behavior} preserves raw error structure (type=${withType})`, async () => {
+        const server = state.server
+        if (!server) throw new Error("Server not initialized")
+        const providerID = ProviderID.make("vivgrid")
+        const source = await loadFixture(providerID, "gemini-3.1-pro-preview")
+        const code = behavior === "terminal" ? 50002 : 50112
+        const frame = {
+          ...(withType ? { type: "error" } : {}),
+          error: { code, type: behavior === "context" ? "context_length_exceeded" : "upstream_error", message: "upstream IO failed" },
+        }
+        await using tmp = await tmpdir({ config: {
+          enabled_providers: [providerID],
+          provider: { [providerID]: { npm: "@ai-sdk/openai-compatible", options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` } } },
+        } })
+        const request = waitRequest("/chat/completions", createEventResponse([
+          { id: "chat-host", object: "chat.completion.chunk", choices: [{ delta: { role: "assistant" } }] },
+          { id: "chat-host", object: "chat.completion.chunk", choices: [{ delta: { content: "Partial output" } }] },
+          frame,
+        ], true))
+        const recovered = behavior === "persistent" ? waitRequest("/chat/completions", new Response(createChatStream("Recovered"), {
+          status: 200, headers: { "Content-Type": "text/event-stream" },
+        })) : undefined
+        HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [{
+          match: { providerID, response: behavior === "terminal" && !withType
+            ? { kind: "json", value: frame }
+            : { kind: "field", path: "error.code", value: code } },
+          code: "host.compatible", retryClass: behavior === "terminal" ? "terminal" : "persistent",
+        }] })
+        try {
+          await Instance.provide({ directory: tmp.path, fn: async () => {
+            const model = await getModel(providerID, ModelID.make(source.model.id))
+            expect(model.api.npm).toBe("@ai-sdk/openai-compatible")
+            const sessionID = SessionID.make("session-compatible-host")
+            const agent = { name: "test", mode: "primary", options: {}, permission: [{ permission: "*", pattern: "*", action: "allow" }] } satisfies Agent.Info
+            const user = { id: MessageID.make("user-compatible-host"), sessionID, role: "user", time: { created: Date.now() }, agent: agent.name,
+              model: { providerID, modelID: model.id } } satisfies MessageV2.User
+            let attempts = 0
+            let failure: ReturnType<typeof MessageV2.fromError> | undefined
+            let retries = 0
+            const exit = await llm.runPromise((svc) => Effect.suspend(() => {
+              attempts++
+              return svc.stream({ user, sessionID, model, agent, system: [], messages: [{ role: "user", content: "Hello" }], tools: {}, retries: 0 }).pipe(
+                Stream.runCollect,
+                Effect.flatMap((events) => {
+                  expect(events.some((event) => event.type === "raw")).toBe(false)
+                  expect(events.some((event) => event.type === "text-delta")).toBe(true)
+                  const error = events.find((event) => event.type === "error")
+                  if (!error || error.type !== "error") return Effect.succeed(events)
+                  failure = MessageV2.fromError(error.error, { providerID })
+                  return Effect.fail(error.error)
+                }),
+              )
+            }).pipe(Effect.retry(SessionRetry.policy({
+              parse: (error) => MessageV2.fromError(error, { providerID }),
+              budget: () => ({ mode: "bounded", maxRetries: 0, maxElapsedMs: 1, initialDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 }),
+              set: (info) => Effect.sync(() => { retries++; expect(info.hostCode).toBe("host.compatible") }),
+            })), Effect.exit))
+            await request
+            expect(failure).toBeDefined()
+            if (!failure) throw new Error("Expected a provider failure")
+            if (behavior === "context") {
+              expect(failure.name).toBe("ContextOverflowError")
+              expect(failure.data.hostCode).toBeUndefined()
+              expect(SessionRetry.decide(failure).retryable).toBe(false)
+            } else {
+              expect(failure.data).toMatchObject({ hostCode: "host.compatible", hostRetryClass: behavior })
+            }
+            expect(MessageV2.fromError(JSON.parse(JSON.stringify(failure)), { providerID })).toEqual(failure)
+            expect(Exit.isSuccess(exit)).toBe(behavior === "persistent")
+            expect(attempts).toBe(behavior === "persistent" ? 2 : 1)
+            expect(retries).toBe(behavior === "persistent" ? 1 : 0)
+            await recovered
+          } })
+        } finally {
+          HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [] })
+        }
+      })
+    }
+  }
+
+  for (const origin of ["plugin", "tool repair"] as const) {
+    test(`${origin} APICallError lookalike cannot acquire a provider host binding`, async () => {
+      const server = state.server
+      if (!server) throw new Error("Server not initialized")
+      const source = await loadFixture("openai", "gpt-5.2")
+      const raw = new APICallError({ message: "local extension failure", url: "https://example.com", requestBodyValues: {}, statusCode: 403,
+        responseBody: JSON.stringify({ error: { code: 90100 } }), isRetryable: false })
+      const repair = origin === "tool repair" ? spyOn(ToolCompat, "repairToolCall").mockRejectedValue(raw) : undefined
+      await using tmp = await tmpdir({ init: async (dir) => {
+        const plugin = path.join(dir, "plugin.ts")
+        if (origin === "plugin") await Bun.write(plugin, `import { APICallError } from ${JSON.stringify(import.meta.resolve("ai"))};
+export default async () => ({ "chat.params": async () => { throw new APICallError({ message: "plugin preparation failure", url: "https://example.com", requestBodyValues: {}, statusCode: 403, responseBody: '{"error":{"code":90100}}', isRetryable: false }); } });`)
+        await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({
+          enabled_providers: ["openai"],
+          ...(origin === "plugin" ? { plugin: [pathToFileURL(plugin).href] } : {}),
+          provider: { openai: { npm: "@ai-sdk/openai", options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` } } },
+        }))
+      } })
+      const request = origin === "tool repair" ? waitRequest("/responses", createEventResponse([
+        { type: "response.created", response: { id: "resp-repair", created_at: 1, model: source.model.id, service_tier: null } },
+        { type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "fc_repair", call_id: "call_repair", name: "missing_tool", arguments: "" } },
+        { type: "response.output_item.done", output_index: 0, item: { type: "function_call", id: "fc_repair", call_id: "call_repair", name: "missing_tool", arguments: "{}", status: "completed" } },
+        { type: "response.completed", response: { incomplete_details: null, usage: { input_tokens: 1, input_tokens_details: null, output_tokens: 1, output_tokens_details: null }, service_tier: null } },
+      ], true)) : undefined
+      HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [{
+        match: { providerID: ProviderID.openai, response: { kind: "field", path: "error.code", value: 90100 } },
+        code: "host.provider_only", retryClass: "terminal",
+      }] })
+      try {
+        await Instance.provide({ directory: tmp.path, fn: async () => {
+          const model = await getModel(ProviderID.openai, ModelID.make(source.model.id))
+          const sessionID = SessionID.make("session-source-isolation")
+          const agent = { name: "test", mode: "primary", options: {}, permission: [{ permission: "*", pattern: "*", action: "allow" }] } satisfies Agent.Info
+          const user = { id: MessageID.make("user-source-isolation"), sessionID, role: "user", time: { created: Date.now() }, agent: agent.name,
+            model: { providerID: ProviderID.openai, modelID: model.id } } satisfies MessageV2.User
+          const exit = await llm.runPromise((svc) => svc.stream({
+            user, sessionID, model, agent, system: [], messages: [{ role: "user", content: "Hello" }], retries: 0,
+            tools: { known: tool({ description: "Known tool", inputSchema: z.object({}), execute: async () => "ok" }) },
+          }).pipe(Stream.runCollect, Effect.exit))
+          await request
+          if (origin === "plugin") {
+            expect(Exit.isFailure(exit)).toBe(true)
+            if (Exit.isSuccess(exit)) throw new Error("Expected plugin failure")
+            const error = Cause.squash(exit.cause)
+            expect(APICallError.isInstance(error)).toBe(true)
+            expect(MessageV2.fromError(error, { providerID: ProviderID.openai }).data.hostCode).toBeUndefined()
+          } else {
+            expect(repair).toHaveBeenCalledTimes(1)
+            const errors = Exit.isFailure(exit) ? [Cause.squash(exit.cause)] : exit.value.flatMap((event) => "error" in event && event.error ? [event.error] : [])
+            expect(errors.length).toBeGreaterThan(0)
+            for (const error of [...errors, raw]) expect(MessageV2.fromError(error, { providerID: ProviderID.openai }).data.hostCode).toBeUndefined()
+          }
+        } })
+      } finally {
+        repair?.mockRestore()
+        HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [] })
+      }
+    })
+  }
+
+  test("host API binding survives a provider error after streamed output", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+    const source = await loadFixture("openai", "gpt-5.2")
+    await using tmp = await tmpdir({ config: {
+      enabled_providers: ["openai"],
+      provider: { openai: { npm: "@ai-sdk/openai", options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` } } },
+    } })
+    const frame = { type: "error", sequence_number: 2, error: { code: "90100", type: "upstream_failure", message: "fetch failed ECONNRESET" } }
+    const request = waitRequest("/responses", createEventResponse([
+      { type: "response.created", response: { id: "resp-host", created_at: 1, model: source.model.id, service_tier: null } },
+      { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "item-host" } },
+      { type: "response.output_text.delta", item_id: "item-host", delta: "Partial output", logprobs: null },
+      frame,
+    ], true))
+    HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [{
+      match: { providerID: ProviderID.openai, response: { kind: "field", path: "error.code", value: "90100" } },
+      code: "host.stream_failure", retryClass: "terminal",
+    }] })
+    try {
+      await Instance.provide({ directory: tmp.path, fn: async () => {
+        const model = await getModel(ProviderID.openai, ModelID.make(source.model.id))
+        const sessionID = SessionID.make("session-host-stream")
+        const agent = { name: "test", mode: "primary", options: {}, permission: [{ permission: "*", pattern: "*", action: "allow" }] } satisfies Agent.Info
+        const user = { id: MessageID.make("user-host-stream"), sessionID, role: "user", time: { created: Date.now() }, agent: agent.name,
+          model: { providerID: ProviderID.openai, modelID: model.id } } satisfies MessageV2.User
+        const events = await llm.runPromise((svc) => svc.stream({
+          user, sessionID, model, agent, system: [], messages: [{ role: "user", content: "Hello" }], tools: {}, retries: 0,
+        }).pipe(Stream.runCollect))
+        await request
+        expect(events.some((event) => event.type === "text-delta")).toBe(true)
+        const error = events.find((event) => event.type === "error")
+        if (!error || error.type !== "error") throw new Error("Expected provider failure")
+        expect(MessageV2.fromError(error.error, { providerID: ProviderID.openai })).toMatchObject({
+          name: "APIError", data: { hostCode: "host.stream_failure", hostRetryClass: "terminal" },
+        })
+      } })
+    } finally {
+      HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [] })
+    }
+  })
+
+  test("request retry events follow Effect InstanceRef instead of a different ambient ALS instance", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+    const source = await loadFixture("openai", "gpt-5.2")
+    const config = {
+      enabled_providers: ["openai"],
+      provider: { openai: {
+        npm: "@ai-sdk/openai",
+        options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` },
+      } },
+      retry: {
+        network: { initialDelayMs: 5, maxDelayMs: 5, jitterRatio: 0 },
+        server: { initialDelayMs: 5, maxDelayMs: 5, jitterRatio: 0 },
+        rateLimit: { initialDelayMs: 5, maxDelayMs: 5, jitterRatio: 0 },
+      },
+    }
+    await using ambient = await tmpdir({ config })
+    await using owner = await tmpdir({ config })
+    const sessionID = SessionID.make("session-retry-instance-ref")
+    const received: Array<{ kind: string; hostCode?: string }> = []
+    const misplaced: Array<{ kind: string }> = []
+    const directories: string[] = []
+    const onGlobal = (event: { directory?: string; payload: { type: string; properties?: { sessionID?: string } } }) => {
+      if (event.payload.type === Session.Event.RetryAttempt.type && event.payload.properties?.sessionID === sessionID) {
+        directories.push(event.directory ?? "")
+      }
+    }
+    const target = await Instance.provide({ directory: owner.path, fn: async () => ({
+      context: Instance.current,
+      model: await getModel(ProviderID.openai, ModelID.make(source.model.id)),
+      unsubscribe: Bus.subscribe(Session.Event.RetryAttempt, (event) => {
+        if (event.properties.sessionID === sessionID) received.push(event.properties)
+      }),
+    }) })
+    const unsubscribeAmbient = await Instance.provide({ directory: ambient.path, fn: () =>
+      Bus.subscribe(Session.Event.RetryAttempt, (event) => {
+        if (event.properties.sessionID === sessionID) misplaced.push(event.properties)
+      }),
+    })
+    HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [408, 429, 503].map((statusCode) => ({
+      match: { providerID: ProviderID.openai, statusCode, response: { kind: "field", path: "error.code", value: 90100 } },
+      code: `host.${statusCode}`, retryClass: "persistent",
+    })) })
+    GlobalBus.on("event", onGlobal)
+    try {
+      const failures = [408, 429, 503].map((status) => waitRequest("/responses", new Response(
+        JSON.stringify({ error: { code: 90100, message: "request failed", type: "upstream_failure" } }),
+        { status, headers: { "Content-Type": "application/json" } },
+      )))
+      const success = waitRequest("/responses", createEventResponse([], true))
+      const agent = { name: "test", mode: "primary", options: {}, permission: [{ permission: "*", pattern: "*", action: "allow" }] } satisfies Agent.Info
+      const user = {
+        id: MessageID.make("user-retry-instance-ref"), sessionID, role: "user", time: { created: Date.now() },
+        agent: agent.name, model: { providerID: ProviderID.openai, modelID: target.model.id },
+      } satisfies MessageV2.User
+      const events = await Instance.provide({ directory: ambient.path, fn: () =>
+        llm.runPromise((svc) => svc.stream({
+          user, sessionID, model: target.model, agent, system: [],
+          messages: [{ role: "user", content: "Hello" }], tools: {}, retries: 0,
+        }).pipe(Stream.runCollect, Effect.provideService(InstanceRef, target.context))),
+      })
+      await Promise.all([...failures, success])
+      expect(Array.from(events).some((event) => event.type === "error")).toBe(false)
+      expect(misplaced).toEqual([])
+      expect(received).toEqual([
+        expect.objectContaining({ kind: "unknown", hostCode: "host.408" }),
+        expect.objectContaining({ kind: "rate_limit", hostCode: "host.429" }),
+        expect.objectContaining({ kind: "server", hostCode: "host.503" }),
+      ])
+      expect(directories).toEqual([owner.path, owner.path, owner.path])
+    } finally {
+      target.unsubscribe()
+      unsubscribeAmbient()
+      GlobalBus.off("event", onGlobal)
+      HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [] })
+    }
+  }, 15_000)
+
   test("sends temperature, tokens, and reasoning options for openai-compatible models", async () => {
     const server = state.server
     if (!server) {

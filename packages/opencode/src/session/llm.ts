@@ -1,4 +1,5 @@
 import { HostModelTransport } from "../provider/host-transport"
+import { bindHostError, inheritHostError } from "@/error/host-registry"
 import path from "path"
 import { Provider, ProviderError } from "@/provider"
 import { Log } from "@/util"
@@ -195,6 +196,7 @@ export type StreamInput = {
    * OTel functionId, and system assembly). session.status is already processor-owned.
    */
   quietRetryDiagnostics?: boolean
+  retryScope?: "max-candidate" | "max-judge"
   ephemeral?: boolean
   requestID?: string
   assistantMessageID?: string
@@ -265,6 +267,7 @@ const live: Layer.Layer<
   Service,
   never,
   | Auth.Service
+  | Bus.Service
   | Config.Service
   | Provider.Service
   | Plugin.Service
@@ -275,6 +278,7 @@ const live: Layer.Layer<
   Service,
   Effect.gen(function* () {
     const auth = yield* Auth.Service
+    const bus = yield* Bus.Service
     const config = yield* Config.Service
     const provider = yield* Provider.Service
     const plugin = yield* Plugin.Service
@@ -742,12 +746,76 @@ const live: Layer.Layer<
           middleware: [
             {
               specificationVersion: "v3" as const,
-              wrapStream: ({ doStream }) => HostModelTransport.modelCall({
+              wrapStream: ({ doStream, params }) => HostModelTransport.modelCall({
                 sessionID: input.sessionID, userMessageID: input.user.id,
                 assistantMessageID: input.assistantMessageID,
                 providerID: input.model.providerID, modelID: input.model.id, sdk: input.model.api.npm,
                 agent: input.agent.name, ephemeral: !!input.ephemeral, format: input.user.format?.type,
-              }, async () => doStream()),
+              }, async () => {
+                const forwardRaw = params.includeRawChunks === true
+                params.includeRawChunks = true
+                const result = await Promise.resolve().then(doStream).catch((error: unknown) => {
+                  bindHostError(error, { providerID: input.model.providerID })
+                  throw error
+                })
+                const reader = result.stream.getReader()
+                let cancelled = false
+                let pendingRaw: { frame: object; message: string } | undefined
+                const stream: typeof result.stream = new ReadableStream({
+                  async pull(controller) {
+                    try {
+                      while (true) {
+                        const next = await reader.read()
+                        if (cancelled) return
+                        if (next.done) {
+                          pendingRaw = undefined
+                          reader.releaseLock()
+                          controller.close()
+                          return
+                        }
+                        if (next.value.type === "raw") {
+                          const value = next.value.rawValue
+                          pendingRaw = value !== null && typeof value === "object" && !Array.isArray(value) &&
+                            "error" in value && value.error !== null && typeof value.error === "object" &&
+                            "message" in value.error && typeof value.error.message === "string"
+                            ? { frame: value, message: value.error.message } : undefined
+                          if (!forwardRaw) continue
+                          controller.enqueue(next.value)
+                          return
+                        }
+                        const raw = pendingRaw
+                        pendingRaw = undefined
+                        if (next.value.type === "error") {
+                          // Some adapters emit only the message after an adjacent raw error frame.
+                          const error = typeof next.value.error === "string" && raw?.message === next.value.error
+                            ? bindHostError({ ...raw.frame, type: "error", message: next.value.error }, { providerID: input.model.providerID }, { responseBody: JSON.stringify(raw.frame) })
+                            : bindHostError(next.value.error, { providerID: input.model.providerID })
+                          controller.enqueue({ ...next.value, error })
+                          return
+                        }
+                        controller.enqueue(next.value)
+                        return
+                      }
+                    } catch (error) {
+                      pendingRaw = undefined
+                      if (cancelled) return
+                      bindHostError(error, { providerID: input.model.providerID })
+                      reader.releaseLock()
+                      controller.error(error)
+                    }
+                  },
+                  async cancel(reason) {
+                    cancelled = true
+                    pendingRaw = undefined
+                    try {
+                      await reader.cancel(reason)
+                    } finally {
+                      reader.releaseLock()
+                    }
+                  },
+                })
+                return { ...result, stream }
+              }),
               async transformParams(args) {
                 // `generate || stream`, matching session/prompt.ts:597. This file's
                 // only SDK entrypoint is `streamText` (:599), so narrowing to
@@ -793,12 +861,13 @@ const live: Layer.Layer<
               // Restore canonical tool IDs before session processing and persistence.
               // The reactive prefill retry remains scoped to request failures.
               const rawStream = Stream.fromAsyncIterable(result.result.fullStream, (e) =>
-                e instanceof Error ? e : new Error(String(e)),
+                inheritHostError(e, { providerID: input.model.providerID }),
               )
               let hasProviderOutput = false
               return rawStream.pipe(
                 Stream.mapEffect((event) =>
                   Effect.gen(function* () {
+                    if (event.type === "error") inheritHostError(event.error, { providerID: input.model.providerID })
                     if (
                       event.type === "error" &&
                       !hasProviderOutput &&
@@ -810,7 +879,7 @@ const live: Layer.Layer<
                         aborted: ctrl.signal.aborted,
                         allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model),
                       })
-                      if (SessionRetry.decide(normalized, "request").retryable) return yield* Effect.fail(event.error)
+                      if (SessionRetry.decide(normalized, "request", input.retryScope).retryable) return yield* Effect.fail(event.error)
                     }
                     if (event.type !== "start" && event.type !== "error") hasProviderOutput = true
                     return event
@@ -832,7 +901,7 @@ const live: Layer.Layer<
         stream.pipe(
           Stream.flatMap((event) =>
             event.type === "error" && ProviderTransform.isAssistantPrefillRejection(event.error)
-              ? Stream.fail(event.error instanceof Error ? event.error : new Error(String(event.error)))
+              ? Stream.fail(event.error)
               : Stream.succeed(event),
           ),
         )
@@ -858,13 +927,13 @@ const live: Layer.Layer<
           ): Stream.Stream<Event, unknown, never> =>
             source.pipe(
               Stream.catchCause((primaryCause) => {
-                const primaryError = Cause.squash(primaryCause)
-                if (ProviderTransform.isAssistantPrefillRejection(primaryError)) {
+                const primaryError = inheritHostError(Cause.squash(primaryCause), { providerID: input.model.providerID })
+                const normalized = MessageV2.fromError(primaryError, { providerID: input.model.providerID, allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) })
+                if (!normalized.data.hostCode && ProviderTransform.isAssistantPrefillRejection(primaryError)) {
                   if (prefillRepaired) return Stream.failCause(primaryCause)
                   return retryRequest(attempt(true, true), retryCount, startedAt, true)
                 }
-                const normalized = MessageV2.fromError(primaryError, { providerID: input.model.providerID, allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) })
-                const decision = SessionRetry.decide(normalized, "request")
+                const decision = SessionRetry.decide(normalized, "request", input.retryScope)
                 if (!decision.retryable) return Stream.failCause(primaryCause)
                 const budget = SessionRetry.budgetFor(retryConfig, decision)
                 const nextAttempt = retryCount + 1
@@ -893,21 +962,20 @@ const live: Layer.Layer<
                     // Session status is owned by processor (user-visible wait); request
                     // attempts stay on Session.Event.RetryAttempt for diagnostics only —
                     // unless the caller is propose-only ensemble (quietRetryDiagnostics).
-                    if (!input.ephemeral && !input.quietRetryDiagnostics) yield* Effect.promise(() =>
-                      Bus.publish(Session.Event.RetryAttempt, {
-                        sessionID: SessionID.make(input.sessionID),
-                        messageID: input.user.id,
-                        attempt: nextAttempt,
-                        phaseAttempt: nextAttempt,
-                        maxAttempts: budget.maxRetries ?? 0,
-                        phase: "request",
-                        kind: decision.kind,
-                        scope: "request",
-                        reason: decision.message,
-                        nextDelayMs: wait,
-                        hostCode: decision.hostCode,
-                      }),
-                    )
+                    // The Promise bridge would reattach ambient ALS instead of this fiber's InstanceRef.
+                    if (!input.ephemeral && !input.quietRetryDiagnostics) yield* bus.publish(Session.Event.RetryAttempt, {
+                      sessionID: SessionID.make(input.sessionID),
+                      messageID: input.user.id,
+                      attempt: nextAttempt,
+                      phaseAttempt: nextAttempt,
+                      maxAttempts: budget.maxRetries ?? 0,
+                      phase: "request",
+                      kind: decision.kind,
+                      scope: decision.scope,
+                      reason: decision.message,
+                      nextDelayMs: wait,
+                      hostCode: decision.hostCode,
+                    })
                     yield* Effect.sleep(Duration.millis(wait))
                     return retryRequest(attempt(false, true), nextAttempt, deadlineStart)
                   }),
@@ -923,7 +991,7 @@ const live: Layer.Layer<
   }),
 )
 
-export const layer = live.pipe(Layer.provide(Permission.defaultLayer))
+export const layer = live.pipe(Layer.provide(Permission.defaultLayer), Layer.provide(Bus.defaultLayer))
 
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
