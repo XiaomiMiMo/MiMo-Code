@@ -961,6 +961,17 @@ return r.output;`,
   })
 })
 
+function parseXmlCatalog(text: string) {
+  const xml = text.match(/<tools>[\s\S]*<\/tools>/)?.[0]
+  expect(xml).toBeDefined()
+  const decode = (value: string) => value.replaceAll("&#13;", "\r").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&")
+  return [...xml!.matchAll(/<tool>\s*<name>([^<]*)<\/name>\s*<desc>([^<]*)<\/desc>\s*<schema>([^<]*)<\/schema>\s*<\/tool>/g)].map((match) => ({
+    name: decode(match[1]),
+    description: decode(match[2]),
+    inputSchema: JSON.parse(decode(match[3])),
+  }))
+}
+
 describe("renderToolScriptDeclarations", () => {
   // Desktop engine-runtime [TP-R5-04]: retain semantic input constraints, not just TS shapes.
   test("preserves full input JSON Schema in declarations and the guest catalog", async () => {
@@ -974,7 +985,7 @@ describe("renderToolScriptDeclarations", () => {
     const description = "Catalog tool.\n" + "Detailed parameter guidance. ".repeat(15) + "Literal */ and ``` stay data."
     const def: Tool.Def = { ...fakeDef("catalog_probe", async () => "ok"), description, parameters }
     const rendered = renderToolScriptDeclarations([def])
-    const catalog = JSON.parse(rendered.match(/```json\n([\s\S]*?)\n```/)?.[1] ?? "null")
+    const catalog = parseXmlCatalog(rendered)
     expect(catalog).not.toBeNull()
     expect(catalog[0].description).toBe(description)
     expect(catalog[0].inputSchema).toMatchObject({
@@ -988,7 +999,8 @@ describe("renderToolScriptDeclarations", () => {
       },
     })
     expect(catalog[0].inputSchema).toEqual(z.toJSONSchema(parameters, { io: "input" }))
-    expect(rendered).toContain("count?: number")
+    expect(rendered).not.toContain("catalog_probe(input:")
+    expect(rendered).not.toContain("```json")
     const result = await runToolScript("return ALL_TOOLS", [def])
     expect(result.metadata.status).toBe("completed")
     const actual = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
@@ -999,7 +1011,7 @@ describe("renderToolScriptDeclarations", () => {
   test("preserves exec_command descriptions and bounds without exposing bash input", async () => {
     const defs = [fakeDef("bash", async () => "ok"), fakeDef("exec", async () => "unused")]
     const rendered = renderToolScriptDeclarations(defs)
-    const catalog = JSON.parse(rendered.match(/```json\n([\s\S]*?)\n```/)?.[1] ?? "null")
+    const catalog = parseXmlCatalog(rendered)
     expect(catalog).not.toBeNull()
     expect(catalog.map((item: { name: string }) => item.name)).toEqual(["exec_command"])
     expect(catalog[0].inputSchema.properties.cmd.description).toBe("Shell command to execute.")
@@ -1010,21 +1022,46 @@ describe("renderToolScriptDeclarations", () => {
     expect(JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])).toEqual(catalog)
   })
 
-  test("renders TS signatures and skips excluded tools", () => {
-    const defs = [
-      fakeDef("read", async () => "x"),
-      fakeDef("mcp_tool_search", async () => "x"),
-      fakeDef("task", async () => "x"),
-      fakeDef("question", async () => "x"),
-    ]
+  // Desktop engine-runtime [TP-R5-06]: one XML entry per available tool, with only name/desc/schema.
+  test("renders XML entries and skips excluded tools without duplicate signatures", () => {
+    const defs = ["read", "mcp_tool_search", "task", "question"].map((id) => fakeDef(id, async () => "x"))
     const text = renderToolScriptDeclarations(defs)
-    expect(text).toContain("read(input:")
-    expect(text).not.toContain("mcp_tool_search(input:")
+    expect(parseXmlCatalog(text).map((tool) => tool.name)).toEqual(["read", "task", "question"])
+    expect(text.match(/<tool>/g)).toHaveLength(3)
+    expect(text).not.toMatch(/\w+\(input:/)
+    expect(text).not.toContain("```json")
     expect(text).toContain("name: string; description: string")
     expect(text).toContain("declare const ALL_TOOLS")
-    expect(text).toContain("task(input:")
-    expect(text).toContain("question(input:")
     expect(text).toContain("declare const tools")
+  })
+
+  // Desktop engine-runtime [TP-R5-06]: literal markup, entities, multiline descriptions and schema strings round-trip.
+  test("preserves XML-sensitive content and empty input without adding entries", async () => {
+    const description = 'First line\r\n<tool><name>injected</name></tool> &lt; &#13; & "quotes" \'apostrophe\' ]]>\n```xml\n*/ 中文'
+    const def = { ...fakeDef('probe<&"', async () => "ok"), description, parameters: z.object({}) }
+    const text = renderToolScriptDeclarations([def])
+    expect(text).toContain("&lt;tool&gt;")
+    expect(text).toContain("&amp;lt;")
+    expect(text).toContain("&#13;\n")
+    expect(text.match(/<tool>/g)).toHaveLength(1)
+    const catalog = parseXmlCatalog(text)
+    expect(catalog).toEqual([{ name: def.id, description, inputSchema: z.toJSONSchema(def.parameters, { io: "input" }) }])
+    const result = await runToolScript(`return { catalog: ALL_TOOLS, result: await tools[${JSON.stringify(def.id)}]({}) }`, [def])
+    expect(result.metadata.status).toBe("completed")
+    const returned = JSON.parse(result.output.match(/<return_value>\s*([\s\S]*?)\s*<\/return_value>/)![1])
+    expect(returned.catalog).toEqual(catalog)
+    expect(returned.result.output).toBe("ok")
+    const constrained = { ...def, parameters: z.object({ value: z.string().default('<>& "').describe(description) }) }
+    expect(parseXmlCatalog(renderToolScriptDeclarations([constrained]))[0].inputSchema)
+      .toEqual(z.toJSONSchema(constrained.parameters, { io: "input" }))
+  })
+
+  // Desktop engine-runtime [TP-R5-06]: empty and fully filtered tool sets still form a valid empty catalog.
+  test("renders an empty XML catalog", () => {
+    for (const defs of [[], [fakeDef("exec", async () => "unused"), fakeDef("cua_repl_js", async () => "unused")]]) {
+      expect(parseXmlCatalog(renderToolScriptDeclarations(defs))).toEqual([])
+      expect(renderToolScriptDeclarations(defs)).toContain("<tools>\n</tools>")
+    }
   })
 
   test("exclusion list covers recursive and internal tools but allows Codex nested tools", () => {
@@ -1037,18 +1074,11 @@ describe("renderToolScriptDeclarations", () => {
   })
 
   test("exposes exec_command instead of bash in code mode", () => {
-    const text = renderToolScriptDeclarations([fakeDef("bash", async () => "x")])
-    expect(text).toContain("exec_command(input:")
-    expect(text).toContain("Alias for bash")
-    expect(text).toContain("cmd: string")
-    expect(text).toContain("yield_time_ms?: number")
-    expect(text).toContain("max_output_tokens?: number")
-    expect(text).not.toContain("command: string")
-    expect(text).not.toContain("timeout?: number")
-    expect(text).not.toContain("interactive?: boolean")
-    const declaration = text.split("\n").find((line) => line.includes("exec_command(input:"))
-    expect(declaration).toContain("description?: string")
-    expect(text).not.toContain("\n  bash(input:")
+    const catalog = parseXmlCatalog(renderToolScriptDeclarations([fakeDef("bash", async () => "x")]))
+    expect(catalog.map((tool) => tool.name)).toEqual(["exec_command"])
+    expect(catalog[0].inputSchema.required).toEqual(["cmd"])
+    expect(Object.keys(catalog[0].inputSchema.properties)).toEqual(["cmd", "yield_time_ms", "max_output_tokens", "workdir", "description"])
+    expect(catalog[0].inputSchema.properties.description.type).toBe("string")
   })
 
 })
@@ -1102,8 +1132,7 @@ describe("exec MCP dispatch", () => {
     expect(result.output).toContain("Call cua_repl_js_reset directly as a top-level tool")
     expect(calls).toEqual(["node_repl_js"])
     const declarations = renderToolScriptDeclarations([fakeDef("cua_repl_js", async () => ""), fakeDef("cua_repl_js_reset", async () => "")])
-    expect(declarations).not.toContain("cua_repl_js(input:")
-    expect(declarations).not.toContain("cua_repl_js_reset(input:")
+    expect(parseXmlCatalog(declarations)).toEqual([])
   })
 
   // Mimics the SessionPrompt-wrapped MCP execute: resolves with the normalized

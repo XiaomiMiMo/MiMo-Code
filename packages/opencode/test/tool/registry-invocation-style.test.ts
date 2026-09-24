@@ -42,8 +42,8 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
           harness: "codex",
         })
         const exec = defs.find((tool) => tool.id === "exec")!
-        expect(exec.description).toContain("watch_video(input:")
-        expect(exec.description).toContain("listen_audio(input:")
+        expect(exec.description).toContain("<name>watch_video</name>")
+        expect(exec.description).toContain("<name>listen_audio</name>")
         const result = yield* exec.execute(
           {
             code: 'return await Promise.all([tools.watch_video({ path: "clip.mp4" }), tools.listen_audio({ path: "clip.wav" })])',
@@ -128,10 +128,11 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
         nested.forEach((id) => expect(ids).not.toContain(id))
 
         const description = tools.find((tool) => tool.id === "exec")?.description ?? ""
-        expect(description).toContain("webfetch(input:")
-        nested.filter((id) => id !== "bash").forEach((id) => expect(description).toContain(`${id}(input:`))
-        expect(description).toContain("exec_command(input:")
-        expect(description).not.toContain("\n  bash(input:")
+        // Desktop engine-runtime [TP-R5-06]: registry advertises the same nested tools through XML.
+        expect(description).toContain("<name>webfetch</name>")
+        nested.filter((id) => id !== "bash").forEach((id) => expect(description).toContain(`<name>${id}</name>`))
+        expect(description).toContain("<name>exec_command</name>")
+        expect(description).not.toContain("<name>bash</name>")
         expect(description).toContain("`timeout` is always measured in milliseconds")
       }),
     ),
@@ -204,12 +205,12 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
         expect(exec?.description).toContain("Run independent calls with `Promise.all` or `Promise.allSettled`")
         expect(exec?.description).toContain("keep dependent operations sequential")
         expect(exec?.description).toContain("do not use `exec` merely to force concurrency")
-        expect(exec?.description).toContain("apply_patch(input:")
-        expect(exec?.description).toContain("exec_command(input:")
-        expect(exec?.description).not.toContain("\n  bash(input:")
-        expect(exec?.description).not.toContain("read(input:")
-        expect(exec?.description).not.toContain("write(input:")
-        expect(exec?.description).not.toContain("edit(input:")
+        expect(exec?.description).toContain("<name>apply_patch</name>")
+        expect(exec?.description).toContain("<name>exec_command</name>")
+        expect(exec?.description).not.toContain("<name>bash</name>")
+        expect(exec?.description).not.toContain("<name>read</name>")
+        expect(exec?.description).not.toContain("<name>write</name>")
+        expect(exec?.description).not.toContain("<name>edit</name>")
         expect(yield* ids("anthropic/claude-sonnet-4-6")).not.toContain("exec")
         expect(yield* ids("mimo-v2")).not.toContain("exec")
       }),

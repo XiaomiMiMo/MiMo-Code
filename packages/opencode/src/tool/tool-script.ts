@@ -118,41 +118,9 @@ function normalizeExecCode(code: string) {
     .replace(/(?:\s*<\/(?:parameter|paramter)>)+\s*(?:#{1,6}\s*)?$/i, "")
 }
 
-/** JSON Schema (zod v4 toJSONSchema output) → compact TS type text. Best-effort:
- * anything unrecognized renders as `unknown`, which is safe for declarations. */
-function schemaToTs(schema: any): string {
-  if (!schema || typeof schema !== "object") return "unknown"
-  if (schema.const !== undefined) return JSON.stringify(schema.const)
-  if (schema.enum) return schema.enum.map((v: unknown) => JSON.stringify(v)).join(" | ")
-  const variants = schema.anyOf ?? schema.oneOf
-  if (variants) return variants.map(schemaToTs).join(" | ")
-  switch (schema.type) {
-    case "string":
-      return "string"
-    case "number":
-    case "integer":
-      return "number"
-    case "boolean":
-      return "boolean"
-    case "null":
-      return "null"
-    case "array":
-      return `Array<${schemaToTs(schema.items)}>`
-    case "object": {
-      if (!schema.properties) {
-        if (schema.additionalProperties && typeof schema.additionalProperties === "object")
-          return `Record<string, ${schemaToTs(schema.additionalProperties)}>`
-        return "Record<string, unknown>"
-      }
-      const required = new Set<string>(schema.required ?? [])
-      const fields = Object.entries(schema.properties).map(
-        ([key, value]) => `${key}${required.has(key) ? "" : "?"}: ${schemaToTs(value)}`,
-      )
-      return `{ ${fields.join("; ")} }`
-    }
-    default:
-      return "unknown"
-  }
+/** Escape XML text without normalizing description line endings. */
+function escapeXmlText(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\r", "&#13;")
 }
 
 /** One metadata source for the model-facing declaration and the exec guest. */
@@ -180,22 +148,15 @@ function toolScriptCatalog(defs: Tool.Def[]) {
   return [...entries, ...aliasEntries]
 }
 
-/** Full JSON schemas are authoritative; TS signatures are a calling convenience. */
+/** XML tool entries carry the full descriptions and authoritative JSON Schemas. */
 export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
   const catalog = toolScriptCatalog(defs)
-  const lines = catalog.map((entry) => {
-    const target = TOOL_SCRIPT_ALIASES[entry.name as keyof typeof TOOL_SCRIPT_ALIASES]
-    const summary = entry.description.split("\n").find((line) => line.trim()) ?? ""
-    const comment = `${target ? `Alias for ${target}. ` : ""}${summary.trim().slice(0, 200)}`.replaceAll("*/", "* /")
-    return `  /** ${comment} */\n  ${entry.name}(input: ${schemaToTs(entry.inputSchema)}): Promise<ToolResult>`
-  })
   return [
     "```ts",
     "type ToolResult = { title: string; output: string; metadata: Record<string, unknown>; structured?: unknown }",
     "declare const tools: {",
-    ...lines,
-    "  /** Request-authorized MCP tools are callable by their exact ALL_TOOLS catalog name. */",
-    "  [mcpToolName: string]: (input: Record<string, unknown>) => Promise<ToolResult>",
+    "  /** Call tools by their exact name from the XML catalog or ALL_TOOLS. */",
+    "  [toolName: string]: (input: Record<string, unknown>) => Promise<ToolResult>",
     "}",
     "/** Every callable tool, with its full description and input JSON Schema. */",
     "declare const ALL_TOOLS: ReadonlyArray<{ name: string; description: string; inputSchema: Record<string, unknown> }>",
@@ -208,10 +169,16 @@ export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
     "}",
     "```",
     "",
-    "Full tool descriptions and input JSON Schemas follow. These schemas are authoritative, including field descriptions, defaults, bounds, and nested constraints; the TypeScript signatures above are only a convenience. MCP schemas are available through ALL_TOOLS.",
-    "```json",
-    JSON.stringify(catalog),
-    "```",
+    "Each XML tool entry contains its name, full description (desc), and authoritative input JSON Schema (schema), including field descriptions, defaults, bounds, and nested constraints. MCP schemas are available through ALL_TOOLS.",
+    "<tools>",
+    ...catalog.map((entry) => [
+      "  <tool>",
+      `    <name>${escapeXmlText(entry.name)}</name>`,
+      `    <desc>${escapeXmlText(entry.description)}</desc>`,
+      `    <schema>${escapeXmlText(JSON.stringify(entry.inputSchema, null, 2))}</schema>`,
+      "  </tool>",
+    ].join("\n")),
+    "</tools>",
   ].join("\n")
 }
 
