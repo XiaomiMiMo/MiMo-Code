@@ -37,7 +37,6 @@ import * as SessionRetry from "./retry"
 import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { usesGPTToolset } from "@/tool/gpt"
-import { isMimoModel } from "@/provider/mimo-model"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
@@ -502,8 +501,7 @@ const live: Layer.Layer<
           }))),
       ]
       if (
-        input.model.api.npm === "@ai-sdk/openai" &&
-        [input.model.id, input.model.api.id, input.model.family ?? ""].some(isMimoModel) &&
+        input.model.api.npm === "@mimo/responses" &&
         !input.ephemeral
       ) {
         system.push(

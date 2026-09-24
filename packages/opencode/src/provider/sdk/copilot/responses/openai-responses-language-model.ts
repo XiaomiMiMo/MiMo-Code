@@ -434,6 +434,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
               z.object({
                 type: z.literal("message"),
                 role: z.literal("assistant"),
+                phase: z.enum(["commentary", "final_answer"]).nullish(),
                 id: z.string(),
                 content: z.array(
                   z.object({
@@ -500,6 +501,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
           service_tier: z.string().nullish(),
           incomplete_details: z.object({ reason: z.string() }).nullish(),
           usage: usageSchema,
+          end_turn: z.boolean().nullish(),
         }),
       ),
       abortSignal: options.abortSignal,
@@ -597,6 +599,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
               providerMetadata: {
                 openai: {
                   itemId: part.id,
+                  ...(part.phase != null ? { phase: part.phase } : {}),
                 },
               },
             })
@@ -755,7 +758,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     }
 
     const providerMetadata: SharedV3ProviderMetadata = {
-      openai: { responseId: response.id },
+      openai: { responseId: response.id, ...(response.end_turn != null ? { endTurn: response.end_turn } : {}) },
     }
 
     if (logprobs.length > 0) {
@@ -886,6 +889,8 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     // Track a stable text part id for the current assistant message.
     // Copilot may change item_id across text deltas; normalize to one id.
     let currentTextId: string | null = null
+    let currentTextPhase: "commentary" | "final_answer" | undefined
+    let endTurn: boolean | undefined
 
     let serviceTier: string | undefined
 
@@ -1003,12 +1008,14 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
               } else if (value.item.type === "message") {
                 // Start a stable text part for this assistant message
                 currentTextId = value.item.id
+                currentTextPhase = value.item.phase ?? undefined
                 controller.enqueue({
                   type: "text-start",
                   id: value.item.id,
                   providerMetadata: {
                     openai: {
                       itemId: value.item.id,
+                      ...(currentTextPhase != null ? { phase: currentTextPhase } : {}),
                     },
                   },
                 })
@@ -1182,11 +1189,14 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                 })
               } else if (value.item.type === "message") {
                 if (currentTextId) {
+                  const phase = value.item.phase ?? currentTextPhase
                   controller.enqueue({
                     type: "text-end",
                     id: currentTextId,
+                    providerMetadata: { openai: { itemId: currentTextId, ...(phase != null ? { phase } : {}) } },
                   })
                   currentTextId = null
+                  currentTextPhase = undefined
                 }
               } else if (isResponseOutputItemDoneReasoningChunk(value)) {
                 const reasoningIndex = activeReasoning[value.output_index] ? value.output_index :
@@ -1365,6 +1375,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                 } },
               })
             } else if (isResponseFinishedChunk(value)) {
+              endTurn = value.response.end_turn ?? undefined
               finishReason = {
                 unified: mapOpenAIResponseFinishReason({
                   finishReason: value.response.incomplete_details?.reason,
@@ -1407,7 +1418,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
           flush(controller) {
             // Close any dangling text part
             if (currentTextId) {
-              controller.enqueue({ type: "text-end", id: currentTextId })
+              controller.enqueue({ type: "text-end", id: currentTextId, providerMetadata: { openai: { itemId: currentTextId, ...(currentTextPhase != null ? { phase: currentTextPhase } : {}) } } })
               currentTextId = null
             }
 
@@ -1420,6 +1431,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
             const providerMetadata: SharedV3ProviderMetadata = {
               openai: {
                 responseId,
+                ...(endTurn != null ? { endTurn } : {}),
               },
             }
 
@@ -1493,6 +1505,7 @@ const responseFinishedChunkSchema = z.object({
   response: z.object({
     incomplete_details: z.object({ reason: z.string() }).nullish(),
     usage: usageSchema,
+    end_turn: z.boolean().nullish(),
     service_tier: z.string().nullish(),
   }),
 })
@@ -1514,6 +1527,7 @@ const responseOutputItemAddedSchema = z.object({
     z.object({
       type: z.literal("message"),
       id: z.string(),
+      phase: z.enum(["commentary", "final_answer"]).nullish(),
     }),
     z.object({
       type: z.literal("reasoning"),
@@ -1577,6 +1591,7 @@ const responseOutputItemDoneSchema = z.object({
     z.object({
       type: z.literal("message"),
       id: z.string(),
+      phase: z.enum(["commentary", "final_answer"]).nullish(),
     }),
     z.object({
       type: z.literal("reasoning"),

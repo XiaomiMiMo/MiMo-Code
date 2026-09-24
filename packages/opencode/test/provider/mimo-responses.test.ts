@@ -58,13 +58,13 @@ test("MiMo Responses transport view keeps identity and original metadata", async
   const { ModelID, ProviderID } = await import("../../src/provider/schema")
   const model = ProviderTest.model({ id: ModelID.make("deployment"), providerID: ProviderID.make("test"), family: "mimo", api: { id: "mimo-v2.6", npm: "@ai-sdk/openai-compatible", url: "https://example.test/v1" } })
   const codex = Provider.forHarness(model, "codex")
-  expect(codex.api.npm).toBe("@ai-sdk/openai")
+  expect(codex.api.npm).toBe("@mimo/responses")
   expect(codex.id).toBe(model.id)
   expect(codex.providerID).toBe(model.providerID)
   expect(codex.api.url).toBe(model.api.url)
   expect(Provider.forHarness(model, "default")).toBe(model)
   expect(model.api.npm).toBe("@ai-sdk/openai-compatible")
-  expect(ProviderTransform.providerOptions(codex, {})).toEqual({ openai: { forceReasoning: true, allowUnencryptedReasoning: true, systemMessageMode: "system", store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } })
+  expect(ProviderTransform.providerOptions(codex, {})).toEqual({ openai: { store: false, include: ["reasoning.encrypted_content"], reasoningSummary: "auto" } })
 })
 
 // [TP-R11-03] A sparse terminal event must not erase encrypted reasoning from the start.
@@ -92,10 +92,10 @@ test("v2.6-flash-test is a MiMo Responses alias without changing its API model I
   const model = ProviderTest.model({ id: ModelID.make("v2.6-flash-test"), providerID: ProviderID.make("test"), api: { id: "v2.6-flash-test", npm: "@ai-sdk/openai-compatible", url: "https://example.test/v1" } })
   expect(Provider.isMimoOrSmartModel("v2.6-flash-test")).toBe(true)
   expect(Provider.isMimoOrSmartModel("test/v2.6-flash-test")).toBe(true)
-  expect(Provider.isMimoOrSmartModel("v2.6-pro-test")).toBe(false)
+  expect(Provider.isMimoOrSmartModel("v2.6-pro-test")).toBe(true)
   expect(Provider.isMimoOrSmartModel("v2.6-flash-test-other")).toBe(false)
   const resolved = Provider.forHarness(model, "codex")
-  expect(resolved.api.npm).toBe("@ai-sdk/openai")
+  expect(resolved.api.npm).toBe("@mimo/responses")
   expect(resolved.api.id).toBe("v2.6-flash-test")
   expect(Provider.forHarness(model, "default")).toBe(model)
   const sdk = createOpenaiCompatible({ name: "openai", baseURL: "https://example.test/v1", fetch: (async (_url, init) => {

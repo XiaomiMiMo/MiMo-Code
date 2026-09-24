@@ -138,9 +138,11 @@ export async function convertToOpenAIResponsesInput({
         for (const part of content) {
           switch (part.type) {
             case "text": {
+              const phase = part.providerOptions?.openai?.phase
               input.push({
                 role: "assistant",
                 content: [{ type: "output_text", text: part.text }],
+                ...(phase === "commentary" || phase === "final_answer" ? { phase } : {}),
                 id: (part.providerOptions?.openai?.itemId as string) ?? undefined,
               })
               break

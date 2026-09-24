@@ -47,6 +47,7 @@ export type OpenAIResponsesUserMessage = {
 
 export type OpenAIResponsesAssistantMessage = {
   role: "assistant"
+  phase?: "commentary" | "final_answer"
   content: Array<{ type: "output_text"; text: string }>
   id?: string
 }
