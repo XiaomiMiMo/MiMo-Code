@@ -123,6 +123,70 @@ describe("Inbox.drain in loop (Plan 2 / Task 7)", () => {
     })
   })
 
+  for (const mode of ["main", "subagent"] as const) {
+    test(`tier-2 seed: empty ${mode} keeps notifications until its own model-bearing message exists`, async () => {
+      await using tmp = await tmpdir({ git: true })
+      await withInbox(tmp.path, async (rt) => {
+        const session = await rt.runPromise(Session.Service.use((s) => s.create()))
+        const actorID = mode === "main" ? "main" : "actor-empty"
+        if (mode === "subagent") {
+          await rt.runPromise(
+            ActorRegistry.Service.use((reg) =>
+              reg.register({
+                sessionID: session.id,
+                actorID,
+                mode,
+                agent: "general",
+                description: "empty receiver",
+                contextMode: "none",
+                background: true,
+                lifecycle: "ephemeral",
+              }),
+            ),
+          )
+        }
+        await seedRealMessage(rt, session.id, "another-actor")
+        let defaultCalls = 0
+        defaultModelRef.current = {
+          defaultModel: () => Effect.sync(() => {
+            defaultCalls += 1
+            return { providerID: ProviderID.make("test"), modelID: ModelID.make("default-model") }
+          }),
+        }
+        await rt.runPromise(
+          Inbox.Service.use((inbox) => inbox.send({
+            receiverSessionID: session.id,
+            receiverActorID: actorID,
+            content: "pending notification",
+            wake: false,
+          })),
+        )
+
+        expect(await rt.runPromise(Inbox.Service.use((inbox) => inbox.drain(session.id, actorID)))).toBe(0)
+        expect(defaultCalls).toBe(0)
+        expect(await rt.runPromise(
+          Session.Service.use((sessions) => sessions.messages({ sessionID: session.id, agentID: actorID })),
+        )).toEqual([])
+
+        await seedRealMessage(rt, session.id, actorID)
+        expect(await rt.runPromise(Inbox.Service.use((inbox) => inbox.drain(session.id, actorID)))).toBe(1)
+        const messages = await rt.runPromise(
+          Session.Service.use((sessions) => sessions.messages({ sessionID: session.id, agentID: actorID })),
+        )
+        const delivered = messages.findLast((message) => message.info.role === "user")
+        expect(delivered?.info).toMatchObject({
+          agent: "general",
+          model: { providerID: "test", modelID: "test-model" },
+        })
+        const parts = delivered?.parts.filter((part) => part.type === "text" && part.synthetic)
+        expect(parts).toHaveLength(1)
+        expect(parts?.[0]).toMatchObject({ text: expect.stringContaining("pending notification") })
+        expect(await rt.runPromise(Inbox.Service.use((inbox) => inbox.drain(session.id, actorID)))).toBe(0)
+        expect(defaultCalls).toBe(0)
+      })
+    })
+  }
+
   test("3 sends → drain returns 3 after seeding real message", async () => {
     await using tmp = await tmpdir({ git: true })
     await withInbox(tmp.path, async (rt) => {

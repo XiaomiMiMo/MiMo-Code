@@ -304,7 +304,8 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
           yield* llm.text("first result")
           const spawned = yield* actor.spawn({ mode, sessionID: parent.id, parentActorID: "owner", agentType: "build", task: "first", context: "none", tools: ["read"], background: true, model: ref })
           yield* Deferred.await(spawned.outcome)
-          expect((yield* parentInboxRows(parent.id, "owner")).length).toBe(1)
+          const initial = yield* parentInboxRows(parent.id, "owner")
+          expect(initial).toHaveLength(1)
           const before = yield* llm.calls
           if (terminal === "success") yield* llm.text("second result")
           if (terminal === "failure") yield* llm.error(401, { error: { message: "invalid credential", type: "authentication_error" } })
@@ -329,11 +330,13 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
           if (terminal === "failure") expect(entry?.resultMessageID).toBeUndefined()
           yield* actor.cancel(spawned.sessionID, spawned.actorID, "forced")
           const rows = yield* parentInboxRows(parent.id, "owner")
-          // Inbox delivery consumes the previous turn's envelope; the new
-          // execution must leave exactly one newly addressed notification.
-          expect(rows.length).toBe(1)
+          expect(rows).toHaveLength(2)
+          expect(rows).toEqual(expect.arrayContaining(initial))
+          const added = rows.filter((row) => row.id !== initial[0].id)
+          expect(added).toHaveLength(1)
           expect((yield* parentInboxRows(parent.id)).length).toBe(0)
-          const content = rows[0].content as { text?: string }
+          expect(yield* sessions.messages({ sessionID: parent.id, agentID: "owner" })).toEqual([])
+          const content = added[0].content as { text?: string }
           expect(content.text).toContain(terminal === "success" ? "completed" : terminal === "failure" ? "failed" : "cancelled")
           if (terminal === "success") expect(content.text).toContain("second result")
           if (terminal === "cancelled") {
@@ -341,19 +344,18 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
             yield* prompt.prompt({ sessionID: spawned.sessionID, agentID: spawned.actorID, agent: "build", model: ref, noReply: true, parts: [{ type: "text", text: "new turn" }] })
             yield* prompt.loop({ sessionID: spawned.sessionID, agentID: spawned.actorID, notifyParentOnComplete: true })
             const next = yield* parentInboxRows(parent.id, "owner")
-            expect(next.length).toBe(1)
-            expect((next[0].content as { text?: string }).text).toContain("after cancellation")
+            expect(next).toHaveLength(3)
+            expect(next).toEqual(expect.arrayContaining(rows))
+            const resumed = next.filter((row) => !rows.some((prior) => prior.id === row.id))
+            expect(resumed).toHaveLength(1)
+            expect((resumed[0].content as { text?: string }).text).toContain("after cancellation")
           }
         }), { git: true, config: providerCfg },
       ))
     }
   }
 
-  // Regression guard: successful completion still notifies exactly once (no
-  // double-notify introduced by the bridge). Read immediately after the outcome
-  // resolves — forkWork sends the notification BEFORE resolving the Deferred, so
-  // the row is present without an added sleep (a post-terminal sleep lets the
-  // ephemeral actor's Instance tear down and the row disappears).
+  // The empty main slice cannot consume notifications without its own model-bearing message.
   it.live("successful background subagent still notifies parent exactly once (completed)", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -422,6 +424,8 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
         })
 
         yield* Deferred.await(result.outcome)
+        expect(yield* Inbox.Service.use((inbox) => inbox.drain(parent.id, "main"))).toBe(0)
+        expect(yield* session.messages({ sessionID: parent.id, agentID: "main" })).toEqual([])
 
         const rows = yield* parentInboxRows(parent.id)
         expect(rows.length).toBe(1)
