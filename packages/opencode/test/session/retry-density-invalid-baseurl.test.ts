@@ -1,7 +1,9 @@
 import { describe, expect } from "bun:test"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Effect, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { createServer, type ServerResponse } from "node:http"
 import path from "path"
+import type z from "zod"
 import type { Agent } from "../../src/agent/agent"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
@@ -20,9 +22,8 @@ import { SessionSummary } from "../../src/session/summary"
 import { Snapshot } from "../../src/snapshot"
 import { Log } from "../../src/util"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { provideTmpdirServer } from "../fixture/fixture"
+import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { TestLLMServer } from "../lib/llm-server"
 import { resetAllMonitors } from "../../src/session/try-best-detector"
 import { ProviderError } from "../../src/provider"
 import { decide } from "../../src/session/retry"
@@ -44,10 +45,11 @@ const ref = {
   modelID: ModelID.make("test-model"),
 }
 
-/** Invalid upstream — ECONNREFUSED (proxy/down) style; DNS-fail host covered separately. */
-const BAD_BASE = "http://127.0.0.1:1/v1"
-
-const cfg = {
+const cfg = (baseURL: string): Partial<Config.Info> => ({
+  // Scale the real backoff down; retry.test.ts covers the production 5s→60s ladder.
+  retry: {
+    network: { initialDelayMs: 20, maxDelayMs: 160, jitterRatio: 0 },
+  },
   provider: {
     test: {
       name: "Test",
@@ -70,11 +72,11 @@ const cfg = {
       },
       options: {
         apiKey: "test-key",
-        baseURL: BAD_BASE,
+        baseURL,
       },
     },
   },
-}
+})
 
 function agent(): Agent.Info {
   return {
@@ -98,10 +100,7 @@ const deps = Layer.mergeAll(
   Provider.defaultLayer,
   statusLayer,
 ).pipe(Layer.provideMerge(infra))
-const env = Layer.mergeAll(
-  TestLLMServer.layer,
-  SessionProcessor.layer.pipe(Layer.provide(summary), Layer.provideMerge(deps)),
-)
+const env = SessionProcessor.layer.pipe(Layer.provide(summary), Layer.provideMerge(deps))
 const it = testEffect(env)
 
 const boot = Effect.fn("density.boot")(function* () {
@@ -152,99 +151,147 @@ const assistant = Effect.fn("density.assistant")(function* (sessionID: SessionID
   return msg
 })
 
-type Publish = { t: number; attempt: number; phase?: string; waitMs: number; message?: string }
+const disconnectedUpstream = Effect.fn("density.upstream")(function* (phase: "request" | "stream") {
+  const hits: Array<{ t: number; method?: string; url?: string }> = []
+  let response: ServerResponse | undefined
+  const server = yield* Effect.acquireRelease(
+    Effect.sync(() => createServer((req, res) => {
+      hits.push({ t: Date.now(), method: req.method, url: req.url })
+      req.resume()
+      if (phase === "request") {
+        req.socket.destroy()
+        return
+      }
+      response = res
+      res.writeHead(200, { "content-type": "text/event-stream" })
+      res.write('data: {"id":"chatcmpl-test","object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant","content":"partial"}}]}\n\n')
+    })),
+    (server) => Effect.promise(() => new Promise<void>((resolve) => {
+      server.close(() => resolve())
+      server.closeAllConnections()
+    })),
+  )
+  yield* Effect.promise(() => new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", resolve)
+  }))
+  const address = server.address()
+  if (!address || typeof address === "string") throw new Error("Expected TCP listener")
+  return { url: `http://127.0.0.1:${address.port}/v1`, hits, disconnect: () => response?.destroy() }
+})
 
-describe("retry density instrumentation (invalid baseURL)", () => {
-  it.live(
-    "records session.status{retry} density when upstream base URL is unreachable",
-    () =>
-      provideTmpdirServer(
-        ({ dir }) =>
-          Effect.gen(function* () {
+describe("retry density instrumentation (upstream transport failure)", () => {
+  for (const phase of ["request", "stream"] as const) {
+    it.live(
+      `${phase} retries preserve event ownership, backoff density, and cancellation`,
+      () => Effect.gen(function* () {
+        const upstream = yield* disconnectedUpstream(phase)
+        yield* provideTmpdirInstance(
+          (dir) => Effect.gen(function* () {
             const { processors, session, provider } = yield* boot()
             const bus = yield* Bus.Service
+            const status = yield* SessionStatus.Service
             const chat = yield* session.create({})
             const parent = yield* user(chat.id, "ping")
             const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
             const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
-
-            const publishes: Publish[] = []
-            const t0 = Date.now()
-            const off = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
-              if (evt.properties.sessionID !== chat.id) return
-              const s = evt.properties.status
-              if (s.type !== "retry") return
-              publishes.push({
-                t: Date.now() - t0,
-                attempt: s.attempt,
-                phase: s.phase,
-                waitMs: Math.max(0, s.next - Date.now()),
-                message: s.message,
-              })
+            const deltas: string[] = []
+            const offDelta = yield* bus.subscribeCallback(MessageV2.Event.PartDelta, (evt) => {
+              if (evt.properties.sessionID !== chat.id || evt.properties.messageID !== msg.id) return
+              deltas.push(evt.properties.delta)
+              // Disconnect only after the processor has consumed output, not merely after headers were written.
+              upstream.disconnect()
             })
 
+            const retries: Array<z.infer<typeof Session.Event.RetryAttempt.properties>> = []
+            const states: Array<{ t: number; status: SessionStatus.RetryInfo }> = []
+            const observed = yield* Deferred.make<void>()
+            const offRetry = yield* bus.subscribeCallback(Session.Event.RetryAttempt, (evt) => {
+              if (evt.properties.sessionID !== chat.id) return
+              retries.push(evt.properties)
+              if (retries.length === 6) Deferred.doneUnsafe(observed, Effect.void)
+            })
+            const offStatus = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
+              if (evt.properties.sessionID !== chat.id || evt.properties.status.type !== "retry") return
+              states.push({ t: Date.now(), status: evt.properties.status })
+            })
+            yield* Effect.addFinalizer(() => Effect.sync(() => {
+              offRetry()
+              offStatus()
+              offDelta()
+            }))
             const handle = yield* processors.create({
               assistantMessage: msg,
               sessionID: chat.id,
               model: mdl,
             })
-
-            // Drive one process() against unreachable baseURL. Default retry budgets:
-            // request 200ms×4 then stream-network 5s→60s (persistent). Cap wall clock
-            // so the suite stays finite; we only need the publish trace + gaps.
-            const proc = handle.process({
-              user: {
-                id: parent.id,
-                sessionID: chat.id,
-                role: "user",
-                time: parent.time,
-                agent: parent.agent,
-                model: { providerID: ref.providerID, modelID: ref.modelID },
-              },
+            const run = yield* handle.process({
+              user: parent,
               sessionID: chat.id,
               model: mdl,
               agent: agent(),
               system: [],
               messages: [{ role: "user", content: "ping" }],
               tools: {},
-            })
+            }).pipe(Effect.forkChild)
 
-            yield* proc.pipe(Effect.timeout("32 seconds"), Effect.option)
-            off()
+            yield* Deferred.await(observed).pipe(Effect.timeout("32 seconds"))
+            expect(handle.message.error).toBeUndefined()
+            expect((yield* status.get(chat.id)).type).toBe(phase === "request" ? "busy" : "retry")
+            yield* Fiber.interrupt(run)
+            const exit = yield* Fiber.await(run)
+            expect(Exit.isFailure(exit)).toBe(true)
+            if (Exit.isFailure(exit)) expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+            if (phase === "request") {
+              expect(handle.message.error?.name).toBe("MessageAbortedError")
+              const stored = MessageV2.get({ sessionID: chat.id, messageID: msg.id })
+              expect(stored.info).toMatchObject({ role: "assistant", error: { name: "MessageAbortedError" } })
+            }
 
-            const elapsed = Date.now() - t0
-            const gaps = publishes.slice(1).map((p, i) => p.t - publishes[i]!.t)
-            // Diagnostic line for humans reading CI / local output
-            console.log(
-              "[retry-density] baseURL=%s elapsed=%dms publishes=%d attempts=%j phases=%j waits=%j gaps=%j messages=%j",
-              BAD_BASE,
-              elapsed,
-              publishes.length,
-              publishes.map((p) => p.attempt),
-              publishes.map((p) => p.phase),
-              publishes.map((p) => p.waitMs),
-              gaps,
-              publishes.map((p) => p.message),
-            )
-
-            expect(publishes.length).toBeGreaterThan(0)
-            // After the fix: session.status{retry} is processor-owned (stream phase only).
-            // Unreachable baseURL must NOT stack request-phase frames onto the UI streak.
-            // Measured pre-fix: 20 frames / 32s (4×request + 1×stream per cycle).
-            // Post-fix ceiling in 32s under stream/server 2s→30s ladders ≈ 4–6.
-            expect(publishes.length).toBeLessThan(10)
-            expect(publishes.every((p) => p.phase !== "request")).toBe(true)
-            // Processor waits should grow (exponential), not restart at ~200ms.
-            const streamWaits = publishes.map((p) => p.waitMs)
-            for (let i = 1; i < streamWaits.length; i++) {
-              expect(streamWaits[i]!).toBeGreaterThanOrEqual(streamWaits[i - 1]! * 0.5)
+            // Keep observers and the upstream alive past the cancelled wait to catch reopened requests.
+            yield* Effect.sleep("350 millis")
+            expect(upstream.hits).toHaveLength(6)
+            for (const hit of upstream.hits) expect(hit).toMatchObject({ method: "POST", url: "/v1/chat/completions" })
+            expect(deltas).toEqual(phase === "stream" ? Array(6).fill("partial") : [])
+            expect(retries).toHaveLength(6)
+            const waits = [20, 40, 80, 160, 160, 160]
+            for (const [i, retry] of retries.entries()) {
+              expect(retry).toMatchObject({
+                sessionID: chat.id,
+                messageID: phase === "request" ? parent.id : msg.id,
+                attempt: i + 1,
+                phaseAttempt: i + 1,
+                maxAttempts: 0,
+                phase,
+                scope: phase === "request" ? "request" : "live-step",
+                kind: "network",
+              })
+              expect(retry.hostCode).toBeUndefined()
+              expect(retry.reason.length).toBeGreaterThan(0)
+              if (phase === "request") expect(retry.nextDelayMs).toBe(waits[i]!)
+              expect(retry.nextDelayMs).toBeGreaterThanOrEqual(0)
+              expect(retry.nextDelayMs).toBeLessThanOrEqual(waits[i]!)
+              if (i > 0) {
+                expect(upstream.hits[i]!.t - upstream.hits[i - 1]!.t).toBeGreaterThanOrEqual(waits[i - 1]! - 2)
+              }
+            }
+            expect(states).toHaveLength(phase === "request" ? 0 : 6)
+            for (const [i, state] of states.entries()) {
+              expect(state.status).toMatchObject({
+                attempt: i + 1, phaseAttempt: i + 1, phase: "stream", scope: "live-step",
+                message: retries[i]!.reason,
+              })
+              expect(state.status.next - upstream.hits[i]!.t).toBeGreaterThanOrEqual(waits[i]!)
+              expect(state.status.next - state.t).toBeLessThanOrEqual(waits[i]!)
+              if (i > 0) expect(upstream.hits[i]!.t).toBeGreaterThanOrEqual(states[i - 1]!.status.next - 2)
             }
           }),
-        // Ignore the fixture LLM server URL — force unreachable upstream.
-        { git: true, config: () => cfg },
-      ),
-    60_000,
-  )
+          { git: true, config: cfg(upstream.url) },
+        )
+      }),
+      60_000,
+    )
+  }
 
   it.live("classifies DNS-failure and connection-refused shapes as retryable", () =>
     Effect.sync(() => {
