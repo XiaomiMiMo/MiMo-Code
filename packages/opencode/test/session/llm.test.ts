@@ -1541,7 +1541,7 @@ describe("session.llm.stream", () => {
 })
 
 // [TP-R11-04] Request headers follow the effective mode, even when a language SDK is reused.
-for (const modelID of ["v2.6-flash-test", "gpt-5-test"]) {
+for (const modelID of ["mimo-example", "gpt-5-test"]) {
   test(`Codex lite header follows mode changes for ${modelID}`, async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")

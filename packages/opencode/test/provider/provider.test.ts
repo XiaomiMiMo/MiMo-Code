@@ -1943,7 +1943,7 @@ test("xiaomi chat streams reasoning_content as reasoning parts", async () => {
   }
 })
 
-test("mimo model ids respect explicit @ai-sdk/openai in config", async () => {
+test("explicit MiMo Responses config uses the compatible adapter and preserves standard OpenAI", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -1973,18 +1973,18 @@ test("mimo model ids respect explicit @ai-sdk/openai in config", async () => {
     directory: tmp.path,
     fn: async () => {
       const models = (await list())[ProviderID.make("my-gateway")].models
-      expect(models["MiMo-V2.6"].api.npm).toBe("@ai-sdk/openai")
-      expect(models["alias-model"].api.npm).toBe("@ai-sdk/openai")
-      expect(models["mimo-auto"].api.npm).toBe("@ai-sdk/openai")
+      expect(models["MiMo-V2.6"].api.npm).toBe("@mimo/responses")
+      expect(models["alias-model"].api.npm).toBe("@mimo/responses")
+      expect(models["mimo-auto"].api.npm).toBe("@mimo/responses")
       expect(models["gpt-5.4"].api.npm).toBe("@ai-sdk/openai")
       expect(models["mimosa-1"].api.npm).toBe("@ai-sdk/openai")
-      // Explicit SDK and provider identity both stay as configured.
+      // Only the SDK is pinned; the provider stays as configured.
       expect(models["MiMo-V2.6"].providerID).toBe(ProviderID.make("my-gateway"))
     },
   })
 })
 
-test("mimo model ids respect explicit @ai-sdk/openai from models.dev", () => {
+test("catalog MiMo models preserve Responses selection without affecting other providers", () => {
   const model = (id: string, npm?: string) => ({
     id,
     name: id,
@@ -2007,7 +2007,7 @@ test("mimo model ids respect explicit @ai-sdk/openai from models.dev", () => {
   } as unknown as ModelsDev.Provider
 
   const models = Provider.fromModelsDevProvider(provider).models
-  expect(models["xiaomi/mimo-v2.5"].api.npm).toBe("@ai-sdk/openai")
+  expect(models["xiaomi/mimo-v2.5"].api.npm).toBe("@mimo/responses")
   expect(models["XiaomiMiMo/MiMo-V2.5-Pro"].api.npm).toBe("@ai-sdk/openai-compatible")
   expect(models["gpt-5.4"].api.npm).toBe("@ai-sdk/openai")
   expect(models["xiaomi/mimo-v2.5"].providerID).toBe(ProviderID.make("test-provider"))
@@ -3510,48 +3510,4 @@ test("plugin config enabled and disabled providers are honored", async () => {
       expect(providers[ProviderID.openai]).toBeUndefined()
     },
   })
-})
-
-// [TP-R11-09] A shared provider can serve MiMo and standard OpenAI models.
-test("MiMo Responses normalization never leaks through the SDK cache to OpenAI models", async () => {
-  const events = [
-    { type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_test" } },
-    { type: "response.content_part.added", item_id: "rs_test", content_index: 0, part: { type: "reasoning_text", text: "" } },
-    { type: "response.reasoning_text.delta", item_id: "rs_test", content_index: 0, delta: "Synthetic reasoning." },
-    { type: "response.output_item.done", output_index: 0, item: { type: "reasoning", id: "rs_test" } },
-    { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 1 } } },
-  ]
-  const server = Bun.serve({
-    port: 0,
-    fetch: () => new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""), {
-      headers: { "content-type": "text/event-stream" },
-    }),
-  })
-  try {
-    for (const order of [["mimo-test", "gpt-test"], ["gpt-test", "mimo-test"]]) {
-      await using tmp = await tmpdir({ init: async dir => {
-        await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({
-          enabled_providers: ["example"],
-          provider: { example: {
-            npm: "@ai-sdk/openai",
-            options: { apiKey: "test-key", baseURL: `http://127.0.0.1:${server.port}/v1` },
-            models: { "mimo-test": {}, "gpt-test": {} },
-          } },
-        }))
-      } })
-      await Instance.provide({ directory: tmp.path, fn: async () => {
-        for (const id of order) {
-          const model = await getModel(ProviderID.make("example"), ModelID.make(id))
-          const language = await getLanguage(model)
-          const result = await language.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "test" }] }] })
-          const parts: import("@ai-sdk/provider").LanguageModelV3StreamPart[] = []
-          await result.stream.pipeTo(new WritableStream({ write(part) { parts.push(part) } }))
-          expect(parts.filter(part => part.type === "error")).toEqual([])
-          expect(parts.filter(part => part.type === "reasoning-delta").map(part => part.delta)).toEqual(id === "mimo-test" ? ["Synthetic reasoning."] : [])
-        }
-      } })
-    }
-  } finally {
-    server.stop(true)
-  }
 })

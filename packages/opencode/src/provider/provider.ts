@@ -6,9 +6,7 @@ import os from "os"
 import fuzzysort from "fuzzysort"
 import { Config } from "../config"
 import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
-import { NoSuchModelError, wrapLanguageModel, type Provider as SDK } from "ai"
-import { openAIExecMiddleware } from "./openai-exec"
-import { normalizeMimoResponse } from "./mimo-responses"
+import { NoSuchModelError, type Provider as SDK } from "ai"
 import { Log } from "../util"
 import { Npm } from "../npm"
 import { Hash } from "@mimo-ai/shared/util/hash"
@@ -263,6 +261,8 @@ const BUNDLED_PROVIDERS: Record<string, () => Promise<(opts: any) => BundledSDK>
   "@ai-sdk/alibaba": () => import("@ai-sdk/alibaba").then((m) => m.createAlibaba),
   "gitlab-ai-provider": () => import("gitlab-ai-provider").then((m) => m.createGitLab),
   "@ai-sdk/github-copilot": () => import("./sdk/copilot").then((m) => m.createOpenaiCompatible),
+  "@mimo/responses": () => import("./sdk/copilot").then((m) => (options: Record<string, unknown>) =>
+    m.createOpenaiCompatible({ ...options, name: "openai", customToolNames: ["exec"] })),
   "venice-ai-sdk-provider": () => import("venice-ai-sdk-provider").then((m) => m.createVenice),
 }
 
@@ -1135,8 +1135,8 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
-// MiMo Codex requests use the standard OpenAI Responses SDK. Explicit OpenAI
-// configuration is also respected outside Codex; other MiMo defaults remain Chat.
+// MiMo catalog models use stock Chat by default; forHarness selects Responses
+// per request without mutating provider configuration or its cached model metadata.
 export function isMimoOrSmartModel(id: string) {
   return isMimoModel(id)
 }
@@ -1145,11 +1145,12 @@ export function isMimoOrSmartModel(id: string) {
 export function forHarness(model: Model, harness?: HarnessMode): Model {
   if (![model.id, model.api.id, model.family ?? ""].some(isMimoOrSmartModel) ||
       !usesGPTToolset(model.id, harness, model.api.id, model.family)) return model
-  return { ...model, api: { ...model.api, npm: "@ai-sdk/openai" } }
+  return { ...model, api: { ...model.api, npm: "@mimo/responses" } }
 }
 
 function resolveModelNpm(npm: string, ...ids: string[]) {
-  return npm === "@ai-sdk/openai" ? npm : ids.some(isMimoOrSmartModel) ? OPENAI_COMPATIBLE_NPM : npm
+  if (!ids.some(isMimoOrSmartModel)) return npm
+  return npm === "@ai-sdk/openai" || npm === "@mimo/responses" ? "@mimo/responses" : OPENAI_COMPATIBLE_NPM
 }
 
 function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
@@ -1668,12 +1669,10 @@ const layer: Layer.Layer<
             ...model.headers,
           }
 
-        const mimoResponses = model.api.npm === "@ai-sdk/openai" && [model.id, model.api.id, model.family ?? ""].some(isMimoModel)
         const key = Hash.fast(
           JSON.stringify({
             providerID: model.providerID,
             npm: model.api.npm,
-            mimoResponses,
             options,
           }),
         )
@@ -1729,8 +1728,8 @@ const layer: Layer.Layer<
           const bounded = requestTimeoutCtl
             ? wrapRequestTimeout(res, callerSignal, requestTimeoutCtl.signal, requestTimeoutCtl.clear)
             : res
-          const streamed = chunkAbortCtl ? wrapSSE(bounded, chunkTimeout, chunkAbortCtl) : bounded
-          return mimoResponses ? normalizeMimoResponse(streamed) : streamed
+          if (!chunkAbortCtl) return bounded
+          return wrapSSE(bounded, chunkTimeout, chunkAbortCtl)
         }
 
         const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
@@ -1811,11 +1810,8 @@ const layer: Layer.Layer<
         const sdk = await resolveSDK(model, s, envs)
 
         try {
-          const language = model.api.npm === "@ai-sdk/openai" && [model.id, model.api.id, model.family ?? ""].some(isMimoModel)
-            ? wrapLanguageModel({
-                model: (sdk as unknown as import("@ai-sdk/openai").OpenAIProvider).responses(model.api.id),
-                middleware: openAIExecMiddleware,
-              })
+          const language = model.api.npm === "@mimo/responses"
+            ? (sdk as unknown as import("./sdk/copilot/copilot-provider").OpenaiCompatibleProvider).responses(model.api.id)
             : s.modelLoaders[model.providerID]
             ? await s.modelLoaders[model.providerID](sdk, model.api.id, {
                 ...provider.options,
