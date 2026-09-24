@@ -6,7 +6,23 @@ import { Log } from "@/util"
 
 const log = Log.create({ service: "cli.bootstrap" })
 
-export async function bootstrap<T>(directory: string, cb: () => Promise<T>) {
+export type CheckpointDrainEvent =
+  | { type: "start"; count: number; timeoutMs: number }
+  | { type: "complete"; drained: number; timedOut: number }
+
+export async function bootstrap<T>(
+  directory: string,
+  cb: () => Promise<T>,
+  options?: { onCheckpointDrain?: (event: CheckpointDrainEvent) => void },
+) {
+  const report = (event: CheckpointDrainEvent) => {
+    try {
+      options?.onCheckpointDrain?.(event)
+    } catch (error) {
+      log.warn("checkpoint drain status failed", { error: String(error) })
+    }
+  }
+
   return Instance.provide({
     directory,
     init: () => AppRuntime.runPromise(InstanceBootstrap),
@@ -23,9 +39,12 @@ export async function bootstrap<T>(directory: string, cb: () => Promise<T>) {
         // don't settle in time are abandoned — the runtime teardown will
         // kill them anyway, and their thresholds stay marked so the next
         // process invocation can observe the gap via fireCheckpoints.
-        await AppRuntime.runPromise(
-          SessionCheckpoint.Service.use((svc) => svc.drainWriters()),
+        const result = await AppRuntime.runPromise(
+          SessionCheckpoint.Service.use((svc) =>
+            svc.drainWriters({ onStart: (info) => report({ type: "start", ...info }) }),
+          ),
         ).catch((err) => log.warn("checkpoint drain failed", { error: String(err) }))
+        if (result && result.drained + result.timedOut > 0) report({ type: "complete", ...result })
         await Instance.dispose()
       }
     },
