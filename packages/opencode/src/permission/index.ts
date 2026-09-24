@@ -306,9 +306,10 @@ export const layer = Layer.effect(
       // published grant snapshot; auto-allow ONLY when the parent already grants
       // every requested pattern (same evaluate() the parent would run). Ordered
       // AFTER the deny loop (explicit deny still wins) and forced-ask still falls
-      // through to the fail-closed/human path below. A path the parent doesn't
-      // hold isn't matched → we do NOT return here → it fails closed at the
-      // non-interactive gate. No human wait, no hang.
+      // through to the ask/deny path below. A path the parent doesn't hold isn't
+      // matched → we do NOT return here → the ask continues for interactive
+      // callers, and the non-interactive gate below denies it. Never an
+      // unbounded human wait.
       if (needsAsk && input.inherit && !forced) {
         const parentSnapshot = forwardRef.getParentGrants(input.inherit.parentSessionID)
         if (parentSnapshot) {
@@ -336,7 +337,7 @@ export const layer = Layer.effect(
         }
       }
 
-      // Non-interactive caller (system-spawned background agent): no human is
+      // Non-interactive caller (system agent): no client is
       // attached to reply, so an ask that would block instead fails clean with
       // the same DeniedError an explicit "deny" rule produces. Emits no
       // Event.Asked and creates no Deferred → provably cannot hang.

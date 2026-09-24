@@ -898,12 +898,13 @@ it.live("reply - always for bash_delete does not persist a rule", () =>
   }),
 )
 
-it.live("reply - reject cancels all pending for same session", () =>
+it.live("reply - reject cancels pending requests from the same source in the same session", () =>
   withDir({ git: true }, () =>
     Effect.gen(function* () {
       const a = yield* ask({
         id: PermissionID.make("per_test4a"),
         sessionID: SessionID.make("session_same"),
+        tool: { messageID: MessageID.make("msg_same_source"), callID: "call_a" },
         permission: "bash",
         patterns: ["ls"],
         metadata: {},
@@ -914,6 +915,7 @@ it.live("reply - reject cancels all pending for same session", () =>
       const b = yield* ask({
         id: PermissionID.make("per_test4b"),
         sessionID: SessionID.make("session_same"),
+        tool: { messageID: MessageID.make("msg_same_source"), callID: "call_b" },
         permission: "edit",
         patterns: ["foo.ts"],
         metadata: {},

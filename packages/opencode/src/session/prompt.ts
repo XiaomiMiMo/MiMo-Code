@@ -1785,9 +1785,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const askActor = input.agentID
         ? yield* actorRegistry.get(input.session.id, input.agentID)
         : undefined
-      // Permission-ask routing (see decideAskRouting): system agent ->
-      // auto-deny; ordinary background subagent -> INHERIT the parent's held
-      // grants; normal -> interactive.
       const askRouting = decideAskRouting({
         askActor: askActor
           ? {
@@ -1851,9 +1848,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 sessionID: input.session.id,
                 tool: { messageID: input.processor.message.id, callID: options.toolCallId },
                 ruleset: Agent.runtimePermission(input.agent, input.session.permission),
-                // System-spawned + background peers/subagents have no human to
-                // answer → fail clean or inherit the parent's held grants
-                // (decideAskRouting); never hang.
                 interactive: askInteractive,
                 ...(askInherit ? { inherit: askInherit } : {}),
               },

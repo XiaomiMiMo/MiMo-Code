@@ -3,7 +3,18 @@ import { Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Context
 import { InstanceState } from "../../src/effect"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { Instance } from "../../src/project/instance"
-import { tmpdir } from "../fixture/fixture"
+import { provideTmpdirInstance, tmpdir } from "../fixture/fixture"
+import { Bus } from "../../src/bus"
+import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
+import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
+import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID, PartID } from "../../src/session/schema"
+import { ModelID, ProviderID } from "../../src/provider/schema"
+import { testEffect } from "../lib/effect"
+import "../../src/server/projectors"
+
+const it = testEffect(Layer.mergeAll(Session.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
 async function access<A, E>(state: InstanceState.InstanceState<A, E>, dir: string) {
   return Instance.provide({
@@ -15,6 +26,131 @@ async function access<A, E>(state: InstanceState.InstanceState<A, E>, dir: strin
 afterEach(async () => {
   await Instance.disposeAll()
 })
+
+test("InstanceState.bind prefers the fiber instance over another ALS instance", async () => {
+  await using one = await tmpdir()
+  await using two = await tmpdir()
+  const correct = await Instance.provide({ directory: one.path, fn: () => Instance.current })
+  const wrong = await Instance.provide({ directory: two.path, fn: () => Instance.current })
+  const bound = Instance.restore(wrong, () =>
+    Effect.runSync(
+      Effect.sync(() => InstanceState.bind((suffix: string) => `${Instance.directory}/${suffix}`)).pipe(
+        Effect.provideService(InstanceRef, correct),
+      ),
+    ),
+  )
+
+  expect(Instance.restore(wrong, () => bound("result"))).toBe(`${one.path}/result`)
+  expect(bound("later")).toBe(`${one.path}/later`)
+})
+
+test("InstanceState.bind captures ALS when the fiber has no instance ref", async () => {
+  await using tmp = await tmpdir()
+  const bound = await Instance.provide({
+    directory: tmp.path,
+    fn: () => Effect.runSync(Effect.sync(() => InstanceState.bind(() => Instance.directory))),
+  })
+  expect(bound()).toBe(tmp.path)
+})
+
+test("InstanceState.bind captures the fiber instance without ALS", async () => {
+  await using tmp = await tmpdir()
+  const correct = await Instance.provide({ directory: tmp.path, fn: () => Instance.current })
+  const bound = Effect.runSync(
+    Effect.sync(() => InstanceState.bind(() => Instance.directory)).pipe(
+      Effect.provideService(InstanceRef, correct),
+    ),
+  )
+  expect(bound()).toBe(tmp.path)
+})
+
+test("InstanceState.bind preserves the function without either context", () => {
+  const fn = (value: number) => value + 1
+  expect(InstanceState.bind(fn)).toBe(fn)
+  expect(Effect.runSync(Effect.sync(() => InstanceState.bind(fn)))).toBe(fn)
+  expect(fn(2)).toBe(3)
+})
+
+it.live("SyncEvent routes message and part updates to the fiber instance despite another ALS instance", () =>
+  provideTmpdirInstance(() =>
+    Effect.gen(function* () {
+      const wrong = yield* InstanceState.context
+      yield* provideTmpdirInstance((directory) =>
+        Effect.gen(function* () {
+          const correct = yield* InstanceState.context
+          const session = yield* Session.Service
+          const created = yield* session.create()
+          const message: MessageV2.User = {
+            id: MessageID.ascending(),
+            sessionID: created.id,
+            agentID: "main",
+            role: "user",
+            time: { created: Date.now() },
+            agent: "build",
+            model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+          }
+          const part: MessageV2.TextPart = {
+            id: PartID.ascending(),
+            messageID: message.id,
+            sessionID: created.id,
+            type: "text",
+            text: "cross-instance message",
+          }
+          const routed: { directory: string; type: string }[] = []
+          const global: { directory: string | undefined; type: string }[] = []
+          const localDone = yield* Deferred.make<void>()
+          const globalDone = yield* Deferred.make<void>()
+          for (const instance of [wrong, correct]) {
+            yield* Effect.acquireRelease(
+              Effect.sync(() => Instance.restore(instance, () => Bus.subscribeAll((event) => {
+                if (event.properties?.sessionID !== created.id) return
+                if (!["message.updated", "message.part.updated"].includes(event.type)) return
+                routed.push({ directory: instance.directory, type: event.type })
+                if (routed.length === 2) Deferred.doneUnsafe(localDone, Effect.void)
+              }))),
+              (unsubscribe) => Effect.sync(unsubscribe),
+            )
+          }
+          const onGlobal = (event: GlobalEvent) => {
+            const payload = event.payload
+            if (payload.type === "sync") {
+              if (payload.syncEvent.aggregateID !== created.id) return
+              if (!["message.updated.1", "message.part.updated.1"].includes(payload.syncEvent.type)) return
+            } else {
+              if (payload.properties?.sessionID !== created.id) return
+              if (!["message.updated", "message.part.updated"].includes(payload.type)) return
+            }
+            global.push({ directory: event.directory, type: payload.type })
+            if (global.length === 4) Deferred.doneUnsafe(globalDone, Effect.void)
+          }
+          yield* Effect.acquireRelease(
+            Effect.sync(() => GlobalBus.on("event", onGlobal)),
+            () => Effect.sync(() => { GlobalBus.off("event", onGlobal) }),
+          )
+
+          yield* Effect.sync(() => Instance.restore(wrong, () => Effect.runSync(
+            Effect.gen(function* () {
+              yield* session.updateMessage(message)
+              yield* session.updatePart(part)
+            }).pipe(Effect.provideService(InstanceRef, correct)),
+          )))
+          yield* Deferred.await(localDone).pipe(Effect.timeout("2 seconds"))
+          yield* Deferred.await(globalDone).pipe(Effect.timeout("2 seconds"))
+
+          expect(MessageV2.get({ sessionID: created.id, messageID: message.id })).toEqual({ info: message, parts: [part] })
+          expect(routed).toEqual([
+            { directory, type: "message.updated" },
+            { directory, type: "message.part.updated" },
+          ])
+          expect(global.map((event) => event.directory)).toEqual(Array(4).fill(directory))
+          expect(global.map((event) => event.type).sort()).toEqual([
+            "message.part.updated", "message.updated", "sync", "sync",
+          ])
+        }),
+      )
+    }),
+  ),
+)
 
 test("InstanceState caches values per directory", async () => {
   await using tmp = await tmpdir()

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect } from "bun:test"
-import { Effect, Fiber, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer } from "effect"
 import { Bus } from "../../src/bus"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Permission } from "../../src/permission"
@@ -41,6 +41,42 @@ function childAsk(patterns: string[], extra?: Partial<Parameters<Permission.Inte
 }
 
 describe("Permission.ask parent-grant inheritance", () => {
+  for (const granted of [true, false]) {
+    it.live(
+      `[TP-R20-03] interactive subagent ${granted ? "inherits a matching grant without asking" : "asks and resumes when inheritance misses"}`,
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const perm = yield* Permission.Service
+          forwardRef.setParentGrants("ses_parent", {
+            ruleset: [],
+            approved: [{ permission: "edit", pattern: "/granted/dir/*", action: "allow" }],
+          })
+          let asked = 0
+          const askedEvent = yield* Deferred.make<void>()
+          const events = yield* Bus.Service
+          const unsub = yield* events.subscribeCallback(Permission.Event.Asked, () => {
+            asked += 1
+            Effect.runSync(Deferred.succeed(askedEvent, undefined))
+          })
+          yield* Effect.addFinalizer(() => Effect.sync(unsub))
+          const fiber = yield* perm.ask(childAsk(
+            [granted ? "/granted/dir/file.ts" : "/foreign/dir/file.ts"],
+            { interactive: true },
+          )).pipe(Effect.forkScoped)
+          if (!granted) {
+            yield* Deferred.await(askedEvent)
+            const [pending] = yield* perm.list()
+            expect(asked).toBe(1)
+            yield* perm.reply({ requestID: pending.id, reply: "once" })
+          }
+          expect((yield* Fiber.await(fiber))._tag).toBe("Success")
+          expect(asked).toBe(granted ? 0 : 1)
+          expect(yield* perm.list()).toHaveLength(0)
+        }),
+      ),
+    )
+  }
+
   it.live(
     "ordinary background subagent auto-allowed for a dir the parent granted",
     provideTmpdirInstance(() =>
@@ -300,7 +336,7 @@ describe("skip-all inheritance for background subagents", () => {
   )
 })
 
-describe("Permission.reply reject source isolation", () => {
+describe("[TP-R20-07] Permission.reply reject source isolation", () => {
   it.live(
     "reject does not cascade to a different tool.messageID source",
     provideTmpdirInstance(() =>
