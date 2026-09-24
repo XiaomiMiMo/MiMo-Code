@@ -1,8 +1,215 @@
 /** @jsxImportSource @opentui/solid */
-import { expect, test } from "bun:test"
+import { beforeAll, expect, test } from "bun:test"
+import path from "path"
+import { Global } from "../../../src/global"
 import { testRender } from "@opentui/solid"
 import { RGBA } from "@opentui/core"
-import { BashDeleteBody } from "../../../src/cli/cmd/tui/routes/session/permission"
+import { BashDeleteBody, PermissionPrompt } from "../../../src/cli/cmd/tui/routes/session/permission"
+import type { PermissionRequest } from "@mimo-ai/sdk/v2"
+import { createSignal } from "solid-js"
+import { ArgsProvider } from "../../../src/cli/cmd/tui/context/args"
+import { ExitProvider } from "../../../src/cli/cmd/tui/context/exit"
+import { ProjectProvider } from "../../../src/cli/cmd/tui/context/project"
+import { SDKProvider } from "../../../src/cli/cmd/tui/context/sdk"
+import { SyncProvider } from "../../../src/cli/cmd/tui/context/sync"
+import { KVProvider } from "../../../src/cli/cmd/tui/context/kv"
+import { TuiConfigProvider } from "../../../src/cli/cmd/tui/context/tui-config"
+import { ThemeProvider } from "../../../src/cli/cmd/tui/context/theme"
+import { LanguageProvider } from "../../../src/cli/cmd/tui/context/language"
+import { KeybindProvider } from "../../../src/cli/cmd/tui/context/keybind"
+import { ToastProvider } from "../../../src/cli/cmd/tui/ui/toast"
+import { DialogProvider } from "../../../src/cli/cmd/tui/ui/dialog"
+
+beforeAll(async () => {
+  const file = Bun.file(path.join(Global.Path.state, "kv.json"))
+  if (!(await file.exists())) await Bun.write(file, "{}")
+})
+
+function request(permission: string): PermissionRequest {
+  return {
+    id: `per_${permission}`,
+    sessionID: "ses_permission",
+    permission,
+    patterns: ["*"],
+    always: ["*"],
+    metadata: {},
+  }
+}
+
+async function waitFor(predicate: () => boolean | Promise<boolean>) {
+  const deadline = Date.now() + 3000
+  while (!(await predicate())) {
+    if (Date.now() >= deadline) throw new Error("PermissionPrompt did not reach the expected state")
+    await Bun.sleep(10)
+  }
+}
+
+async function mountPermission(permission: string) {
+  const replies: { method: string; path: string; body: unknown }[] = []
+  const [current, setRequest] = createSignal(request(permission))
+  const fetcher = (async (input: Request) => {
+    const url = new URL(input.url)
+    if (url.pathname.startsWith("/permission/")) {
+      replies.push({ method: input.method, path: url.pathname, body: await input.json() })
+      return Response.json(true)
+    }
+    if (url.pathname === "/path") return Response.json({ directory: "/tmp/permission", worktree: "" })
+    if (url.pathname === "/project/current") return Response.json({ id: "permission-project" })
+    if (url.pathname === "/config/providers") return Response.json({ providers: [], default: {} })
+    if (url.pathname === "/provider") return Response.json({ all: [], default: {}, connected: [], authenticated: [] })
+    if (["/session", "/agent", "/command", "/experimental/workspace", "/experimental/workspace/status", "/lsp", "/formatter"].includes(url.pathname)) {
+      return Response.json([])
+    }
+    return Response.json({})
+  }) as typeof fetch
+  const app = await testRender(() => (
+    <SDKProvider url="http://test" directory="/tmp/permission" fetch={fetcher} events={{ subscribe: async () => () => {} }}>
+      <ProjectProvider>
+        <ArgsProvider>
+          <ExitProvider>
+            <SyncProvider>
+              <KVProvider>
+                <TuiConfigProvider config={{ keybinds: { app_exit: "ctrl+c" } }}>
+                  <ThemeProvider mode="dark">
+                    <LanguageProvider>
+                      <ToastProvider>
+                        <DialogProvider>
+                          <KeybindProvider>
+                            <PermissionPrompt request={current()} />
+                          </KeybindProvider>
+                        </DialogProvider>
+                      </ToastProvider>
+                    </LanguageProvider>
+                  </ThemeProvider>
+                </TuiConfigProvider>
+              </KVProvider>
+            </SyncProvider>
+          </ExitProvider>
+        </ArgsProvider>
+      </ProjectProvider>
+    </SDKProvider>
+  ), { width: 100, height: 24 })
+  try {
+    await waitFor(() => app.renderer.root.getChildren().length > 0)
+    await waitFor(async () => {
+      await app.renderOnce()
+      return app.captureCharFrame().includes("Permission required")
+    })
+  } catch (error) {
+    app.renderer.destroy()
+    throw error
+  }
+  return { app, replies, setRequest }
+}
+
+for (const permission of ["computer", "bash_delete"]) {
+  test(`${permission} PermissionPrompt offers only once and reject`, async () => {
+    const { app } = await mountPermission(permission)
+    try {
+      expect(app.captureCharFrame()).toContain("Allow once")
+      expect(app.captureCharFrame()).toContain("Reject")
+      expect(app.captureCharFrame()).not.toContain("Allow always")
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+
+  for (const action of [
+    { keys: ["RETURN"], reply: "once" },
+    { keys: ["ARROW_RIGHT", "RETURN"], reply: "reject" },
+    { keys: ["ARROW_LEFT", "RETURN"], reply: "reject" },
+    { keys: ["l", "RETURN"], reply: "reject" },
+    { keys: ["h", "RETURN"], reply: "reject" },
+    { keys: ["ESCAPE"], reply: "reject" },
+  ]) {
+    test(`${permission} PermissionPrompt ${action.keys.join("+")} sends ${action.reply}`, async () => {
+      const { app, replies } = await mountPermission(permission)
+      try {
+        await app.mockInput.pressKeys(action.keys)
+        await app.renderOnce()
+        expect(app.captureCharFrame()).not.toContain("until MiMoCode is restarted")
+        await waitFor(() => replies.length > 0)
+        expect(replies).toEqual([{
+          method: "POST",
+          path: `/permission/per_${permission}/reply`,
+          body: { reply: action.reply },
+        }])
+      } finally {
+        app.renderer.destroy()
+      }
+    })
+  }
+
+  test(`${permission} PermissionPrompt app-exit shortcut rejects`, async () => {
+    const { app, replies } = await mountPermission(permission)
+    try {
+      app.mockInput.pressCtrlC()
+      await app.renderOnce()
+      await waitFor(() => replies.length > 0)
+      expect(replies).toEqual([{
+        method: "POST",
+        path: `/permission/per_${permission}/reply`,
+        body: { reply: "reject" },
+      }])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+}
+
+for (const permission of ["bash", "edit"]) {
+  test(`${permission} PermissionPrompt preserves always confirmation and reply`, async () => {
+    const { app, replies } = await mountPermission(permission)
+    try {
+      expect(app.captureCharFrame()).toContain("Allow always")
+      await app.mockInput.pressKeys(["ARROW_RIGHT", "RETURN"])
+      await app.renderOnce()
+      expect(app.captureCharFrame()).toContain("until MiMoCode is restarted")
+      expect(replies).toEqual([])
+      app.mockInput.pressEnter()
+      await app.renderOnce()
+      await waitFor(() => replies.length > 0)
+      expect(replies).toEqual([{
+        method: "POST",
+        path: `/permission/per_${permission}/reply`,
+        body: { reply: "always" },
+      }])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+}
+
+for (const stage of ["selected", "confirmation"]) {
+  for (const reply of ["once", "reject"]) {
+    test(`switching ${stage} bash always to computer resets selection before ${reply}`, async () => {
+      const { app, replies, setRequest } = await mountPermission("bash")
+      try {
+        app.mockInput.pressArrow("right")
+        if (stage === "confirmation") app.mockInput.pressEnter()
+        await app.renderOnce()
+        if (stage === "confirmation") expect(app.captureCharFrame()).toContain("until MiMoCode is restarted")
+        setRequest(request("computer"))
+        await app.renderOnce()
+        expect(app.captureCharFrame()).toContain("Tool: computer")
+        expect(app.captureCharFrame()).not.toContain("Allow always")
+        expect(app.captureCharFrame()).not.toContain("until MiMoCode is restarted")
+        expect(replies).toEqual([])
+        if (reply === "reject") app.mockInput.pressArrow("right")
+        app.mockInput.pressEnter()
+        await app.renderOnce()
+        await waitFor(() => replies.length > 0)
+        expect(replies).toEqual([{
+          method: "POST",
+          path: "/permission/per_computer/reply",
+          body: { reply },
+        }])
+      } finally {
+        app.renderer.destroy()
+      }
+    })
+  }
+}
 
 const WARNING = RGBA.fromHex("#e0af68")
 
