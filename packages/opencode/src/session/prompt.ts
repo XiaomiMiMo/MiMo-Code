@@ -7236,6 +7236,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "cascade-cancelled" })
           continue
         }
+        if (actor.lastOutcome === "cancelled") {
+          outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "cancelled" })
+          continue
+        }
         // Ownership: only registry-idle rows are unclaimed. running/pending stay
         // claimed in the shared DB — do not auto-takeover even if this process
         // has no ActorExecution or abandon-window liveness says idle.
