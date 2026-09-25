@@ -43,4 +43,3 @@ SELECT `session`.`id`,
     WHERE `message`.`session_id` = `session`.`id` AND `message`.`agent_id` = 'main'),
   false, CAST(strftime('%s', 'now') AS integer) * 1000
 FROM `session`;
-
