@@ -18,6 +18,7 @@ import { deriveLiveness, DEFAULT_LIVENESS_ABANDON_MS } from "./schema"
 import * as Events from "./events"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { randomUUID } from "node:crypto"
+import { SessionRuntime } from "@/session/runtime"
 
 // Identifies the registering process; a different token does not prove termination.
 const PROCESS_INSTANCE_ID = randomUUID()
@@ -32,7 +33,7 @@ export function sweepAbandonedZombies(): void {
   const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
   // Keep this a top-level transaction; Database.use would bypass its boundary.
   Database.transaction((tx) => {
-    tx.update(ActorRegistryTable)
+    const changed = tx.update(ActorRegistryTable)
       .set({
         status: "idle",
         last_outcome: "failure",
@@ -48,7 +49,10 @@ export function sweepAbandonedZombies(): void {
           sql`COALESCE(${ActorRegistryTable.last_activity_time}, ${ActorRegistryTable.time_created}) < ${cutoff}`,
         ),
       )
-      .run()
+      .returning({ sessionID: ActorRegistryTable.session_id, actorID: ActorRegistryTable.actor_id }).all()
+    Database.effect(() => {
+      for (const actor of changed) SessionRuntime.current().actor(actor.sessionID, actor.actorID)
+    })
   })
 }
 
@@ -189,7 +193,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         time_created: now,
         time_updated: now,
       }
-      yield* Effect.sync(() => Database.use((db) => db.insert(ActorRegistryTable).values(row).run()))
+      yield* Effect.sync(() => Database.use((db) => {
+        db.insert(ActorRegistryTable).values(row).run()
+        Database.effect(() => SessionRuntime.current().actor(input.sessionID, input.actorID))
+      }))
       yield* bus.publish(Events.ActorRegistered, {
         sessionID: input.sessionID,
         actorID: input.actorID,
@@ -228,13 +235,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       if (patch.lastError !== undefined) set.last_error = patch.lastError
       else if (patch.lastOutcome !== undefined && patch.lastOutcome !== "failure") set.last_error = null
       yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .update(ActorRegistryTable)
-            .set(set)
-            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
-            .run(),
-        ),
+        Database.use((db) => {
+          db.update(ActorRegistryTable).set(set)
+            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID))).run()
+          Database.effect(() => SessionRuntime.current().actor(sessionID, actorID))
+        }),
       )
       // Re-read so the event payload reflects committed row values (not the
       // sparse patch). Skip publish if the row vanished between UPDATE and
@@ -263,17 +268,14 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     const updateTurn = Effect.fn("ActorRegistry.updateTurn")(function* (sessionID: SessionID, actorID: string) {
       const now = Date.now()
       yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .update(ActorRegistryTable)
-            .set({
-              last_turn_time: now,
-              turn_count: sql`${ActorRegistryTable.turn_count} + 1`,
-              time_updated: now,
-            })
-            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
-            .run(),
-        ),
+        Database.use((db) => {
+          db.update(ActorRegistryTable).set({
+            last_turn_time: now,
+            turn_count: sql`${ActorRegistryTable.turn_count} + 1`,
+            time_updated: now,
+          }).where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID))).run()
+          Database.effect(() => SessionRuntime.current().actor(sessionID, actorID))
+        }),
       )
     })
 

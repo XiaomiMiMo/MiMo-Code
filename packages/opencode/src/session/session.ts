@@ -24,6 +24,7 @@ import { Snapshot } from "@/snapshot"
 import { ProjectID } from "../project/schema"
 import { WorkspaceID } from "../control-plane/schema"
 import { SessionID, MessageID, PartID } from "./schema"
+import { SessionRuntime } from "./runtime"
 
 import type { Provider } from "@/provider"
 import { Permission } from "@/permission"
@@ -334,6 +335,8 @@ export const Event = {
     "session.error",
     z.object({
       sessionID: SessionID.zod.optional(),
+      ownerActorId: z.string().optional(),
+      messageID: z.string().optional(),
       // z.lazy defers access to break circular dep: session → message-v2 → provider → plugin → session
       error: z.lazy(() => MessageV2.Assistant.shape.error),
     }),
@@ -938,6 +941,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       field: string
       delta: string
     }) {
+      yield* Effect.sync(() => SessionRuntime.current().record(input.sessionID, { type: MessageV2.Event.PartDelta.type, properties: input }))
       yield* bus.publish(MessageV2.Event.PartDelta, input)
     })
 

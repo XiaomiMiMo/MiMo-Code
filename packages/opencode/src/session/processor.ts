@@ -15,6 +15,7 @@ import { isOverflow } from "./overflow"
 import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
+import { SessionRuntime } from "./runtime"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import { ProviderError } from "@/provider"
@@ -449,6 +450,9 @@ export const layer: Layer.Layer<
       }
 
       const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
+        if ((value.type === "text-delta" && value.text.length > 0) || value.type === "tool-call" || value.type === "tool-result" || value.type === "tool-error") {
+          SessionRuntime.current().clearRetry(ctx.sessionID, ctx.assistantMessage.agentID ?? "main")
+        }
         switch (value.type) {
           case "start":
             if (isMain) yield* status.set(ctx.sessionID, { type: "busy" })
@@ -838,12 +842,14 @@ export const layer: Layer.Layer<
         const error = parse(e)
         if (MessageV2.ContextOverflowError.isInstance(error)) {
           ctx.needsOverflowHandling = true
-          yield* bus.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
+          yield* bus.publish(Session.Event.Error, { sessionID: ctx.sessionID, ownerActorId: ctx.assistantMessage.agentID ?? "main", messageID: ctx.assistantMessage.id, error })
           return
         }
         ctx.assistantMessage.error = error
         yield* bus.publish(Session.Event.Error, {
           sessionID: ctx.assistantMessage.sessionID,
+          ownerActorId: ctx.assistantMessage.agentID ?? "main",
+          messageID: ctx.assistantMessage.id,
           error: ctx.assistantMessage.error,
         })
         // Do NOT status.set(idle) here. halt runs before cleanup and the outer
@@ -930,6 +936,10 @@ export const layer: Layer.Layer<
                         hostCode: info.hostCode,
                       })
                     }
+                    SessionRuntime.current().retry(ctx.sessionID, ctx.assistantMessage.agentID ?? "main", {
+                      type: "retry", attempt, phaseAttempt: info.attempt,
+                      message: info.message, next: info.next, phase: info.phase, scope: info.scope,
+                    })
                     yield* bus
                       .publish(Session.Event.RetryAttempt, {
                         sessionID: ctx.sessionID,
@@ -997,6 +1007,10 @@ export const layer: Layer.Layer<
                         })
                         .pipe(Effect.ignore)
                     }
+                    SessionRuntime.current().retry(ctx.sessionID, ctx.assistantMessage.agentID ?? "main", {
+                      type: "retry", attempt: 1, phaseAttempt: 1, message: decision.message,
+                      next: Date.now(), phase: "stream", scope: "live-step",
+                    })
                     // Keep tool parts; mark the step as tool-calls so classify
                     // continues. Do NOT write assistant.error (that is terminal).
                     ctx.assistantMessage.finish = "tool-calls"

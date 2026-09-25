@@ -6,6 +6,7 @@ import { BusEvent } from "./bus-event"
 import { GlobalBus } from "./global"
 import { InstanceState } from "@/effect"
 import { makeRuntime } from "@/effect/run-service"
+import { SessionRuntime } from "@/session/runtime"
 
 const log = Log.create({ service: "bus" })
 
@@ -84,6 +85,18 @@ export const layer = Layer.effect(
       return Effect.gen(function* () {
         const s = yield* InstanceState.get(state)
         const payload: Payload = { type: def.type, properties }
+        if (def.type === "session.error") {
+          const source = yield* SessionRuntime.Owner
+          const supplied = properties as Record<string, unknown>
+          const ownerActorId = typeof supplied.ownerActorId === "string" ? supplied.ownerActorId
+            : source?.sessionID === supplied.sessionID ? source?.actorID : undefined
+          const error = ownerActorId ? { ...supplied, ownerActorId } : supplied
+          payload.properties = error
+          if (typeof supplied.sessionID === "string") {
+            SessionRuntime.current().record(supplied.sessionID, { type: def.type, properties: error }, ownerActorId)
+            if (ownerActorId) SessionRuntime.current().clearRetry(supplied.sessionID, ownerActorId)
+          }
+        }
         log.debug("publishing", { type: def.type })
 
         const ps = s.typed.get(def.type)

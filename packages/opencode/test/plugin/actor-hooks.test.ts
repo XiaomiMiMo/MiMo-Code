@@ -6,6 +6,7 @@ import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
+import { SessionRuntime, type Envelope } from "../../src/session/runtime"
 import { Log } from "../../src/util"
 import { Plugin, HookEvent } from "../../src/plugin"
 import { Bus } from "../../src/bus"
@@ -203,7 +204,8 @@ describe("triggerActorPreStop", () => {
     expect(out.continue).toBe(false)
   })
 
-  test("hook throwing → other hooks still run, error logged not raised", async () => {
+  // [TP-R17-02]
+  test("hook throwing → other hooks still run, source-owned error logged not raised", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {
         const a = path.join(dir, "plugin-a.ts")
@@ -244,11 +246,18 @@ describe("triggerActorPreStop", () => {
       fn: async () =>
         Effect.gen(function* () {
           const plugin = yield* Plugin.Service
-          return yield* plugin.triggerActorPreStop({
+          const events: Envelope[] = []
+          const off = SessionRuntime.current().subscribe((event) => events.push(event))
+          const result = yield* plugin.triggerActorPreStop({
             sessionID: "ses_test", actorID: "actor_test",
             agentType: "custom", mode: "subagent", lifecycle: "ephemeral",
             task: "x", iteration: 0,
-          })
+          }).pipe(Effect.ensuring(Effect.sync(off)))
+          const errors = events.filter((event) => event.properties.event.type === "session.error")
+          expect(errors).toHaveLength(1)
+          expect(errors[0].properties.ownerActorId).toBe("actor_test")
+          expect(errors[0].properties.event.properties.ownerActorId).toBe("actor_test")
+          return result
         }).pipe(Effect.provide(Plugin.defaultLayer), Effect.runPromise),
     })
     expect(out.continue).toBe(true)

@@ -2,6 +2,14 @@ import { describe, expect, test } from "bun:test"
 import { AsyncQueue } from "../../src/util/queue"
 
 describe("util.AsyncQueue", () => {
+  // [TP-R17-05]
+  test("reliable mode rejects overflow without silently dropping an accepted frame", async () => {
+    const q = new AsyncQueue<number>({ capacity: 1, overflow: "reject" })
+    expect(q.push(1)).toBe(true)
+    expect(q.push(2)).toBe(false)
+    expect(q.dropped).toBe(0)
+    expect(await q.next()).toBe(1)
+  })
   test("delivers items in FIFO order when buffered", async () => {
     const q = new AsyncQueue<number>()
     q.push(1)

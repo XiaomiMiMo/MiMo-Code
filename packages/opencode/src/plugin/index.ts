@@ -601,6 +601,7 @@ export const layer = Layer.effect(
                 log.error(`${eventName} hook failed`, { pluginName: entry.pluginName, hookID: entry.hookIDFor(eventName), error: err })
                 yield* bus.publish(Session.Event.Error, {
                   sessionID: input.sessionID as SessionID,
+                  ownerActorId: input.actorID,
                   error: new NamedError.Unknown({
                     message: `${eventName} hook (${entry.pluginName}) failed: ${errorMessage(err)}`,
                   }).toObject(),

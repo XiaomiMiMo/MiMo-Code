@@ -9,6 +9,7 @@ import { EventSequenceTable, EventTable } from "./event.sql"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
 import { EventID } from "./schema"
 import { Flag } from "@/flag/flag"
+import { SessionRuntime } from "@/session/runtime"
 
 export type Definition = {
   type: string
@@ -139,6 +140,7 @@ function process<Def extends Definition>(def: Def, event: Event<Def>, options: {
     }
 
     Database.effect(() => {
+      SessionRuntime.current().record(event.aggregateID, { type: def.type, properties: event.data as Record<string, unknown> })
       if (options?.publish) {
         const result = convertEvent(def.type, event.data)
         if (result instanceof Promise) {
