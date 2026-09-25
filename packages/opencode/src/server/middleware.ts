@@ -1,4 +1,5 @@
 import { Provider } from "../provider"
+import { InstanceBusyError } from "@/project/instance"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { NotFoundError } from "../storage"
 import { Session } from "../session"
@@ -30,6 +31,7 @@ export const ErrorMiddleware: ErrorHandler = (err, c) => {
   }
   if (err instanceof Session.TitleConflictError) return c.json(err.toObject(), { status: 409 })
   if (err instanceof Session.TitleRevisionError) return c.json({ success: false, data: { message: err.message }, errors: [{ message: err.message }] }, { status: 400 })
+  if (err instanceof InstanceBusyError) return c.json(new NamedError.Unknown({ message: err.message }).toObject(), { status: 409 })
   if (err instanceof Session.BusyError) {
     return c.json(new NamedError.Unknown({ message: err.message }).toObject(), { status: 409 })
   }

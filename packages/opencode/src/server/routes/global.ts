@@ -148,6 +148,31 @@ export const GlobalRoutes = lazy(() =>
       },
     )
     .get(
+      "/config/status",
+      describeRoute({
+        summary: "Get configuration application status",
+        operationId: "global.config.status",
+        responses: {
+          200: {
+            description: "Directory configuration generation",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.object({
+                    state: z.enum(["pending", "applied"]),
+                    requested: z.number(),
+                    applied: z.number(),
+                  }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      validator("query", z.object({ directory: z.string().min(1).optional() })),
+      (c) => c.json(Instance.refreshStatus(c.req.valid("query").directory)),
+    )
+    .get(
       "/config",
       describeRoute({
         summary: "Get global configuration",

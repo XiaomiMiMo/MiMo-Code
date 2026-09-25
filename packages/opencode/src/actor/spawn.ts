@@ -709,7 +709,7 @@ export const layer = Layer.effect(
       // (prompt.ts) re-registers a peer — it only reads (reg.get) and updates
       // (updateTurn/updateStatus). Prerequisite for T43 (--topic reuse).
       return yield* Effect.acquireUseRelease(
-        executions.reserve(child.id, child.id),
+        executions.reserve(child.id, child.id, instanceRef?.directory),
         (execution) =>
           Effect.gen(function* () {
             yield* actorReg.register({

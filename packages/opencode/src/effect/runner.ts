@@ -66,6 +66,8 @@ export const make = <A, E = never, B = never>(
     busy?: () => B
     label?: string
     onReentryWarn?: (info: { label: string; existingRunId: number }) => Effect.Effect<void>
+    onRunStart?: Effect.Effect<() => void>
+    onShellStart?: Effect.Effect<() => void>
   },
 ): Runner<A, E, B> => {
   const ref = SynchronizedRef.makeUnsafe<State<A, E>>({ _tag: "Idle" })
@@ -95,6 +97,7 @@ export const make = <A, E = never, B = never>(
   ): Effect.Effect<RunHandle<A, E>> =>
     Effect.gen(function* () {
       const id = next()
+      const release = opts?.onRunStart ? yield* opts.onRunStart : () => {}
       const fiber = yield* work.pipe(
         Effect.onExit((exit) => finishRun(id, done, exit)),
         Effect.forkIn(scope),
@@ -104,6 +107,7 @@ export const make = <A, E = never, B = never>(
       // (ensureExclusive / admission) cannot hang.
       yield* Fiber.await(fiber).pipe(
         Effect.flatMap((exit) => complete(done, exit)),
+        Effect.ensuring(Effect.sync(release)),
         Effect.forkIn(scope),
       )
       return { id, done, fiber } satisfies RunHandle<A, E>
@@ -258,8 +262,9 @@ export const make = <A, E = never, B = never>(
           return [busyFailure<A>(), st] as readonly [Effect.Effect<A, E | B>, State<A, E>]
         }
         yield* busy
+        const release = opts?.onShellStart ? yield* opts.onShellStart : () => {}
         const id = next()
-        const fiber = yield* work.pipe(Effect.ensuring(finishShell(id)), Effect.forkChild)
+        const fiber = yield* work.pipe(Effect.ensuring(finishShell(id)), Effect.ensuring(Effect.sync(release)), Effect.forkChild)
         const shell = { id, fiber } satisfies ShellHandle<A, E>
         return [
           Effect.gen(function* () {

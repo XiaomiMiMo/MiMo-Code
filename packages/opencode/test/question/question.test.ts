@@ -393,7 +393,7 @@ test("questions stay isolated by directory", async () => {
   await p2.catch(() => {})
 })
 
-test("pending question rejects on instance dispose", async () => {
+test("pending question survives deferred instance dispose", async () => {
   await using tmp = await tmpdir({ git: true })
 
   const pending = Instance.provide({
@@ -422,13 +422,16 @@ test("pending question rejects on instance dispose", async () => {
       const items = await list()
       expect(items).toHaveLength(1)
       await Instance.dispose()
+      expect(Instance.refreshStatus(tmp.path).state).toBe("pending")
+      expect(await list()).toHaveLength(1)
+      await reject(items[0]!.id)
     },
   })
 
   expect(await result).toBeInstanceOf(Question.RejectedError)
 })
 
-test("pending question rejects on instance reload", async () => {
+test("pending question prevents instance reload", async () => {
   await using tmp = await tmpdir({ git: true })
 
   const pending = Instance.provide({
@@ -456,7 +459,9 @@ test("pending question rejects on instance reload", async () => {
     fn: async () => {
       const items = await list()
       expect(items).toHaveLength(1)
-      await Instance.reload({ directory: tmp.path })
+      await expect(Instance.reload({ directory: tmp.path })).rejects.toThrow("Instance busy")
+      expect(await list()).toHaveLength(1)
+      await reject(items[0]!.id)
     },
   })
 

@@ -1,5 +1,7 @@
 import { Context, Deferred, Effect, Fiber, Layer, Scheduler, Scope } from "effect"
 import type { SessionID } from "@/session/schema"
+import { Instance } from "@/project/instance"
+import { InstanceState } from "@/effect"
 
 export interface Execution {
   readonly sessionID: SessionID
@@ -13,10 +15,11 @@ export interface Execution {
    * a later main turn or resume must not clear it for late terminal handlers.
    */
   groupAbort?: boolean
+  releaseInstance?: () => void
 }
 
 export interface Interface {
-  readonly reserve: (sessionID: SessionID, actorID: string) => Effect.Effect<Execution>
+  readonly reserve: (sessionID: SessionID, actorID: string, directory?: string) => Effect.Effect<Execution>
   readonly acquire: (sessionID: SessionID, actorID: string) => Effect.Effect<Execution>
   readonly current: (sessionID: SessionID, actorID: string) => Effect.Effect<Execution | undefined>
   readonly attach: (execution: Execution) => Effect.Effect<void>
@@ -38,12 +41,14 @@ export const layer = Layer.effect(
     const active = new Map<string, Execution>()
     const key = (sessionID: SessionID, actorID: string) => `${sessionID}:${actorID}`
     const current = (sessionID: SessionID, actorID: string) => Effect.sync(() => active.get(key(sessionID, actorID)))
-    const reserve = Effect.fn("ActorExecution.reserve")(function* (sessionID: SessionID, actorID: string) {
+    const reserve = Effect.fn("ActorExecution.reserve")(function* (sessionID: SessionID, actorID: string, directory?: string) {
       const done = yield* Deferred.make<void>()
+      const dir = directory ?? (yield* InstanceState.directory)
       return yield* Effect.sync(() => {
         const id = key(sessionID, actorID)
         if (active.has(id)) throw new Error(`Actor execution already active: ${id}`)
-        const execution: Execution = { sessionID, actorID, done, cancelled: false }
+        const releaseInstance = Instance.claim(dir)
+        const execution: Execution = { sessionID, actorID, done, cancelled: false, releaseInstance }
         active.set(id, execution)
         return execution
       })
@@ -52,7 +57,10 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         yield* Effect.sync(() => {
           const id = key(execution.sessionID, execution.actorID)
-          if (active.get(id) === execution) active.delete(id)
+          if (active.get(id) === execution) {
+            active.delete(id)
+            execution.releaseInstance?.()
+          }
         })
         yield* Deferred.succeed(execution.done, undefined)
       }).pipe(Effect.asVoid, Effect.uninterruptible)
@@ -60,18 +68,24 @@ export const layer = Layer.effect(
       reserve,
       acquire: (sessionID, actorID) =>
         Effect.gen(function* () {
-          for (;;) {
-            const claim = yield* Effect.sync(() => {
-              const id = key(sessionID, actorID)
-              const existing = active.get(id)
-              if (existing) return { owned: false, execution: existing }
-              const execution: Execution = { sessionID, actorID, done: Deferred.makeUnsafe<void>(), cancelled: false }
-              active.set(id, execution)
-              return { owned: true, execution }
-            })
-            if (claim.owned) return claim.execution
-            yield* Deferred.await(claim.execution.done).pipe(Effect.interruptible)
-          }
+          const directory = yield* InstanceState.directory
+          const releaseInstance = yield* Effect.sync(() => Instance.claim(directory))
+          let transferred = false
+          return yield* Effect.gen(function* () {
+            for (;;) {
+              const claim = yield* Effect.sync(() => {
+                const id = key(sessionID, actorID)
+                const existing = active.get(id)
+                if (existing) return { owned: false, execution: existing }
+                const execution: Execution = { sessionID, actorID, done: Deferred.makeUnsafe<void>(), cancelled: false, releaseInstance }
+                active.set(id, execution)
+                transferred = true
+                return { owned: true, execution }
+              })
+              if (claim.owned) return claim.execution
+              yield* Deferred.await(claim.execution.done).pipe(Effect.interruptible)
+            }
+          }).pipe(Effect.ensuring(Effect.sync(() => { if (!transferred) releaseInstance() })))
         }),
       current,
       attach: (execution) =>

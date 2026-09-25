@@ -7,6 +7,7 @@ import { Session } from "@/session"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionRunState } from "@/session/run-state"
+import { Instance } from "@/project/instance"
 import { SessionCompaction } from "@/session/compaction"
 import { SessionRevert } from "@/session/revert"
 import { SessionShare } from "@/share"
@@ -1369,6 +1370,7 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
+        const releaseInstance = Instance.claim(Instance.directory)
         void runRequest(
           "SessionRoutes.prompt_async",
           c,
@@ -1379,7 +1381,7 @@ export const SessionRoutes = lazy(() =>
             sessionID,
             error: new NamedError.Unknown({ message: err instanceof Error ? err.message : String(err) }).toObject(),
           })
-        })
+        }).finally(releaseInstance)
 
         return c.body(null, 204)
       },

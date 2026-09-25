@@ -1,4 +1,5 @@
 import { EffectLogger, InstanceState } from "@/effect"
+import { Instance } from "@/project/instance"
 import { Runner } from "@/effect"
 import { Effect, Layer, Scope, Context } from "effect"
 import * as Session from "./session"
@@ -86,7 +87,10 @@ export const layer = Layer.effect(
       const existing = byAgent.get(agentID)
       if (existing) return existing
       const isMain = agentID === "main"
+      const directory = yield* InstanceState.directory
       const next = Runner.make<MessageV2.WithParts, never, Session.BusyError>(data.scope, {
+        onRunStart: Effect.sync(() => Instance.claim(directory)),
+        onShellStart: Effect.sync(() => Instance.claim(directory)),
         label: `${sessionID}:${agentID}`,
         onReentryWarn: (info) => elog.warn("runner-reentry", info),
         // Do NOT delete Runners on idle: a waiter parked on Cancelling retries

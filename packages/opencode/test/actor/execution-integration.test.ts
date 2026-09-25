@@ -15,6 +15,7 @@ import { Inbox } from "../../src/inbox"
 import { sessionPromptRef } from "../../src/inbox/inbox-ref"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
+import { Config } from "../../src/config"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { AppLayer } from "../../src/effect/app-runtime"
 import { attach } from "../../src/effect/run-service"
@@ -75,6 +76,11 @@ test("new main messages preserve four background actors awaiting model responses
               yield* Effect.promise(() => entered[i]!.promise)
             }
             expect(yield* status.get(parent.id)).toEqual({ type: "idle" })
+            const initialConfig = yield* Config.Service.use((cfg) => cfg.get())
+            yield* Effect.promise(() => Bun.write(path.join(tmp.path, "mimocode.json"), JSON.stringify({ model: "test/changed" })))
+            yield* Effect.promise(() => Instance.disposeAll())
+            expect(Instance.refreshStatus(tmp.path).state).toBe("pending")
+            expect(yield* Config.Service.use((cfg) => cfg.get())).toBe(initialConfig)
             const before = yield* sessions.messages({ sessionID: parent.id, agentID: "*" })
             expect(before.filter((m) => m.info.role === "assistant")).toHaveLength(4)
             for (const text of ["How is progress?", "Keep working"]) {
