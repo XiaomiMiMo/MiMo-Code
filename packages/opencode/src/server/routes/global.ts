@@ -194,6 +194,34 @@ export const GlobalRoutes = lazy(() =>
       },
     )
     .post(
+      "/config/inject",
+      describeRoute({
+        summary: "Inject in-memory config overlay",
+        description:
+          "Set or clear a process-local config overlay (e.g. model_groups) without writing any config file. User config leaves still win on merge. Body null/omitted clears the overlay.",
+        operationId: "global.config.inject",
+        responses: {
+          200: {
+            description: "Overlay applied; instances invalidated for next load",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ ok: z.boolean() })),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("json", z.record(z.string(), z.unknown()).nullable().optional()),
+      async (c) => {
+        const overlay = c.req.valid("json")
+        // Pure in-memory: never writeString the user's mimocode.json (unlike PATCH /config).
+        Config.inject((overlay ?? undefined) as never)
+        await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.invalidate(true)))
+        return c.json({ ok: true })
+      },
+    )
+    .post(
       "/dispose",
       describeRoute({
         summary: "Dispose instance",

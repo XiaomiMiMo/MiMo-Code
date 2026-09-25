@@ -277,6 +277,12 @@ describe("SessionPrompt.genTitle source model routing", () => {
     { name: "explicit lite wins over small_model", config: { model_groups: { lite: "title-test/lite" }, small_model: "title-test/other" }, expected: ["lite"] },
     { name: "small_model compatibility", config: { small_model: "title-test/lite" }, expected: ["lite"] },
     { name: "DEFAULTS-only small_model compatibility", config: {}, defaults: { small_model: "title-test/lite" }, expected: ["lite"] },
+    // Product channel: Desktop injects model_groups.lite via MIMOCODE_CONFIG_DEFAULTS (SSO track).
+    // Title must use that lite leaf, never fall back to the session/source model when lite resolves.
+    { name: "DEFAULTS-only model_groups.lite uses lite not source", config: {}, defaults: { model_groups: { lite: "title-test/lite" } }, expected: ["lite"] },
+    { name: "DEFAULTS model_groups.lite wins over source but loses to explicit user lite", config: { model_groups: { lite: "title-test/other" } }, defaults: { model_groups: { lite: "title-test/lite" } }, expected: ["other"] },
+    // Desktop shape: lite=flash route id, session chat model is a different catalog id (mimo-v2.6-pro style).
+    { name: "DEFAULTS lite=flash used even when source is pro catalog id", config: {}, defaults: { model_groups: { lite: "title-test/lite" } }, expected: ["lite"] },
     { name: "provider-aware lite member resolves before default", config: { model_groups: { lite: { default: "title-test/other", models: ["title-test/lite"] } } }, expected: ["lite"] },
     { name: "group member source is deduplicated by resolved identity", config: { model_groups: { lite: { default: "title-test/other", models: ["title-test/source"] } } }, failure: true, expected: ["source"], fallback: true },
     { name: "failed lite uses source once", config: { model_groups: { lite: "title-test/lite" } }, failure: true, expected: ["lite", "source"] },

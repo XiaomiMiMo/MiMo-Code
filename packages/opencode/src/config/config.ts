@@ -514,6 +514,19 @@ type State = {
   consoleState: ConsoleState
 }
 
+/**
+ * Host-supplied config overlay (desktop / embedding host). Kept in memory only —
+ * same rationale as `Auth.inject`: never write the user's mimocode.json for
+ * runtime tiers such as model_groups. Merged UNDER effective user config so an
+ * explicit leaf in the user file still wins (see model_groups / ST-R7).
+ */
+let injectedOverlay: Info | undefined
+
+/** Set (or clear, with `undefined`) the in-process config overlay. Read on every load(). */
+export function inject(overlay: Info | undefined) {
+  injectedOverlay = overlay
+}
+
 export interface Interface {
   readonly get: () => Effect.Effect<Info>
   readonly getGlobal: () => Effect.Effect<Info>
@@ -1012,8 +1025,16 @@ export const layer = Layer.effect(
         if (result.model_groups?.lite === undefined && result.small_model !== undefined) {
           result.model_groups = { ...result.model_groups, lite: result.small_model }
         }
-        if (process.env.MIMOCODE_CONFIG_DEFAULTS) {
-          const defaults = yield* loadConfig(process.env.MIMOCODE_CONFIG_DEFAULTS, { dir: ctx.directory, source: "MIMOCODE_CONFIG_DEFAULTS" })
+        // Host defaults (env) and in-process overlay sit UNDER effective user config.
+        // Overlay wins over MIMOCODE_CONFIG_DEFAULTS on the same leaf; user file/CONTENT win over both.
+        if (process.env.MIMOCODE_CONFIG_DEFAULTS || injectedOverlay) {
+          let defaults: Info = {}
+          if (process.env.MIMOCODE_CONFIG_DEFAULTS) {
+            defaults = yield* loadConfig(process.env.MIMOCODE_CONFIG_DEFAULTS, { dir: ctx.directory, source: "MIMOCODE_CONFIG_DEFAULTS" })
+          }
+          if (injectedOverlay) {
+            defaults = mergeConfigConcatArrays(defaults, injectedOverlay)
+          }
           result = mergeConfigConcatArrays(defaults, result)
         }
         return {
