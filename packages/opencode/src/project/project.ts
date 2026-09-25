@@ -217,10 +217,11 @@ export const layer: Layer.Layer<
         const dotgit = dotgitMatches[0]
 
         if (!dotgit) {
+          const id = resolveProjectId(directory)
           return {
-            id: ProjectID.global,
-            worktree: "/",
-            sandbox: "/",
+            id,
+            worktree: directory,
+            sandbox: directory,
             vcs: fakeVcs,
           }
         }
