@@ -75,6 +75,10 @@ Turn admission is split across several ad-hoc paths on main (`30e55a4e58`):
 6. **Receipts are durable correctness state** (not optional P2).
 7. TUI/Desktop keep `prompt_async` path; sync `/message` = admit + await receipt/stream.
 
+### Instance lifetime
+
+Admission and execution retain separate instance claims. The asynchronous HTTP endpoint holds its claim through durable admission and releases it on both success and rejection; Runner and ActorExecution hold their own claims through execution and finalization so configuration refresh cannot dispose active work after a 202 response. Queue ownership is checked before acquisition and again before work. Pre-runner admission failures publish the existing session error event and return an HTTP failure rather than reporting successful admission.
+
 ### Main-turn completion and subagent liveness
 
 A successful natural main-turn completion retains its Runner while any non-system, same-session subagent execution remains active. This also applies to structured-output success. Peer sessions and system actors are excluded. Explicit cancellation and error exits retain their existing semantics.

@@ -1389,7 +1389,14 @@ export const SessionRoutes = lazy(() =>
           "SessionRoutes.prompt_async",
           c,
           SessionPrompt.Service.use((svc) => svc.promptAsync({ ...body, sessionID })),
-        ).finally(releaseInstance)
+        ).catch(async (err) => {
+          log.error("prompt_async failed", { sessionID, error: err })
+          await Bus.publish(Session.Event.Error, {
+            sessionID,
+            error: new NamedError.Unknown({ message: err instanceof Error ? err.message : String(err) }).toObject(),
+          })
+          throw err
+        }).finally(releaseInstance)
         if (!accepted.receiptId) return c.body(null, 204)
         return c.json({ receiptId: accepted.receiptId }, 202)
       },
