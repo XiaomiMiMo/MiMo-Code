@@ -189,7 +189,6 @@ describe("actor tool — wait action", () => {
           ctxFor(chat.id),
         )
         const elapsed = Date.now() - start
-        yield* executions.release(execution)
 
         const snap = parseOutput(result.output)
         expect(snap.status).toBe("timeout")
