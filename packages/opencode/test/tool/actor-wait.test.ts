@@ -48,6 +48,8 @@ interface WaitResponse {
   result?: string
   error?: string
   lastOutcome?: string
+  executionActive?: boolean
+  hint?: string
 }
 
 function parseOutput(output: string): WaitResponse {
@@ -83,6 +85,7 @@ describe("actor tool — wait action", () => {
         expect(snap.status).toBe("idle")
         expect(snap.lastOutcome).toBe("failure")
         expect(snap.error).toBe("execution failed")
+        expect(snap.hint).toBeUndefined()
       }
     }),
   ))
@@ -116,6 +119,7 @@ describe("actor tool — wait action", () => {
         const snap = parseOutput(result.output)
         expect(snap.status).toBe("idle")
         expect(snap.actor_id).toBe(actorID)
+        expect(snap.hint).toBeUndefined()
       }),
     ),
   )
@@ -151,6 +155,7 @@ describe("actor tool — wait action", () => {
         const snap = parseOutput(result.output)
         expect(snap.status).toBe("unknown")
         expect(snap.actor_id).toBe(actorID)
+        expect(snap.hint).toBeUndefined()
       }),
     ),
   )
@@ -175,7 +180,7 @@ describe("actor tool — wait action", () => {
         })
 
         const executions = yield* ActorExecution.Service
-        const execution = yield* executions.reserve(chat.id, actorID)
+        const execution = yield* Effect.acquireRelease(executions.reserve(chat.id, actorID), executions.release)
         const tool = yield* ActorTool
         const def = yield* tool.init()
         const start = Date.now()
@@ -188,8 +193,13 @@ describe("actor tool — wait action", () => {
 
         const snap = parseOutput(result.output)
         expect(snap.status).toBe("timeout")
+        expect(snap.hint).toBe(ActorWaiter.WAIT_TIMEOUT_HINT)
+        expect(snap.executionActive).toBe(true)
+        expect(execution.cancelled).toBe(false)
+        expect(yield* executions.current(chat.id, actorID)).toBe(execution)
         expect(elapsed).toBeGreaterThanOrEqual(140)
         expect(elapsed).toBeLessThan(2000)
+        yield* executions.release(execution)
       }),
     ),
   )

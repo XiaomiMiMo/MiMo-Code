@@ -1,5 +1,6 @@
-import { test, expect, beforeEach } from "bun:test"
-import { Effect, Layer } from "effect"
+import { test, expect, beforeEach, afterEach } from "bun:test"
+import { Context, Deferred, Effect, Fiber, Layer } from "effect"
+import { InstanceRef } from "@/effect/instance-ref"
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
@@ -16,9 +17,14 @@ import { SessionPrompt, type PromptInput, type InjectScheduledPromptInput } from
 import { MessageV2 } from "@/session/message-v2"
 import { SessionID, MessageID, PartID } from "@/session/schema"
 import { ProviderID, ModelID } from "@/provider/schema"
-import { Scheduler, defaultLayer as SchedulerDefaultLayer, type Interface as SchedulerInterface } from "@/cron/scheduler"
-import { clearAllLoopStates } from "@/cron/loop-state"
-import { getSessionCronTasks, readCronTasks, removeSessionCronTasks, writeCronTasks } from "@/cron/cron-task"
+import {
+  Scheduler,
+  defaultLayer as SchedulerDefaultLayer,
+  type Interface as SchedulerInterface,
+  type StartOpts,
+} from "@/cron/scheduler"
+import { clearAllLoopStates, getLoopState, getStrikes, setLoopState } from "@/cron/loop-state"
+import { addSessionCronTask, getSessionCronTasks, readCronTasks, removeSessionCronTasks, writeCronTasks } from "@/cron/cron-task"
 import { getLockFilePath } from "@/cron/cron-lock"
 import { CronBridge, layer as cronBridgeLayer, type Interface as CronBridgeInterface } from "@/session/cron-bridge"
 
@@ -31,41 +37,46 @@ import * as PromptModule from "@/session/prompt"
 // front door, not a side channel.
 
 type CapturedPrompt = PromptInput
+type Capture = { value: CapturedPrompt[]; beforePrompt?: Effect.Effect<void> }
 
-const makeCaptureLayer = (captured: { value: CapturedPrompt[] }) =>
+const makeCaptureLayer = (captured: Capture) =>
   Layer.succeed(
     SessionPrompt.Service,
     SessionPrompt.Service.of({
-      cancel: () => Effect.void,
+      cancel: () => Effect.succeed(0),
+      promptAsync: () => Effect.die("promptAsync not expected in cron-bridge test"),
       prompt: (input: PromptInput) =>
-        Effect.sync(() => {
-          captured.value.push(input)
-          const sessionID = input.sessionID
-          const id = MessageID.ascending()
-          const text: MessageV2.TextPart = {
-            id: PartID.ascending(),
-            messageID: id,
-            sessionID,
-            type: "text",
-            text: "",
-            synthetic: true,
-          }
-          const info: MessageV2.User = {
-            id,
-            role: "user",
-            sessionID,
-            agentID: undefined,
-            time: { created: Date.now() },
-            agent: input.agent ?? "main",
-            model: {
-              providerID: ProviderID.make("test"),
-              modelID: ModelID.make("test-model"),
-              variant: undefined,
-            },
-          }
-          const out: MessageV2.WithParts = { info, parts: [text] }
-          return out
-        }),
+        Effect.andThen(
+          captured.beforePrompt ?? Effect.void,
+          Effect.sync(() => {
+            captured.value.push(input)
+            const sessionID = input.sessionID
+            const id = MessageID.ascending()
+            const text: MessageV2.TextPart = {
+              id: PartID.ascending(),
+              messageID: id,
+              sessionID,
+              type: "text",
+              text: "",
+              synthetic: true,
+            }
+            const info: MessageV2.User = {
+              id,
+              role: "user",
+              sessionID,
+              agentID: undefined,
+              time: { created: Date.now() },
+              agent: input.agent ?? "main",
+              model: {
+                providerID: ProviderID.make("test"),
+                modelID: ModelID.make("test-model"),
+                variant: undefined,
+              },
+            }
+            const out: MessageV2.WithParts = { info, parts: [text] }
+            return out
+          }),
+        ),
       recovery: () => Effect.succeed([]),
       resume: () => Effect.die("resume not expected in cron-bridge test"),
       resumeBackground: () => Effect.die("resumeBackground not expected in cron-bridge test"),
@@ -82,18 +93,39 @@ const makeCaptureLayer = (captured: { value: CapturedPrompt[] }) =>
     }),
   )
 
-// AppRuntime monkey-patch — injectScheduledPrompt's onFire fanout uses
-// `import("@/effect/app-runtime").AppRuntime.runPromise(...)`. In tests we
-// replace it with a runtime that materializes the capture layer so the
-// detached fire-and-forget actually lands in our stub Service.
-//
-// We can't intercept the dynamic import without a module replacement, so the
-// test asserts the synchronous PATH through `injectScheduledPrompt` directly
-// (calling it from inside Effect.gen) plus a *bridge-driven* call via the
-// callback. The bridge unit test below verifies start/stop + isKilled + the
-// onFire callback shape; the higher-fidelity end-to-end fire (real
-// setInterval clock advance) is deferred to T22's smoke test where the live
-// AppRuntime + Session services are available.
+const captureInject = Effect.gen(function* () {
+  const prompt = yield* SessionPrompt.Service
+  return (input: InjectScheduledPromptInput) =>
+    PromptModule.injectScheduledPrompt(input).pipe(Effect.provideService(SessionPrompt.Service, prompt))
+})
+
+const waitFor = (predicate: () => boolean) =>
+  Effect.promise(async () => {
+    for (let attempt = 0; attempt < 200 && !predicate(); attempt++) await Bun.sleep(5)
+    expect(predicate()).toBe(true)
+  })
+
+const addDueTask = (scheduler: SchedulerInterface, prompt: string) =>
+  scheduler.add({ session_id: sid, cron: "* * * * *", prompt, recurring: false, durable: false }).pipe(
+    Effect.tap((task) =>
+      Effect.sync(() => {
+        addSessionCronTask({ ...task, createdAt: Date.now() - 5 * 60_000 })
+      }),
+    ),
+  )
+
+const MountContext = Context.Reference("cron-bridge-test/MountContext", { defaultValue: () => "outside" })
+const originalCronFlag = Flag.MIMOCODE_EXPERIMENTAL_CRON
+const originalCronEnv = process.env.MIMOCODE_EXPERIMENTAL_CRON
+const originalDisableEnv = process.env.MIMOCODE_DISABLE_CRON
+
+afterEach(() => {
+  ;(Flag as { MIMOCODE_EXPERIMENTAL_CRON: boolean }).MIMOCODE_EXPERIMENTAL_CRON = originalCronFlag
+  if (originalCronEnv === undefined) delete process.env.MIMOCODE_EXPERIMENTAL_CRON
+  else process.env.MIMOCODE_EXPERIMENTAL_CRON = originalCronEnv
+  if (originalDisableEnv === undefined) delete process.env.MIMOCODE_DISABLE_CRON
+  else process.env.MIMOCODE_DISABLE_CRON = originalDisableEnv
+})
 
 const freshDir = () => mkdtempSync(join(tmpdir(), "cron-bridge-"))
 
@@ -102,27 +134,48 @@ beforeEach(() => {
   removeSessionCronTasks(getSessionCronTasks().map((t) => t.id))
   delete process.env.MIMOCODE_DISABLE_CRON
   process.env.MIMOCODE_EXPERIMENTAL_CRON = "1"
+  ;(Flag as { MIMOCODE_EXPERIMENTAL_CRON: boolean }).MIMOCODE_EXPERIMENTAL_CRON = true
 })
 
 const sid = SessionID.make("ses_cronbridge_test")
 
-const harness = <A>(captured: { value: CapturedPrompt[] }, work: (ctx: {
-  bridge: CronBridgeInterface
-  scheduler: SchedulerInterface
-}) => Effect.Effect<A, unknown, SessionPrompt.Service>) => {
+const harness = <A>(
+  captured: Capture,
+  work: (ctx: {
+    bridge: CronBridgeInterface
+    scheduler: SchedulerInterface
+    inject: (input: InjectScheduledPromptInput) => Effect.Effect<void, unknown>
+    bus: Bus.Interface
+  }) => Effect.Effect<A, unknown, SessionPrompt.Service>,
+  onStart?: (opts: StartOpts) => void,
+  schedulerBase: Layer.Layer<Scheduler> = SchedulerDefaultLayer,
+) => {
   const capture = makeCaptureLayer(captured)
-  const base = Layer.mergeAll(SchedulerDefaultLayer, SessionStatus.defaultLayer, Bus.layer, capture)
+  const schedulerLayer = onStart
+    ? Layer.effect(
+        Scheduler,
+        Effect.gen(function* () {
+          const scheduler = yield* Scheduler
+          return Scheduler.of({
+            ...scheduler,
+            start: (opts) =>
+              Effect.andThen(
+                Effect.sync(() => onStart(opts)),
+                scheduler.start(opts),
+              ),
+          })
+        }),
+      ).pipe(Layer.provide(schedulerBase))
+    : schedulerBase
+  const base = Layer.mergeAll(schedulerLayer, SessionStatus.defaultLayer, Bus.layer, capture)
   const bridge = cronBridgeLayer.pipe(Layer.provide(base))
   const eff = Effect.gen(function* () {
     const b = yield* CronBridge
     const s = yield* Scheduler
-    return yield* work({ bridge: b, scheduler: s })
+    const inject = yield* captureInject
+    const bus = yield* Bus.Service
+    return yield* work({ bridge: b, scheduler: s, inject, bus })
   })
-  // The bridge (and its downstream SessionStatus / Bus / Scheduler) use
-  // InstanceState which reads the current Instance from a fiber-local
-  // context. Wrap the whole effect with an Instance provider so those
-  // reads resolve — same shape the real AppRuntime uses when it mounts
-  // the bridge from prompt.ts.
   const tmp = mkdtempSync(join(tmpdir(), "cron-bridge-instance-"))
   const provided = eff.pipe(Effect.provide(Layer.mergeAll(bridge, base)))
   return Effect.runPromise(provideInstance(tmp)(provided as Effect.Effect<A>)).finally(() => {
@@ -158,13 +211,246 @@ test("injectScheduledPrompt funnels through SessionPrompt.Service.prompt with cr
   })
 })
 
+test("scheduler tick delivers through the mounted prompt service and start-time context", async () => {
+  const observed: { owner: string; instance: unknown }[] = []
+  const captured: Capture = {
+    value: [],
+    beforePrompt: Effect.gen(function* () {
+      observed.push({ owner: yield* MountContext, instance: yield* InstanceRef })
+    }),
+  }
+  const dir = freshDir()
+  try {
+    await harness(captured, ({ bridge, scheduler, inject }) =>
+      Effect.gen(function* () {
+        const instance = yield* InstanceRef
+        expect(instance).toBeDefined()
+        yield* bridge.start(sid, dir, inject).pipe(Effect.provideService(MountContext, "mounted"))
+        const task = yield* addDueTask(scheduler, "check deployment")
+        const before = Date.now()
+        yield* scheduler
+          .tickOnce()
+          .pipe(Effect.provideService(MountContext, "tick"), Effect.provideService(InstanceRef, undefined))
+        yield* waitFor(() => captured.value.length === 1)
+        expect(observed).toEqual([{ owner: "mounted", instance }])
+        const input = captured.value[0]!
+        expect(input.sessionID).toBe(sid)
+        expect(input.source).toBe("hook")
+        expect(input.parts).toHaveLength(1)
+        const part = input.parts[0]!
+        expect(part.type).toBe("text")
+        if (part.type !== "text") throw new Error("expected text part")
+        expect(part.synthetic).toBe(true)
+        const origin = part.metadata?.origin as { firedAt: string }
+        expect(part.metadata).toMatchObject({
+          origin: { kind: "cron", taskId: task.id, kindOfTask: "cron" },
+          priority: "later",
+        })
+        expect(origin.firedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+        expect(Date.parse(origin.firedAt)).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000)
+        expect(Date.parse(origin.firedAt)).toBeLessThanOrEqual(Date.now())
+        expect(part.text).toBe(`[cron fire @ ${origin.firedAt}] check deployment`)
+        yield* scheduler.tickOnce()
+        expect(captured.value).toHaveLength(1)
+        yield* bridge.stop()
+      }),
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("busy to idle runs keepalive on the mounted scheduler and stop removes the subscription", async () => {
+  const captured: Capture = { value: [] }
+  const dir = freshDir()
+  const priorBudget = process.env.MIMOCODE_LOOP_KEEPALIVE_BUDGET
+  process.env.MIMOCODE_LOOP_KEEPALIVE_BUDGET = "1"
+  try {
+    await harness(captured, ({ bridge, scheduler, inject, bus }) =>
+      Effect.gen(function* () {
+        yield* bridge.start(sid, dir, inject)
+        const overdue = {
+          prompt: "edge keepalive",
+          startedAt: Date.now(),
+          lastScheduledFor: Date.now() - 1000,
+          keepaliveStrikes: 0,
+        }
+        setLoopState(overdue)
+        yield* bus.publish(SessionStatus.Event.Status, { sessionID: sid, status: { type: "busy" } })
+        const task = yield* addDueTask(scheduler, "wait until idle")
+        yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)))
+        yield* scheduler.tickOnce()
+        expect(captured.value).toHaveLength(0)
+        expect(getSessionCronTasks().some((row) => row.id === task.id)).toBe(true)
+        yield* bus.publish(SessionStatus.Event.Status, { sessionID: sid, status: { type: "idle" } })
+        yield* waitFor(() => getStrikes(overdue.prompt) === 1)
+        expect(getLoopState(overdue.prompt)!.lastScheduledFor).toBeGreaterThan(Date.now())
+        expect(
+          getSessionCronTasks().filter((row) => row.kind === "loop" && row.prompt === overdue.prompt),
+        ).toHaveLength(1)
+        yield* scheduler.tickOnce()
+        yield* waitFor(() => captured.value.length === 1)
+        yield* bridge.stop()
+        setLoopState(overdue)
+        yield* bus.publish(SessionStatus.Event.Status, { sessionID: sid, status: { type: "busy" } })
+        yield* bus.publish(SessionStatus.Event.Status, { sessionID: sid, status: { type: "idle" } })
+        yield* Effect.sleep("30 millis")
+        expect(getStrikes(overdue.prompt)).toBe(0)
+        yield* scheduler.tickOnce()
+        expect(captured.value).toHaveLength(1)
+      }),
+    )
+  } finally {
+    if (priorBudget === undefined) delete process.env.MIMOCODE_LOOP_KEEPALIVE_BUDGET
+    else process.env.MIMOCODE_LOOP_KEEPALIVE_BUDGET = priorBudget
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("stop waits for an in-flight start and cannot leave a late scheduler running", async () => {
+  const entered = Deferred.makeUnsafe<void>()
+  const release = Deferred.makeUnsafe<void>()
+  const stopping = Deferred.makeUnsafe<void>()
+  let running = false
+  let stops = 0
+  const delayedScheduler = Layer.effect(
+    Scheduler,
+    Effect.gen(function* () {
+      const scheduler = yield* Scheduler
+      return Scheduler.of({
+        ...scheduler,
+        start: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined)
+            yield* Deferred.await(release)
+            running = true
+          }),
+        stop: () =>
+          Effect.sync(() => {
+            running = false
+            stops++
+          }),
+      })
+    }),
+  ).pipe(Layer.provide(SchedulerDefaultLayer))
+  const dir = freshDir()
+  try {
+    await harness(
+      { value: [] },
+      ({ bridge, inject }) =>
+        Effect.gen(function* () {
+          const start = yield* bridge.start(sid, dir, inject).pipe(Effect.forkChild)
+          yield* Deferred.await(entered).pipe(Effect.timeout("2 seconds"))
+          const stop = yield* Effect.andThen(Deferred.succeed(stopping, undefined), bridge.stop()).pipe(
+            Effect.forkChild,
+          )
+          yield* Deferred.await(stopping)
+          yield* Effect.sleep("20 millis")
+          yield* Deferred.succeed(release, undefined)
+          yield* Fiber.join(start)
+          yield* Fiber.join(stop)
+          expect(running).toBe(false)
+          expect(stops).toBe(1)
+          yield* bridge.stop()
+          expect(running).toBe(false)
+          expect(stops).toBe(1)
+        }),
+      undefined,
+      delayedScheduler,
+    )
+    expect(running).toBe(false)
+    expect(stops).toBe(1)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+for (const teardown of ["stop", "scope close"] as const) {
+  test(`${teardown} interrupts pending delivery and rejects stale fires${teardown === "stop" ? " after restart" : ""}`, async () => {
+    const entered = Deferred.makeUnsafe<void>()
+    const release = Deferred.makeUnsafe<void>()
+    let attempts = 0
+    let finalized = 0
+    const captured: Capture = {
+      value: [],
+      beforePrompt: Effect.gen(function* () {
+        attempts++
+        yield* Deferred.succeed(entered, undefined)
+        yield* Deferred.await(release)
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            finalized++
+          }),
+        ),
+      ),
+    }
+    const mounts: StartOpts[] = []
+    const dir = freshDir()
+    try {
+      const escaped = await harness(
+        captured,
+        ({ bridge, scheduler, inject }) =>
+          Effect.gen(function* () {
+            yield* bridge.start(sid, dir, inject)
+            const task = yield* addDueTask(scheduler, "pending delivery")
+            yield* scheduler.tickOnce()
+            yield* Deferred.await(entered).pipe(Effect.timeout("2 seconds"))
+            expect(attempts).toBe(1)
+            expect(captured.value).toHaveLength(0)
+            if (teardown === "stop") {
+              yield* bridge.stop()
+              expect(finalized).toBe(1)
+              yield* Deferred.succeed(release, undefined)
+              yield* addDueTask(scheduler, "after stop")
+              yield* scheduler.tickOnce()
+              mounts[0]!.onFire(task)
+              yield* Effect.sleep("30 millis")
+              expect(attempts).toBe(1)
+              expect(captured.value).toHaveLength(0)
+              const nextSession = SessionID.make("ses_cronbridge_restarted")
+              yield* bridge.start(nextSession, dir, inject)
+              mounts[0]!.onFire(task)
+              yield* Effect.sleep("30 millis")
+              expect(attempts).toBe(1)
+              expect(captured.value).toHaveLength(0)
+              yield* scheduler.tickOnce()
+              yield* waitFor(() => captured.value.length === 1)
+              expect(captured.value[0]!.sessionID).toBe(nextSession)
+              expect(attempts).toBe(2)
+              yield* bridge.stop()
+            }
+            return { scheduler, task }
+          }),
+        (opts) => mounts.push(opts),
+      )
+      if (teardown === "scope close") {
+        expect(finalized).toBe(1)
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(release, undefined)
+            yield* addDueTask(escaped.scheduler, "after scope close")
+            yield* escaped.scheduler.tickOnce()
+            mounts[0]!.onFire(escaped.task)
+            yield* Effect.sleep("30 millis")
+          }),
+        )
+        expect(attempts).toBe(1)
+        expect(captured.value).toHaveLength(0)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+}
+
 test("cron-bridge start wires Scheduler with isLoading + isKilled + onFire", async () => {
   const captured: { value: CapturedPrompt[] } = { value: [] }
   const dir = freshDir()
   try {
-    await harness(captured, ({ bridge, scheduler }) =>
+    await harness(captured, ({ bridge, scheduler, inject }) =>
       Effect.gen(function* () {
-        yield* bridge.start(sid, dir)
+        yield* bridge.start(sid, dir, inject)
 
         // Register a session-only task and verify it lands in scheduler state
         // (i.e. the bridge's start() actually called scheduler.start so the
@@ -273,9 +559,9 @@ test("cron-bridge is a no-op when MIMOCODE_EXPERIMENTAL_CRON is explicitly disab
   ;(Flag as { MIMOCODE_EXPERIMENTAL_CRON: boolean }).MIMOCODE_EXPERIMENTAL_CRON = false
   const dir = freshDir()
   try {
-    await harness(captured, ({ bridge, scheduler }) =>
+    await harness(captured, ({ bridge, scheduler, inject }) =>
       Effect.gen(function* () {
-        yield* bridge.start(sid, dir)
+        yield* bridge.start(sid, dir, inject)
         // Scheduler.start was never called so add() still works (it does not
         // require start), but armLoop returns null without a runtime.
         const arm = yield* scheduler.armLoop({
@@ -297,10 +583,10 @@ test("cron-bridge double-start is idempotent (warns + ignores)", async () => {
   const captured: { value: CapturedPrompt[] } = { value: [] }
   const dir = freshDir()
   try {
-    await harness(captured, ({ bridge }) =>
+    await harness(captured, ({ bridge, inject }) =>
       Effect.gen(function* () {
-        yield* bridge.start(sid, dir)
-        yield* bridge.start(sid, dir) // second call no-ops
+        yield* bridge.start(sid, dir, inject)
+        yield* bridge.start(sid, dir, inject) // second call no-ops
         yield* bridge.stop()
       }),
     )
@@ -309,13 +595,6 @@ test("cron-bridge double-start is idempotent (warns + ignores)", async () => {
   }
 })
 
-// Wiring assertion: the session-lifecycle hook near the auto-dream / auto-distill
-// block in prompt.ts fires `AppRuntime.runPromise(CronBridge.use(b => b.start(sid, root)))`.
-// That CALL only succeeds if CronBridge.defaultLayer is composed into AppLayer.
-// We assert that the bridge layer + its transitive deps satisfy the
-// `CronBridge.use(...)` access pattern the hook performs — equivalent to
-// "AppLayer can resolve CronBridge", without booting the full AppRuntime
-// (which would require Instance, Storage, Provider, etc).
 test("cron-bridge is resolvable via CronBridge.use (matches prompt.ts hook pattern)", async () => {
   const captured: { value: CapturedPrompt[] } = { value: [] }
   const dir = freshDir()
@@ -329,7 +608,8 @@ test("cron-bridge is resolvable via CronBridge.use (matches prompt.ts hook patte
       provideInstance(instanceDir)(
         CronBridge.use((b) =>
           Effect.gen(function* () {
-            yield* b.start(sid, dir)
+            const inject = yield* captureInject
+            yield* b.start(sid, dir, inject)
             yield* b.stop()
           }),
         ).pipe(Effect.provide(layered)) as Effect.Effect<void>,
@@ -374,7 +654,8 @@ test("cron-bridge resets sentinel cache on main-agent Compacted, ignores subagen
         Effect.gen(function* () {
           const b = yield* CronBridge
           const bus = yield* Bus.Service
-          yield* b.start(sid, wsDir)
+          const inject = yield* captureInject
+          yield* b.start(sid, wsDir, inject)
 
           // Warm the cache (first fire → full content).
           const first = yield* Effect.promise(() => resolveAtFireTime(LOOP_FILE_SENTINEL, wsDir, sid))

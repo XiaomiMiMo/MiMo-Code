@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { Effect, Fiber } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber } from "effect"
 import { createOpencodeClient } from "@mimo-ai/sdk/v2"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { Instance } from "../../src/project/instance"
@@ -7,11 +7,14 @@ import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
 import { ResumeTestHooks } from "../../src/session/resume-test-hooks"
+import { SessionRunState } from "../../src/session/run-state"
+import { SessionStatus } from "../../src/session/status"
 import { MessageID, PartID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Log } from "../../src/util"
 import { Bus } from "../../src/bus"
 import { tmpdir } from "../fixture/fixture"
+import { startScriptedLLMServer, textStopResponse } from "../lib/scripted-llm-server"
 
 void Log.init({ print: false })
 
@@ -132,6 +135,109 @@ describe("session turn recovery routes", () => {
     }
   })
 })
+
+for (const target of ["assistant", "parent-user"] as const) {
+  test(`recovery hides ${target} while resume owns the Runner before busy publication, then permits one retry`, async () => {
+    const server = startScriptedLLMServer([{ lines: textStopResponse("RESUMED-ONCE") }])
+    await using tmp = await tmpdir({ git: true, config: {
+      enabled_providers: ["alibaba"],
+      provider: { alibaba: { options: { apiKey: "test-key", baseURL: `${server.origin}/v1` } } },
+      agent: { build: { model: "alibaba/qwen-plus" } },
+      checkpoint: { thresholds: [] },
+    } })
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => AppRuntime.runPromise(Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const prompt = yield* SessionPrompt.Service
+        const runs = yield* SessionRunState.Service
+        const status = yield* SessionStatus.Service
+        const bus = yield* Bus.Service
+        const session = yield* sessions.create({ title: "resume ownership window" })
+        const user = yield* sessions.updateMessage({
+          id: MessageID.ascending(), role: "user", sessionID: session.id, agent: "build",
+          model: { providerID: ProviderID.make("alibaba"), modelID: ModelID.make("qwen-plus") },
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(), messageID: user.id, sessionID: session.id, type: "text", text: "Continue this task.",
+        })
+        const assistant = target === "assistant" ? yield* sessions.updateMessage({
+          id: MessageID.ascending(), role: "assistant", parentID: user.id, sessionID: session.id,
+          mode: "build", agent: "build", path: { cwd: tmp.path, root: tmp.path }, cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          providerID: user.model.providerID, modelID: user.model.modelID, time: { created: Date.now() },
+        }) : undefined
+        const before = yield* sessions.messages({ sessionID: session.id })
+        const candidates = yield* prompt.recovery({ sessionID: session.id })
+        expect(candidates).toHaveLength(1)
+        expect(candidates[0]?.kind).toBe(target)
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const previous = ResumeTestHooks.beforeAdmissionRecheck
+        ResumeTestHooks.beforeAdmissionRecheck = () => Deferred.succeed(entered, undefined)
+          .pipe(Effect.andThen(Deferred.await(release)))
+        const app = Server.Default().app
+        const query = `?directory=${encodeURIComponent(tmp.path)}`
+        const request = (suffix: string, post = false) => Effect.promise(() => Promise.resolve(app.request(
+          `/session/${session.id}/${suffix}${query}`,
+          post ? { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" } : undefined,
+        )))
+        const initial = yield* request("resume", true).pipe(Effect.forkChild)
+        try {
+          yield* Deferred.await(entered)
+          const owned = yield* runs.executionSnapshot(session.id, "main")
+          expect(owned.fiber).toBeDefined()
+          expect(owned.fiber?.pollUnsafe()).toBeUndefined()
+          expect((yield* status.get(session.id)).type).toBe("idle")
+          const listed = yield* request("recovery")
+          expect(listed.status).toBe(200)
+          expect(yield* Effect.promise(() => listed.json())).toEqual([])
+          expect(yield* prompt.recovery({ sessionID: session.id, allowBusy: true })).toEqual(candidates)
+          for (let index = 0; index < 2; index++) {
+            const raced = yield* request("resume", true)
+            expect(raced.status).toBe(409)
+            expect(yield* Effect.promise(() => raced.json())).toMatchObject({ data: { name: "BusyError" } })
+          }
+          if (assistant) expect((yield* request(`turn/${assistant.id}/resume`, true)).status).toBe(404)
+          const sync = yield* prompt.resume({ sessionID: session.id, assistantMessageID: MessageID.ascending() }).pipe(Effect.exit)
+          expect(Exit.isFailure(sync)).toBe(true)
+          if (Exit.isFailure(sync)) expect(Cause.squash(sync.cause)).toBeInstanceOf(Session.BusyError)
+          expect((yield* runs.executionSnapshot(session.id, "main")).fiber).toBe(owned.fiber)
+          expect(yield* sessions.messages({ sessionID: session.id })).toEqual(before)
+          expect(server.captures).toHaveLength(0)
+        } finally {
+          yield* runs.cancel(session.id)
+          ResumeTestHooks.beforeAdmissionRecheck = previous
+          yield* Deferred.succeed(release, undefined)
+        }
+        expect((yield* Fiber.join(initial)).status).toBe(target === "assistant" ? 202 : 404)
+        yield* runs.assertNotBusy(session.id)
+        const available = yield* request("recovery")
+        expect(yield* Effect.promise(() => available.json())).toEqual(candidates)
+        const idle = Promise.withResolvers<void>()
+        const unsubscribe = yield* bus.subscribeCallback(SessionStatus.Event.Status, (event) => {
+          if (event.properties.sessionID === session.id && event.properties.status.type === "idle") idle.resolve()
+        })
+        try {
+          expect((yield* request("resume", true)).status).toBe(202)
+          yield* Effect.promise(() => idle.promise)
+          yield* runs.assertNotBusy(session.id)
+          const after = yield* sessions.messages({ sessionID: session.id })
+          expect(after.filter((message) => message.info.role === "user").map((message) => message.info.id)).toEqual([user.id])
+          expect(after.find((message) => message.info.id === user.id)?.parts).toEqual(before.find((message) => message.info.id === user.id)?.parts)
+          expect(after.filter((message) => message.parts.some((part) => part.type === "text" && part.text === "RESUMED-ONCE"))).toHaveLength(1)
+          expect(server.captures).toHaveLength(1)
+          expect((yield* request("resume", true)).status).toBe(404)
+        } finally {
+          unsubscribe()
+          yield* prompt.cancel(session.id)
+        }
+      }).pipe(Effect.scoped)) })
+    } finally {
+      await server.stop()
+    }
+  }, 20000)
+}
 
 test("SDK serializes resume titleLocale in the query string", async () => {
   let captured: Request | undefined

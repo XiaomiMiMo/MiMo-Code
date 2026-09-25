@@ -2752,7 +2752,7 @@ export class Session2 extends HeyApiClient {
   /**
    * Send async message
    *
-   * Create and send a new message to a session asynchronously. Returns 202 + receiptId (preferred) or 204 (compat).
+   * Create and send a message asynchronously. Returns 202 with a durable receiptId, or 204 when no user turn is admitted.
    */
   public promptAsync<ThrowOnError extends boolean = false>(
     parameters: {

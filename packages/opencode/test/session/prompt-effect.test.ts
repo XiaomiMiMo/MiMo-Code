@@ -31,6 +31,7 @@ import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionCompaction } from "../../src/session/compaction"
 import { SessionPrompt } from "../../src/session/prompt"
+import { defaultLayer as CronBridgeDefaultLayer } from "../../src/session/cron-bridge"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
@@ -71,6 +72,8 @@ import {
   hintGitProbeBarrier,
 } from "../../src/session/prompt/uncommitted-hint"
 import { SessionPrefixSnapshotTable } from "../../src/session/session.sql"
+import { TurnQueue } from "../../src/turn-queue/controller"
+import { TurnReceiptTable } from "../../src/turn-queue/turn-queue.sql"
 
 void Log.init({ print: false })
 
@@ -316,6 +319,7 @@ function makeHttp(mcpService = mcp, providerLayer = ProviderSvc.defaultLayer) {
   return Layer.mergeAll(
     TestLLMServer.layer,
     SessionPrompt.layer.pipe(
+      Layer.provide(CronBridgeDefaultLayer),
       Layer.provide(Goal.defaultLayer),
       Layer.provide(TaskRegistry.defaultLayer),
       Layer.provide(SchedulerDefaultLayer),
@@ -3796,6 +3800,10 @@ it.live(
         if (Exit.isSuccess(exitA) && Exit.isSuccess(exitB)) {
           expect(exitA.value.info.id).toBe(exitB.value.info.id)
         }
+        expect(yield* llm.calls).toBe(1)
+        const messages = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        expect(messages.filter((message) => message.info.role === "assistant")).toHaveLength(1)
+        yield* (yield* SessionRunState.Service).assertNotBusy(chat.id)
       }),
       { git: true, config: providerCfg },
     ),
@@ -4011,6 +4019,27 @@ unix("shell captures stdout and stderr in completed tool output", () =>
         expect(tool.state.metadata.output).toContain("err")
         yield* run.assertNotBusy(chat.id)
       }),
+    { git: true, config: cfg },
+  ),
+)
+
+unix("shell keeps exclusive ownership with a mounted queue and repeated commands", () =>
+  provideTmpdirInstance(
+    () => Effect.gen(function* () {
+      const queue = yield* TurnQueue.Service
+      const { prompt, run, chat } = yield* boot()
+      const first = yield* prompt.shell({ sessionID: chat.id, agent: "build", command: "printf once" })
+      const second = yield* prompt.shell({ sessionID: chat.id, agent: "build", command: "printf once" })
+      expect(first.info.id).not.toBe(second.info.id)
+      expect(completedTool(first.parts)?.state.output).toContain("once")
+      expect(completedTool(second.parts)?.state.output).toContain("once")
+      expect(yield* queue.listAccepted({ sessionID: chat.id, agentID: "main" })).toEqual([])
+      expect(Database.use((db) => db.select().from(TurnReceiptTable)
+        .where(eq(TurnReceiptTable.session_id, chat.id)).all())).toEqual([])
+      const messages = yield* (yield* Session.Service).messages({ sessionID: chat.id, agentID: "main" })
+      expect(messages.filter((message) => message.info.role === "assistant")).toHaveLength(2)
+      yield* run.assertNotBusy(chat.id)
+    }).pipe(Effect.provide(TurnQueue.defaultLayer)),
     { git: true, config: cfg },
   ),
 )
@@ -5554,9 +5583,46 @@ describe("trailing-user resume integration", () => {
     20_000,
   )
 
+  it.live("recovery checks only its target Runner and restores candidates after ownership release", () =>
+    provideTmpdirInstance(() => Effect.gen(function* () {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const runs = yield* SessionRunState.Service
+      const chat = yield* sessions.create({ title: "slice recovery ownership" })
+      const users = yield* Effect.forEach(["main", "child-1"], (agentID) => sessions.updateMessage({
+        id: MessageID.ascending(), role: "user", sessionID: chat.id, agentID, agent: "build", model: ref,
+        time: { created: Date.now() },
+      }))
+      const mainCandidates = yield* prompt.recovery({ sessionID: chat.id })
+      const childCandidates = yield* prompt.recovery({ sessionID: chat.id, agentID: "child-1" })
+      expect(mainCandidates).toHaveLength(1)
+      expect(childCandidates).toHaveLength(1)
+      const release = yield* Deferred.make<void>()
+      yield* runs.start(chat.id, "child-1", Effect.interrupt,
+        Deferred.await(release).pipe(Effect.as({ info: users[1]!, parts: [] })))
+      const owned = yield* runs.executionSnapshot(chat.id, "child-1")
+      if (!owned.fiber) throw new Error("child Runner did not start")
+      try {
+        expect((yield* (yield* SessionStatus.Service).get(chat.id)).type).toBe("idle")
+        expect(yield* prompt.recovery({ sessionID: chat.id, agentID: "child-1" })).toEqual([])
+        expect(yield* prompt.recovery({ sessionID: chat.id, agentID: "child-1", allowBusy: true })).toEqual(childCandidates)
+        expect(yield* prompt.recovery({ sessionID: chat.id })).toEqual(mainCandidates)
+        yield* runs.assertNotBusy(chat.id)
+        const resumed = yield* prompt.resumeBackground({ sessionID: chat.id, agentID: "child-1" }).pipe(Effect.exit)
+        expect(Exit.isFailure(resumed)).toBe(true)
+        if (Exit.isFailure(resumed)) expect(Cause.squash(resumed.cause)).toBeInstanceOf(Session.BusyError)
+      } finally {
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.await(owned.fiber)
+      }
+      expect(yield* prompt.recovery({ sessionID: chat.id, agentID: "child-1" })).toEqual(childCandidates)
+      expect(yield* prompt.recovery({ sessionID: chat.id })).toEqual(mainCandidates)
+    }), { git: true, config: cfg }),
+  )
+
   it.live("concurrent double resume: BusyError or consumed-target NotFoundError; only one execution", () =>
     provideTmpdirServer(
-      Effect.fnUntraced(function* ({ llm, dir }) {
+      ({ llm, dir }) => Effect.gen(function* () {
         const prompt = yield* SessionPrompt.Service
         const sessions = yield* Session.Service
         const chat = yield* sessions.create({
@@ -5602,7 +5668,43 @@ describe("trailing-user resume integration", () => {
           before.flatMap((m) => m.parts).filter((p) => p.type === "tool"),
         )
         expect(yield* llm.calls).toBe(1)
-      }),
+        expect(Database.use((db) => db.select().from(TurnReceiptTable)
+          .where(eq(TurnReceiptTable.session_id, chat.id)).all())).toEqual([])
+      }).pipe(Effect.provide(TurnQueue.defaultLayer)),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  it.live("resume planned before an epoch change cannot acquire a new execution", () =>
+    provideTmpdirServer(
+      ({ llm, dir }) => Effect.gen(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const queue = yield* TurnQueue.Service
+        const chat = yield* sessions.create({ title: "resume-epoch-fence" })
+        const { user2 } = yield* seedTail(chat.id, dir, {})
+        const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const reached = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const previous = ResumeTestHooks.beforeExclusiveOccupy
+        ResumeTestHooks.beforeExclusiveOccupy = () => Deferred.succeed(reached, undefined)
+          .pipe(Effect.andThen(Deferred.await(release)))
+        yield* Effect.addFinalizer(() => Effect.sync(() => {
+          ResumeTestHooks.beforeExclusiveOccupy = previous
+        }))
+        yield* llm.text("MUST_NOT_EXECUTE")
+        const fiber = yield* prompt.resume({ sessionID: chat.id, userMessageID: user2.id, model: ref })
+          .pipe(Effect.forkChild)
+        yield* Deferred.await(reached)
+        yield* queue.abortSession(chat.id)
+        yield* Deferred.succeed(release, undefined)
+        const exit = yield* Fiber.await(fiber)
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isFailure(exit)) expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+        expect(yield* llm.calls).toBe(0)
+        expect(yield* sessions.messages({ sessionID: chat.id, agentID: "main" })).toEqual(before)
+        yield* (yield* SessionRunState.Service).assertNotBusy(chat.id)
+      }).pipe(Effect.provide(TurnQueue.defaultLayer)),
       { git: true, config: providerCfg },
     ),
   )

@@ -30,5 +30,17 @@ CREATE TABLE `turn_receipt` (
   `time_updated` integer NOT NULL
 );--> statement-breakpoint
 CREATE INDEX `turn_receipt_lane_state_idx` ON `turn_receipt` (`session_id`,`agent_id`,`state`);--> statement-breakpoint
-CREATE UNIQUE INDEX `turn_receipt_idem_idx` ON `turn_receipt` (`session_id`,`idempotency_key`) WHERE `idempotency_key` != '';
+CREATE UNIQUE INDEX `turn_receipt_idem_idx` ON `turn_receipt` (`session_id`,`idempotency_key`) WHERE `idempotency_key` != '';--> statement-breakpoint
+CREATE TABLE `turn_legacy_bootstrap` (
+  `session_id` text PRIMARY KEY NOT NULL REFERENCES `session`(`id`) ON DELETE CASCADE,
+  `message_ids` text NOT NULL DEFAULT '[]',
+  `completed` integer NOT NULL DEFAULT true,
+  `time_updated` integer NOT NULL
+);--> statement-breakpoint
+INSERT INTO `turn_legacy_bootstrap` (`session_id`, `message_ids`, `completed`, `time_updated`)
+SELECT `session`.`id`,
+  (SELECT json_group_array(`message`.`id`) FROM `message`
+    WHERE `message`.`session_id` = `session`.`id` AND `message`.`agent_id` = 'main'),
+  false, CAST(strftime('%s', 'now') AS integer) * 1000
+FROM `session`;
 

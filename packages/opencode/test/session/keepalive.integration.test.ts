@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect"
 
 import { Bus } from "@/bus"
 import { SessionStatus } from "@/session/status"
-import { SessionPrompt, type PromptInput } from "@/session/prompt"
+import { SessionPrompt, injectScheduledPrompt, type InjectScheduledPromptInput, type PromptInput } from "@/session/prompt"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionID, MessageID, PartID } from "@/session/schema"
 import { ProviderID, ModelID } from "@/provider/schema"
@@ -35,12 +35,12 @@ afterEach(async () => {
   await Instance.disposeAll()
 })
 
-// Stub SessionPrompt — none of the keepalive code paths invoke it, but the
-// CronBridge layer requires it transitively.
+// Keepalive sweeps arm future tasks without delivering prompts.
 const stubPrompt = Layer.succeed(
   SessionPrompt.Service,
   SessionPrompt.Service.of({
-    cancel: () => Effect.void,
+    cancel: () => Effect.succeed(0),
+    promptAsync: () => Effect.die("promptAsync not expected in keepalive test"),
     prompt: (input: PromptInput) =>
       Effect.sync(() => {
         const id = MessageID.ascending()
@@ -118,7 +118,10 @@ const withMountedBridge = <A>(
     Effect.gen(function* () {
       const bridge = yield* CronBridge
       const scheduler = yield* Scheduler
-      yield* bridge.start(sid, dir)
+      const prompt = yield* SessionPrompt.Service
+      yield* bridge.start(sid, dir, (input: InjectScheduledPromptInput) =>
+        injectScheduledPrompt(input).pipe(Effect.provideService(SessionPrompt.Service, prompt)),
+      )
       const result = yield* run({ bridge, scheduler, dir })
       yield* bridge.stop()
       return result

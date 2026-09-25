@@ -25,6 +25,13 @@ import { errorData } from "@/util/error"
 import { AppRuntime } from "@/effect/app-runtime"
 import { waitEvent } from "./util"
 import { WorkspaceContext } from "./workspace-context"
+import { Effect } from "effect"
+import { Instance } from "@/project/instance"
+import { SessionRunState } from "@/session/run-state"
+import { ActorExecution } from "@/actor/execution"
+import { ExecutionOwnership } from "@/session/execution-ownership"
+import * as QueueSync from "@/turn-queue/sync"
+import { TurnReceiptTable } from "@/turn-queue/turn-queue.sql"
 
 export const Info = WorkspaceInfo.meta({
   ref: "Workspace",
@@ -154,35 +161,61 @@ export const sessionRestore = fn(SessionRestoreInput, async (input) => {
     const adaptor = await getAdaptor(space.projectID, space.type)
     const target = await adaptor.target(space)
 
-    // Need to switch the workspace of the session
-    SyncEvent.run(Session.Event.Updated, {
-      sessionID: input.sessionID,
-      info: {
-        workspaceID: input.workspaceID,
-      },
+    const origin = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get())
+    if (!origin) throw new Error(`Session not found: ${input.sessionID}`)
+    const retryRemote = origin.workspace_id === input.workspaceID && target.type === "remote"
+    let sourceDirectory = origin.directory
+    if (origin.workspace_id && !retryRemote) {
+      const owner = await get(origin.workspace_id)
+      if (!owner) throw new Error(`Source workspace not found: ${origin.workspace_id}`)
+      const sourceAdaptor = await getAdaptor(owner.projectID, owner.type)
+      const sourceTarget = await sourceAdaptor.target(owner)
+      if (sourceTarget.type !== "local")
+        throw new Error("Remote workspace transfer must be initiated by its execution owner; a mirror cannot transfer its lease")
+      sourceDirectory = sourceTarget.directory
+    }
+    const source = retryRemote ? undefined : await WorkspaceContext.provide({
+      workspaceID: origin.workspace_id ?? undefined,
+      fn: () => Instance.provide({
+        directory: sourceDirectory,
+        fn: () => AppRuntime.runPromise(Effect.gen(function* () {
+          const identity = yield* ExecutionOwnership.captureIdentity
+          const runs = yield* SessionRunState.Service
+          const executions = yield* ActorExecution.Service
+          const snapshot = yield* runs.sessionExecutionSnapshot(input.sessionID)
+          return { identity, isIdle: () => snapshot.isIdle() && !executions.hasActiveUnsafe(input.sessionID) }
+        })),
+      }),
     })
-
-    const rows = Database.use((db) =>
-      db
-        .select({
-          id: EventTable.id,
-          aggregateID: EventTable.aggregate_id,
-          seq: EventTable.seq,
-          type: EventTable.type,
-          data: EventTable.data,
-        })
-        .from(EventTable)
-        .where(eq(EventTable.aggregate_id, input.sessionID))
-        .orderBy(asc(EventTable.seq))
-        .all(),
-    )
-    if (rows.length === 0) throw new Error(`No events found for session: ${input.sessionID}`)
-
-    const all = rows
-
-    const size = 10
-    const sets = Array.from({ length: Math.ceil(all.length / size) }, (_, i) => all.slice(i * size, (i + 1) * size))
-    const total = sets.length
+    const transfer = Database.transaction((db) => {
+      if (source) {
+        ExecutionOwnership.assertOwnership(db, input.sessionID, source.identity)
+        if (!source.isIdle()) throw new Error("Cannot transfer a session with active execution")
+      } else {
+        const current = db.select().from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get()
+        if (current?.workspace_id !== input.workspaceID) throw new Error("Session owner changed before retry")
+      }
+      if (db.select().from(TurnReceiptTable).where(eq(TurnReceiptTable.session_id, input.sessionID)).all()
+        .some((receipt) => receipt.state === "claimed")) throw new Error("Cannot transfer unresolved execution claims")
+      if (source) {
+        SyncEvent.run(Session.Event.Updated, { sessionID: input.sessionID, info: { workspaceID: input.workspaceID } })
+        QueueSync.snapshot(input.sessionID)
+      }
+      const queueSnapshot = QueueSync.capture(input.sessionID, db)
+      const events = db.select({
+        id: EventTable.id,
+        aggregateID: EventTable.aggregate_id,
+        seq: EventTable.seq,
+        type: EventTable.type,
+        data: EventTable.data,
+      }).from(EventTable).where(eq(EventTable.aggregate_id, input.sessionID)).orderBy(asc(EventTable.seq)).all()
+      if (target.type === "remote" &&
+          (events[0]?.seq !== 0 || !events.some((event) => event.type.startsWith("session.created."))))
+        throw new Error("Remote restoration requires a complete recorded session history")
+      return { events, queueSnapshot, finalSeq: events.at(-1)?.seq ?? -1 }
+    }, { behavior: "immediate" })
+    const all = transfer.events
+    const total = 1
     log.info("session restore prepared", {
       workspaceID: input.workspaceID,
       sessionID: input.sessionID,
@@ -207,74 +240,35 @@ export const sessionRestore = fn(SessionRestoreInput, async (input) => {
         },
       },
     })
-    for (const [i, events] of sets.entries()) {
-      log.info("session restore batch starting", {
-        workspaceID: input.workspaceID,
-        sessionID: input.sessionID,
-        step: i + 1,
-        total,
-        events: events.length,
-        first: events[0]?.seq,
-        last: events.at(-1)?.seq,
-        target: target.type === "remote" ? String(route(target.url, "/sync/replay")) : target.directory,
+    if (target.type === "remote") {
+      const url = route(target.url, "/sync/replay")
+      const headers = new Headers(target.headers)
+      headers.set("content-type", "application/json")
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          directory: space.directory ?? "",
+          workspaceID: input.workspaceID,
+          events: transfer.events,
+          queueSnapshot: transfer.queueSnapshot,
+          finalSeq: transfer.finalSeq,
+        }),
       })
-      if (target.type === "local") {
-        SyncEvent.replayAll(events)
-        log.info("session restore batch replayed locally", {
-          workspaceID: input.workspaceID,
-          sessionID: input.sessionID,
-          step: i + 1,
-          total,
-          events: events.length,
-        })
-      } else {
-        const url = route(target.url, "/sync/replay")
-        const headers = new Headers(target.headers)
-        headers.set("content-type", "application/json")
-        const res = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            directory: space.directory ?? "",
-            events,
-          }),
-        })
-        if (!res.ok) {
-          const body = await res.text()
-          log.error("session restore batch failed", {
-            workspaceID: input.workspaceID,
-            sessionID: input.sessionID,
-            step: i + 1,
-            total,
-            status: res.status,
-            body,
-          })
-          throw new Error(
-            `Failed to replay session ${input.sessionID} into workspace ${input.workspaceID}: HTTP ${res.status} ${body}`,
-          )
-        }
-        log.info("session restore batch posted", {
-          workspaceID: input.workspaceID,
-          sessionID: input.sessionID,
-          step: i + 1,
-          total,
-          status: res.status,
-        })
+      if (!res.ok) {
+        const body = await res.text()
+        // The target may have committed before its response was lost. Never reopen the old owner here.
+        throw new Error(`Failed to restore session ${input.sessionID} into workspace ${input.workspaceID}: HTTP ${res.status} ${body}`)
       }
-      GlobalBus.emit("event", {
-        directory: "global",
-        workspace: input.workspaceID,
-        payload: {
-          type: Event.Restore.type,
-          properties: {
-            workspaceID: input.workspaceID,
-            sessionID: input.sessionID,
-            total,
-            step: i + 1,
-          },
-        },
-      })
     }
+    GlobalBus.emit("event", {
+      directory: "global",
+      workspace: input.workspaceID,
+      payload: {
+        type: Event.Restore.type,
+        properties: { workspaceID: input.workspaceID, sessionID: input.sessionID, total, step: 1 },
+      },
+    })
 
     log.info("session restore complete", {
       workspaceID: input.workspaceID,

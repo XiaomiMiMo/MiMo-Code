@@ -533,10 +533,11 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const policy = c.req.valid("json")?.queuedPolicy ?? "drop"
-        const epoch = turnQueueRef.current
-          ? await AppRuntime.runPromise(turnQueueRef.current.abortSession(sessionID, policy)).catch(() => 0)
-          : 0
-        await runRequest("SessionRoutes.abort", c, SessionPrompt.Service.use((svc) => svc.cancel(sessionID)))
+        const epoch = await runRequest(
+          "SessionRoutes.abort",
+          c,
+          SessionPrompt.Service.use((svc) => svc.cancel(sessionID, policy)),
+        )
         return c.json({ ok: true, epoch })
       },
     )
@@ -1275,11 +1276,14 @@ export const SessionRoutes = lazy(() =>
                   z.object({
                     info: MessageV2.User,
                     parts: MessageV2.Part.array(),
-                    receiptId: z.string().optional(),
+                    receiptId: z.string(),
                   }),
                 ),
               },
             },
+          },
+          204: {
+            description: "No user turn admitted",
           },
           ...errors(400, 404),
         },
@@ -1313,27 +1317,14 @@ export const SessionRoutes = lazy(() =>
           const queued = await runRequest(
             "SessionRoutes.prompt.queue",
             c,
-            SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID, noReply: true })),
+            SessionPrompt.Service.use((svc) => svc.promptAsync({ ...body, sessionID })),
           )
-          // prompt() already admitted with idempotencyKey=messageID. Re-admit
-          // with the same key only looks up that receipt — never a second live row.
-          const tq = turnQueueRef.current
-          const receipt = tq
-            ? await AppRuntime.runPromise(
-                tq.admit({
-                  lane: { sessionID, agentID: "main" },
-                  intent: { kind: "prompt", messageID: queued.info.id },
-                  idempotencyKey: queued.info.id,
-                }),
-              )
-            : undefined
-          // admit() already kicked the Controller scheduler (TOCTOU-safe).
-          c.status(202)
+          if (!queued.receiptId) return c.body(null, 204)
           return c.json({
-            info: queued.info,
-            parts: queued.parts,
-            ...(receipt ? { receiptId: receipt.id } : {}),
-          })
+            info: queued.message.info,
+            parts: queued.message.parts,
+            receiptId: queued.receiptId,
+          }, 202)
         }
 
         c.status(200)
@@ -1366,19 +1357,19 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "Send async message",
         description:
-          "Create and send a new message to a session asynchronously. Returns 202 + receiptId (preferred) or 204 (compat).",
+          "Create and send a message asynchronously. Returns 202 with a durable receiptId, or 204 when no user turn is admitted.",
         operationId: "session.prompt_async",
         responses: {
           202: {
             description: "Accepted — durable receipt",
             content: {
               "application/json": {
-                schema: resolver(z.object({ receiptId: z.string().optional() })),
+                schema: resolver(z.object({ receiptId: z.string() })),
               },
             },
           },
           204: {
-            description: "Prompt accepted (deprecated compat; no receipt body)",
+            description: "No user turn admitted",
           },
           ...errors(400, 404),
         },
@@ -1394,30 +1385,13 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
         const releaseInstance = Instance.claim(Instance.directory)
-        let receiptId: string | undefined
-        void runRequest(
+        const accepted = await runRequest(
           "SessionRoutes.prompt_async",
           c,
-          SessionPrompt.Service.use((svc) =>
-            svc.prompt({ ...body, sessionID, noReply: true }).pipe(
-              Effect.tap((msg) =>
-                Effect.sync(() => {
-                  receiptId = msg.info.id
-                }),
-              ),
-            ),
-          ),
-        ).catch((err) => {
-          log.error("prompt_async failed", { sessionID, error: err })
-          void Bus.publish(Session.Event.Error, {
-            sessionID,
-            error: new NamedError.Unknown({ message: err instanceof Error ? err.message : String(err) }).toObject(),
-          })
-        }).finally(releaseInstance)
-        // Preferred contract: 202 + receiptId (message id is the stable idempotency key).
-        c.status(202)
-        c.header("Deprecation", "204")
-        return c.json({ receiptId })
+          SessionPrompt.Service.use((svc) => svc.promptAsync({ ...body, sessionID })),
+        ).finally(releaseInstance)
+        if (!accepted.receiptId) return c.body(null, 204)
+        return c.json({ receiptId: accepted.receiptId }, 202)
       },
     )
     .get(

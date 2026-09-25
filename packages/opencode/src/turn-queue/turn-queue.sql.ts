@@ -46,6 +46,7 @@ export const TurnReceiptTable = sqliteTable(
     suspended: integer({ mode: "boolean" }).notNull().default(false),
     outcome: text().$type<"success" | "assistant_error" | "interrupted" | "never_ran">(),
     message_id: text().$type<MessageID>(),
+    delivery_message_id: text().$type<MessageID>(),
     error: text(),
     idempotency_key: text().notNull().default(""),
     time_created: integer().notNull(),
@@ -57,5 +58,15 @@ export const TurnReceiptTable = sqliteTable(
     // string means "no idempotency key" and must not collide.
   ],
 )
+
+export const TurnLegacyBootstrapTable = sqliteTable("turn_legacy_bootstrap", {
+  session_id: text()
+    .$type<SessionID>()
+    .primaryKey()
+    .references(() => SessionTable.id, { onDelete: "cascade" }),
+  message_ids: text({ mode: "json" }).$type<MessageID[]>().notNull().default([]),
+  completed: integer({ mode: "boolean" }).notNull().default(true),
+  time_updated: integer().notNull(),
+})
 
 export type TurnReceiptRow = typeof TurnReceiptTable.$inferSelect

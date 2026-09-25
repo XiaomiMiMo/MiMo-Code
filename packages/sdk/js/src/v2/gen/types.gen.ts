@@ -1036,6 +1036,11 @@ export type UserMessage = {
     [key: string]: boolean
   }
   provenance?: Provenance
+  queueAdmission?: {
+    epoch: number
+    ready: true
+    dispatch: boolean
+  }
 }
 
 export type AssistantMessage = {
@@ -5367,8 +5372,12 @@ export type SessionPromptResponses = {
   202: {
     info: UserMessage
     parts: Array<Part>
-    receiptId?: string
+    receiptId: string
   }
+  /**
+   * No user turn admitted
+   */
+  204: void
 }
 
 export type SessionPromptResponse = SessionPromptResponses[keyof SessionPromptResponses]
@@ -5724,10 +5733,10 @@ export type SessionPromptAsyncResponses = {
    * Accepted — durable receipt
    */
   202: {
-    receiptId?: string
+    receiptId: string
   }
   /**
-   * Prompt accepted (deprecated compat; no receipt body)
+   * No user turn admitted
    */
   204: void
 }

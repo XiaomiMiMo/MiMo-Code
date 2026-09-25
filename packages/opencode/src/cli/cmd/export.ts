@@ -7,8 +7,10 @@ import { bootstrap } from "../bootstrap"
 import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { EOL } from "os"
-import { AppRuntime } from "@/effect/app-runtime"
 import { Log } from "../../util"
+import { Database, eq, NotFoundError } from "../../storage"
+import { SessionTable } from "../../session/session.sql"
+import * as QueueSync from "../../turn-queue/sync"
 
 function redact(kind: string, id: string, value: string) {
   return value.trim() ? `[redacted:${kind}:${id}]` : value
@@ -17,6 +19,20 @@ function redact(kind: string, id: string, value: string) {
 function data(kind: string, id: string, value: Record<string, unknown> | undefined) {
   if (!value) return value
   return Object.keys(value).length ? { redacted: `${kind}:${id}` } : value
+}
+
+function payload(kind: string, id: string, value: unknown) {
+  return value == null ? value : `[redacted:${kind}:${id}]`
+}
+
+function redactError<T extends NonNullable<MessageV2.Assistant["error"]>>(value: T, id: string): T {
+  return {
+    ...value,
+    data: Object.fromEntries(Object.entries(value.data).map(([key, item]) => [key,
+      typeof item === "string" ? redact(`error-${key}`, id, item) :
+        item && typeof item === "object" ? { redacted: `error-${key}:${id}` } : item,
+    ])),
+  } as T
 }
 
 function span(id: string, value: { value: string; start: number; end: number }) {
@@ -114,6 +130,8 @@ function part(part: MessageV2.Part): MessageV2.Part {
                     ...part.state,
                     input: data("tool-input", part.id, part.state.input) ?? part.state.input,
                     output: redact("tool-output", part.id, part.state.output),
+                    providerOutput: payload("tool-provider-output", part.id, part.state.providerOutput),
+                    providerMetadata: data("tool-provider-metadata", part.id, part.state.providerMetadata),
                     title: redact("tool-title", part.id, part.state.title),
                     metadata: data("tool-state-metadata", part.id, part.state.metadata) ?? part.state.metadata,
                     attachments: part.state.attachments?.map(filepart),
@@ -121,9 +139,13 @@ function part(part: MessageV2.Part): MessageV2.Part {
                 : {
                     ...part.state,
                     input: data("tool-input", part.id, part.state.input) ?? part.state.input,
+                    error: redact("tool-error", part.id, part.state.error),
                     metadata: data("tool-state-metadata", part.id, part.state.metadata),
+                    attachments: part.state.attachments?.map(filepart),
                   },
       }
+    case "retry":
+      return { ...part, error: redactError(part.error, part.id) }
     case "patch":
       return {
         ...part,
@@ -162,12 +184,41 @@ function part(part: MessageV2.Part): MessageV2.Part {
 
 const partFn = part
 
-function sanitize(data: { info: Session.Info; messages: MessageV2.WithParts[] }) {
+export function captureExportData(sessionID: SessionID) {
+  return Database.transaction((tx) => {
+    const row = tx.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get()
+    if (!row) throw new NotFoundError({ message: `Session not found: ${sessionID}` })
+    return {
+      info: Session.fromRow(row),
+      messages: Array.from(MessageV2.stream(sessionID, { agentID: "*" })).reverse(),
+      queue: QueueSync.capture(sessionID, tx),
+    }
+  })
+}
+
+export function sanitize(data: ReturnType<typeof captureExportData>) {
   return {
+    queue: {
+      ...data.queue,
+      receipts: data.queue.receipts.map((row) => ({
+        ...row,
+        intent: row.intent.kind === "shell" ? {
+          ...row.intent,
+          command: typeof row.intent.command === "string" ? redact("shell-command", row.id, row.intent.command) : row.intent.command,
+          ...(typeof row.intent.cwd === "string" ? { cwd: redact("shell-cwd", row.id, row.intent.cwd) } : {}),
+        } : row.intent,
+        error: row.error === null ? null : redact("receipt-error", row.id, row.error),
+        idempotency_key: redact("receipt-key", row.id, row.idempotency_key),
+      })),
+    },
     info: {
       ...data.info,
       title: redact("session-title", data.info.id, data.info.title),
       directory: redact("session-directory", data.info.id, data.info.directory),
+      prompt: data.info.prompt ? {
+        ...data.info.prompt,
+        system: data.info.prompt.system === undefined ? undefined : redact("session-system", data.info.id, data.info.prompt.system),
+      } : data.info.prompt,
       summary: !data.info.summary
         ? data.info.summary
         : {
@@ -211,6 +262,15 @@ function sanitize(data: { info: Session.Info; messages: MessageV2.WithParts[] })
             }
           : {
               ...msg.info,
+              error: msg.info.error ? redactError(msg.info.error, msg.info.id) : msg.info.error,
+              structured: payload("assistant-structured", msg.info.id, msg.info.structured),
+              actorResult: msg.info.actorResult ? {
+                ...msg.info.actorResult,
+                finalText: msg.info.actorResult.finalText === undefined ? undefined : redact("actor-final", msg.info.id, msg.info.actorResult.finalText),
+                structured: payload("actor-structured", msg.info.id, msg.info.actorResult.structured),
+                reportedSummary: msg.info.actorResult.reportedSummary === undefined ? undefined : redact("actor-summary", msg.info.id, msg.info.actorResult.reportedSummary),
+                warnings: msg.info.actorResult.warnings?.map((warning) => redact("actor-warning", msg.info.id, warning)),
+              } : msg.info.actorResult,
               path: {
                 cwd: redact("cwd", msg.info.id, msg.info.path.cwd),
                 root: redact("root", msg.info.id, msg.info.path.root),
@@ -286,15 +346,7 @@ export const ExportCommand = cmd({
       }
 
       try {
-        const sessionInfo = await AppRuntime.runPromise(Session.Service.use((svc) => svc.get(sessionID!)))
-        const messages = await AppRuntime.runPromise(
-          Session.Service.use((svc) => svc.messages({ sessionID: sessionInfo.id, agentID: "*" })),
-        )
-
-        const exportData = {
-          info: sessionInfo,
-          messages,
-        }
+        const exportData = captureExportData(sessionID!)
 
         process.stdout.write(JSON.stringify(args.sanitize ? sanitize(exportData) : exportData, null, 2))
         process.stdout.write(EOL)

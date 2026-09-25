@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Fiber, Layer } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Scheduler } from "effect"
 import { Bus } from "@/bus"
 import { ActorExecution } from "@/actor/execution"
 import { SessionRunState } from "@/session/run-state"
@@ -45,7 +45,11 @@ export interface WaitResult {
   time?: { created: number; updated: number; completed?: number }
 }
 
-const DEFAULT_TIMEOUT_MS = 600_000
+export const DEFAULT_TIMEOUT_MS = 600_000
+export const WAIT_INTERRUPTED_HINT =
+  "A user message arrived while you were waiting. Stop calling tools and address the user. The subagent keeps running and will notify when done — do not wait again immediately."
+export const WAIT_TIMEOUT_HINT =
+  "This wait timed out; this does not mean the actor stopped. Do not blindly repeat waits. Use actor status to check executionState, turnCount, and lastTurnTime, but activity alone is not proof of progress. Inspect available tool results and concrete outputs; if evidence is insufficient, use actor send to request concrete progress, partial results, and a focused wrap-up. If necessary, use actor cancel, then actor status to confirm execution has exited. Do not infer failure from elapsed time alone."
 
 // Persistent actors stay idle without a lastOutcome before their first turn
 // runs. We only resolve wait once they've completed at least one turn AND
@@ -59,7 +63,12 @@ function isWaitResolving(entry: Pick<Actor, "status" | "lastOutcome" | "lifecycl
 
 export interface Interface {
   readonly status: (entry: Actor) => Effect.Effect<Actor & { executionActive: boolean; executionState: ExecutionState }>
-  readonly wait: (input: { sessionID: SessionID; actor_id: string; timeout_ms?: number }) => Effect.Effect<WaitResult>
+  readonly wait: (input: {
+    sessionID: SessionID
+    actor_id: string
+    timeout_ms?: number
+    afterRevision?: number
+  }) => Effect.Effect<WaitResult>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ActorWaiter") {}
@@ -76,22 +85,40 @@ export const layer: Layer.Layer<
     const reg = yield* ActorRegistry.Service
     const bus = yield* Bus.Service
     const sessions = yield* Session.Service
-    const context = yield* Effect.context()
 
-    // Execution belongs to this runtime. Persisted pending/running rows survive
-    // process exit and cannot prove that work is still executing here.
-    const status = Effect.fn("ActorWaiter.status")(function* (entry: Actor) {
-      const executionActive =
-        !!(yield* executions.current(entry.sessionID, entry.actorID)) ||
-        (yield* runs
-          .assertNotBusy(entry.sessionID, entry.actorID)
-          .pipe(Effect.match({ onFailure: () => true, onSuccess: () => false })))
-      return {
-        ...entry,
-        status: executionActive ? ("running" as const) : ("idle" as const),
-        executionActive,
-        executionState: executionState(entry, executionActive),
+    const inspect = Effect.fn("ActorWaiter.inspect")(function* (entry: Actor) {
+      for (;;) {
+        const runner = yield* runs.executionSnapshot(entry.sessionID, entry.actorID)
+        const fresh = (yield* reg.get(entry.sessionID, entry.actorID)) ?? entry
+        if (!runner.isCurrent()) continue
+        const execution = executions.currentUnsafe(entry.sessionID, entry.actorID)
+        const waits: Effect.Effect<unknown>[] = []
+        if (execution && (!execution.fiber || execution.fiber.pollUnsafe() === undefined))
+          waits.push(execution.fiber ? Fiber.await(execution.fiber) : Deferred.await(execution.done))
+        if (runner.fiber && runner.fiber.pollUnsafe() === undefined) waits.push(Fiber.await(runner.fiber))
+        const executionActive = waits.length > 0
+        // A running row can retain an older outcome across a crash or a new reservation.
+        const terminal = !executionActive && fresh.status === "idle"
+        const actor = {
+          ...fresh,
+          status: executionActive ? ("running" as const) : ("idle" as const),
+          lastOutcome: terminal ? fresh.lastOutcome : undefined,
+          lastError: terminal ? fresh.lastError : undefined,
+          resultMessageID: terminal ? fresh.resultMessageID : undefined,
+          time: { ...fresh.time, completed: terminal ? fresh.time.completed : undefined },
+          executionActive,
+          executionState: executionActive
+            ? ("running" as const)
+            : terminal
+              ? executionState(fresh, false)
+              : ("stopped" as const),
+        }
+        return { actor, waits, settled: !executionActive && (fresh.status !== "idle" || isWaitResolving(fresh)) }
       }
+    }, Effect.provideService(Scheduler.PreventSchedulerYield, true))
+
+    const status = Effect.fn("ActorWaiter.status")(function* (entry: Actor) {
+      return (yield* inspect(entry)).actor
     })
 
     // Pull the most recent assistant text + structured object from the actor's
@@ -119,7 +146,11 @@ export const layer: Layer.Layer<
         return { result: textPart?.text, structured: undefined as unknown }
       })
 
-    const snapshot = (sessionID: SessionID, actorID: string, entry: Actor): Effect.Effect<WaitResult> =>
+    const snapshot = (
+      sessionID: SessionID,
+      actorID: string,
+      entry: Actor & { executionActive: boolean; executionState: ExecutionState },
+    ): Effect.Effect<WaitResult> =>
       Effect.gen(function* () {
         const extracted =
           entry.status === "idle" &&
@@ -132,7 +163,8 @@ export const layer: Layer.Layer<
           : parseReturnHeader(extracted.result)
         return {
           status: entry.status,
-          executionState: executionState(entry, false),
+          executionActive: entry.executionActive,
+          executionState: entry.executionState,
           actor_id: entry.actorID,
           description: entry.description,
           agent: entry.agent,
@@ -154,90 +186,50 @@ export const layer: Layer.Layer<
       sessionID: SessionID
       actor_id: string
       timeout_ms?: number
+      afterRevision?: number
     }) {
-      // Fast path: registry already in a wait-resolving state.
       const entry = yield* reg.get(input.sessionID, input.actor_id)
       if (!entry) return { status: "unknown" as const, actor_id: input.actor_id }
-      const current = yield* status(entry)
-      if (!current.executionActive && entry.status !== "idle") {
-        return { ...(yield* snapshot(input.sessionID, input.actor_id, current)), executionActive: false }
-      }
-      if (isWaitResolving(entry)) return yield* snapshot(input.sessionID, input.actor_id, entry)
-
-      const resolved = yield* Deferred.make<WaitResult>()
-      const interrupted = yield* Deferred.make<WaitResult>()
-      const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS
+      const deadline = Date.now() + (input.timeout_ms ?? DEFAULT_TIMEOUT_MS)
       const tq = turnQueueRef.current
-      // Snapshot main-lane inputRevision so a later user admit steers this wait.
       const lane = { sessionID: input.sessionID, agentID: "main" as const }
-      let afterRev = 0
+      const afterRev = input.afterRevision ?? (tq ? yield* tq.observeInput(lane, -1) : 0)
+      const interrupted = yield* Deferred.make<void>()
       if (tq) {
-        afterRev = yield* tq.observeInput(lane, -1).pipe(Effect.catchCause(() => Effect.succeed(0)))
+        yield* tq.observeInput(lane, afterRev).pipe(
+          Effect.flatMap(() => Deferred.succeed(interrupted, undefined)),
+          Effect.forkScoped,
+        )
       }
-
-      const steerFiber = tq
-        ? yield* tq
-            .observeInput(lane, afterRev)
-            .pipe(
-              Effect.map(() => ({
-                status: "interrupted" as const,
-                actor_id: input.actor_id,
-                description: entry.description,
-                agent: entry.agent,
-                background: entry.background,
-                turnCount: entry.turnCount,
-                lastTurnTime: entry.lastTurnTime,
-              })),
-              Effect.tap((r) => Effect.sync(() => Deferred.doneUnsafe(interrupted, Effect.succeed(r)))),
-              Effect.catchCause(() => Effect.void),
-              Effect.forkChild,
-            )
-        : undefined
-
-      return yield* Effect.acquireUseRelease(
-        Effect.gen(function* () {
-          return yield* bus.subscribeCallback(ActorStatusChanged, (evt) => {
-            if (evt.properties.actorID !== input.actor_id) return
-            if (evt.properties.sessionID !== input.sessionID) return
-            Effect.runFork(
-              Effect.gen(function* () {
-                const fresh = yield* reg.get(input.sessionID, input.actor_id)
-                if (!fresh) return
-                if (!isWaitResolving(fresh)) return
-                const snap = yield* snapshot(input.sessionID, input.actor_id, fresh)
-                Deferred.doneUnsafe(resolved, Effect.succeed(snap))
-              }).pipe(
-                Effect.catchCause((cause) => Effect.logError(`waiter rehydrate failed: ${cause}`)),
-                Effect.provide(context),
-              ),
-            )
-          })
+      let changed = yield* Deferred.make<void>()
+      yield* Effect.acquireRelease(
+        bus.subscribeCallback(ActorStatusChanged, (evt) => {
+          if (evt.properties.actorID !== input.actor_id || evt.properties.sessionID !== input.sessionID) return
+          Deferred.doneUnsafe(changed, Effect.void)
         }),
-        () =>
-          Effect.gen(function* () {
-            const recheck = yield* reg.get(input.sessionID, input.actor_id)
-            if (recheck && isWaitResolving(recheck)) {
-              return yield* snapshot(input.sessionID, input.actor_id, recheck)
-            }
-            const raced = yield* Deferred.await(resolved).pipe(
-              Effect.raceFirst(Deferred.await(interrupted)),
-              Effect.timeout(timeoutMs),
-              Effect.catchTag("TimeoutError", () => Effect.succeed(null)),
-            )
-            if (raced === null) {
-              const final = yield* reg.get(input.sessionID, input.actor_id)
-              if (final && isWaitResolving(final)) return yield* snapshot(input.sessionID, input.actor_id, final)
-              return { status: "timeout" as const, actor_id: input.actor_id }
-            }
-            return raced
-          }),
-        (unsub) =>
-          Effect.sync(() => {
-            unsub()
-            if (steerFiber) void steerFiber.pipe(Fiber.interrupt)
-          }),
+        (unsubscribe) => Effect.sync(unsubscribe),
       )
-    })
+      for (;;) {
+        // Subscribe before reading; reset before each snapshot so completion cannot fall in a gap.
+        changed = yield* Deferred.make<void>()
+        const fresh = yield* reg.get(input.sessionID, input.actor_id)
+        if (!fresh) return { status: "unknown" as const, actor_id: input.actor_id }
+        const { actor, waits, settled } = yield* inspect(fresh)
+        if (settled) return yield* snapshot(input.sessionID, input.actor_id, actor)
+        if (yield* Deferred.isDone(interrupted))
+          return { ...(yield* snapshot(input.sessionID, input.actor_id, actor)), status: "interrupted" as const }
+        const remaining = deadline - Date.now()
+        if (remaining <= 0)
+          return { ...(yield* snapshot(input.sessionID, input.actor_id, actor)), status: "timeout" as const }
+        // Awaiting an execution observes its exit; interrupting this wait never interrupts the actor.
+        yield* Effect.raceAllFirst([
+          ...waits,
+          Deferred.await(changed),
+          Deferred.await(interrupted),
+          Effect.sleep(remaining),
+        ])
+      }
+    }, Effect.scoped)
 
     return Service.of({ wait, status })
   }),
