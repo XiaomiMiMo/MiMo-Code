@@ -5,6 +5,7 @@ import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID } from "./schema"
 import { SessionStatus } from "./status"
+import { SessionRuntime } from "./runtime"
 import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan-tool-idle-hook"
 
 export interface Interface {
@@ -94,7 +95,9 @@ export const layer = Layer.effect(
         // unregistered Runner (RL-ORPHAN-C01). Applies to main AND non-main
         // (Cancelling-wait is agent-agnostic in Runner.ensureRunning).
         // Session idle status is main-only (actors do not publish session idle).
-        onIdle: isMain ? status.set(sessionID, { type: "idle" }) : Effect.void,
+        onIdle: Effect.sync(() => SessionRuntime.current().execution(sessionID, agentID, false)).pipe(
+          Effect.andThen(isMain ? status.set(sessionID, { type: "idle" }) : Effect.void),
+        ),
         onBusy: isMain ? status.set(sessionID, { type: "busy" }) : Effect.void,
         // Child executors must observe cancellation, not a stale assistant.
         onInterrupt: isMain ? onInterrupt : Effect.interrupt,
@@ -111,6 +114,11 @@ export const layer = Layer.effect(
       return
     })
 
+    const withExecution = (sessionID: SessionID, agentID: string, work: Effect.Effect<MessageV2.WithParts>) =>
+      SessionRuntime.withOwner(sessionID, agentID,
+        Effect.sync(() => SessionRuntime.current().execution(sessionID, agentID, true)).pipe(Effect.andThen(work)),
+      )
+
     /**
      * Snapshot assistant message IDs while work is still exiting, then sweep
      * orphans only on that set (RL-ORPHAN-D01). Field evidence: the original
@@ -119,8 +127,9 @@ export const layer = Layer.effect(
      * create new message IDs and cannot enter an earlier snapshot.
      */
     const withOrphanSweep = (sessionID: SessionID, agentID: string, work: Effect.Effect<MessageV2.WithParts>) => {
-      if (agentID !== "main") return work
-      return work.pipe(
+      const owned = withExecution(sessionID, agentID, work)
+      if (agentID !== "main") return owned
+      return owned.pipe(
         Effect.ensuring(
           Effect.suspend(() =>
             Effect.gen(function* () {
@@ -217,7 +226,7 @@ export const layer = Layer.effect(
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, agentID, onInterrupt)).ensureExclusive(work)
+      return yield* (yield* runner(sessionID, agentID, onInterrupt)).ensureExclusive(withExecution(sessionID, agentID, work))
     })
 
     const startShell = Effect.fn("SessionRunState.startShell")(function* (
@@ -225,7 +234,7 @@ export const layer = Layer.effect(
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, "main", onInterrupt)).startShell(work)
+      return yield* (yield* runner(sessionID, "main", onInterrupt)).startShell(withExecution(sessionID, "main", work))
     })
 
     return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, ensureExclusive, start, startOwned, startShell })

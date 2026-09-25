@@ -7,14 +7,16 @@ import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { Actor } from "../../src/actor/spawn"
 import { ActorRegistry } from "../../src/actor/registry"
+import { ActorExecution } from "../../src/actor/execution"
 import { ActorStatusChanged } from "../../src/actor/events"
-import { Bus } from "../../src/bus"
+import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
 import { TaskRegistry } from "../../src/task/registry"
 import { ActorWaiter } from "../../src/actor/waiter"
 import { Inbox } from "../../src/inbox"
 import { sessionPromptRef } from "../../src/inbox/inbox-ref"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
+import { SessionRuntime, type Envelope } from "../../src/session/runtime"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { AppLayer } from "../../src/effect/app-runtime"
 import { attach } from "../../src/effect/run-service"
@@ -328,7 +330,7 @@ test("leftover owned task leaves delivery body untouched", async () => {
   }
 }, 30000)
 
-// Desktop tool-step-schema [TP-R14-08] [TP-R14-11].
+// Desktop tool-step-schema [TP-R14-08] [TP-R14-11] [TP-R17-03].
 test("inbox waits for the entire spawn execution before starting a continuation", async () => {
   const server = startScriptedLLMServer([
     { lines: textStopResponse("SPAWN-RESULT") },
@@ -342,7 +344,7 @@ test("inbox waits for the entire spawn execution before starting a continuation"
       const hook = path.join(dir, "hook.ts")
       await Bun.write(
         hook,
-        `import fs from 'node:fs/promises'; export default async () => ({'actor.postStop': async (input, output) => { await fs.writeFile(${JSON.stringify(path.join(dir, "entered"))}, '1'); while (!await fs.stat(${JSON.stringify(path.join(dir, "release"))}).then(() => true, () => false)) await new Promise(r => setTimeout(r, 10)); if (input.iteration === 0) { output.continue = true; output.reason = 'postStop housekeeping'; } }});`,
+        `import fs from 'node:fs/promises'; export default async () => ({'actor.preStop': async () => { await fs.writeFile(${JSON.stringify(path.join(dir, "entered-pre"))}, '1'); while (!await fs.stat(${JSON.stringify(path.join(dir, "release-pre"))}).then(() => true, () => false)) await new Promise(r => setTimeout(r, 10)); }, 'actor.postStop': async (input, output) => { const suffix = input.iteration === 0 ? '' : '-next'; await fs.writeFile(${JSON.stringify(path.join(dir, "entered"))} + suffix, '1'); while (!await fs.stat(${JSON.stringify(path.join(dir, "release"))} + suffix).then(() => true, () => false)) await new Promise(r => setTimeout(r, 10)); if (input.iteration === 0) { output.continue = true; output.reason = 'postStop housekeeping'; } }});`,
       )
       await Bun.write(
         path.join(dir, "mimocode.json"),
@@ -377,6 +379,10 @@ test("inbox waits for the entire spawn execution before starting a continuation"
               title: "execution overlap",
               permission: [{ permission: "*", pattern: "*", action: "allow" }],
             })
+            const runtime = SessionRuntime.current()
+            const frames: Envelope[] = []
+            const off = runtime.subscribe((frame) => frames.push(frame))
+            yield* Effect.addFinalizer(() => Effect.sync(off))
             const child = yield* actors.spawn({
               mode: "subagent",
               sessionID: parent.id,
@@ -386,6 +392,10 @@ test("inbox waits for the entire spawn execution before starting a continuation"
               tools: [],
               background: true,
             })
+            for (let i = 0; i < 500 && !(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "entered-pre")).exists())); i++) yield* Effect.sleep("10 millis")
+            expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "entered-pre")).exists())).toBe(true)
+            expect(runtime.snapshot(parent.id).actors.find((actor) => actor.actorID === child.actorID)).toMatchObject({ executionActive: true, status: "running" })
+            yield* Effect.promise(() => Bun.write(path.join(tmp.path, "release-pre"), "1"))
             for (
               let i = 0;
               i < 500 && !(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "entered")).exists()));
@@ -393,12 +403,14 @@ test("inbox waits for the entire spawn execution before starting a continuation"
             )
               yield* Effect.sleep("10 millis")
             expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "entered")).exists())).toBe(true)
-            const bus = yield* Bus.Service
             const context = yield* Effect.context<Services>()
             let completions = 0
             let lateSend: Promise<unknown> | undefined
-            const unsubscribe = yield* bus.subscribeCallback(ActorStatusChanged, (event) => {
+            // Spawn and continuation can publish through different scoped Bus services.
+            const onGlobal = ({ directory, payload: event }: GlobalEvent) => {
               if (
+                directory !== tmp.path ||
+                event.type !== ActorStatusChanged.type ||
                 event.properties.sessionID !== child.sessionID ||
                 event.properties.actorID !== child.actorID ||
                 event.properties.status !== "idle"
@@ -417,8 +429,9 @@ test("inbox waits for the entire spawn execution before starting a continuation"
                     }),
                   ),
                 )
-            })
-            yield* Effect.addFinalizer(() => Effect.sync(unsubscribe))
+            }
+            GlobalBus.on("event", onGlobal)
+            yield* Effect.addFinalizer(() => Effect.sync(() => { GlobalBus.off("event", onGlobal) }))
             yield* inbox.send({
               receiverSessionID: child.sessionID,
               receiverActorID: child.actorID,
@@ -436,8 +449,17 @@ test("inbox waits for the entire spawn execution before starting a continuation"
             yield* Effect.sleep("150 millis")
             const duringHook = yield* registry.get(child.sessionID, child.actorID)
             expect(duringHook?.status).toBe("running")
+            expect(runtime.snapshot(parent.id).actors.find((actor) => actor.actorID === child.actorID)).toMatchObject({ executionActive: true, status: "running" })
             expect(server.captures.length).toBe(1)
             yield* Effect.promise(() => Bun.write(path.join(tmp.path, "release"), "1"))
+            for (let i = 0; i < 500 && !(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "entered-next")).exists())); i++) yield* Effect.sleep("10 millis")
+            expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "entered-next")).exists())).toBe(true)
+            expect(runtime.snapshot(parent.id).actors.find((actor) => actor.actorID === child.actorID)).toMatchObject({ executionActive: true, status: "running" })
+            const activity = frames.filter((frame) => frame.properties.ownerActorId === child.actorID && frame.properties.event.type === "actor.runtime")
+            const firstActive = activity.findIndex((frame) => (frame.properties.event.properties.actor as { executionActive: boolean }).executionActive)
+            expect(firstActive).toBeGreaterThanOrEqual(0)
+            expect(activity.slice(firstActive).every((frame) => (frame.properties.event.properties.actor as { executionActive: boolean }).executionActive)).toBe(true)
+            yield* Effect.promise(() => Bun.write(path.join(tmp.path, "release-next"), "1"))
             const outcome = yield* Deferred.await(child.outcome)
             expect(outcome.status).toBe("success")
             if (outcome.status === "success") expect(outcome.finalText).toBe("SPAWN-RESULT")
@@ -458,11 +480,18 @@ test("inbox waits for the entire spawn execution before starting a continuation"
             expect(after.filter((message) => message.info.role === "assistant")).toHaveLength(4)
             expect(JSON.stringify(server.captures[1].messages)).not.toContain("woken probe")
             expect(JSON.stringify(server.captures[1].messages)).not.toContain("another queued message")
+            const execution = yield* ActorExecution.Service.use((executions) => executions.current(child.sessionID, child.actorID))
+            if (execution) yield* Deferred.await(execution.done).pipe(Effect.timeout("10 seconds"))
+            expect(runtime.snapshot(parent.id).actors.find((actor) => actor.actorID === child.actorID)).toMatchObject({ executionActive: false, status: "idle" })
+            const final = frames.findLast((frame) => frame.properties.ownerActorId === child.actorID && frame.properties.event.type === "actor.runtime")
+            expect(final?.properties.event.properties.actor).toMatchObject({ executionActive: false })
           }).pipe(Effect.scoped, Effect.provide(Inbox.defaultLayer)),
         ),
     })
   } finally {
+    await Bun.write(path.join(tmp.path, "release-pre"), "1")
     await Bun.write(path.join(tmp.path, "release"), "1")
+    await Bun.write(path.join(tmp.path, "release-next"), "1")
     await server.stop()
   }
 }, 30000)

@@ -18,6 +18,7 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { SessionProcessor } from "../../src/session/processor"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
+import { SessionRuntime, type Envelope } from "../../src/session/runtime"
 import { SessionSummary } from "../../src/session/summary"
 import { Snapshot } from "../../src/snapshot"
 import { Log } from "../../src/util"
@@ -195,6 +196,10 @@ describe("retry density instrumentation (upstream transport failure)", () => {
             const parent = yield* user(chat.id, "ping")
             const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
             const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+            const runtimeWaits: Envelope[] = []
+            const runtimeOff = SessionRuntime.current().subscribe((event) => {
+              if (event.properties.sessionID === chat.id && event.properties.event.type === "actor.retry" && event.properties.event.properties.status) runtimeWaits.push(event)
+            })
             const deltas: string[] = []
             const offDelta = yield* bus.subscribeCallback(MessageV2.Event.PartDelta, (evt) => {
               if (evt.properties.sessionID !== chat.id || evt.properties.messageID !== msg.id) return
@@ -219,6 +224,7 @@ describe("retry density instrumentation (upstream transport failure)", () => {
               offRetry()
               offStatus()
               offDelta()
+              runtimeOff()
             }))
             const handle = yield* processors.create({
               assistantMessage: msg,
@@ -247,6 +253,9 @@ describe("retry density instrumentation (upstream transport failure)", () => {
               const stored = MessageV2.get({ sessionID: chat.id, messageID: msg.id })
               expect(stored.info).toMatchObject({ role: "assistant", error: { name: "MessageAbortedError" } })
             }
+            // [TP-R17-02] The runtime mirrors each actual request/stream wait once.
+            expect(runtimeWaits).toHaveLength(retries.length)
+            expect(runtimeWaits.every((event) => event.properties.ownerActorId === "main")).toBe(true)
 
             // Keep observers and the upstream alive past the cancelled wait to catch reopened requests.
             yield* Effect.sleep("350 millis")

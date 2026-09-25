@@ -2299,7 +2299,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const ctx = yield* InstanceState.context
       const promptOps = yield* ops()
       const { actor: actorTool } = yield* registry.named()
-      const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
+      const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID, undefined, lastUser.agentID ?? "main") : model
       const assistantMessage: MessageV2.Assistant = yield* sessions.updateMessage({
         id: MessageID.ascending(),
         role: "assistant",
@@ -2349,7 +2349,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Agent not found: "${task.agent}".${hint}` })
-        yield* bus.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+        yield* bus.publish(Session.Event.Error, { sessionID, ownerActorId: lastUser.agentID ?? "main", error: error.toObject() })
         throw error
       }
 
@@ -2493,7 +2493,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Agent not found: "${input.agent}".${hint}` })
-        yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
+        yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, ownerActorId: "main", error: error.toObject() })
         throw error
       }
       const inputModel = input.modelRef
@@ -2682,6 +2682,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       modelID: ModelID,
       sessionID: SessionID,
       terminalUser?: MessageV2.User,
+      ownerActorId = terminalUser?.agentID ?? "main",
     ) {
       const exit = yield* provider.getModel(providerID, modelID).pipe(Effect.exit)
       if (Exit.isSuccess(exit)) return exit.value
@@ -2691,11 +2692,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const error = new NamedError.Unknown({
           message: `Model not found: ${err.data.providerID}/${err.data.modelID}.${hint}`,
         }).toObject()
+        let messageID: MessageID | undefined
         if (terminalUser) {
           const ctx = yield* InstanceState.context
           const now = Date.now()
+          messageID = MessageID.ascending()
           yield* sessions.updateMessage({
-            id: MessageID.ascending(),
+            id: messageID,
             sessionID,
             parentID: terminalUser.id,
             agentID: terminalUser.agentID,
@@ -2714,6 +2717,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
         yield* bus.publish(Session.Event.Error, {
           sessionID,
+          ownerActorId,
+          messageID,
           error,
         })
       }
@@ -2737,7 +2742,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
-        yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
+        yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, ownerActorId: input.agentID ?? "main", error: error.toObject() })
         throw error
       }
 
@@ -3008,6 +3013,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   const message = error instanceof Error ? error.message : String(error)
                   yield* bus.publish(Session.Event.Error, {
                     sessionID: input.sessionID,
+                    ownerActorId: input.agentID ?? "main",
                     error: new NamedError.Unknown({ message }).toObject(),
                   })
                   pieces.push({
@@ -3030,6 +3036,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   const message = error instanceof Error ? error.message : String(error)
                   yield* bus.publish(Session.Event.Error, {
                     sessionID: input.sessionID,
+                    ownerActorId: input.agentID ?? "main",
                     error: new NamedError.Unknown({ message }).toObject(),
                   })
                   return [
@@ -4077,6 +4084,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             yield* sessions.updateMessage(input.assistant)
             yield* bus.publish(Session.Event.Error, {
               sessionID: input.assistant.sessionID,
+              ownerActorId: input.assistant.agentID ?? "main",
+              messageID: input.assistant.id,
               error: input.assistant.error,
             })
             return false
@@ -4239,6 +4248,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             yield* sessions.updateMessage(input.assistant)
             yield* bus.publish(Session.Event.Error, {
               sessionID: input.assistant.sessionID,
+              ownerActorId: input.assistant.agentID ?? "main",
+              messageID: input.assistant.id,
               error: input.assistant.error,
             })
             return false
@@ -4315,6 +4326,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           if (textToolCallRetries >= TEXT_TOOL_CALL_RETRY_LIMIT) {
             yield* bus.publish(Session.Event.Error, {
               sessionID: input.assistant.sessionID,
+              ownerActorId: input.assistant.agentID ?? "main",
+              messageID: input.assistant.id,
               error: input.assistant.error,
             })
             return false
@@ -4373,6 +4386,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             yield* sessions.updateMessage(input.assistant)
             yield* bus.publish(Session.Event.Error, {
               sessionID: input.assistant.sessionID,
+              ownerActorId: input.assistant.agentID ?? "main",
+              messageID: input.assistant.id,
               error: input.assistant.error,
             })
             return false
@@ -4420,6 +4435,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             yield* slog.info("text n-gram: max recovery exceeded, terminating")
             yield* bus.publish(Session.Event.Error, {
               sessionID,
+              ownerActorId: input.lastUser.agentID ?? "main",
               error: new NamedError.Unknown({
                 message: `Text repetition detected: repeated n-grams after ${TEXT_NGRAM_MAX_RECOVERY} recovery attempts. Session terminated.`,
               }).toObject(),
@@ -4466,6 +4482,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* sessions.updateMessage(input.assistant)
           yield* bus.publish(Session.Event.Error, {
             sessionID: input.assistant.sessionID,
+            ownerActorId: input.assistant.agentID ?? "main",
+            messageID: input.assistant.id,
             error: input.assistant.error,
           })
         })
@@ -4484,6 +4502,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* sessions.updateMessage(input.assistant)
           yield* bus.publish(Session.Event.Error, {
             sessionID: input.assistant.sessionID,
+            ownerActorId: input.assistant.agentID ?? "main",
+            messageID: input.assistant.id,
             error: input.assistant.error,
           })
         })
@@ -4921,7 +4941,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
             const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
             const error = new NamedError.Unknown({ message: `Agent not found: "${lastUser.agent}".${hint}` })
-            yield* bus.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+            yield* bus.publish(Session.Event.Error, { sessionID, ownerActorId: lastUser.agentID ?? "main", error: error.toObject() })
             throw error
           }
           const maxSteps = agent.steps ?? Infinity
@@ -5716,6 +5736,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   yield* slog.info("text loop: max recovery exceeded, terminating")
                   yield* bus.publish(Session.Event.Error, {
                     sessionID,
+                    ownerActorId: lastUser.agentID ?? "main",
                     error: new NamedError.Unknown({
                       message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times after ${TEXT_LOOP_MAX_RECOVERY} recovery attempts. Session terminated.`,
                     }).toObject(),
@@ -5914,7 +5935,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const available = (yield* commands.list()).map((c) => c.name)
         const hint = available.length ? ` Available commands: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Command not found: "${input.command}".${hint}` })
-        yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
+        yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, ownerActorId: "main", error: error.toObject() })
         throw error
       }
       const agentName = cmd.agent ?? input.agent ?? (yield* agents.defaultAgent())
@@ -6146,7 +6167,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
-        yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
+        yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, ownerActorId: "main", error: error.toObject() })
         throw error
       }
 
@@ -6188,7 +6209,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (isSubtask) {
         if (!(yield* agents.get(userAgent))) {
           const error = new NamedError.Unknown({ message: `Agent not found: "${userAgent}".` })
-          yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
+          yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, ownerActorId: "main", error: error.toObject() })
           throw error
         }
         yield* getModel(userModel.providerID, userModel.modelID, input.sessionID)
@@ -6575,7 +6596,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const agentID = input.agentID ?? "main"
       // Validate model override before abandon: getModel failure must not stamp the old message first.
       if (input.model) {
-        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
+        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID, undefined, agentID)
       }
       const plan = yield* planResume({
         sessionID: input.sessionID,
@@ -6641,7 +6662,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         : { userMessageID: candidate.userMessageID }
       const agentID = input.agentID ?? "main"
       if (input.model) {
-        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
+        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID, undefined, agentID)
       }
       const plan = yield* planResume({
         sessionID: input.sessionID,
@@ -6688,7 +6709,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         )
       }
       if (input.model) {
-        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
+        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID, undefined, agentID)
       }
       const plan = yield* planResume({
         sessionID: input.sessionID,

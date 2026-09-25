@@ -1,5 +1,9 @@
 import { Context, Deferred, Effect, Fiber, Layer, Scheduler, Scope } from "effect"
 import type { SessionID } from "@/session/schema"
+import { SessionRuntime, type RuntimeProjection } from "@/session/runtime"
+import * as ExecutionState from "./execution-state"
+
+const owners = new WeakMap<Execution, { active: Map<string, Execution>; runtime: RuntimeProjection }>()
 
 export interface Execution {
   readonly sessionID: SessionID
@@ -35,24 +39,33 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Ac
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const active = new Map<string, Execution>()
     const key = (sessionID: SessionID, actorID: string) => `${sessionID}:${actorID}`
-    const current = (sessionID: SessionID, actorID: string) => Effect.sync(() => active.get(key(sessionID, actorID)))
+    const current = (sessionID: SessionID, actorID: string) => Effect.sync(() => ExecutionState.current().get(key(sessionID, actorID)))
+    const claim = (execution: Execution, active: Map<string, Execution>) => {
+      const runtime = SessionRuntime.current()
+      active.set(key(execution.sessionID, execution.actorID), execution)
+      owners.set(execution, { active, runtime })
+      runtime.refreshExecution(execution.sessionID, execution.actorID)
+      return execution
+    }
     const reserve = Effect.fn("ActorExecution.reserve")(function* (sessionID: SessionID, actorID: string) {
       const done = yield* Deferred.make<void>()
       return yield* Effect.sync(() => {
+        const active = ExecutionState.current()
         const id = key(sessionID, actorID)
         if (active.has(id)) throw new Error(`Actor execution already active: ${id}`)
-        const execution: Execution = { sessionID, actorID, done, cancelled: false }
-        active.set(id, execution)
-        return execution
+        return claim({ sessionID, actorID, done, cancelled: false }, active)
       })
     })
     const release = (execution: Execution) =>
       Effect.gen(function* () {
         yield* Effect.sync(() => {
+          const owner = owners.get(execution)
           const id = key(execution.sessionID, execution.actorID)
-          if (active.get(id) === execution) active.delete(id)
+          if (owner?.active.get(id) !== execution) return
+          owner.active.delete(id)
+          owners.delete(execution)
+          owner.runtime.refreshExecution(execution.sessionID, execution.actorID)
         })
         yield* Deferred.succeed(execution.done, undefined)
       }).pipe(Effect.asVoid, Effect.uninterruptible)
@@ -61,16 +74,14 @@ export const layer = Layer.effect(
       acquire: (sessionID, actorID) =>
         Effect.gen(function* () {
           for (;;) {
-            const claim = yield* Effect.sync(() => {
-              const id = key(sessionID, actorID)
-              const existing = active.get(id)
+            const next = yield* Effect.sync(() => {
+              const active = ExecutionState.current()
+              const existing = active.get(key(sessionID, actorID))
               if (existing) return { owned: false, execution: existing }
-              const execution: Execution = { sessionID, actorID, done: Deferred.makeUnsafe<void>(), cancelled: false }
-              active.set(id, execution)
-              return { owned: true, execution }
+              return { owned: true, execution: claim({ sessionID, actorID, done: Deferred.makeUnsafe<void>(), cancelled: false }, active) }
             })
-            if (claim.owned) return claim.execution
-            yield* Deferred.await(claim.execution.done).pipe(Effect.interruptible)
+            if (next.owned) return next.execution
+            yield* Deferred.await(next.execution.done).pipe(Effect.interruptible)
           }
         }),
       current,

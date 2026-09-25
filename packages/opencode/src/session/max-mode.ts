@@ -9,6 +9,7 @@ import type { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
 import { MessageV2 } from "./message-v2"
 import * as SessionRetry from "./retry"
+import { SessionRuntime } from "./runtime"
 import { createTextNgramMonitor, isTextNgramRepeat, textNgramRepeat } from "./prompt/text-ngram-detection"
 import type { Permission } from "@/permission"
 import { Log } from "@/util"
@@ -84,10 +85,14 @@ function retryPolicy(input: MaxStepInput, scope: "max-candidate" | "max-judge", 
     budget: (decision) => SessionRetry.budgetFor(retryConfig, decision),
     jitterRatio: retryConfig.jitterRatio,
     parse: (error) => MessageV2.fromLiveError(error, { providerID: input.model.providerID, aborted: aborted(), allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) }),
-    set: (info) =>
-      input.onRetry
-        ? input.onRetry({ ...info, nextDelayMs: Math.max(0, info.next - Date.now()) })
-        : Effect.void,
+    set: (info) => Effect.sync(() => {
+      SessionRuntime.current().retry(input.sessionID, input.agentID ?? input.user.agentID ?? "main", {
+        type: "retry", attempt: info.attempt, phaseAttempt: info.attempt,
+        message: info.message, next: info.next, phase: info.phase, scope: info.scope,
+      })
+    }).pipe(Effect.andThen(
+      input.onRetry ? input.onRetry({ ...info, nextDelayMs: Math.max(0, info.next - Date.now()) }) : Effect.void,
+    )),
   })
 }
 

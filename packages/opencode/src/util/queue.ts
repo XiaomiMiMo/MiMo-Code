@@ -14,7 +14,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
    * slow/stalled consumer would otherwise let the buffer grow without limit
    * and exhaust process memory, since `push` never blocks the producer.
    */
-  constructor(options?: { capacity?: number }) {
+  constructor(private options?: { capacity?: number; overflow?: "drop-oldest" | "reject" }) {
     this.capacity = options?.capacity ?? Infinity
   }
 
@@ -22,13 +22,19 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     const resolve = this.resolvers.shift()
     if (resolve) {
       resolve(item)
-      return
+      return true
     }
     if (this.queue.length >= this.capacity) {
+      if (this.options?.overflow === "reject") return false
       this.queue.shift()
       this.dropped++
     }
     this.queue.push(item)
+    return true
+  }
+
+  clear() {
+    this.queue.length = 0
   }
 
   /** Number of items currently buffered (not yet consumed). */

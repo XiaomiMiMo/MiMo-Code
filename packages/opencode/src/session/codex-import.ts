@@ -1,4 +1,5 @@
 import { indexImportedParts } from "../history/import"
+import { SessionRuntime } from "./runtime"
 import path from "path"
 import { existsSync } from "fs"
 import { readFile } from "fs/promises"
@@ -325,6 +326,7 @@ export async function run(opts?: { force?: boolean }): Promise<ImportStats> {
       const messageIds = parsed.messages.map((m) => m.info.id)
 
       Database.transaction((tx) => {
+        SessionRuntime.observeImport(sessionId, messageIds)
         tx.insert(ProjectTable)
           .values({
             id: project.id,

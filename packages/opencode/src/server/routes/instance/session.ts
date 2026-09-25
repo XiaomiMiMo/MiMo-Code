@@ -7,6 +7,7 @@ import { Session } from "@/session"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionRunState } from "@/session/run-state"
+import { SessionRuntime } from "@/session/runtime"
 import { SessionCompaction } from "@/session/compaction"
 import { SessionRevert } from "@/session/revert"
 import { SessionShare } from "@/share"
@@ -177,6 +178,11 @@ export const SessionRoutes = lazy(() =>
           return yield* session.get(sessionID)
         })
       },
+    )
+    .get(
+      "/:sessionID/runtime",
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      (c) => c.json(SessionRuntime.current().snapshot(c.req.valid("param").sessionID)),
     )
     .get(
       "/:sessionID/children",
@@ -1128,7 +1134,7 @@ export const SessionRoutes = lazy(() =>
             error instanceof Session.BusyError
               ? new MessageV2.APIError({ message: error.message, statusCode: 409, isRetryable: true }).toObject()
               : new NamedError.Unknown({ message: error instanceof Error ? error.message : String(error) }).toObject()
-          void Bus.publish(Session.Event.Error, { sessionID: params.sessionID, error: failure })
+          void Bus.publish(Session.Event.Error, { sessionID: params.sessionID, ownerActorId: query.agentID ?? "main", error: failure })
         })
         return c.body(null, 202)
       },
@@ -1377,6 +1383,7 @@ export const SessionRoutes = lazy(() =>
           log.error("prompt_async failed", { sessionID, error: err })
           void Bus.publish(Session.Event.Error, {
             sessionID,
+            ownerActorId: body.agentID ?? "main",
             error: new NamedError.Unknown({ message: err instanceof Error ? err.message : String(err) }).toObject(),
           })
         })

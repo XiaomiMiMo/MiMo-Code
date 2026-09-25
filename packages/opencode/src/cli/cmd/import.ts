@@ -1,4 +1,5 @@
 import { indexImportedParts } from "../../history/import"
+import { SessionRuntime } from "../../session/runtime"
 import type { Argv } from "yargs"
 import type { Session as SDKSession, Message, Part } from "@mimo-ai/sdk/v2"
 import { Session } from "../../session"
@@ -81,6 +82,7 @@ export function storeImportedSession(
 ) {
   const row = Session.toRow(info)
   Database.transaction((tx) => {
+    SessionRuntime.observeImport(row.id)
     tx.insert(SessionTable)
       .values(row)
       .onConflictDoUpdate({ target: SessionTable.id, set: { project_id: row.project_id } })

@@ -1,4 +1,5 @@
 import { indexImportedParts } from "../history/import"
+import { SessionRuntime } from "./runtime"
 import { existsSync } from "fs"
 import { Log } from "../util"
 import { Database, eq, and, inArray } from "../storage"
@@ -159,6 +160,7 @@ export async function run(opts?: { force?: boolean; dbPath?: string }): Promise<
         }
 
         Database.transaction((tx) => {
+          SessionRuntime.observeImport(sess.id, messageIds)
           tx.insert(ProjectTable)
             .values({
               id: project.id,
