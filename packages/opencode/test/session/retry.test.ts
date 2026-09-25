@@ -291,6 +291,30 @@ describe("session.retry.retryable", () => {
     }
   })
 
+  // A gateway error label must not turn an unauthorized response into a stream retry.
+  test("does not retry an unmatched upstream_error HTTP 401", () => {
+    const body = JSON.stringify({ error: { type: "upstream_error", code: "401", message: "Access denied due to invalid subscription key or wrong API endpoint" } })
+    const unauthorized = new MessageV2.APIError({ message: "Access denied", statusCode: 401, isRetryable: false, responseBody: body }).toObject()
+    for (const phase of ["request", "stream"] as const) {
+      expect(decide(unauthorized, phase)).toMatchObject({ retryable: false, phase, kind: "terminal", statusCode: 401 })
+    }
+
+    expect(loadHostErrorCatalog({ protocolVersion: 2, rules: [{
+      match: { providerID, statusCode: 401, response: { kind: "json", value: JSON.parse(body) } },
+      code: "host.temporary", retryClass: "bounded",
+    }] }).ok).toBe(true)
+    const matched = bindHostError(new APICallError({
+      message: "Access denied", url: "https://example.test", requestBodyValues: {},
+      responseBody: body, statusCode: 401, isRetryable: false,
+    }), { providerID })
+    expect(decide(MessageV2.fromError(matched, { providerID }), "request")).toMatchObject({
+      retryable: true, hostCode: "host.temporary", hostRetryClass: "bounded", statusCode: 401,
+    })
+
+    const unavailable = new MessageV2.APIError({ message: "Service unavailable", statusCode: 503, isRetryable: true, responseBody: JSON.stringify({ error: { type: "upstream_error", message: "Temporary failure" } }) }).toObject()
+    expect(decide(unavailable, "stream")).toMatchObject({ retryable: true, kind: "stream", statusCode: 503 })
+  })
+
   test("only retries provider-specific compatible 404 responses", () => {
     const generic = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true }).toObject()
     const compatible = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true, metadata: { allow404Retry: "true" } }).toObject()

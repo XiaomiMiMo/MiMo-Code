@@ -6,6 +6,8 @@ import { Log } from "@/util"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { AsyncQueue } from "@/util/queue"
+import { Instance } from "@/project/instance"
+import { registerDisposer } from "@/effect/instance-registry"
 
 const log = Log.create({ service: "server" })
 
@@ -46,6 +48,7 @@ export const EventRoutes = () =>
       },
     }),
     async (c) => {
+      const directory = Instance.directory
       log.info("event connected")
       c.header("Cache-Control", "no-cache, no-transform")
       c.header("X-Accel-Buffering", "no")
@@ -76,10 +79,12 @@ export const EventRoutes = () =>
           )
         }, 10_000)
 
+        let unregister = () => {}
         const stop = () => {
           if (done) return
           done = true
           clearInterval(heartbeat)
+          unregister()
           unsub()
           q.push(null)
           if (q.dropped > 0) log.warn("event dropped under backpressure", { dropped: q.dropped })
@@ -93,6 +98,10 @@ export const EventRoutes = () =>
           }
         })
 
+        // Bus shutdown can discard a queued disposal event; abort also interrupts a backpressured write.
+        unregister = registerDisposer(async (disposed) => {
+          if (disposed === directory) stream.abort()
+        })
         stream.onAbort(stop)
 
         try {

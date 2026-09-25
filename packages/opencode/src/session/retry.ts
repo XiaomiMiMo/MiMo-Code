@@ -388,6 +388,7 @@ export function decide(
     if (hostClass === "terminal") return terminal()
     return retry(status === 429 ? "rate_limit" : status !== undefined && status >= 500 ? "server" : "unknown")
   }
+  if (status === 401) return terminal()
 
   if (signals.code === "FreeUsageLimitError" || responseBody?.includes("FreeUsageLimitError"))
     return terminal("Usage limit reached", GO_UPSELL_MESSAGE)
