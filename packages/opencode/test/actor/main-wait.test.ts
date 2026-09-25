@@ -1812,10 +1812,11 @@ describe("main automatically waits for subagent executions", () => {
           const registry = yield* ActorRegistry.Service
           const session = yield* sessions.create({ title: "stalled is not dead" })
           const held = yield* child(session.id)
+          // Keep the independent background stall watchdog from sending main a new notification.
           Database.use((db) =>
             db
               .update(ActorRegistryTable)
-              .set({ last_activity_time: Date.now() - DEFAULT_LIVENESS_STALL_MS - 60000 })
+              .set({ background: false, last_activity_time: Date.now() - DEFAULT_LIVENESS_STALL_MS - 60000 })
               .where(and(eq(ActorRegistryTable.session_id, session.id), eq(ActorRegistryTable.actor_id, "child-1")))
               .run(),
           )

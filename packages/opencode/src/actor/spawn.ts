@@ -710,7 +710,7 @@ export const layer = Layer.effect(
         parentID: input.sessionID,
         contextFrom: input.context === "full" ? input.sessionID : undefined,
         title: `${input.agentType}: ${input.task.slice(0, 40)}`,
-        ...(input.cwd ? { directory: input.cwd } : {}),
+        ...(input.cwd ? { directory: instanceRef?.directory ?? input.cwd } : {}),
       })
       // T42: register the peer's receiver/actor-registry row (session_id ===
       // actor_id === child.id, mode "peer") SYNCHRONOUSLY here — before spawn
@@ -724,7 +724,9 @@ export const layer = Layer.effect(
       // (prompt.ts) re-registers a peer — it only reads (reg.get) and updates
       // (updateTurn/updateStatus). Prerequisite for T43 (--topic reuse).
       return yield* Effect.acquireUseRelease(
-        executions.reserve(child.id, child.id, instanceRef?.directory),
+        instanceRef
+          ? executions.reserve(child.id, child.id, instanceRef.directory).pipe(Effect.provideService(InstanceRef, instanceRef))
+          : executions.reserve(child.id, child.id),
         (execution) =>
           Effect.gen(function* () {
             yield* actorReg.register({
