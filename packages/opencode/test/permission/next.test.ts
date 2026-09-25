@@ -5,7 +5,7 @@ import { Bus } from "../../src/bus"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Permission } from "../../src/permission"
 import { PermissionID } from "../../src/permission/schema"
-import { Instance } from "../../src/project/instance"
+import { Instance, InstanceBusyError } from "../../src/project/instance"
 import { provideInstance, provideTmpdirInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { MessageID, SessionID } from "../../src/session/schema"
@@ -48,10 +48,10 @@ const fail = <A, E, R>(self: Effect.Effect<A, E, R>) =>
     throw new Error("expected permission effect to fail")
   })
 
-const ask = (input: Parameters<Permission.Interface["ask"]>[0]) =>
+const ask = (input: Parameters<Permission.Interface["ask"]>[0], abortSignal?: AbortSignal) =>
   Effect.gen(function* () {
     const permission = yield* Permission.Service
-    return yield* permission.ask(input)
+    return yield* permission.ask(input, abortSignal)
   })
 
 const reply = (input: Parameters<Permission.Interface["reply"]>[0]) =>
@@ -1093,7 +1093,7 @@ it.live("permission requests stay isolated by directory", () =>
   }),
 )
 
-it.live("pending permission rejects on instance dispose", () =>
+it.live("pending permission survives deferred instance dispose", () =>
   Effect.gen(function* () {
     const dir = yield* tmpdirScoped({ git: true })
     const run = withProvided(dir)
@@ -1107,16 +1107,18 @@ it.live("pending permission rejects on instance dispose", () =>
       ruleset: [],
     }).pipe(run, Effect.forkScoped)
 
-    expect(yield* waitForPending(1).pipe(run)).toHaveLength(1)
-    yield* Effect.promise(() => Instance.provide({ directory: dir, fn: () => void Instance.dispose() }))
-
+    const pending = yield* waitForPending(1).pipe(run)
+    yield* Effect.promise(() => Instance.disposeAll())
+    expect(Instance.refreshStatus(dir).state).toBe("pending")
+    expect(yield* list().pipe(run)).toHaveLength(1)
+    yield* reply({ requestID: pending[0]!.id, reply: "reject" }).pipe(run)
     const exit = yield* Fiber.await(fiber)
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(Permission.RejectedError)
   }),
 )
 
-it.live("pending permission rejects on instance reload", () =>
+it.live("pending permission prevents instance reload", () =>
   Effect.gen(function* () {
     const dir = yield* tmpdirScoped({ git: true })
     const run = withProvided(dir)
@@ -1130,9 +1132,11 @@ it.live("pending permission rejects on instance reload", () =>
       ruleset: [],
     }).pipe(run, Effect.forkScoped)
 
-    expect(yield* waitForPending(1).pipe(run)).toHaveLength(1)
-    yield* Effect.promise(() => Instance.reload({ directory: dir }))
-
+    const pending = yield* waitForPending(1).pipe(run)
+    const reloadFailure = yield* Effect.promise(() => Instance.reload({ directory: dir }).then(() => null, (error) => error))
+    expect(reloadFailure).toBeInstanceOf(InstanceBusyError)
+    expect(yield* list().pipe(run)).toHaveLength(1)
+    yield* reply({ requestID: pending[0]!.id, reply: "reject" }).pipe(run)
     const exit = yield* Fiber.await(fiber)
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(Permission.RejectedError)
@@ -1212,6 +1216,7 @@ it.live("ask - abort should clear pending request", () =>
   Effect.gen(function* () {
     const dir = yield* tmpdirScoped({ git: true })
     const run = withProvided(dir)
+    const controller = new AbortController()
 
     const fiber = yield* ask({
       id: PermissionID.make("per_reload"),
@@ -1221,14 +1226,14 @@ it.live("ask - abort should clear pending request", () =>
       metadata: {},
       always: [],
       ruleset: [{ permission: "bash", pattern: "*", action: "ask" }],
-    }).pipe(run, Effect.forkScoped)
+    }, controller.signal).pipe(run, Effect.forkScoped)
 
     const pending = yield* waitForPending(1).pipe(run)
     expect(pending).toHaveLength(1)
-    yield* Effect.promise(() => Instance.reload({ directory: dir }))
-
+    controller.abort()
     const exit = yield* Fiber.await(fiber)
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(Permission.RejectedError)
+    expect(yield* list().pipe(run)).toHaveLength(0)
   }),
 )
