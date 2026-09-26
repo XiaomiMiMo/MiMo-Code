@@ -6905,6 +6905,15 @@
                       "id": {
                         "type": "string"
                       },
+                      "sessionID": {
+                        "type": "string"
+                      },
+                      "messageID": {
+                        "type": "string"
+                      },
+                      "callID": {
+                        "type": "string"
+                      },
                       "command": {
                         "type": "string"
                       },
@@ -11689,6 +11698,15 @@
             "type": "object",
             "properties": {
               "id": {
+                "type": "string"
+              },
+              "sessionID": {
+                "type": "string"
+              },
+              "messageID": {
+                "type": "string"
+              },
+              "callID": {
                 "type": "string"
               },
               "command": {

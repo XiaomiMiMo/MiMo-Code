@@ -952,6 +952,9 @@ export const BashTool = Tool.define(
                 })
                 const interactiveResult = yield* Effect.tryPromise(() =>
                   BashInteractive.request({
+                    sessionID: ctx.sessionID,
+                    messageID: ctx.messageID,
+                    callID: ctx.callID,
                     command: params.command,
                     cwd,
                     env: env as Record<string, string>,

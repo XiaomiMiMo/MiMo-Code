@@ -746,6 +746,9 @@ export type EventBashInteractiveAsked = {
   type: "bash.interactive.asked"
   properties: {
     id: string
+    sessionID?: string
+    messageID?: string
+    callID?: string
     command: string
     cwd: string
     env?: {
@@ -6482,6 +6485,9 @@ export type BashInteractiveListResponses = {
    */
   200: Array<{
     id: string
+    sessionID?: string
+    messageID?: string
+    callID?: string
     command: string
     cwd: string
     description: string

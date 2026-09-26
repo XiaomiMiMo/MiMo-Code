@@ -29,6 +29,9 @@ export const BashInteractiveRoutes = lazy(() =>
                   z.array(
                     z.object({
                       id: z.string(),
+                      sessionID: z.string().optional(),
+                      messageID: z.string().optional(),
+                      callID: z.string().optional(),
                       command: z.string(),
                       cwd: z.string(),
                       description: z.string(),

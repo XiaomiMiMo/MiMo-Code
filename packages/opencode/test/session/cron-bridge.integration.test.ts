@@ -1,9 +1,9 @@
 import { test, expect, beforeEach } from "bun:test"
 import { Effect, Layer } from "effect"
-import { mkdtempSync, rmSync } from "fs"
+import { existsSync, mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { provideInstance } from "../fixture/fixture"
+import { provideInstance, tmpdir as fixtureTmpdir } from "../fixture/fixture"
 import { Flag } from "@/flag/flag"
 
 import { Bus } from "@/bus"
@@ -15,7 +15,8 @@ import { SessionID, MessageID, PartID } from "@/session/schema"
 import { ProviderID, ModelID } from "@/provider/schema"
 import { Scheduler, defaultLayer as SchedulerDefaultLayer, type Interface as SchedulerInterface } from "@/cron/scheduler"
 import { clearAllLoopStates } from "@/cron/loop-state"
-import { getSessionCronTasks, removeSessionCronTasks } from "@/cron/cron-task"
+import { getSessionCronTasks, readCronTasks, removeSessionCronTasks, writeCronTasks } from "@/cron/cron-task"
+import { getLockFilePath } from "@/cron/cron-lock"
 import { CronBridge, layer as cronBridgeLayer, type Interface as CronBridgeInterface } from "@/session/cron-bridge"
 
 import * as PromptModule from "@/session/prompt"
@@ -197,6 +198,43 @@ test("cron-bridge start wires Scheduler with isLoading + isKilled + onFire", asy
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// Desktop engine-runtime [TP-R10-03]: embedded hosts do not change process.cwd().
+test("cron-bridge owns durable tasks and its scheduler lock in the session workspace", async () => {
+  await using workspace = await fixtureTmpdir({ git: true })
+  expect(workspace.path).not.toBe(process.cwd())
+  const captured: { value: CapturedPrompt[] } = { value: [] }
+  await harness(captured, ({ bridge, scheduler }) =>
+    Effect.gen(function* () {
+      const task = {
+        id: "workspace-cron",
+        cron: "0 0 1 1 *",
+        prompt: "workspace task",
+        createdAt: Date.now(),
+        createdBySessionId: sid,
+        recurring: true,
+        durable: true,
+      }
+      yield* writeCronTasks([task], workspace.path)
+      yield* bridge.start(sid, workspace.path)
+
+      expect(yield* scheduler.list({ session_id: sid })).toEqual([task])
+      expect(existsSync(getLockFilePath(workspace.path))).toBe(true)
+      const created = yield* scheduler.add({
+        session_id: sid,
+        cron: "0 0 1 1 *",
+        prompt: "another workspace task",
+        recurring: true,
+        durable: true,
+      })
+      expect((yield* readCronTasks(workspace.path)).map((entry) => entry.id)).toEqual([task.id, created.id])
+
+      yield* bridge.stop()
+      expect(existsSync(getLockFilePath(workspace.path))).toBe(false)
+      expect((yield* readCronTasks(workspace.path)).map((entry) => entry.id)).toEqual([task.id, created.id])
+    }),
+  )
 })
 
 test("cron-bridge is a no-op when MIMOCODE_EXPERIMENTAL_CRON is explicitly disabled", async () => {

@@ -15,6 +15,9 @@ export const Event = {
     "bash.interactive.asked",
     z.object({
       id: z.string(),
+      sessionID: z.string().optional(),
+      messageID: z.string().optional(),
+      callID: z.string().optional(),
       command: z.string(),
       cwd: z.string(),
       env: z.record(z.string(), z.string()).optional(),
@@ -35,11 +38,16 @@ export const Event = {
 
 export interface InteractiveRequest {
   id: string
+  sessionID?: string
+  messageID?: string
+  callID?: string
   command: string
   cwd: string
   env?: Record<string, string>
   description: string
 }
+
+export type InteractiveInput = Omit<InteractiveRequest, "id">
 
 export interface InteractiveResult {
   output: string
@@ -65,12 +73,7 @@ interface State {
 }
 
 export interface Interface {
-  readonly request: (input: {
-    command: string
-    cwd: string
-    env?: Record<string, string>
-    description: string
-  }) => Effect.Effect<InteractiveResult, InteractiveError>
+  readonly request: (input: InteractiveInput) => Effect.Effect<InteractiveResult, InteractiveError>
   readonly reply: (input: { id: string; output: string; exitCode: number }) => Effect.Effect<void>
   readonly list: () => Effect.Effect<ReadonlyArray<InteractiveRequest>>
 }
@@ -100,12 +103,7 @@ export const layer = Layer.effect(
       }),
     )
 
-    const request = Effect.fn("BashInteractive.request")(function* (input: {
-      command: string
-      cwd: string
-      env?: Record<string, string>
-      description: string
-    }) {
+    const request = Effect.fn("BashInteractive.request")(function* (input: InteractiveInput) {
       const pending = (yield* InstanceState.get(state)).pending
       const id = crypto.randomUUID()
       log.info("requesting interactive", { id, command: input.command })
@@ -113,6 +111,9 @@ export const layer = Layer.effect(
       const deferred = yield* Deferred.make<InteractiveResult, InteractiveError>()
       const req: InteractiveRequest = {
         id,
+        sessionID: input.sessionID,
+        messageID: input.messageID,
+        callID: input.callID,
         command: input.command,
         cwd: input.cwd,
         env: input.env,
@@ -169,12 +170,7 @@ import { makeRuntime } from "@/effect/run-service"
 
 const { runPromise } = makeRuntime(Service, defaultLayer)
 
-export function request(input: {
-  command: string
-  cwd: string
-  env?: Record<string, string>
-  description: string
-}): Promise<InteractiveResult> {
+export function request(input: InteractiveInput): Promise<InteractiveResult> {
   return runPromise((svc) => svc.request(input))
 }
 

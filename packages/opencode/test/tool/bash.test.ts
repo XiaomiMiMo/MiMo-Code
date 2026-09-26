@@ -4,6 +4,8 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { Shell } from "../../src/shell/shell"
+import { Bus } from "../../src/bus"
+import * as BashInteractive from "../../src/tool/bash-interactive"
 import { BashTool, DEFAULT_MAX_OUTPUT_TOKENS } from "../../src/tool/bash"
 import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util"
@@ -1604,5 +1606,49 @@ describe("tool.bash truncation", () => {
         expect(lines[lineCount - 1]).toBe(String(lineCount))
       },
     })
+  })
+})
+
+// Desktop turn-execution TP-R4-04b: real bash execution supplies the event owner.
+test("[TP-R4-04b] interactive bash publishes each real tool context without cross-session attribution", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const seen: BashInteractive.InteractiveRequest[] = []
+      const unsubscribe = Bus.subscribe(BashInteractive.Event.Asked, async (event) => {
+        seen.push(event.properties)
+        await BashInteractive.reply({ id: event.properties.id, output: "Client declined interaction", exitCode: 1 })
+      })
+      try {
+        const tool = await initBash()
+        for (const name of ["a", "b"]) {
+          const source = {
+            sessionID: SessionID.make(`ses_${name}`),
+            messageID: MessageID.make(`msg_${name}`),
+            callID: `call_${name}`,
+          }
+          const result = await Effect.runPromise(
+            tool.execute(
+              { command: "echo example", description: "Interactive example", interactive: true },
+              { ...ctx, ...source },
+            ),
+          )
+          expect({
+            sessionID: seen.at(-1)?.sessionID,
+            messageID: seen.at(-1)?.messageID,
+            callID: seen.at(-1)?.callID,
+          }).toEqual(source)
+          expect(seen.at(-1)?.cwd).toBe(tmp.path)
+          expect(seen.at(-1)?.command).toBe("echo example")
+          expect(result.output).toBe("Client declined interaction")
+          expect(result.metadata.exit).toBe(1)
+        }
+        expect(seen).toHaveLength(2)
+        expect(seen[0]!.id).not.toBe(seen[1]!.id)
+      } finally {
+        unsubscribe()
+      }
+    },
   })
 })

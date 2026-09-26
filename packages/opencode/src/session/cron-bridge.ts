@@ -272,6 +272,7 @@ export const layer = Layer.effect(
 
         yield* scheduler.start({
           workspaceRoot,
+          dir: workspaceRoot,
           sessionID,
           isLoading: () => handle.loading,
           isKilled: () => isCronDisabled(),
