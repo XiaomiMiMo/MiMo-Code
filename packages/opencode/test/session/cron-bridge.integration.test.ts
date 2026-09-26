@@ -534,7 +534,7 @@ for (const kind of ["git-root", "git-subdirectory", "non-git"] as const) {
           durable: true,
         }
         yield* writeCronTasks([task], directory)
-        yield* bridge.start(sid, context.worktree)
+        yield* bridge.start(sid, context.worktree, () => Effect.die("scheduled fire not expected in directory test"))
         expect(yield* scheduler.list({ session_id: sid })).toEqual([task])
         expect(existsSync(getLockFilePath(directory))).toBe(true)
         const created = yield* scheduler.add({
