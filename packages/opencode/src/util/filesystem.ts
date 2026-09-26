@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, stat as statFile, writeFile } from "fs/promises"
 import { createWriteStream, existsSync, statSync } from "fs"
 import { realpathSync } from "fs"
-import { dirname, join, relative, resolve as pathResolve, win32 } from "path"
+import { dirname, isAbsolute, join, relative, resolve as pathResolve, win32 } from "path"
 import { Readable } from "stream"
 import { pipeline } from "stream/promises"
 import { Glob } from "@mimo-ai/shared/util/glob"
@@ -162,7 +162,10 @@ export function overlaps(a: string, b: string) {
 }
 
 export function contains(parent: string, child: string) {
-  return !relative(parent, child).startsWith("..")
+  // A cross-drive (Windows) pair cannot be relativized: relative() returns the
+  // absolute target, which never starts with "..". Treat it as disjoint.
+  const rel = relative(parent, child)
+  return !isAbsolute(rel) && !rel.startsWith("..")
 }
 
 export async function findUp(
