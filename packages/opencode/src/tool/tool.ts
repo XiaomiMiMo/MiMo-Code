@@ -107,6 +107,34 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
           ...(ctx.callID ? { "tool.call_id": ctx.callID } : {}),
         }
         return Effect.gen(function* () {
+          // Pre-execution dedup (Issue #1162)
+          let duplicatePart: any | undefined
+          for (let i = ctx.messages.length - 1; i >= 0; i--) {
+            const msg = ctx.messages[i]
+            if (msg.info.role === "user") break
+            const toolParts = msg.parts.filter(
+              (p: any) =>
+                p.type === "tool" &&
+                p.tool === id &&
+                p.state &&
+                p.state.status === "completed" &&
+                JSON.stringify(p.state.input) === JSON.stringify(args)
+            )
+            if (toolParts.length > 0) {
+              duplicatePart = toolParts[toolParts.length - 1]
+              break
+            }
+          }
+
+          if (duplicatePart && duplicatePart.state && duplicatePart.state.status === "completed") {
+            return {
+              title: duplicatePart.state.title,
+              metadata: duplicatePart.state.metadata as Result,
+              output: duplicatePart.state.output,
+              attachments: duplicatePart.state.attachments,
+            }
+          }
+
           yield* Effect.try({
             try: () => toolInfo.parameters.parse(args),
             catch: (error) => {
