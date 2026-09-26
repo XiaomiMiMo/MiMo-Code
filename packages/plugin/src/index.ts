@@ -457,6 +457,15 @@ export interface Hooks {
     input: { sessionID: string; agent: string; model: Model; provider: ProviderContext; message: UserMessage },
     output: { headers: Record<string, string> },
   ) => Promise<void>
+  /**
+   * Called before a permission request is shown to the user, so a plugin can
+   * auto-allow or auto-deny its own tools without a prompt. Set
+   * `output.status` to `"allow"` or `"deny"`; leaving it as `"ask"` falls
+   * through to the normal permission prompt. `input.type` is the permission
+   * name (e.g. `bash`), `input.pattern` the affected path(s), and
+   * `input.metadata` carries the request details (tool args etc.). Forced-ask
+   * permissions (e.g. `bash_delete`) are never routed here.
+   */
   "permission.ask"?: (input: Permission, output: { status: "ask" | "deny" | "allow" }) => Promise<void>
   "command.execute.before"?: (
     input: { command: string; sessionID: string; arguments: string },

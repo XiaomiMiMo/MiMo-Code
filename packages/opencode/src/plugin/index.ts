@@ -33,6 +33,7 @@ import { SubagentProgressCheckerPlugin } from "./subagent-progress-checker"
 import { Effect, Layer, Context, Stream } from "effect"
 import { EffectBridge } from "@/effect"
 import { InstanceState } from "@/effect"
+import { Service } from "./service"
 import { errorMessage } from "@/util/error"
 import { PluginLoader } from "./loader"
 import { parsePluginSpecifier, readPluginId, readV1Plugin, resolvePluginId } from "./shared"
@@ -137,7 +138,7 @@ export interface Interface {
   ) => Effect.Effect<ActorStopAggregatedDecision>
 }
 
-export class Service extends Context.Service<Service, Interface>()("@opencode/Plugin") {}
+export { Service } from "./service"
 
 // Built-in plugins that are directly imported (not installed from npm)
 const INTERNAL_PLUGINS: PluginInstance[] = [

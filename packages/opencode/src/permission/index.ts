@@ -11,11 +11,16 @@ import { zod } from "@/util/effect-zod"
 import { Log } from "@/util"
 import { withStatics } from "@/util/schema"
 import { Wildcard } from "@/util"
-import { Deferred, Effect, Layer, Schema, Context } from "effect"
+import { Deferred, Effect, Layer, Schema, Context, Option } from "effect"
 import os from "os"
 import { evaluate as evalRule } from "./evaluate"
 import { PermissionID } from "./schema"
 import { forwardRef } from "./permission-forward-ref"
+import { inboxServiceRef } from "@/inbox/inbox-ref"
+import { TuiEvent } from "@/cli/cmd/tui/event"
+import { EffectBridge } from "@/effect"
+import { Service as PluginService } from "@/plugin/service"
+import type { Permission as PluginPermission } from "@mimo-ai/sdk"
 
 // Legacy env var — maps to permissionAskTimeoutMs initial value for backward
 // compat. When set to a positive integer, new instances start with that timeout.
@@ -344,7 +349,52 @@ export const layer = Layer.effect(
 
       if (!needsAsk) return
 
+      // Allocate the request ID once so the plugin hook payload and the actual
+      // pending request/event (below) identify the same permission request.
       const id = request.id ?? PermissionID.ascending()
+
+      // Plugins get one chance to auto-allow or deny before the human
+      // round-trip. This wires the `permission.ask` hook declared in
+      // @mimo-ai/plugin but previously never consulted by the permission
+      // system. An unset/`ask` status falls through to the normal prompt
+      // below; forced-ask permissions keep the mandatory human confirmation.
+      if (needsAsk && !forced) {
+        const pluginService = yield* Effect.serviceOption(PluginService)
+        if (Option.isSome(pluginService)) {
+          const pluginDecision = yield* pluginService.value.trigger<
+            "permission.ask",
+            PluginPermission,
+            { status: "ask" | "deny" | "allow" }
+          >(
+            "permission.ask",
+            {
+              id: id as unknown as string,
+              type: request.permission,
+              pattern: request.patterns.length === 1 ? request.patterns[0] : [...request.patterns],
+              sessionID: request.sessionID,
+              messageID: request.tool?.messageID ?? "",
+              callID: request.tool?.callID,
+              title: request.permission,
+              metadata: request.metadata,
+              time: { created: Date.now() },
+            } satisfies PluginPermission,
+            { status: "ask" },
+          )
+          if (pluginDecision.status === "deny") {
+            return yield* new DeniedError({
+              ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
+            })
+          }
+          if (pluginDecision.status === "allow") {
+            log.info("plugin auto-allowed permission", {
+              permission: request.permission,
+              patterns: request.patterns,
+            })
+            return
+          }
+        }
+      }
+
       const info = Schema.decodeUnknownSync(Request)({
         id,
         ...request,
