@@ -18,6 +18,29 @@ import { diffs as list, message as clean } from "@/utils/diffs"
 
 const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
 
+/**
+ * Transcript payloads (messages/parts) are only applied for sessions whose
+ * store slots already exist. Bootstrapping them from bus events would let every
+ * concurrent agent session in a project pollute the Solid store — each
+ * part/tool-output write then forces renderer reconciles even when the user
+ * never opened that session, which is a primary multi-session CPU/input-lag
+ * source. Opening a session still loads history via the normal fetch path.
+ */
+function transcriptLoaded(store: Store<State>, sessionID: string) {
+  return store.message[sessionID] !== undefined
+}
+
+function sessionVisible(store: Store<State>, sessionID: string) {
+  if (!sessionID) return false
+  if (transcriptLoaded(store, sessionID)) return true
+  if (store.session_status[sessionID] !== undefined) return true
+  if (store.todo[sessionID] !== undefined) return true
+  if (store.session_diff[sessionID] !== undefined) return true
+  if (store.permission[sessionID] !== undefined) return true
+  if (store.question[sessionID] !== undefined) return true
+  return Binary.search(store.session, sessionID, (s) => s.id).found
+}
+
 export function applyGlobalEvent(input: {
   event: { type: string; properties?: unknown }
   project: Project[]
@@ -167,27 +190,27 @@ export function applyDirectoryEvent(input: {
     }
     case "session.diff": {
       const props = event.properties as { sessionID: string; diff: SnapshotFileDiff[] }
+      if (input.store.session_diff[props.sessionID] === undefined && !transcriptLoaded(input.store, props.sessionID)) break
       input.setStore("session_diff", props.sessionID, reconcile(list(props.diff), { key: "file" }))
       break
     }
     case "todo.updated": {
       const props = event.properties as { sessionID: string; todos: Todo[] }
+      if (!sessionVisible(input.store, props.sessionID)) break
       input.setStore("todo", props.sessionID, reconcile(props.todos, { key: "id" }))
       input.setSessionTodo?.(props.sessionID, props.todos)
       break
     }
     case "session.status": {
       const props = event.properties as { sessionID: string; status: SessionStatus }
+      if (!sessionVisible(input.store, props.sessionID)) break
       input.setStore("session_status", props.sessionID, reconcile(props.status))
       break
     }
     case "message.updated": {
       const info = clean((event.properties as { info: Message }).info)
       const messages = input.store.message[info.sessionID]
-      if (!messages) {
-        input.setStore("message", info.sessionID, [info])
-        break
-      }
+      if (!messages) break
       const result = Binary.search(messages, info.id, (m) => m.id)
       if (result.found) {
         input.setStore("message", info.sessionID, result.index, reconcile(info))
@@ -221,6 +244,10 @@ export function applyDirectoryEvent(input: {
       if (SKIP_PARTS.has(part.type)) break
       const parts = input.store.part[part.messageID]
       if (!parts) {
+        // New parts for a session whose transcript is already in the store
+        // (live stream of an open/optimistic session) still bootstrap; parts
+        // for unloaded sessions are dropped.
+        if (!transcriptLoaded(input.store, part.sessionID ?? "")) break
         input.setStore("part", part.messageID, [part])
         break
       }

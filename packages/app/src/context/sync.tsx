@@ -588,7 +588,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const client = sdk.client
           const [store, setStore] = globalSync.child(directory)
           setStore("limit", (x) => x + count)
-          await client.session.list().then((x) => {
+          // Always request a bounded page — never the server default "all-ish"
+          // unpaginated dump that scales with project session count.
+          const limit = Math.max(store.limit, 1)
+          await client.session.list({ limit }).then((x) => {
             const sessions = (x.data ?? [])
               .filter((s) => !!s?.id)
               .sort((a, b) => cmp(a.id, b.id))
