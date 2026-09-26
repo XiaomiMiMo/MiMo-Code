@@ -1,9 +1,12 @@
 import { test, expect, beforeEach } from "bun:test"
 import { Effect, Layer } from "effect"
-import { existsSync, mkdtempSync, rmSync } from "fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { provideInstance, tmpdir as fixtureTmpdir } from "../fixture/fixture"
+import { provideInstance, tmpdirScoped } from "../fixture/fixture"
+import { InstanceState } from "@/effect"
+import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
+import { testEffect } from "../lib/effect"
 import { Flag } from "@/flag/flag"
 
 import { Bus } from "@/bus"
@@ -200,42 +203,69 @@ test("cron-bridge start wires Scheduler with isLoading + isKilled + onFire", asy
   }
 })
 
-// Desktop engine-runtime [TP-R10-03]: embedded hosts do not change process.cwd().
-test("cron-bridge owns durable tasks and its scheduler lock in the session workspace", async () => {
-  await using workspace = await fixtureTmpdir({ git: true })
-  expect(workspace.path).not.toBe(process.cwd())
-  const captured: { value: CapturedPrompt[] } = { value: [] }
-  await harness(captured, ({ bridge, scheduler }) =>
+// Check the storage destination before delegating, so a regression never writes at `/`.
+const directoryCheckedScheduler = Layer.effect(
+  Scheduler,
+  Effect.gen(function* () {
+    const scheduler = yield* Scheduler
+    return Scheduler.of({
+      ...scheduler,
+      start: (input) => Effect.gen(function* () {
+        expect(input.dir).toBe(yield* InstanceState.directory)
+        yield* scheduler.start(input)
+      }),
+    })
+  }),
+).pipe(Layer.provide(SchedulerDefaultLayer))
+const directoryLayers = Layer.mergeAll(directoryCheckedScheduler, SessionStatus.defaultLayer, Bus.layer)
+const directoryTest = testEffect(Layer.mergeAll(
+  CrossSpawnSpawner.defaultLayer,
+  directoryLayers,
+  cronBridgeLayer.pipe(Layer.provide(directoryLayers)),
+))
+
+// Embedded hosts keep their own cwd; TUI can start in a Git subdirectory or outside Git.
+for (const kind of ["git-root", "git-subdirectory", "non-git"] as const) {
+  directoryTest.live(`cron-bridge stores durable tasks and locks in the instance directory (${kind})`, () =>
     Effect.gen(function* () {
-      const task = {
-        id: "workspace-cron",
-        cron: "0 0 1 1 *",
-        prompt: "workspace task",
-        createdAt: Date.now(),
-        createdBySessionId: sid,
-        recurring: true,
-        durable: true,
-      }
-      yield* writeCronTasks([task], workspace.path)
-      yield* bridge.start(sid, workspace.path)
-
-      expect(yield* scheduler.list({ session_id: sid })).toEqual([task])
-      expect(existsSync(getLockFilePath(workspace.path))).toBe(true)
-      const created = yield* scheduler.add({
-        session_id: sid,
-        cron: "0 0 1 1 *",
-        prompt: "another workspace task",
-        recurring: true,
-        durable: true,
-      })
-      expect((yield* readCronTasks(workspace.path)).map((entry) => entry.id)).toEqual([task.id, created.id])
-
-      yield* bridge.stop()
-      expect(existsSync(getLockFilePath(workspace.path))).toBe(false)
-      expect((yield* readCronTasks(workspace.path)).map((entry) => entry.id)).toEqual([task.id, created.id])
+      const workspace = yield* tmpdirScoped(kind === "non-git" ? { outsideGit: true } : { git: true })
+      const directory = kind === "git-subdirectory" ? join(workspace, "nested") : workspace
+      mkdirSync(directory, { recursive: true })
+      expect(directory).not.toBe(process.cwd())
+      yield* provideInstance(directory)(Effect.gen(function* () {
+        const context = yield* InstanceState.context
+        expect(context.directory).toBe(directory)
+        expect(context.worktree).toBe(kind === "non-git" ? "/" : workspace)
+        const bridge = yield* CronBridge
+        const scheduler = yield* Scheduler
+        const task = {
+          id: "workspace-cron",
+          cron: "0 0 1 1 *",
+          prompt: "workspace task",
+          createdAt: Date.now(),
+          createdBySessionId: sid,
+          recurring: true,
+          durable: true,
+        }
+        yield* writeCronTasks([task], directory)
+        yield* bridge.start(sid, context.worktree)
+        expect(yield* scheduler.list({ session_id: sid })).toEqual([task])
+        expect(existsSync(getLockFilePath(directory))).toBe(true)
+        const created = yield* scheduler.add({
+          session_id: sid,
+          cron: "0 0 1 1 *",
+          prompt: "another workspace task",
+          recurring: true,
+          durable: true,
+        })
+        expect((yield* readCronTasks(directory)).map((entry) => entry.id)).toEqual([task.id, created.id])
+        yield* bridge.stop()
+        expect(existsSync(getLockFilePath(directory))).toBe(false)
+        expect((yield* readCronTasks(directory)).map((entry) => entry.id)).toEqual([task.id, created.id])
+      }))
     }),
   )
-})
+}
 
 test("cron-bridge is a no-op when MIMOCODE_EXPERIMENTAL_CRON is explicitly disabled", async () => {
   const captured: { value: CapturedPrompt[] } = { value: [] }

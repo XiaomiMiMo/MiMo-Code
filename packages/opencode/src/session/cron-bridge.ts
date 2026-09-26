@@ -10,6 +10,7 @@ import { Bus } from "@/bus"
 import { SessionID } from "./schema"
 import { Flag } from "@/flag/flag"
 import { Log } from "@/util"
+import { InstanceState } from "@/effect"
 
 const log = Log.create({ service: "cron-bridge" })
 
@@ -272,7 +273,7 @@ export const layer = Layer.effect(
 
         yield* scheduler.start({
           workspaceRoot,
-          dir: workspaceRoot,
+          dir: yield* InstanceState.directory,
           sessionID,
           isLoading: () => handle.loading,
           isKilled: () => isCronDisabled(),
