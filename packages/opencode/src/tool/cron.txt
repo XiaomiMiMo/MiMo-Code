@@ -25,10 +25,10 @@ JSON calls always wrap the action in an `operation` object — see examples belo
 
 ## Picking minutes for `schedule`
 
-Avoid :00 and :30 unless the user named that exact time. Every user who asks
-for "9:00 UTC" gets `0 9` and every fleet fires at the same instant. Nudge
-after converting the user's local time to UTC:
-  "every morning around 9:00 UTC" → "57 8 * * *" or "3 9 * * *"
+Avoid :00 and :30 unless the user named that exact time. After converting the
+user's local time to UTC, every expression still pinned to minute 0 (e.g.
+`0 9` = 09:00 UTC) fires in lockstep across the fleet — nudge the minute:
+  "every morning around 9" (local) → convert first → "57 8 * * *" or "3 9 * * *" for 09:00 UTC
   "hourly" → "7 * * * *"
 
 ## Picking delay_seconds for `loop`
@@ -40,7 +40,7 @@ Clamp range is [60, 3600]. Pick based on what you observed this turn:
 
 ## Schedule vs loop
 
-Use `schedule` when cadence is fixed up front ("every 5 minutes", "weekdays 9:00 UTC").
+Use `schedule` when cadence is fixed up front ("every 5 minutes", "weekdays 9am").
 Use `loop` when cadence depends on what you observed and may change next turn.
 
 ## Durability
