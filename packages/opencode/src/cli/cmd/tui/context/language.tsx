@@ -35,6 +35,7 @@ const loaders: Record<Exclude<Locale, "en">, () => Promise<Dictionary>> = {
   th: () => merge(import("@mimo-ai/ui/i18n/th")),
   bs: () => merge(import("@mimo-ai/ui/i18n/bs")),
   tr: () => merge(import("@mimo-ai/ui/i18n/tr")),
+  fa: () => merge(import("@mimo-ai/ui/i18n/fa")),
 }
 
 const cache = new Map<Locale, Dictionary>([["en", base]])
