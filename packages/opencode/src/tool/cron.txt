@@ -25,10 +25,11 @@ JSON calls always wrap the action in an `operation` object — see examples belo
 
 ## Picking minutes for `schedule`
 
-Avoid :00 and :30 unless the user named that exact time. After converting the
-user's local time to UTC, every expression still pinned to minute 0 (e.g.
-`0 9` = 09:00 UTC) fires in lockstep across the fleet — nudge the minute:
-  "every morning around 9" (local) → convert first → "57 8 * * *" or "3 9 * * *" for 09:00 UTC
+Avoid :00 and :30 unless the user named that exact time. Convert the user's
+local time to UTC first, then nudge the minute so the fleet does not fire in
+lockstep (e.g. if the UTC target is 09:00, write "57 8 * * *" or "3 9 * * *",
+not "0 9 * * *"):
+  "every morning around 9" (user local) — convert to UTC first, then nudge
   "hourly" → "7 * * * *"
 
 ## Picking delay_seconds for `loop`

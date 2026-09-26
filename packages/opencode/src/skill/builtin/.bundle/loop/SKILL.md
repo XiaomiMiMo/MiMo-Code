@@ -33,6 +33,9 @@ When the user types `/loop <interval>` (interval only) **and** the project has e
 | `Nh` where `N` is 1–23 and divides 24 | `0 */N * * *` |
 | `Nd` where `N` divides 31 sensibly (1, 2) | `0 0 */N * *` |
 
+Cron fields are UTC (see the `cron` tool). These interval patterns are
+timezone-agnostic; the `Nd` row fires at midnight UTC, not local midnight.
+
 **Rounding rule.** If `N` does not divide its wrap-around cleanly (e.g. `7m`, `90m`, `5h`, `7d`), pick the **nearest interval that does** and tell the user explicitly what you rounded to and why. Acceptable nearby values:
 
 - minutes < 60: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30
