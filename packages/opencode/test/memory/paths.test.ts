@@ -47,6 +47,24 @@ describe("parsePath", () => {
     })
   })
 
+  test("Windows path with backslash separators parses (issue #2503)", () => {
+    expect(parsePath("C:\\Users\\me\\AppData\\Roaming\\mimo\\memory\\global\\tooling-prefs.md")).toEqual({
+      scope: "global",
+      scope_id: "",
+      type: "free",
+      key: "tooling-prefs",
+    })
+  })
+
+  test("Windows project memory: <pid>/memory.md parses (issue #2503)", () => {
+    expect(parsePath("C:\\Users\\me\\AppData\\Roaming\\mimo\\memory\\projects\\uuid-1\\memory.md")).toEqual({
+      scope: "projects",
+      scope_id: "uuid-1",
+      type: "memory",
+      key: "memory",
+    })
+  })
+
   test("session checkpoint: <sid>/checkpoint.md", () => {
     expect(parsePath("/data/memory/sessions/ses_abc/checkpoint.md")).toEqual({
       scope: "sessions",

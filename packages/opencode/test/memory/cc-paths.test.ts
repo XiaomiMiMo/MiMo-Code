@@ -46,6 +46,17 @@ describe("parseCcPath", () => {
     })
   })
 
+  test("Windows path with backslash separators parses (issue #2503)", () => {
+    expect(
+      parseCcPath("C:\\Users\\me\\.claude\\projects\\-myproj\\memory\\feedback_x.md"),
+    ).toEqual({
+      scope: "cc",
+      scope_id: "-myproj",
+      type: "free",
+      key: "feedback_x",
+    })
+  })
+
   test("non-CC path returns null", () => {
     expect(parseCcPath("/data/memory/global/x.md")).toBeNull()
   })
