@@ -127,6 +127,49 @@ function structuredTool(input: Record<string, unknown>) {
 }
 
 describe("TurnQueue admission and claim acceptance without child execution", () => {
+  it.live(
+    "failed delegated subtask anchors its delivery once and is not replayed by the next prompt",
+    provideTmpdirServer(
+      ({ llm }) =>
+        Effect.gen(function* () {
+          const { session, sessions, prompt } = yield* setup("Delegation failure delivery")
+          const messageID = MessageID.ascending()
+          yield* llm.text("Delegation failed once")
+          const result = yield* prompt.prompt({
+            sessionID: session.id,
+            messageID,
+            agent: "build",
+            parts: [{ type: "subtask", prompt: "Delegate request", description: "", agent: "explore" }],
+          }).pipe(Effect.timeout("10 seconds"))
+          answer(result, "Delegation failed once", messageID)
+          const messages = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+          const delegated = messages.filter((message) =>
+            message.parts.some((part) => part.type === "tool" && part.tool === "actor"),
+          )
+          expect(delegated).toHaveLength(1)
+          expect(delegated[0].parts.find((part) => part.type === "tool" && part.tool === "actor"))
+            .toMatchObject({ state: { status: "error" } })
+          const receipt = yield* receiptFor(session.id, messageID)
+          yield* successful(receipt.id)
+          expect(receipts(session.id).find((row) => row.id === receipt.id)?.delivery_message_id)
+            .toBe(delegated[0].info.id)
+          yield* llm.text("Follow-up complete")
+          const later = yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            parts: [{ type: "text", text: "Continue without repeating delegation" }],
+          })
+          expect(later.parts.some((part) => part.type === "text" && part.text === "Follow-up complete")).toBe(true)
+          expect((yield* sessions.messages({ sessionID: session.id, agentID: "main" }))
+            .flatMap((message) => message.parts).filter((part) => part.type === "tool" && part.tool === "actor"))
+            .toHaveLength(1)
+          expect(yield* llm.calls).toBe(2)
+        }),
+      { git: true, config },
+    ),
+    30_000,
+  )
+
   for (const persisted of ["before U2 execution", "after U2 ack"] as const) {
     for (const change of ["replace", "clear"] as const) {
       it.live(

@@ -1276,7 +1276,7 @@ export function Session() {
         }
         // Agent opened FROM a workflow page → back returns to that workflow.
         if (fullRoute.data.type === "session" && currentAgentID() !== "main" && fromWorkflowRunID()) {
-          navigate({ ...fullRoute.data, agentID: undefined, fromWorkflowRunID: undefined, workflowRunID: fromWorkflowRunID() })
+          navigate({ ...fullRoute.data, sessionID: sync.data.workflow[fromWorkflowRunID()!]?.sessionID ?? route.sessionID, agentID: undefined, fromWorkflowRunID: undefined, workflowRunID: fromWorkflowRunID() })
           dialog.clear()
           return
         }
@@ -1415,8 +1415,8 @@ export function Session() {
               <WorkflowPage
                 runID={workflowRunID()!}
                 onBack={() => navigate({ ...route, workflowRunID: undefined })}
-                onOpenAgent={(actorID) =>
-                  navigate({ ...route, workflowRunID: undefined, agentID: actorID, fromWorkflowRunID: workflowRunID() })
+                onOpenAgent={(actorID, sessionID) =>
+                  navigate({ ...route, sessionID: sessionID ?? route.sessionID, workflowRunID: undefined, agentID: actorID, fromWorkflowRunID: workflowRunID() })
                 }
                 onOpenChild={(childRunID) => navigate({ ...route, workflowRunID: childRunID })}
               />
@@ -2878,7 +2878,7 @@ function WorkflowPanel(props: {
 function WorkflowPage(props: {
   runID: string
   onBack: () => void
-  onOpenAgent: (actorID: string) => void
+  onOpenAgent: (actorID: string, sessionID?: string) => void
   onOpenChild: (childRunID: string) => void
 }) {
   const sync = useSync()
@@ -2895,8 +2895,8 @@ function WorkflowPage(props: {
   // Describe what a running subagent is currently doing, from its live message
   // stream (last message's last meaningful part): a tool call → "⚙ <tool>", else
   // the latest text snippet. Returns undefined when nothing's streamed yet.
-  const liveActivity = (actorID: string): string | undefined => {
-    const sid = run()?.sessionID
+  const liveActivity = (actorID: string, sessionID?: string): string | undefined => {
+    const sid = sessionID ?? run()?.sessionID
     if (!sid) return undefined
     const msgs = sync.data.message[sid]?.[actorID]
     const last = msgs?.[msgs.length - 1]

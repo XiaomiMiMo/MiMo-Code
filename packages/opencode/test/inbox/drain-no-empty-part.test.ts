@@ -3,7 +3,6 @@ import { Layer, ManagedRuntime } from "effect"
 import { Inbox } from "../../src/inbox"
 import { renderInboxRow } from "../../src/inbox/render"
 import type { InboxRow } from "../../src/inbox/inbox.sql"
-import { defaultModelRef } from "../../src/inbox/inbox-ref"
 import { ActorRegistry } from "../../src/actor/registry"
 import { Session } from "../../src/session"
 import { Bus } from "../../src/bus"
@@ -31,7 +30,6 @@ const base = Layer.mergeAll(Session.defaultLayer, ActorRegistry.defaultLayer, Bu
 const testLayer = Inbox.layer.pipe(Layer.provide(base), Layer.provideMerge(base))
 
 afterEach(async () => {
-  defaultModelRef.current = undefined
   await Instance.disposeAll()
 })
 
@@ -145,6 +143,7 @@ describe("Inbox.drain never persists an empty user text part", () => {
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox.send({
+            wake: false,
             receiverSessionID: session.id,
             receiverActorID: "actor-empty",
             type: "actor_notification",
@@ -184,6 +183,7 @@ describe("Inbox.drain never persists an empty user text part", () => {
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox.send({
+            wake: false,
             receiverSessionID: session.id,
             receiverActorID: "actor-mixed",
             type: "actor_notification",
@@ -194,6 +194,7 @@ describe("Inbox.drain never persists an empty user text part", () => {
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox.send({
+            wake: false,
             receiverSessionID: session.id,
             receiverActorID: "actor-mixed",
             type: "actor_notification",
@@ -232,6 +233,7 @@ describe("Inbox.drain leaves rows durable when cancelled before commit", () => {
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox.send({
+            wake: false,
             receiverSessionID: session.id,
             receiverActorID: "actor-cancel",
             type: "actor_notification",
@@ -277,6 +279,7 @@ describe("Inbox.drain leaves rows durable when cancelled before commit", () => {
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox.send({
+            wake: false,
             receiverSessionID: session.id,
             receiverActorID: "actor-ok",
             type: "actor_notification",
@@ -304,6 +307,7 @@ describe("Inbox.drain leaves rows durable when cancelled before commit", () => {
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox.send({
+            wake: false,
             receiverSessionID: session.id,
             receiverActorID: "actor-mid",
             type: "actor_notification",

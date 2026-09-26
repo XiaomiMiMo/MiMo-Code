@@ -629,17 +629,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       if (!options?.visible) return rows.map(fromRow)
       if (!rows.length) return []
       // visible: only children a user should see in session lists. Peer actors
-      // register under the child session with actor_id === session id. Exactly
-      // three code paths create a child session, so the two dropped here are
-      // the checkpoint-writer host (session/checkpoint.ts:851, mode "subagent")
-      // and the HTTP `/ask` fork-query host (tool/session.ts forkQuery, title
-      // `ask: …`, mode "subagent"); a pre-registry child with no actor row at
-      // all is dropped too.
-      //
-      // ⚠️This list used to also name "workflow subagent sessions". There is no
-      // such session: a workflow's agent() calls actor.spawn with
-      // sessionID = its OWN session (workflow/runtime.ts:814-816, :945-948), so
-      // it registers an actor, not a child session.
+      // register under the child session with actor_id === session id. Subagent
+      // hosts (checkpoint writer, fork-query and isolated workflow attempts) are
+      // omitted from this list, as are children without an actor row.
       //
       // ⚠️This filter is NOT the render prohibition. Being absent here means
       // "not offered in a list"; what may never be RENDERED is narrower and

@@ -367,6 +367,7 @@ export const layer = Layer.effect(
       wakeEpoch?: number
       model?: { providerID: ProviderID; modelID: ModelID }
       lifecycle: "ephemeral" | "persistent"
+      actorMode: "peer" | "subagent"
       task_id?: string
       format?: MessageV2.OutputFormat
       // When set, the child's work fiber runs under this InstanceContext (via
@@ -415,8 +416,7 @@ export const layer = Layer.effect(
         const warnings: string[] = []
         let lastResult: { finalText?: string; structured?: unknown } = {}
 
-        // Derive actor mode from spawn shape: peer creates a new session, subagent shares parent's
-        const actorMode: "peer" | "subagent" = input.parentSessionID === input.sessionID ? "subagent" : "peer"
+        const actorMode = input.actorMode
 
         // Writability of THIS agent, derived from the same predicate the runtime uses to
         // strip the Write tool (llm.ts resolveTools → Permission.disabled). Read-only agents
@@ -759,6 +759,7 @@ export const layer = Layer.effect(
               wakeEpoch,
               model: input.model,
               lifecycle: input.lifecycle ?? "persistent",
+              actorMode: "peer",
               task_id: input.task_id,
               format: input.format,
               ...(instanceRef ? { instanceRef } : {}),
@@ -827,6 +828,7 @@ export const layer = Layer.effect(
               wakeEpoch,
               model: input.model,
               lifecycle: input.lifecycle ?? "ephemeral",
+              actorMode: "subagent",
               task_id: input.task_id,
               format: input.format,
             })

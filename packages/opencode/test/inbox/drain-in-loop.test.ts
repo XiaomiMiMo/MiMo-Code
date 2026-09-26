@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { Inbox } from "../../src/inbox"
 import { MAX_DRAIN_PER_TURN } from "../../src/inbox/inbox"
@@ -14,8 +14,13 @@ import { tmpdir } from "../fixture/fixture"
 const base = Layer.mergeAll(Session.defaultLayer, ActorRegistry.defaultLayer, Bus.defaultLayer)
 const testLayer = Inbox.layer.pipe(Layer.provide(base), Layer.provideMerge(base))
 
-afterEach(async () => {
+let previousDefaultModel: typeof defaultModelRef.current
+beforeEach(() => {
+  previousDefaultModel = defaultModelRef.current
   defaultModelRef.current = undefined
+})
+afterEach(async () => {
+  defaultModelRef.current = previousDefaultModel
   await Instance.disposeAll()
 })
 
@@ -109,6 +114,7 @@ describe("Inbox.drain in loop (Plan 2 / Task 7)", () => {
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox.send({
+            wake: false,
             receiverSessionID: session.id,
             receiverActorID: "actor-2",
             content: "hello",
@@ -149,9 +155,9 @@ describe("Inbox.drain in loop (Plan 2 / Task 7)", () => {
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
           Effect.all([
-            inbox.send({ receiverSessionID: session.id, receiverActorID: "actor-3", content: "msg-1" }),
-            inbox.send({ receiverSessionID: session.id, receiverActorID: "actor-3", content: "msg-2" }),
-            inbox.send({ receiverSessionID: session.id, receiverActorID: "actor-3", content: "msg-3" }),
+            inbox.send({ wake: false, receiverSessionID: session.id, receiverActorID: "actor-3", content: "msg-1" }),
+            inbox.send({ wake: false, receiverSessionID: session.id, receiverActorID: "actor-3", content: "msg-2" }),
+            inbox.send({ wake: false, receiverSessionID: session.id, receiverActorID: "actor-3", content: "msg-3" }),
           ]),
         ),
       )
@@ -205,7 +211,7 @@ describe("Inbox.drain in loop (Plan 2 / Task 7)", () => {
 
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
-          inbox.send({ receiverSessionID: session.id, receiverActorID: "peer-idle", content: "relayed task" }),
+          inbox.send({ wake: false, receiverSessionID: session.id, receiverActorID: "peer-idle", content: "relayed task" }),
         ),
       )
 
@@ -251,7 +257,7 @@ describe("Inbox.drain in loop (Plan 2 / Task 7)", () => {
       )
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
-          inbox.send({ receiverSessionID: session.id, receiverActorID: "peer-t0", content: "queued" }),
+          inbox.send({ wake: false, receiverSessionID: session.id, receiverActorID: "peer-t0", content: "queued" }),
         ),
       )
 
@@ -303,7 +309,7 @@ describe("Inbox.drain in loop (Plan 2 / Task 7)", () => {
       )
       await rt.runPromise(
         Inbox.Service.use((inbox) =>
-          inbox.send({ receiverSessionID: session.id, receiverActorID: "peer-fresh", content: "queued" }),
+          inbox.send({ wake: false, receiverSessionID: session.id, receiverActorID: "peer-fresh", content: "queued" }),
         ),
       )
 
@@ -353,6 +359,7 @@ describe("Inbox.drain in loop (Plan 2 / Task 7)", () => {
           Effect.all(
             Array.from({ length: total }, (_, i) =>
               inbox.send({
+                wake: false,
                 receiverSessionID: session.id,
                 receiverActorID: "actor-cap",
                 content: `msg-${i}`,

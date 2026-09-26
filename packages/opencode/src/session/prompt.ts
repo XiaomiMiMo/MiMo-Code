@@ -1,4 +1,5 @@
 import { HostModelTransport } from "../provider/host-transport"
+import { bindScopedRef } from "../effect/scoped-ref"
 import path from "path"
 import os from "os"
 import z from "zod"
@@ -139,6 +140,7 @@ import {
 } from "./trajectory"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { spawnRef } from "@/actor/spawn-ref"
+import { workflowRef } from "@/workflow/runtime-ref"
 import { Inbox } from "@/inbox"
 import { sessionPromptRef, defaultModelRef } from "@/inbox/inbox-ref"
 import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan-tool-idle-hook"
@@ -797,6 +799,8 @@ export const layer = Layer.effect(
           }).pipe(Effect.ignore),
         { concurrency: "unbounded", discard: true },
       )
+      // Isolated workflow children have their own session identities and are not in nonMain.
+      if (workflowRef.current) yield* workflowRef.current.cancelSession(sessionID)
       // Phase 2 — interrupt runners.
       yield* state.cancel(sessionID)
       // Phase 3 — cascade Actor.cancel; wake:false for any registry-only terminal.
@@ -2312,6 +2316,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sessionID: SessionID
       session: Session.Info
       msgs: MessageV2.WithParts[]
+      onDelivery: (messageID: MessageID) => Effect.Effect<void>
     }) {
       const { task, model, lastUser, sessionID, session, msgs } = input
       const ctx = yield* InstanceState.context
@@ -2334,6 +2339,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         providerID: taskModel.providerID,
         time: { created: Date.now() },
       })
+      yield* input.onDelivery(assistantMessage.id)
       const taskArgs = {
         operation: {
           action: "run" as const,
@@ -4689,6 +4695,38 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
         let unprocessedPrompt = claimOwner?.receipts.some((receipt) => receipt.intent.kind === "prompt") ?? false
         const deliveredPrompts = new Set<MessageID>()
+        const recordDelivery = Effect.fn("SessionPrompt.recordDelivery")(function* (
+          messageID: MessageID,
+          msgs: MessageV2.WithParts[],
+        ) {
+          if (claimOwner) {
+            const pending = claimOwner.receipts.filter((receipt) => {
+              const intent = receipt.intent
+              return intent.kind === "prompt" && !deliveredPrompts.has(intent.messageID) &&
+                msgs.some((msg) => msg.info.id === intent.messageID)
+            })
+            if (pending.length > 0) {
+              const identity = yield* ExecutionOwnership.captureIdentity
+              yield* Effect.sync(() => Database.transaction((db) => {
+                ExecutionOwnership.assertOwnership(db, sessionID, identity)
+                const receipts = db.update(TurnReceiptTable).set({
+                  delivery_message_id: messageID,
+                }).where(and(
+                  inArray(TurnReceiptTable.id, pending.map((receipt) => receipt.id)),
+                  eq(TurnReceiptTable.state, "claimed"),
+                  eq(TurnReceiptTable.run_id, claimOwner.runId),
+                  eq(TurnReceiptTable.epoch, pending[0].epoch),
+                  isNull(TurnReceiptTable.delivery_message_id),
+                )).returning().all()
+                QueueSync.record({ sessionID, receipts })
+              }))
+              for (const receipt of pending) {
+                if (receipt.intent.kind === "prompt") deliveredPrompts.add(receipt.intent.messageID)
+              }
+            }
+          }
+          unprocessedPrompt = false
+        })
         while (true) {
           const inputRevision = turnQueueRef.current
             ? yield* turnQueueRef.current.observeInput({ sessionID, agentID: resolvedAgentID }, -1)
@@ -5010,7 +5048,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const task = tasks.pop()
 
           if (task?.type === "subtask") {
-            yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+            yield* handleSubtask({
+              task, model, lastUser, sessionID, session, msgs,
+              onDelivery: (messageID) => recordDelivery(messageID, msgs),
+            })
             continue
           }
 
@@ -5808,33 +5849,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                })
               : handle.process(processArgs)
 
-            if (claimOwner) {
-              const pending = claimOwner.receipts.filter((receipt) => {
-                const intent = receipt.intent
-                return intent.kind === "prompt" && !deliveredPrompts.has(intent.messageID) &&
-                  msgs.some((msg) => msg.info.id === intent.messageID)
-              })
-              if (pending.length > 0) {
-                const identity = yield* ExecutionOwnership.captureIdentity
-                yield* Effect.sync(() => Database.transaction((db) => {
-                  ExecutionOwnership.assertOwnership(db, sessionID, identity)
-                  const receipts = db.update(TurnReceiptTable).set({
-                    delivery_message_id: handle.message.id,
-                  }).where(and(
-                    inArray(TurnReceiptTable.id, pending.map((receipt) => receipt.id)),
-                    eq(TurnReceiptTable.state, "claimed"),
-                    eq(TurnReceiptTable.run_id, claimOwner.runId),
-                    eq(TurnReceiptTable.epoch, pending[0].epoch),
-                    isNull(TurnReceiptTable.delivery_message_id),
-                  )).returning().all()
-                  QueueSync.record({ sessionID, receipts })
-                }))
-                for (const receipt of pending) {
-                  if (receipt.intent.kind === "prompt") deliveredPrompts.add(receipt.intent.messageID)
-                }
-              }
-            }
-            unprocessedPrompt = false
+            yield* recordDelivery(handle.message.id, msgs)
             const result = yield* stepEffect.pipe(
               Effect.onExit((exit) =>
                 plugin
@@ -7339,7 +7354,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sweepOrphanToolParts,
       predict,
     })
-    sessionPromptRef.current = { loop: impl.loop }
+    yield* bindScopedRef(sessionPromptRef, { loop: impl.loop })
     // C-02/C-06: Controller.admit → kick starts a lease when idle; onIdle also
     // re-kicks leftover accepted receipts (lost-wake replacement for pending-attach).
     const laneKick: (lane: Lane) => Effect.Effect<void> = (lane) =>
@@ -7361,20 +7376,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           requireClaim: true,
         }).pipe(Effect.catchCause(() => Effect.void))
       }).pipe(Effect.catchCause(() => Effect.void))
-    schedulerRef.current = { kick: laneKick }
+    yield* bindScopedRef(schedulerRef, { kick: laneKick })
     // Expose the project default-model resolver to Inbox.drain's option-2
     // fallback (seed a synthetic message for a turnCount-0 standing peer whose
     // slice has no model-bearing message yet). Reads Provider, which is already
     // in scope here — Inbox.layer stays free of a Provider dependency.
     const defaultModelResolver = { defaultModel: () => provider.defaultModel() }
-    defaultModelRef.current = defaultModelResolver
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        if (sessionPromptRef.current?.loop === impl.loop) sessionPromptRef.current = undefined
-        if (defaultModelRef.current === defaultModelResolver) defaultModelRef.current = undefined
-        if (schedulerRef.current?.kick === laneKick) schedulerRef.current = undefined
-      }),
-    )
+    yield* bindScopedRef(defaultModelRef, defaultModelResolver)
     return impl
   }),
 ).pipe(Layer.provide(ActorExecution.layer))

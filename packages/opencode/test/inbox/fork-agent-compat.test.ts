@@ -264,27 +264,9 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
         // Seed two synthetic "inherited" messages in the forkContext — these
         // represent the parent's conversation history that a fork agent would
         // inherit at spawn time.
-        const inheritedMessages: MessageV2.Info[] = [
-          {
-            id: MessageID.ascending(),
-            sessionID: parent.id,
-            role: "user" as const,
-            time: { created: Date.now() },
-            agent: "test",
-            model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
-            tools: {},
-            mode: "",
-          } as unknown as MessageV2.Info,
-          {
-            id: MessageID.ascending(),
-            sessionID: parent.id,
-            role: "assistant" as const,
-            time: { created: Date.now() },
-            agent: "test",
-            model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
-            tools: {},
-            mode: "",
-          } as unknown as MessageV2.Info,
+        const inheritedMessages: Actor.ForkContext["inheritedMessages"] = [
+          { role: "user", content: "inherited user prompt" },
+          { role: "assistant", content: "inherited assistant response" },
         ]
 
         const watermarkID = MessageID.ascending()
@@ -292,7 +274,7 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
         const fakeForkCtx: Actor.ForkContext = {
           system: ["inherited-system-prompt"],
           tools: {},
-          inheritedMessages: inheritedMessages as unknown as import("ai").ModelMessage[],
+          inheritedMessages,
           parentPermission: [],
           watermarkMsgID: watermarkID,
           model: ref,
@@ -325,25 +307,30 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
         // Seed a real message in the fork's slice so drain's lastReal predicate
         // can resolve. Drain requires a prior real assistant/user turn in the
         // fork's agentID slice before it will write the synthetic user message.
-        yield* session.updateMessage({
+        const user = yield* session.updateMessage({
           id: MessageID.ascending(),
-          role: "user" as const,
+          role: "user",
           sessionID: parent.id,
           agentID: forkActorID,
           time: { created: Date.now() },
           agent: "explore",
           model: ref,
-        } as unknown as MessageV2.Info)
-        // Seed a matching assistant turn so the "model" field is available to drain.
+        })
         yield* session.updateMessage({
           id: MessageID.ascending(),
-          role: "assistant" as const,
+          role: "assistant",
           sessionID: parent.id,
           agentID: forkActorID,
           time: { created: Date.now() },
           agent: "explore",
-          model: ref,
-        } as unknown as MessageV2.Info)
+          parentID: user.id,
+          providerID: ref.providerID,
+          modelID: ref.modelID,
+          mode: "explore",
+          path: { cwd: "/", root: "/" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        })
 
         // Send an inbox message to the fork actor.
         yield* inbox.send({

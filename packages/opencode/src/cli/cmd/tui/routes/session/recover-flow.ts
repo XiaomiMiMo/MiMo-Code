@@ -65,8 +65,8 @@ export function recoverErrorMessage(error: unknown): { message: string; variant:
 
 /** TUI /recover entry: pick candidate, dispatch resume, map 202/reject. */
 export async function runSessionRecover(deps: RecoverDeps): Promise<RecoverOutcome> {
-  // C-09: busy no longer blocks recover — resume admits into the Controller
-  // mailbox (202) instead of 409. Do not treat status.busy as a hard stop.
+  // Cached status cannot decide whether the selected target is still recoverable;
+  // the resume endpoint owns freshness and exclusive-admission checks.
   let list: RecoverCandidate[]
   try {
     list = await deps.listCandidates()

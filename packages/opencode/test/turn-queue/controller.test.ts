@@ -686,11 +686,12 @@ describe("TurnQueue controller", () => {
   )
 
   it.live(
-    "disposing the queue service clears its global reference instead of exposing a closed bus",
+    "disposing the queue service clears its global reference to the closed bus and restores the live owner",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const sessions = yield* SessionNs.Service
         const session = yield* sessions.create({ title: "queue-scope" })
+        const owner = yield* TurnQueue.Service
         yield* Effect.gen(function* () {
           const tq = yield* TurnQueue.Service
           expect(turnQueueRef.current).toBe(tq)
@@ -699,7 +700,17 @@ describe("TurnQueue controller", () => {
             intent: { kind: "prompt", messageID: MessageID.ascending() },
           })
         }).pipe(Effect.provide(Layer.fresh(TurnQueue.defaultLayer)))
-        expect(turnQueueRef.current).toBeUndefined()
+        expect(turnQueueRef.current).toBe(owner)
+        const lane = { sessionID: session.id, agentID: "main" }
+        const receipt = yield* turnQueueRef.current!.admit({
+          lane,
+          intent: { kind: "prompt", messageID: MessageID.ascending() },
+        })
+        const claim = yield* turnQueueRef.current!.claimNext(lane, 1)
+        expect(claim?.receipts.map((item) => item.id)).toContain(receipt.id)
+        yield* turnQueueRef.current!.ack(lane, claim?.claimFrontier,
+          claim!.receipts.map((item) => ({ receiptId: item.id, outcome: "success" as const })), 1)
+        expect((yield* owner.getReceipt(receipt.id)).state).toBe("settled")
       }),
     ),
   )
@@ -708,6 +719,7 @@ describe("TurnQueue controller", () => {
     "disposing an older queue service preserves the newer owner without restoring expired references",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
+        const owner = yield* TurnQueue.Service
         const firstReady = yield* Deferred.make<TurnQueue.Interface>()
         const first = yield* Effect.gen(function* () {
           const tq = yield* TurnQueue.Service
@@ -728,7 +740,37 @@ describe("TurnQueue controller", () => {
         yield* Fiber.interrupt(first)
         expect(turnQueueRef.current).toBe(secondQueue)
         yield* Fiber.interrupt(second)
-        expect(turnQueueRef.current).toBeUndefined()
+        expect(turnQueueRef.current).toBe(owner)
+        const sessions = yield* SessionNs.Service
+        const session = yield* sessions.create({ title: "surviving-queue-owner" })
+        const receipt = yield* turnQueueRef.current!.admit({
+          lane: { sessionID: session.id, agentID: "main" },
+          intent: { kind: "prompt", messageID: MessageID.ascending() },
+        })
+        expect((yield* owner.getReceipt(receipt.id)).state).toBe("accepted")
+      }),
+    ),
+  )
+
+  it.live(
+    "disposing a queue scope preserves an external override to a live controller",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const owner = yield* TurnQueue.Service
+        const sessions = yield* SessionNs.Service
+        const session = yield* sessions.create({ title: "queue-override" })
+        yield* Effect.gen(function* () {
+          const temporary = yield* TurnQueue.Service
+          expect(turnQueueRef.current).toBe(temporary)
+          turnQueueRef.current = owner
+        }).pipe(Effect.provide(Layer.fresh(TurnQueue.defaultLayer)))
+        expect(turnQueueRef.current).toBe(owner)
+        const lane = { sessionID: session.id, agentID: "main" }
+        const receipt = yield* turnQueueRef.current!.admit({
+          lane,
+          intent: { kind: "prompt", messageID: MessageID.ascending() },
+        })
+        expect((yield* turnQueueRef.current!.claimNext(lane, 1))?.receipts.map((item) => item.id)).toEqual([receipt.id])
       }),
     ),
   )

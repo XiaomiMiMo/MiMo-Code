@@ -77,7 +77,27 @@ Turn admission is split across several ad-hoc paths on main (`30e55a4e58`):
 
 ### Instance lifetime
 
-Admission and execution retain separate instance claims. The asynchronous HTTP endpoint holds its claim through durable admission and releases it on both success and rejection; Runner and ActorExecution hold their own claims through execution and finalization so configuration refresh cannot dispose active work after a 202 response. Queue ownership is checked before acquisition and again before work. Pre-runner admission failures publish the existing session error event and return an HTTP failure rather than reporting successful admission.
+Admission and execution retain separate instance claims. The asynchronous HTTP endpoint holds its claim through durable admission and releases it on both success and rejection; Runner and ActorExecution hold their own claims through execution and finalization so configuration refresh cannot dispose active work after a 202 response. Queue ownership is checked before acquisition and again before work. Pre-runner admission failures publish the existing session error event and return an HTTP failure rather than reporting successful admission. Shared skill discovery invalidates an interrupted cache entry so another project can discover normally; cancellation does not automatically retry the interrupted request or preserve interruption as a permanent discovery result.
+
+### Late-bound service lifetime
+
+Queue and prompt scheduling references belong to live Effect service graphs. Installing a newer graph makes its binding current; closing it restores the newest earlier binding that is still alive. Closing an older graph must neither clear the current owner nor leave a binding that can later revive a disposed graph. When all owners close, the reference is absent. Temporary external overrides are not overwritten by a different owner's finalizer. Cached AppRuntime graphs must remain addressable after shorter-lived graphs close; requests must never silently bypass admission because another graph released its own binding.
+
+### Isolated workflow execution identity
+
+```mermaid
+flowchart LR
+  P[Parent workflow session] --> C[Child session owned by worktree]
+  C --> A[Ephemeral subagent execution]
+  P --> R[Reclaim by session and actor ID]
+  R --> A
+```
+
+Each isolated workflow attempt runs in a child session whose directory is the worktree, with `parentID` pointing to the orchestration session and permissions inherited from that parent. The parent session is never moved or admitted from a foreign Instance. Shared-directory workflow agents keep their existing parent-session execution path. Isolated agents retain subagent lifecycle and hook semantics with `context: none`; the spawn path supplies hook mode explicitly instead of inferring it from session equality.
+
+Workflow tracking, cancellation, timeout, deadline cleanup, and trace lookup retain the complete `(sessionID, actorID)` execution address. Cancellation enters the child's owning Instance and synchronous spawn registration occurs before detached work, so a racing stop cannot lose the child. The workflow consumes each isolated child's outcome and reports workflow completion to the parent; isolated children do not emit a second completion notification. Child history is retained for trace inspection after worktree cleanup and follows parent-session deletion; retaining history never implies resuming execution.
+
+Runner callers serialize behind an active lease without merging their work or result Deferreds. TUI recovery does not reject from cached busy/retry status: the authoritative resume endpoint decides freshness and exclusive admission, and a rejected request must not light the active badge.
 
 ### Main-turn completion and subagent liveness
 
@@ -91,7 +111,7 @@ An explicit actor wait timeout includes a model-facing hint without changing the
 
 CronBridge startup, scheduled fires, and keepalive callbacks belong to the application graph that owns the mounted Prompt service. Mounting Cron must not initialize a second global AppRuntime or replace actor, prompt, or queue service references. Scheduled delivery retains the mount's Instance context and calls that Prompt instance; it preserves the existing hook path, not a claim of durable queue admission or priority enforcement. Start and scheduler teardown are serialized, while delivery scopes close outside the lifecycle lock so callback finalizers can re-enter safely. Stopped mounts cancel pending delivery and reject stale callbacks.
 
-Claim expansion precedes the model-history snapshot, retains every receipt under the same run ID, and never lowers the frontier. A newly claimed prompt requires a model step even when its persisted ID predates the latest assistant. Hook turns that defer inbox processing must not claim external wake receipts.
+Claim expansion precedes the model-history snapshot, retains every receipt under the same run ID, and never lowers the frontier. A newly claimed prompt requires a model step even when its persisted ID predates the latest assistant. Both normal model steps and delegated subtask steps record first delivery after creating their assistant message and before executing the step. A failed delegation keeps that first-delivery anchor; its input must not move to the tail and be delegated again in a later iteration or prompt. Hook turns that defer inbox processing must not claim external wake receipts.
 
 The earlier delivery status is not a whole-PR acceptance result after rebase. HTTP admission, scheduler ownership, shell dispatch, and abort-epoch behavior still require separate full-migration validation.
 
@@ -238,6 +258,8 @@ Receipts travel with the session rather than being reconstructed from message or
 Queue mutations enter the existing session-aggregate SyncEvent sequence as changed-row deltas, committed in the same transaction as the mutation. Replay applies results only: it does not repeat admission/coalescing logic, bump revision again, or kick execution. Initial workspace restoration also carries a consistent full queue baseline for rows that predate queue sync events. Transcript replay and baseline installation must complete atomically before the target can execute; an old baseline must not overwrite a newer sequence. Live execution leases are not portable and active migration must be rejected or explicitly fenced, never silently duplicated.
 
 Legacy and third-party imports without queue metadata explicitly register imported user content as terminal, consumed history with no claimed execution outcome. They remove source admission markers and do not infer pending work or success from transcript order. Re-import replaces only that importer's history records, preserving local continuation receipts.
+
+Current message and part writes validate their complete internal schemas before persistence, including replay. Reading existing history is a separate compatibility boundary: fixtures for legacy missing fields or external part shapes belong at the historical database/hydration boundary, not the current write API. Fork-context inherited messages use the provider SDK's `ModelMessage` representation, not internal message metadata.
 
 ### Steer
 

@@ -24,6 +24,7 @@ import { schedulerRef } from "./scheduler"
 import * as TurnQueueSync from "./sync"
 import { ExecutionOwnership } from "@/session/execution-ownership"
 import { EffectBridge } from "@/effect"
+import { bindScopedRef } from "@/effect/scoped-ref"
 
 const log = Log.create({ service: "turn-queue" })
 
@@ -728,12 +729,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       getEpoch,
       reconcileOnBoot,
     }
-    turnQueueRef.current = impl
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        if (turnQueueRef.current === impl) turnQueueRef.current = undefined
-      }),
-    )
+    yield* bindScopedRef(turnQueueRef, impl)
     return Service.of(impl)
   }),
 )

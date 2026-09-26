@@ -104,14 +104,17 @@ describe("SessionSummary.summarize main-slice contract", () => {
           sessionID: info.id,
           type: "step-start",
           snapshot: "snap-main-from",
-        } as never)
+        })
         yield* ssn.updatePart({
           id: PartID.ascending(),
           messageID: mainAsstID,
           sessionID: info.id,
           type: "step-finish",
+          reason: "stop",
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           snapshot: "snap-main-to",
-        } as never)
+        })
 
         // Subagent on the SAME sessionID with its own step-finish anchor.
         // Under the buggy unfiltered path, this snapshot ID would land in
@@ -148,8 +151,11 @@ describe("SessionSummary.summarize main-slice contract", () => {
           messageID: subAsstID,
           sessionID: info.id,
           type: "step-finish",
+          reason: "stop",
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           snapshot: "snap-sub-to",
-        } as never)
+        })
 
         const summary = yield* SessionSummary.Service
         yield* summary.summarize({ sessionID: info.id, messageID: userID })
