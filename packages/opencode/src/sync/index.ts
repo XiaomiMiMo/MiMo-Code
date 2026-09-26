@@ -166,10 +166,27 @@ function process<Def extends Definition>(def: Def, event: Event<Def>, options: {
   })
 }
 
+export class ReplayValidationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ReplayValidationError"
+  }
+}
+
 export function replay(event: SerializedEvent, options?: { publish: boolean }) {
   const def = registry.get(event.type)
   if (!def) {
-    throw new Error(`Unknown event type: ${event.type}`)
+    throw new ReplayValidationError(`Unknown event type: ${event.type}`)
+  }
+  if (!Number.isSafeInteger(event.seq) || event.seq < 0) {
+    throw new ReplayValidationError("Replay sequence must be a nonnegative safe integer")
+  }
+  const aggregate = event.data?.[def.aggregate]
+  const aggregateSchema = def.schema.shape[def.aggregate]
+  const parsed = aggregateSchema.safeParse(aggregate)
+  if (!parsed.success) throw new ReplayValidationError(parsed.error.message)
+  if (typeof aggregate !== "string" || aggregate !== event.aggregateID) {
+    throw new ReplayValidationError(`Replay aggregate mismatch for "${event.type}": payload "${def.aggregate}" must equal "${event.aggregateID}"`)
   }
 
   return Database.transaction((db) => {
@@ -177,28 +194,30 @@ export function replay(event: SerializedEvent, options?: { publish: boolean }) {
     const latest = row?.seq ?? -1
     if (event.seq <= latest) return
     const expected = latest + 1
-    if (event.seq !== expected) throw new Error(`Sequence mismatch for aggregate "${event.aggregateID}": expected ${expected}, got ${event.seq}`)
+    if (event.seq !== expected) throw new ReplayValidationError(`Sequence mismatch for aggregate "${event.aggregateID}": expected ${expected}, got ${event.seq}`)
     process(def, event, { publish: !!options?.publish, replay: true })
   }, { behavior: "immediate" })
 }
 
 export function replayAll(events: SerializedEvent[], options?: { publish: boolean }) {
-  const source = events[0]?.aggregateID
-  if (!source) return
+  if (events.length === 0) return
+  const source = events[0].aggregateID
   if (events.some((item) => item.aggregateID !== source)) {
-    throw new Error("Replay events must belong to the same session")
+    throw new ReplayValidationError("Replay events must belong to the same aggregate")
   }
   const start = events[0].seq
   for (const [i, item] of events.entries()) {
     const seq = start + i
     if (item.seq !== seq) {
-      throw new Error(`Replay sequence mismatch at index ${i}: expected ${seq}, got ${item.seq}`)
+      throw new ReplayValidationError(`Replay sequence mismatch at index ${i}: expected ${seq}, got ${item.seq}`)
     }
   }
-  for (const item of events) {
-    replay(item, options)
-  }
-  return source
+  return Database.transaction(() => {
+    for (const item of events) {
+      replay(item, options)
+    }
+    return source
+  }, { behavior: "immediate" })
 }
 
 export function run<Def extends Definition>(def: Def, data: Event<Def>["data"], options?: { publish?: boolean }) {

@@ -1,9 +1,9 @@
-import { Context, Effect, Layer } from "effect"
+import { Cause, Context, Effect, Exit, Layer, Scope, Semaphore } from "effect"
 import { Scheduler, defaultLayer as SchedulerDefaultLayer, type LoopEndedEvent } from "@/cron/scheduler"
 import type { CronTask } from "@/cron/cron-task"
 import { resolveAtFireTime, isSentinel, resetOnCompaction as resetCronSentinelOnCompaction } from "@/cron/sentinel"
 import { listLoopStates, deleteLoopState, resetStrikes, incrementStrikes, getStrikes } from "@/cron/loop-state"
-import { injectScheduledPrompt } from "./prompt"
+import type { InjectScheduledPromptInput } from "./prompt"
 import { SessionStatus } from "./status"
 import { SessionCompaction } from "./compaction"
 import { Bus } from "@/bus"
@@ -33,7 +33,11 @@ export interface Interface {
    * onLoopEnded → log emission, and busy→idle status edges → keepalive sweep
    * (spec [S8]). No-op when MIMOCODE_EXPERIMENTAL_CRON is unset.
    */
-  readonly start: (sessionID: SessionID, workspaceRoot: string) => Effect.Effect<void>
+  readonly start: (
+    sessionID: SessionID,
+    workspaceRoot: string,
+    inject: (input: InjectScheduledPromptInput) => Effect.Effect<void, unknown>,
+  ) => Effect.Effect<void>
   readonly stop: () => Effect.Effect<void>
   /**
    * Run one keepalive sweep against the active session. Exposed for the
@@ -52,10 +56,14 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler
     const status = yield* SessionStatus.Service
     const bus = yield* Bus.Service
+    const scope = yield* Scope.Scope
+    const lifecycle = Semaphore.makeUnsafe(1)
 
     // Per-mount mutable state. start/stop guard against double-mount.
     type Handle = {
       sessionID: SessionID
+      scope: Scope.Closeable
+      stopping: boolean
       unsubscribe: () => void
       unsubscribeCompaction: () => void
       loading: boolean
@@ -125,164 +133,174 @@ export const layer = Layer.effect(
         }
       })
 
-    const start = (sessionID: SessionID, workspaceRoot: string) =>
-      Effect.gen(function* () {
-        if (!Flag.MIMOCODE_EXPERIMENTAL_CRON) {
-          yield* Effect.sync(() => log.info("cron disabled by flag — bridge inert", { sessionID }))
-          return
-        }
-        if (started) {
-          yield* Effect.sync(() => log.warn("bridge already started — ignoring", { sessionID }))
-          return
-        }
-
-        // Fire-reliability race fix: install the bus subscription BEFORE
-        // reading the current status. Doing it the other way round has a
-        // window between status.get() and subscribeCallback in which a
-        // busy or idle event can be published and lost — the observed
-        // "stuck true" reports came from a busy→idle transition landing in
-        // that window on a freshly-mounted bridge, so handle.loading
-        // stayed at its seed value forever. Now events start entering the
-        // callback the moment we install it; then we reconcile the seed
-        // from status.get() only if no event has landed yet.
-        const handle: Handle = {
-          sessionID,
-          unsubscribe: () => undefined,
-          unsubscribeCompaction: () => undefined,
-          loading: false,
-          gotFirstEvent: false,
-          armedThisTurn: new Set(),
-        }
-        started = handle
-
-        // Subscribe to SessionStatus.Event.Status. The same subscription serves
-        // two purposes:
-        //   1. Keep the synchronous isLoading() predicate that the scheduler's
-        //      setInterval tick reads in sync with the live session state.
-        //   2. Detect the busy→idle transition. That edge IS the turn-end
-        //      signal per the recommendation in plan task 9 — after the
-        //      assistant message is finalized and all tool_results have
-        //      settled, the runLoop transitions the session back to idle.
-        //      Intermediate assistant→tool_use→tool_result rounds stay in
-        //      `busy`, so this edge fires exactly once per completed turn.
-        const unsubscribe = yield* bus.subscribeCallback(SessionStatus.Event.Status, (e) => {
-          if (e.properties.sessionID !== sessionID) return
-          const wasLoading = handle.loading
-          const nowLoading = e.properties.status.type === "busy"
-          handle.loading = nowLoading
-          handle.gotFirstEvent = true
-          if (wasLoading && !nowLoading) {
-            // busy → idle: a turn just completed. Run the keepalive sweep
-            // detached on the host runtime — we cannot yield* here because
-            // subscribeCallback's callback is synchronous.
-            import("@/effect/app-runtime")
-              .then(({ AppRuntime }) => AppRuntime.runPromise(runKeepaliveSweepFor(handle)))
-              .catch((err) =>
-                log.error("keepalive sweep failed", { sessionID, error: String(err) }),
-              )
+    const start: Interface["start"] = (sessionID, workspaceRoot, inject) =>
+      Effect.suspend(() => {
+        let mounted: Handle | undefined
+        return Effect.gen(function* () {
+          if (!Flag.MIMOCODE_EXPERIMENTAL_CRON) {
+            yield* Effect.sync(() => log.info("cron disabled by flag — bridge inert", { sessionID }))
+            return
           }
-        })
-        handle.unsubscribe = unsubscribe
+          if (started) {
+            yield* Effect.sync(() => log.warn("bridge already started — ignoring", { sessionID }))
+            return
+          }
 
-        // Subscribe to SessionCompaction.Event.Compacted. Any compaction
-        // (user /compact via compaction.process, or overflow-boundary via
-        // compaction.create) drops effective context from the model's view —
-        // the cron sentinel content cache must reset for this session so the
-        // next fire re-sends full loop.md / autonomous preamble rather than
-        // the short "unchanged" reminder that assumes the earlier full
-        // delivery is still in context. Ignore subagent-slice compactions
-        // (agentID present and not "main") because those don't touch the
-        // main-agent context that owns the sentinel cache for this session.
-        const unsubscribeCompaction = yield* bus.subscribeCallback(
-          SessionCompaction.Event.Compacted,
-          (e) => {
+          // Fire-reliability race fix: install the bus subscription BEFORE
+          // reading the current status. Doing it the other way round has a
+          // window between status.get() and subscribeCallback in which a
+          // busy or idle event can be published and lost — the observed
+          // "stuck true" reports came from a busy→idle transition landing in
+          // that window on a freshly-mounted bridge, so handle.loading
+          // stayed at its seed value forever. Now events start entering the
+          // callback the moment we install it; then we reconcile the seed
+          // from status.get() only if no event has landed yet.
+          const handle: Handle = {
+            sessionID,
+            scope: yield* Scope.fork(scope),
+            stopping: false,
+            unsubscribe: () => undefined,
+            unsubscribeCompaction: () => undefined,
+            loading: false,
+            gotFirstEvent: false,
+            armedThisTurn: new Set(),
+          }
+          started = handle
+          mounted = handle
+
+          // Capture at mount time: InstanceRef belongs to the caller, not the layer build.
+          const context = yield* Effect.context()
+          const runDetached = (
+            effect: Effect.Effect<void, unknown>,
+            message: string,
+            fields: Record<string, string>,
+          ) => {
+            if (started !== handle || handle.stopping) return
+            Effect.runForkWith(context)(
+              effect.pipe(
+                Effect.catchCause((cause) =>
+                  Effect.sync(() => {
+                    if (!Cause.hasInterruptsOnly(cause)) log.error(message, { ...fields, error: Cause.pretty(cause) })
+                  }),
+                ),
+                Effect.forkIn(handle.scope),
+              ),
+            )
+          }
+
+          // Subscribe to SessionStatus.Event.Status. The same subscription serves
+          // two purposes:
+          //   1. Keep the synchronous isLoading() predicate that the scheduler's
+          //      setInterval tick reads in sync with the live session state.
+          //   2. Detect the busy→idle transition. That edge IS the turn-end
+          //      signal per the recommendation in plan task 9 — after the
+          //      assistant message is finalized and all tool_results have
+          //      settled, the runLoop transitions the session back to idle.
+          //      Intermediate assistant→tool_use→tool_result rounds stay in
+          //      `busy`, so this edge fires exactly once per completed turn.
+          const unsubscribe = yield* bus.subscribeCallback(SessionStatus.Event.Status, (e) => {
+            if (e.properties.sessionID !== sessionID) return
+            const wasLoading = handle.loading
+            const nowLoading = e.properties.status.type === "busy"
+            handle.loading = nowLoading
+            handle.gotFirstEvent = true
+            if (wasLoading && !nowLoading) {
+              runDetached(runKeepaliveSweepFor(handle), "keepalive sweep failed", { sessionID })
+            }
+          })
+          handle.unsubscribe = unsubscribe
+
+          // Subscribe to SessionCompaction.Event.Compacted. Any compaction
+          // (user /compact via compaction.process, or overflow-boundary via
+          // compaction.create) drops effective context from the model's view —
+          // the cron sentinel content cache must reset for this session so the
+          // next fire re-sends full loop.md / autonomous preamble rather than
+          // the short "unchanged" reminder that assumes the earlier full
+          // delivery is still in context. Ignore subagent-slice compactions
+          // (agentID present and not "main") because those don't touch the
+          // main-agent context that owns the sentinel cache for this session.
+          const unsubscribeCompaction = yield* bus.subscribeCallback(SessionCompaction.Event.Compacted, (e) => {
             if (e.properties.sessionID !== sessionID) return
             const aid = e.properties.agentID
             if (aid !== undefined && aid !== "main") return
             resetCronSentinelOnCompaction(sessionID)
-          },
-        )
-        handle.unsubscribeCompaction = unsubscribeCompaction
-
-        // Reconcile: if the subscription hasn't seen any events yet, seed
-        // handle.loading from the live status. If events already landed
-        // during subscribe setup, they've written the authoritative value
-        // and we leave it alone.
-        const initial = yield* status.get(sessionID)
-        if (!handle.gotFirstEvent) handle.loading = initial.type === "busy"
-
-        const onFire = (task: CronTask) => {
-          // Detached fire-and-forget on the host runtime. We cannot yield* here
-          // because the setInterval tick escapes the Effect scope; the host's
-          // global runtime materializes the prompt fan-out (same pattern as
-          // auto-dream / auto-distill near the cron-bridge mount in prompt.ts).
-          //
-          // Dynamic import breaks a real module-init cycle:
-          // app-runtime.ts (imports CronBridgeDefaultLayer) → cron-bridge.ts →
-          // app-runtime.ts. A top-level import here would deadlock module init.
-          import("@/effect/app-runtime")
-            .then(({ AppRuntime }) =>
-              AppRuntime.runPromise(
-                Effect.gen(function* () {
-                  const resolved = yield* Effect.tryPromise(() =>
-                    resolveAtFireTime(task.prompt, workspaceRoot, sessionID),
-                  ).pipe(Effect.orElseSucceed(() => task.prompt))
-                  // Prepend an ISO fire timestamp so both the user (TUI) and the
-                  // model see when each fire happened. Recurring fires especially
-                  // need this — otherwise a `*/5` reply looks identical whether it
-                  // came from the :00 tick or the :05 tick. Format kept short and
-                  // unambiguous: `[cron fire @ YYYY-MM-DDTHH:MM:SSZ] `.
-                  const firedAtISO = new Date().toISOString().replace(/\.\d{3}Z$/, "Z")
-                  const value = `[cron fire @ ${firedAtISO}] ${resolved}`
-                  yield* injectScheduledPrompt({
-                    sessionID,
-                    value,
-                    origin: {
-                      kind: "cron",
-                      taskId: task.id,
-                      kindOfTask: task.kind ?? "cron",
-                      firedAt: firedAtISO,
-                    },
-                    priority: "later",
-                    isMeta: true,
-                  })
-                }),
-              ),
-            )
-            .catch((err) => log.error("scheduled fire failed", { taskId: task.id, error: String(err) }))
-        }
-
-        const onLoopEnded = (e: LoopEndedEvent) => {
-          // Structured `loop_ended` emission. Analytics-only for now: TUI
-          // does not render this row yet (deferred to T21+). The bridge's
-          // keepalive sweep calls scheduler.endLoop which routes through here.
-          log.info("loop_ended", {
-            sessionID,
-            reason: e.reason,
-            prompt: e.prompt,
-            via_keepalive: e.via_keepalive ?? false,
           })
-        }
+          handle.unsubscribeCompaction = unsubscribeCompaction
 
-        const onArmLoop = (prompt: string) => {
-          // Model-driven re-arm of an existing loop. Record so the busy→idle
-          // sweep knows whose strikes to reset. Keepalive-driven auto-arms
-          // set viaKeepalive:true in armLoop, which suppresses this callback.
-          handle.armedThisTurn.add(prompt)
-        }
+          // Reconcile: if the subscription hasn't seen any events yet, seed
+          // handle.loading from the live status. If events already landed
+          // during subscribe setup, they've written the authoritative value
+          // and we leave it alone.
+          const initial = yield* status.get(sessionID)
+          if (!handle.gotFirstEvent) handle.loading = initial.type === "busy"
 
-        yield* scheduler.start({
-          workspaceRoot,
-          dir: yield* InstanceState.directory,
-          sessionID,
-          isLoading: () => handle.loading,
-          isKilled: () => isCronDisabled(),
-          onFire,
-          onLoopEnded,
-          onArmLoop,
-        })
+          const onFire = (task: CronTask) => {
+            runDetached(
+              Effect.gen(function* () {
+                const resolved = yield* Effect.tryPromise(() =>
+                  resolveAtFireTime(task.prompt, workspaceRoot, sessionID),
+                ).pipe(Effect.orElseSucceed(() => task.prompt))
+                // Prepend an ISO fire timestamp so both the user (TUI) and the
+                // model see when each fire happened. Recurring fires especially
+                // need this — otherwise a `*/5` reply looks identical whether it
+                // came from the :00 tick or the :05 tick. Format kept short and
+                // unambiguous: `[cron fire @ YYYY-MM-DDTHH:MM:SSZ] `.
+                const firedAtISO = new Date().toISOString().replace(/\.\d{3}Z$/, "Z")
+                const value = `[cron fire @ ${firedAtISO}] ${resolved}`
+                yield* inject({
+                  sessionID,
+                  value,
+                  origin: {
+                    kind: "cron",
+                    taskId: task.id,
+                    kindOfTask: task.kind ?? "cron",
+                    firedAt: firedAtISO,
+                  },
+                  priority: "later",
+                  isMeta: true,
+                })
+              }),
+              "scheduled fire failed",
+              { taskId: task.id },
+            )
+          }
 
-        yield* Effect.sync(() => log.info("bridge started", { sessionID, workspaceRoot }))
+          const onLoopEnded = (e: LoopEndedEvent) => {
+            // Structured `loop_ended` emission. Analytics-only for now: TUI
+            // does not render this row yet (deferred to T21+). The bridge's
+            // keepalive sweep calls scheduler.endLoop which routes through here.
+            log.info("loop_ended", {
+              sessionID,
+              reason: e.reason,
+              prompt: e.prompt,
+              via_keepalive: e.via_keepalive ?? false,
+            })
+          }
+
+          const onArmLoop = (prompt: string) => {
+            // Model-driven re-arm of an existing loop. Record so the busy→idle
+            // sweep knows whose strikes to reset. Keepalive-driven auto-arms
+            // set viaKeepalive:true in armLoop, which suppresses this callback.
+            handle.armedThisTurn.add(prompt)
+          }
+
+          yield* scheduler.start({
+            workspaceRoot,
+            dir: yield* InstanceState.directory,
+            sessionID,
+            isLoading: () => handle.loading,
+            isKilled: () => isCronDisabled(),
+            onFire,
+            onLoopEnded,
+            onArmLoop,
+          })
+
+          yield* Effect.sync(() => log.info("bridge started", { sessionID, workspaceRoot }))
+        }).pipe(
+          lifecycle.withPermits(1),
+          Effect.onExit((exit) => (Exit.isFailure(exit) && mounted ? stopHandle(mounted) : Effect.void)),
+          Effect.uninterruptible,
+        )
       })
 
     const runKeepaliveSweep = () =>
@@ -292,16 +310,30 @@ export const layer = Layer.effect(
         yield* runKeepaliveSweepFor(handle)
       })
 
-    const stop = () =>
+    const stopHandle = (expected?: Handle): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const handle = started
+        const handle = yield* Effect.gen(function* () {
+          const handle = started
+          if (!handle || handle.stopping || (expected && expected !== handle)) return undefined
+          handle.stopping = true
+          yield* Effect.sync(() => handle.unsubscribe())
+          yield* Effect.sync(() => handle.unsubscribeCompaction())
+          yield* scheduler.stop()
+          return handle
+        }).pipe(lifecycle.withPermits(1))
         if (!handle) return
-        started = null
-        yield* Effect.sync(() => handle.unsubscribe())
-        yield* Effect.sync(() => handle.unsubscribeCompaction())
-        yield* scheduler.stop()
+        // A delivery finalizer can re-enter start/stop; never close its scope under the lock.
+        yield* Scope.close(handle.scope, Exit.void).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (started === handle) started = null
+            }),
+          ),
+        )
         yield* Effect.sync(() => log.info("bridge stopped", { sessionID: handle.sessionID }))
-      })
+      }).pipe(Effect.uninterruptible)
+
+    const stop = () => stopHandle()
 
     // If the Layer's scope closes (session teardown), make sure stop() runs.
     yield* Effect.addFinalizer(() => stop().pipe(Effect.orElseSucceed(() => undefined)))

@@ -1381,7 +1381,7 @@ export class Agent implements ACPAgent {
       return { name, args: rest.join(" ").trim() }
     })()
 
-    const buildUsage = (msg: AssistantMessage): Usage => ({
+    const buildUsage = (msg: { tokens: AssistantMessage["tokens"] }): Usage => ({
       totalTokens:
         msg.tokens.input +
         msg.tokens.output +
@@ -1413,7 +1413,7 @@ export class Agent implements ACPAgent {
 
       return {
         stopReason: "end_turn" as const,
-        usage: msg ? buildUsage(msg) : undefined,
+        usage: msg && "tokens" in msg ? buildUsage(msg) : undefined,
         _meta: {},
       }
     }
@@ -1436,7 +1436,7 @@ export class Agent implements ACPAgent {
 
       return {
         stopReason: "end_turn" as const,
-        usage: msg ? buildUsage(msg) : undefined,
+        usage: msg && "tokens" in msg ? buildUsage(msg) : undefined,
         _meta: {},
       }
     }

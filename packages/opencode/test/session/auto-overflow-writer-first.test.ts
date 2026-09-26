@@ -8,6 +8,7 @@ import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
+import { TurnQueue } from "../../src/turn-queue"
 import { MessageTable, SessionTable } from "../../src/session/session.sql"
 import { checkpointPath } from "../../src/session/checkpoint-paths"
 import { spawnRef } from "../../src/actor/spawn-ref"
@@ -30,7 +31,10 @@ afterEach(async () => {
 
 function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Service>) {
   return Effect.runPromise(
-    fx.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer))),
+    fx.pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer, TurnQueue.defaultLayer)),
+    ),
   )
 }
 
@@ -352,6 +356,7 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
                 expect(
                   MessageV2.filterCompacted(after).some((message) => message.info.id === first.id),
                 ).toBe(true)
+                expect(llm.calls).toBe(1)
               }),
             ),
         })
@@ -657,7 +662,7 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
                 // earlier tests having initialized the shared spawn ref.
                 const previous = spawnRef.current
                 spawnRef.current = writer
-                yield* prompt
+                const result = yield* prompt
                   .prompt({
                     sessionID: info.id,
                     parts: [{ type: "text", text: "next question that overflows" }],
@@ -682,6 +687,10 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
                 expect(boundary?.projection?.version).toBe(1)
                 expect(boundary?.projection?.summary).toContain("<conversation-summary")
                 expect(boundary?.projection?.trigger).toBe("automatic")
+                expect(result.info.id).not.toBe(boundary?.projection?.summary_message_id)
+                expect(result.parts.some((part) => part.type === "text" && part.text === "post-compaction-reply"))
+                  .toBe(true)
+                expect(llm.calls).toBe(3)
 
                 // No checkpoint boundary, because no checkpoint was written.
                 const checkpoints = after.filter((m) => m.parts.some((p) => p.type === "checkpoint"))

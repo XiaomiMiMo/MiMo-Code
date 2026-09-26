@@ -11,6 +11,7 @@ import { Log } from "@/util"
 import { InboxTable } from "./inbox.sql"
 import { renderInboxRow } from "./render"
 import { sessionPromptRef, inboxServiceRef, defaultModelRef } from "./inbox-ref"
+import { turnQueueRef } from "@/turn-queue"
 import type { ProviderID, ModelID } from "@/provider/schema"
 
 const log = Log.create({ service: "inbox" })
@@ -117,10 +118,15 @@ export interface SendInput {
    * the execution group that stop just killed. Default true.
    */
   wake?: boolean
+  /** Rechecked at wake admission and dispatch; durable delivery is unaffected. */
+  isWakeCancelled?: () => boolean
+  /** Parent epoch captured before the sending execution started. */
+  wakeEpoch?: number
 }
 
 export interface SendResult {
   inboxID: string
+  wakeSuppressed?: boolean
 }
 
 export interface Interface {
@@ -190,27 +196,39 @@ export const layer: Layer.Layer<
       // not affect delivery. `wake: false` keeps the durable row without
       // scheduling a new turn (session abort / process-group kill).
       const promptRef = sessionPromptRef.current
-      if (input.wake === false) {
-        // Row already persisted; skip auto-dispatch on purpose.
+      // Durable wake Intent (turn-queue). Wake dispatch is promptRef.loop —
+      // no Controller kick (that would race the explicit loop and steal the turn).
+      const tq = turnQueueRef.current
+      let wakeEpoch = input.wakeEpoch
+      if (tq && input.wake !== false && !input.isWakeCancelled?.()) {
+        const admitted = yield* tq
+          .admit({
+            lane: { sessionID: input.receiverSessionID, agentID: input.receiverActorID },
+            intent: {
+              kind: "wake",
+              receiverActorID: input.receiverActorID,
+              inboxWatermark: row.id,
+            },
+          }, input.isWakeCancelled || input.wakeEpoch !== undefined
+            ? { isCancelled: input.isWakeCancelled, expectedEpoch: input.wakeEpoch }
+            : undefined)
+          .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+        if (!admitted) return { inboxID: row.id, wakeSuppressed: true }
+        wakeEpoch = admitted.epoch
+      }
+      if (input.wake === false || input.isWakeCancelled?.()) {
+        return { inboxID: row.id, wakeSuppressed: true }
       } else if (promptRef) {
-        yield* promptRef
-          .loop({
-            sessionID: input.receiverSessionID,
-            agentID: input.receiverActorID,
-            // Woken turns notify their parent on completion. The spawn turn goes
-            // through SessionPrompt.prompt (no flag) so forkWork.notify remains
-            // the sole notifier for turn 1 — no double-notify.
-            notifyParentOnComplete: true,
-            inboxWake: true,
-            // Inbox wakes are internal machine scheduling (actor notifications / queued
-            // actor traffic). They must NOT be labeled user — real user turns enter via
-            // prompt()/Desktop/TUI/HTTP/command which default source to "user".
-            source: "spawn",
-          })
-          .pipe(Effect.ignore, Effect.forkIn(scope))
+        yield* Effect.suspend(() => input.isWakeCancelled?.() ? Effect.void : promptRef.loop({
+          sessionID: input.receiverSessionID,
+          agentID: input.receiverActorID,
+          notifyParentOnComplete: true,
+          inboxWake: true,
+          source: "spawn",
+          // A cancelled admission must not be replaced by a force-run after abort.
+          ...(tq ? { requireClaim: true, expectedEpoch: wakeEpoch } : {}),
+        })).pipe(Effect.ignore, Effect.forkIn(scope))
       } else {
-        // Test fixtures / renderer-only paths can run without SessionPrompt.
-        // Row is durable; will be drained on next runLoop iteration.
         log.warn("inbox.send: sessionPromptRef.current undefined — wake skipped", {
           receiverActorID: input.receiverActorID,
         })

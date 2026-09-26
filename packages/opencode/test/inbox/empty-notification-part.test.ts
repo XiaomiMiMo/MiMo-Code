@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Layer, ManagedRuntime } from "effect"
 import { Inbox } from "../../src/inbox"
 import { renderInboxRow } from "../../src/inbox/render"
-import { defaultModelRef } from "../../src/inbox/inbox-ref"
 import type { InboxRow } from "../../src/inbox/inbox.sql"
 import { ActorRegistry } from "../../src/actor/registry"
 import { Session } from "../../src/session"
@@ -33,7 +32,6 @@ const base = Layer.mergeAll(Session.defaultLayer, ActorRegistry.defaultLayer, Bu
 const testLayer = Inbox.layer.pipe(Layer.provide(base), Layer.provideMerge(base))
 
 afterEach(async () => {
-  defaultModelRef.current = undefined
   await Instance.disposeAll()
 })
 
@@ -137,6 +135,7 @@ describe("Inbox.drain never persists an empty user text part", () => {
             receiverActorID: "actor-empty",
             content: "",
             type: "actor_notification",
+            wake: false,
           }),
         ),
       )
@@ -187,6 +186,7 @@ describe("Inbox.drain never persists an empty user text part", () => {
               receiverActorID: "actor-mixed",
               content: body,
               type: "actor_notification",
+              wake: false,
             }),
           ),
         )

@@ -310,10 +310,12 @@ export const layer = Layer.effect(
     const config = yield* Config.Service
     const bus = yield* Bus.Service
     const fsys = yield* AppFileSystem.Service
-    const [stable, invalidateStable] = yield* Effect.cachedInvalidateWithTTL(
+    const [cachedStable, invalidateStable] = yield* Effect.cachedInvalidateWithTTL(
       discoverStableSkills(fsys),
       Duration.infinity,
     )
+    // A cancelled first scan must not become the process-wide snapshot.
+    const stable = cachedStable.pipe(Effect.onInterrupt(() => invalidateStable))
     const discovered = yield* InstanceState.make(
       Effect.fn("Skill.discovery")(function* (ctx) {
         return yield* discoverSkills(config, discovery, fsys, yield* stable, ctx.directory, ctx.worktree)

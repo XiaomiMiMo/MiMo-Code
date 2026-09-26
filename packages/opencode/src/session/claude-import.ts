@@ -15,6 +15,7 @@ import { SessionTable, MessageTable, PartTable } from "./session.sql"
 import { ExternalImportTable } from "./external-import.sql"
 import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
+import * as QueueSync from "../turn-queue/sync"
 
 const log = Log.create({ service: "claude-import" })
 
@@ -254,6 +255,9 @@ export async function run(opts?: { force?: boolean }) {
         continue
       }
 
+      const ownedMessageIDs = existing?.message_ids
+      if (existing && ownedMessageIDs == null) throw new Error("Cannot resync: imported message ownership is missing")
+
       // Only reuse a prior import's session if that session still exists. If the
       // user deleted it in mimocode, drop the stale mapping and import fresh —
       // otherwise the update would touch zero rows and the inserts below would
@@ -296,18 +300,10 @@ export async function run(opts?: { force?: boolean }) {
           .run()
 
         if (existing) {
-          // Remove only the rows this importer previously created — never the
-          // user's mimocode-native continuation messages in the same session.
-          // Legacy rows (imported before message_ids tracking) fall back to a
-          // full session wipe, matching the original Claude-only contents.
-          if (existing.message_ids?.length) {
-            for (let i = 0; i < existing.message_ids.length; i += 500)
-              tx.delete(MessageTable)
-                .where(inArray(MessageTable.id, existing.message_ids.slice(i, i + 500)))
-                .run()
-          } else {
-            tx.delete(MessageTable).where(eq(MessageTable.session_id, sessionId)).run()
-          }
+          for (let i = 0; i < ownedMessageIDs!.length; i += 500)
+            tx.delete(MessageTable)
+              .where(inArray(MessageTable.id, ownedMessageIDs!.slice(i, i + 500)))
+              .run()
           // Preserve mimocode-owned metadata on re-sync: keep any user rename
           // (don't reset title — the Claude title is the immutable first prompt),
           // and never move time_updated backward past native activity.
@@ -353,6 +349,10 @@ export async function run(opts?: { force?: boolean }) {
         }
 
         indexImportedParts(tx, parsed.messages.flatMap((m) => m.parts.map((p) => p.part.id)))
+        QueueSync.materializeHistory({
+          sessionID: sessionId, source: "cc", sourceKey: sourceUuid,
+          messages: parsed.messages.map((message) => message.info), replacedMessageIDs: existing?.message_ids ?? [],
+        }, tx)
 
         tx.insert(ExternalImportTable)
           .values({

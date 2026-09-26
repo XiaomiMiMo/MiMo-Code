@@ -22,6 +22,8 @@ export interface TerminalNotification {
   warnings?: string[]
   /** Persist inbox row without auto-waking the parent (session abort). Default true. */
   wake?: boolean
+  isWakeCancelled?: () => boolean
+  wakeEpoch?: number
 }
 
 export function makeTerminalNotifier(deps: {
@@ -39,13 +41,15 @@ export function makeTerminalNotifier(deps: {
         input.parentSessionID ??
         (actor.mode === "peer" ? (yield* deps.sessions.get(input.sessionID)).parentID : input.sessionID)
       if (!parentSessionID) return yield* Effect.fail(new Error("actor parent session missing"))
-      yield* deps.inbox.send({
+      const sent = yield* deps.inbox.send({
         receiverSessionID: parentSessionID,
         receiverActorID: input.parentActorID ?? actor.parentActorID ?? "main",
         senderSessionID: input.sessionID,
         senderActorID: input.actorID,
         type: "actor_notification",
         ...(input.wake === false ? { wake: false } : {}),
+        ...(input.isWakeCancelled ? { isWakeCancelled: input.isWakeCancelled } : {}),
+        ...(input.wakeEpoch !== undefined ? { wakeEpoch: input.wakeEpoch } : {}),
         content: renderActorNotification({
           actorID: input.actorID,
           description: actor.description,
@@ -58,7 +62,7 @@ export function makeTerminalNotifier(deps: {
         }),
       })
       if (input.source === "continuation") return
-      if (input.wake === false) return
+      if (sent.wakeSuppressed || input.wake === false || input.isWakeCancelled?.()) return
       yield* Effect.promise(() =>
         Bus.publish(TuiEvent.ToastShow, {
           message: `Child "${actor.description}" ${input.status}`,

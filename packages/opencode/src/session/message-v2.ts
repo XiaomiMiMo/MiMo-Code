@@ -547,6 +547,11 @@ export const User = Base.extend({
   harness: z.enum(["auto", "codex", "default"]).optional(),
   tools: z.record(z.string(), z.boolean()).optional(),
   provenance: Provenance.optional(),
+  queueAdmission: z.object({
+    epoch: z.number().int().nonnegative(),
+    ready: z.literal(true),
+    dispatch: z.boolean(),
+  }).optional(),
 }).meta({
   ref: "UserMessage",
 })

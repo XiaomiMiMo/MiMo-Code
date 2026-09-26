@@ -1049,6 +1049,29 @@ export default {
     ).toThrow("outside plugin directory")
   })
 
+  test("loads a ready file plugin without waiting for background dependencies", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const file = path.join(dir, "plugin.ts")
+        await Bun.write(file, "export default async () => ({})\n")
+        return { spec: pathToFileURL(file).href }
+      },
+    })
+
+    let waited = false
+    const loaded = await PluginLoader.loadExternal({
+      items: [{ spec: tmp.extra.spec, scope: "local", source: tmp.path }],
+      kind: "server",
+      wait: async () => {
+        waited = true
+        await new Promise<void>(() => {})
+      },
+    })
+
+    expect(loaded.map((item) => item.spec)).toEqual([tmp.extra.spec])
+    expect(waited).toBe(false)
+  })
+
   test("retries failed file plugins once after wait and keeps order", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {

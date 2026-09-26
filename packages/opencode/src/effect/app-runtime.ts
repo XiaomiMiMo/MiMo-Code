@@ -52,6 +52,7 @@ import { ShareNext } from "@/share"
 import { SessionShare } from "@/share"
 import { Npm } from "@/npm"
 import { ActorRegistry } from "@/actor/registry"
+import { TurnQueue } from "@/turn-queue"
 import { ActorWaiter } from "@/actor/waiter"
 import { Actor } from "@/actor/spawn"
 import { TaskRegistry } from "@/task/registry"
@@ -113,6 +114,7 @@ export const AppLayer = Layer.suspend(() =>
     SessionShare.defaultLayer,
     ActorRegistry.defaultLayer,
     ActorWaiter.defaultLayer,
+    TurnQueue.defaultLayer,
     TaskRegistry.defaultLayer,
     WorkflowRuntime.defaultLayer,
     Memory.defaultLayer,

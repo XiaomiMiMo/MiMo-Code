@@ -3,18 +3,19 @@ import { Cause, Deferred, Effect, Exit, Fiber, Schema, Scope, SynchronizedRef } 
 export interface Runner<A, E = never, B = never> {
   readonly state: State<A, E>
   readonly busy: boolean
-  readonly ensureRunning: (work: Effect.Effect<A, E>) => Effect.Effect<A, E>
+  readonly ensureRunning: (work: Effect.Effect<A, E>, beforeAcquire?: Effect.Effect<void>) => Effect.Effect<A, E>
   /** [R003] Start work only if idle; busy → fail B. Never join an existing run. */
-  readonly ensureExclusive: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
-  readonly start: (work: Effect.Effect<A, E>) => Effect.Effect<void, B>
+  readonly ensureExclusive: (work: Effect.Effect<A, E>, beforeAcquire?: Effect.Effect<void>) => Effect.Effect<A, E | B>
+  readonly start: (work: Effect.Effect<A, E>, beforeAcquire?: Effect.Effect<void>) => Effect.Effect<void, B>
   /**
    * [C001] Start work and return a cancel bound to THIS run id only —
    * a later replacement run is never interrupted.
    */
   readonly startOwned: (
     work: Effect.Effect<A, E>,
+    beforeAcquire?: Effect.Effect<void>,
   ) => Effect.Effect<{ readonly runId: number; readonly interruptOwned: Effect.Effect<void> }, B>
-  readonly startShell: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
+  readonly startShell: (work: Effect.Effect<A, E>, beforeAcquire?: Effect.Effect<void>) => Effect.Effect<A, E | B>
   readonly cancel: Effect.Effect<void>
 }
 
@@ -25,24 +26,15 @@ interface RunHandle<A, E> {
   done: Deferred.Deferred<A, E | Cancelled>
   fiber: Fiber.Fiber<A, E>
   /**
-   * Work attached while this run's fiber was still live. The live loop is not
-   * guaranteed to reload messages after its last check (tail between final
-   * message read and finishRun → Idle), so dropping work on reentry can orphan
-   * a newly written prompt. Pending work is started by finishRun instead of
-   * going Idle — same single-loop invariant, no lost wake.
+   * (Removed) pending-attach dual owner. TurnQueue Controller is the sole
+   * admission/mailbox owner; ensureRunning serializes behind a live run and
+   * the Controller kicks remaining accepted receipts on idle.
    */
-  pending?: { work: Effect.Effect<A, E>; done: Deferred.Deferred<A, E | Cancelled> }
 }
 
 interface ShellHandle<A, E> {
   id: number
   fiber: Fiber.Fiber<A, E>
-}
-
-interface PendingHandle<A, E> {
-  id: number
-  done: Deferred.Deferred<A, E | Cancelled>
-  work: Effect.Effect<A, E>
 }
 
 export type State<A, E> =
@@ -55,7 +47,6 @@ export type State<A, E> =
    */
   | { readonly _tag: "Cancelling"; readonly run: RunHandle<A, E> }
   | { readonly _tag: "Shell"; readonly shell: ShellHandle<A, E> }
-  | { readonly _tag: "ShellThenRun"; readonly shell: ShellHandle<A, E>; readonly run: PendingHandle<A, E> }
 
 export const make = <A, E = never, B = never>(
   scope: Scope.Scope,
@@ -75,6 +66,7 @@ export const make = <A, E = never, B = never>(
   const busy = opts?.onBusy ?? Effect.void
   const onInterrupt = opts?.onInterrupt
   let ids = 0
+  let cancelGeneration = 0
 
   const state = () => SynchronizedRef.getUnsafe(ref)
   const next = () => {
@@ -87,15 +79,14 @@ export const make = <A, E = never, B = never>(
       ? Deferred.fail(done, new Cancelled()).pipe(Effect.asVoid)
       : Deferred.done(done, exit).pipe(Effect.asVoid)
 
-  const idleIfCurrent = () =>
-    SynchronizedRef.modify(ref, (st) => [st._tag === "Idle" ? idle : Effect.void, st] as const).pipe(Effect.flatten)
-
   // Explicit return types break the finishRun ↔ startRun circular inference.
   const startRun = (
     work: Effect.Effect<A, E>,
     done: Deferred.Deferred<A, E | Cancelled>,
+    beforeAcquire: Effect.Effect<void>,
   ): Effect.Effect<RunHandle<A, E>> =>
     Effect.gen(function* () {
+      yield* beforeAcquire
       const id = next()
       const release = opts?.onRunStart ? yield* opts.onRunStart : () => {}
       const fiber = yield* work.pipe(
@@ -134,13 +125,8 @@ export const make = <A, E = never, B = never>(
           ] as const
         }
         if (st._tag !== "Running" || st.run.id !== id) return [complete(done, exit), st] as const
-        // Pending work attached during this run must still get a loop before Idle.
-        // Prompt-loop work reloads the full message table, so one pending is enough.
-        const pending = st.run.pending
-        if (pending) {
-          const nextRun = yield* startRun(pending.work, pending.done)
-          return [complete(done, exit), { _tag: "Running", run: nextRun }] as const
-        }
+        // No pending-attach: remaining work is owned by TurnQueue receipts;
+        // onIdle kicks the Controller scheduler for leftover accepted work.
         return [
           Effect.gen(function* () {
             yield* idle
@@ -159,20 +145,22 @@ export const make = <A, E = never, B = never>(
       ref,
       Effect.fnUntraced(function* (st) {
         if (st._tag === "Shell" && st.shell.id === id) return [idle, { _tag: "Idle" }] as const
-        if (st._tag === "ShellThenRun" && st.shell.id === id) {
-          const run = yield* startRun(st.run.work, st.run.done)
-          return [Effect.void, { _tag: "Running", run }] as const
-        }
         return [Effect.void, st] as const
       }),
     ).pipe(Effect.flatten)
 
   const stopShell = (shell: ShellHandle<A, E>) => Fiber.interrupt(shell.fiber)
 
-  const ensureRunning = (work: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+  const ensureRunning = (work: Effect.Effect<A, E>, beforeAcquire = Effect.void): Effect.Effect<A, E> =>
+    Effect.suspend(() => ensureRunningAt(work, cancelGeneration, beforeAcquire))
+
+  const ensureRunningAt = (work: Effect.Effect<A, E>, generation: number, beforeAcquire: Effect.Effect<void>): Effect.Effect<A, E> =>
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
+        // A pre-cancel waiter must settle rather than acquire a new execution lease.
+        if (generation !== cancelGeneration) return [Effect.fail(new Cancelled()), st] as const
+        yield* beforeAcquire
         switch (st._tag) {
           case "Running": {
             // Fiber already exited but state is still Running — finishRun/onIdle
@@ -181,56 +169,41 @@ export const make = <A, E = never, B = never>(
             // gets a loop; do not await a dead Deferred forever.
             const exit = st.run.fiber.pollUnsafe()
             if (exit !== undefined) {
-              // Close any pending first so a prior attach is not dropped by reclaim.
-              if (st.run.pending) {
-                yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
-              }
               yield* Deferred.isDone(st.run.done).pipe(
                 Effect.flatMap((done) => (done ? Effect.void : Deferred.done(st.run.done, exit))),
               )
               const done = yield* Deferred.make<A, E | Cancelled>()
-              const run = yield* startRun(work, done)
+              const run = yield* startRun(work, done, beforeAcquire)
               return [Deferred.await(done), { _tag: "Running", run }] as const
             }
             if (opts?.onReentryWarn)
               yield* opts.onReentryWarn({ label: opts.label ?? "(unlabeled)", existingRunId: st.run.id })
-            // Live fiber: attach work as pending (do not drop). finishRun starts
-            // it instead of Idle, closing the lost-wake window between the loop's
-            // last message check and completion. One pending slot — prompt work
-            // reloads the full table, so later attaches share the same done.
-            if (st.run.pending) return [Deferred.await(st.run.pending.done), st] as const
-            const pendingDone = yield* Deferred.make<A, E | Cancelled>()
-            const run: RunHandle<A, E> = { ...st.run, pending: { work, done: pendingDone } }
-            return [Deferred.await(pendingDone), { _tag: "Running", run }] as const
-          }
-          case "ShellThenRun": {
-            const exit = st.shell.fiber.pollUnsafe()
-            if (exit !== undefined) {
-              yield* Deferred.fail(st.run.done, new Cancelled()).pipe(Effect.ignore)
-              const done = yield* Deferred.make<A, E | Cancelled>()
-              const run = yield* startRun(work, done)
-              return [Deferred.await(done), { _tag: "Running", run }] as const
-            }
-            if (opts?.onReentryWarn)
-              yield* opts.onReentryWarn({ label: opts.label ?? "(unlabeled)", existingRunId: st.run.id })
-            // Live shell: replace pending work so finishShell starts the latest
-            // (work reloads all messages; later attach subsumes earlier).
+            // Live fiber: NO pending-attach (C-01). Serialize — wait for the
+            // current run, then start this work as a new exclusive run. The
+            // Controller mailbox owns multi-work admission; one pending slot
+            // was a second consumer and is gone.
+            const fiber = st.run.fiber
             return [
-              Deferred.await(st.run.done),
-              { _tag: "ShellThenRun", shell: st.shell, run: { ...st.run, work } },
+              Fiber.await(fiber).pipe(
+                Effect.ignore,
+                Effect.andThen(Effect.suspend(() => ensureRunningAt(work, generation, beforeAcquire))),
+              ),
+              st,
             ] as const
           }
           case "Shell": {
-            const run = {
-              id: next(),
-              done: yield* Deferred.make<A, E | Cancelled>(),
-              work,
-            } satisfies PendingHandle<A, E>
-            return [Deferred.await(run.done), { _tag: "ShellThenRun", shell: st.shell, run }] as const
+            const shellFiber = st.shell.fiber
+            return [
+              Fiber.await(shellFiber).pipe(
+                Effect.ignore,
+                Effect.andThen(Effect.suspend(() => ensureRunningAt(work, generation, beforeAcquire))),
+              ),
+              st,
+            ] as const
           }
           case "Idle": {
             const done = yield* Deferred.make<A, E | Cancelled>()
-            const run = yield* startRun(work, done)
+            const run = yield* startRun(work, done, beforeAcquire)
             return [Deferred.await(done), { _tag: "Running", run }] as const
           }
           case "Cancelling": {
@@ -240,7 +213,7 @@ export const make = <A, E = never, B = never>(
             return [
               Fiber.await(fiber).pipe(
                 Effect.ignore,
-                Effect.andThen(Effect.suspend(() => ensureRunning(work))),
+                Effect.andThen(Effect.suspend(() => ensureRunningAt(work, generation, beforeAcquire))),
               ),
               st,
             ] as const
@@ -254,14 +227,16 @@ export const make = <A, E = never, B = never>(
       ),
     )
 
-  const startShell = (work: Effect.Effect<A, E>) =>
+  const startShell = (work: Effect.Effect<A, E>, beforeAcquire = Effect.void) =>
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
         if (st._tag !== "Idle") {
           return [busyFailure<A>(), st] as readonly [Effect.Effect<A, E | B>, State<A, E>]
         }
+        yield* beforeAcquire
         yield* busy
+        yield* beforeAcquire
         const release = opts?.onShellStart ? yield* opts.onShellStart : () => {}
         const id = next()
         const fiber = yield* work.pipe(Effect.ensuring(finishShell(id)), Effect.ensuring(Effect.sync(release)), Effect.forkChild)
@@ -278,7 +253,7 @@ export const make = <A, E = never, B = never>(
       }),
     ).pipe(Effect.flatten)
 
-  const ensureExclusive = (work: Effect.Effect<A, E>): Effect.Effect<A, E | B> =>
+  const ensureExclusive = (work: Effect.Effect<A, E>, beforeAcquire = Effect.void): Effect.Effect<A, E | B> =>
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
@@ -286,7 +261,7 @@ export const make = <A, E = never, B = never>(
           return [busyFailure<A>(), st] as readonly [Effect.Effect<A, E | B>, State<A, E>]
         }
         const done = yield* Deferred.make<A, E | Cancelled>()
-        const run = yield* startRun(work, done)
+        const run = yield* startRun(work, done, beforeAcquire)
         return [
           Deferred.await(done) as Effect.Effect<A, E | B>,
           { _tag: "Running", run } as State<A, E>,
@@ -299,7 +274,7 @@ export const make = <A, E = never, B = never>(
       ),
     )
 
-  const start = (work: Effect.Effect<A, E>): Effect.Effect<void, B> =>
+  const start = (work: Effect.Effect<A, E>, beforeAcquire = Effect.void): Effect.Effect<void, B> =>
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
@@ -307,7 +282,7 @@ export const make = <A, E = never, B = never>(
           return [busyFailure<void>(), st] as const
         }
         const done = yield* Deferred.make<A, E | Cancelled>()
-        const run = yield* startRun(work, done)
+        const run = yield* startRun(work, done, beforeAcquire)
         return [Effect.void, { _tag: "Running", run } as const] as const
       }),
     ).pipe(Effect.flatten)
@@ -321,7 +296,6 @@ export const make = <A, E = never, B = never>(
       if (st._tag === "Running" && st.run.id === runId) {
         return [
           Effect.gen(function* () {
-            if (st.run.pending) yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
             // Interrupt WAITS for the fiber, including ensuring/finalizers.
             // State stays Cancelling until finishRun (RL-ORPHAN-D01).
             yield* Fiber.interrupt(st.run.fiber)
@@ -344,6 +318,7 @@ export const make = <A, E = never, B = never>(
 
   const startOwned = (
     work: Effect.Effect<A, E>,
+    beforeAcquire = Effect.void,
   ): Effect.Effect<{ readonly runId: number; readonly interruptOwned: Effect.Effect<void> }, B> =>
     SynchronizedRef.modifyEffect(
       ref,
@@ -352,7 +327,7 @@ export const make = <A, E = never, B = never>(
           return [busyFailure<{ runId: number; interruptOwned: Effect.Effect<void> }>(), st] as const
         }
         const done = yield* Deferred.make<A, E | Cancelled>()
-        const run = yield* startRun(work, done)
+        const run = yield* startRun(work, done, beforeAcquire)
         const owned = {
           runId: run.id,
           interruptOwned: interruptOwned(run.id),
@@ -362,6 +337,7 @@ export const make = <A, E = never, B = never>(
     ).pipe(Effect.flatten)
 
   const cancel = SynchronizedRef.modify(ref, (st) => {
+    cancelGeneration++
     switch (st._tag) {
       case "Idle":
         return [Effect.void, st] as const
@@ -371,7 +347,6 @@ export const make = <A, E = never, B = never>(
       case "Running":
         return [
           Effect.gen(function* () {
-            if (st.run.pending) yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
             // Interrupt WAITS for the fiber, including ensuring/finalizers.
             // State stays Cancelling until finishRun or this effect flips Idle
             // so start/ensureRunning cannot begin mid-finalizer (RL-ORPHAN-D01).
@@ -391,18 +366,9 @@ export const make = <A, E = never, B = never>(
         return [
           Effect.gen(function* () {
             yield* stopShell(st.shell)
-            yield* idleIfCurrent()
+            yield* finishShell(st.shell.id)
           }),
-          { _tag: "Idle" } as const,
-        ] as const
-      case "ShellThenRun":
-        return [
-          Effect.gen(function* () {
-            yield* Deferred.fail(st.run.done, new Cancelled()).pipe(Effect.asVoid)
-            yield* stopShell(st.shell)
-            yield* idleIfCurrent()
-          }),
-          { _tag: "Idle" } as const,
+          st,
         ] as const
     }
   }).pipe(Effect.flatten)

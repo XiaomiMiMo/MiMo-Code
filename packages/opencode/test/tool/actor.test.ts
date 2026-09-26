@@ -152,7 +152,7 @@ afterEach(async () => {
 
 // Mock Actor.spawn that simulates the spawn lifecycle using ActorRegistry + Bus
 // so tests can exercise the actor tool without the full Actor.layer graph.
-function installMockSpawn(onSpawn?: (input: SpawnInput) => void) {
+function installMockSpawn(onSpawn?: (input: SpawnInput) => void, result: AgentOutcome = { status: "success", finalText: "done" }) {
   return Effect.gen(function* () {
     const actorReg = yield* ActorRegistry.Service
 
@@ -178,8 +178,8 @@ function installMockSpawn(onSpawn?: (input: SpawnInput) => void) {
           const outcome = yield* Deferred.make<AgentOutcome>()
 
           // Synchronously complete the actor so waiter.wait resolves immediately.
-          yield* actorReg.updateStatus(input.sessionID, actorID, { status: "idle", lastOutcome: "success" }).pipe(Effect.ignore)
-          yield* Deferred.succeed(outcome, { status: "success", finalText: "done" })
+          yield* actorReg.updateStatus(input.sessionID, actorID, { status: "idle", lastOutcome: result.status }).pipe(Effect.ignore)
+          yield* Deferred.succeed(outcome, result)
 
           return { actorID, sessionID: input.sessionID, outcome }
         }),
@@ -505,6 +505,67 @@ describe("tool.actor", () => {
         },
       },
     ),
+  )
+})
+
+describe("Actor run result contract", () => {
+  for (const structured of [false, true]) {
+    for (const status of ["success", "failure"] as const) {
+      it.live(`run preserves ${structured ? "structured" : "text"} ${status} after adding interruptible waiting`, () =>
+        provideTmpdirInstance(() => Effect.gen(function* () {
+          const payload = { answer: "CHILD-STRUCTURED" }
+          const outcome: AgentOutcome = status === "success"
+            ? { status, finalText: "CHILD-TEXT", ...(structured ? { structured: payload } : {}),
+                reportedStatus: "partial", reportedSummary: "More work remains", warnings: ["CHILD-WARNING"] }
+            : { status, error: "CHILD-FAILURE", finalText: "CHILD-TEXT", ...(structured ? { structured: payload } : {}) }
+          let input: SpawnInput | undefined
+          yield* installMockSpawn((value) => { input = value }, outcome)
+          const { chat, assistant } = yield* seed()
+          const tool = yield* ActorTool
+          const def = yield* tool.init()
+          const schema = { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] }
+          const exit = yield* def.execute({ operation: {
+            action: "run", description: "verify original result", prompt: "Return the child result.", subagent_type: "general",
+            timeout_ms: 1000, ...(structured ? { output_schema: schema } : {}),
+          } }, {
+            sessionID: chat.id, messageID: assistant.id, agent: "build", abort: new AbortController().signal,
+            extra: {}, messages: [], metadata: () => Effect.void, ask: () => Effect.void,
+          }).pipe(Effect.exit)
+          expect(input?.format).toEqual(structured ? { type: "json_schema", schema, retryCount: 2 } : undefined)
+          if (status === "failure") {
+            expect(exit._tag).toBe("Failure")
+            if (exit._tag !== "Failure") throw new Error("failed run returned a successful tool result")
+            expect(String(exit.cause)).toContain("Tool execution failed: CHILD-FAILURE")
+            expect(String(exit.cause)).toContain(`Partial result: ${structured ? JSON.stringify(payload) : "CHILD-TEXT"}`)
+            return
+          }
+          expect(exit._tag).toBe("Success")
+          if (exit._tag !== "Success") throw new Error("successful run failed")
+          expect(exit.value.metadata.actorId).toBe("general-1")
+          expect(exit.value.metadata.sessionId).toBe(chat.id)
+          expect(exit.value.output).toBe([
+            "actor_id: general-1 (to give this subagent more work, `send` it another message)", "",
+            '<actor_result status="partial" summary="More work remains">',
+            structured ? JSON.stringify(payload) : "CHILD-TEXT", "</actor_result>", "Warning: CHILD-WARNING",
+          ].join("\n"))
+        })),
+      )
+    }
+  }
+
+  it.live("run schema accepts a positive integer timeout without extending spawn", () =>
+    provideTmpdirInstance(() => Effect.gen(function* () {
+      const tool = yield* ActorTool
+      const def = yield* tool.init()
+      const parse = (action: "run" | "spawn", timeout_ms: number) => def.parameters.safeParse({ operation: {
+        action, description: "test deadline", prompt: "test", subagent_type: "general", timeout_ms,
+      } })
+      const valid = parse("run", 1000)
+      expect(valid.success).toBe(true)
+      if (valid.success) expect(valid.data.operation).toHaveProperty("timeout_ms", 1000)
+      for (const value of [0, -1, 1.5]) expect(parse("run", value).success).toBe(false)
+      expect(parse("spawn", 1000).success).toBe(false)
+    })),
   )
 })
 

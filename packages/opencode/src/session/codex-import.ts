@@ -15,6 +15,7 @@ import { SessionTable, MessageTable, PartTable } from "./session.sql"
 import { ExternalImportTable } from "./external-import.sql"
 import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
+import * as QueueSync from "../turn-queue/sync"
 
 const log = Log.create({ service: "codex-import" })
 
@@ -295,6 +296,9 @@ export async function run(opts?: { force?: boolean }): Promise<ImportStats> {
         continue
       }
 
+      const ownedMessageIDs = existing?.message_ids
+      if (existing && ownedMessageIDs == null) throw new Error("Cannot resync: imported message ownership is missing")
+
       let existingUpdated: number | undefined
       if (existing) {
         const sess = Database.use((db) =>
@@ -338,14 +342,10 @@ export async function run(opts?: { force?: boolean }): Promise<ImportStats> {
           .run()
 
         if (existing) {
-          if (existing.message_ids?.length) {
-            for (let i = 0; i < existing.message_ids.length; i += 500)
-              tx.delete(MessageTable)
-                .where(inArray(MessageTable.id, existing.message_ids.slice(i, i + 500)))
-                .run()
-          } else {
-            tx.delete(MessageTable).where(eq(MessageTable.session_id, sessionId)).run()
-          }
+          for (let i = 0; i < ownedMessageIDs!.length; i += 500)
+            tx.delete(MessageTable)
+              .where(inArray(MessageTable.id, ownedMessageIDs!.slice(i, i + 500)))
+              .run()
           tx.update(SessionTable)
             .set({
               project_id: project.id,
@@ -388,6 +388,10 @@ export async function run(opts?: { force?: boolean }): Promise<ImportStats> {
         }
 
         indexImportedParts(tx, parsed.messages.flatMap((m) => m.parts.map((p) => p.part.id)))
+        QueueSync.materializeHistory({
+          sessionID: sessionId, source: "codex", sourceKey,
+          messages: parsed.messages.map((message) => message.info), replacedMessageIDs: existing?.message_ids ?? [],
+        }, tx)
 
         tx.insert(ExternalImportTable)
           .values({

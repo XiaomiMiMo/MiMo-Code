@@ -107,6 +107,12 @@ export interface Interface {
       resultMessageID?: MessageID | undefined
     },
   ) => Effect.Effect<void>
+  readonly failOrphan: (
+    sessionID: SessionID,
+    actorID: string,
+    error: string,
+    isCurrent: () => boolean,
+  ) => Effect.Effect<"failed" | "terminal" | "retry">
   readonly updateTurn: (sessionID: SessionID, actorID: string) => Effect.Effect<void>
   readonly updateAgent: (sessionID: SessionID, actorID: string, agent: string) => Effect.Effect<void>
   readonly get: (sessionID: SessionID, actorID: string) => Effect.Effect<Actor | undefined>
@@ -258,6 +264,48 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         lastTurnTime: row.last_turn_time,
         ...(row.last_error ? { error: row.last_error } : {}),
       })
+    })
+
+    const failOrphan = Effect.fn("ActorRegistry.failOrphan")(function* (
+      sessionID: SessionID,
+      actorID: string,
+      error: string,
+      isCurrent: () => boolean,
+    ) {
+      const result = yield* Effect.sync(() => {
+        // The execution identity check and conditional write must share one scheduler turn.
+        if (!isCurrent()) return "retry" as const
+        const now = Date.now()
+        return Database.use((db) => db
+          .update(ActorRegistryTable)
+          .set({
+            status: "idle",
+            last_outcome: "failure",
+            last_error: error,
+            result_message_id: null,
+            time_completed: now,
+            time_updated: now,
+          })
+          .where(and(
+            eq(ActorRegistryTable.session_id, sessionID),
+            eq(ActorRegistryTable.actor_id, actorID),
+            inArray(ActorRegistryTable.status, ["pending", "running"]),
+          ))
+          .returning()
+          .get())
+      })
+      if (result === "retry") return "retry" as const
+      if (!result) return "terminal" as const
+      yield* bus.publish(Events.ActorStatusChanged, {
+        sessionID,
+        actorID,
+        status: result.status,
+        lastOutcome: "failure",
+        turnCount: result.turn_count,
+        lastTurnTime: result.last_turn_time,
+        error,
+      })
+      return "failed" as const
     })
 
     const updateTurn = Effect.fn("ActorRegistry.updateTurn")(function* (sessionID: SessionID, actorID: string) {
@@ -493,6 +541,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     return Service.of({
       register,
       updateStatus,
+      failOrphan,
       updateTurn,
       updateAgent,
       get,

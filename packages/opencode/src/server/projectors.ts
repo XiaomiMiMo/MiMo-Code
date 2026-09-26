@@ -1,5 +1,6 @@
 import z from "zod"
 import sessionProjectors from "../session/projectors"
+import { projectors as turnQueueProjectors } from "../turn-queue/sync"
 import { SyncEvent } from "@/sync"
 import { Session } from "@/session"
 import { SessionTable } from "@/session/session.sql"
@@ -7,7 +8,7 @@ import { Database, eq } from "@/storage"
 
 export function initProjectors() {
   SyncEvent.init({
-    projectors: sessionProjectors,
+    projectors: [...sessionProjectors, ...turnQueueProjectors],
     convertEvent: (type, data) => {
       if (type === "session.updated") {
         const id = (data as z.infer<typeof Session.Event.Updated.schema>).sessionID
