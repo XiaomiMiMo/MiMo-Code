@@ -4811,7 +4811,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               receipt.intent.kind === "prompt" && !deliveredPrompts.has(receipt.intent.messageID)
                 ? [receipt.intent.messageID] : [],
             )
-            if (pending.length > 0) {
+            const compacting = msgs.findLast((msg) => msg.info.role === "user")?.parts.some((part) =>
+              part.type === "compaction" && !part.projection,
+            )
+            // An unfinished boundary must run before pending prompts enter their first model step.
+            if (pending.length > 0 && !compacting) {
               const inputs = yield* Effect.sync(() => pending.map((messageID) =>
                 msgs.find((msg) => msg.info.id === messageID) ?? MessageV2.get({ sessionID, messageID }),
               ))
