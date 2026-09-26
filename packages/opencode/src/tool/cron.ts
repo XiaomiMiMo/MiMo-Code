@@ -13,7 +13,7 @@ const kindSchema = z.enum(["cron", "loop"])
 
 const scheduleOperation = z.strictObject({
   action: z.literal("schedule"),
-  cron: z.string().min(1).describe("5-field cron expression (minute hour dom month dow)."),
+  cron: z.string().min(1).describe("5-field cron expression (minute hour dom month dow), evaluated in UTC."),
   prompt: z.string().min(1).describe("Prompt to send to the agent when the job fires."),
   one_shot: z.boolean().optional().describe("If true, run once and remove."),
   durable: z.boolean().optional().describe("If true, persist across session restart."),
