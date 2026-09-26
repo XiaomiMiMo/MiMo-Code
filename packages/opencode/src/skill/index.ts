@@ -2,7 +2,7 @@ import os from "os"
 import path from "path"
 import { pathToFileURL } from "url"
 import z from "zod"
-import { Duration, Effect, Layer, Context } from "effect"
+import { Duration, Effect, Layer, Context, Option } from "effect"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import type { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
@@ -83,17 +83,20 @@ export const NameMismatchError = NamedError.create(
 type State = {
   skills: Record<string, Info>
   dirs: Set<string>
+  fingerprints: Map<string, string | undefined>
 }
 
 type DiscoveryState = {
   matches: string[]
   dirs: string[]
+  roots: string[]
   bundledRoots: string[]
 }
 
 type ScanState = {
   matches: Set<string>
   dirs: Set<string>
+  roots: Set<string>
 }
 
 export interface Interface {
@@ -104,6 +107,16 @@ export interface Interface {
   readonly modelInvocable: (agent?: Agent.Info) => Effect.Effect<Info[]>
   readonly reload: () => Effect.Effect<void>
 }
+
+const fingerprint = Effect.fnUntraced(function* (fsys: AppFileSystem.Interface, item: string) {
+  const info = yield* fsys.stat(item).pipe(Effect.catch(() => Effect.succeed(undefined)))
+  if (!info) return
+  const mtime = info.mtime.pipe(
+    Option.map((value) => value.getTime()),
+    Option.getOrElse(() => 0),
+  )
+  return `${info.type}:${Number(info.size)}:${mtime}`
+})
 
 const add = Effect.fnUntraced(function* (state: State, match: string, bundledRoots: string[], bus: Bus.Interface) {
   const md = yield* Effect.tryPromise({
@@ -163,6 +176,7 @@ const scan = Effect.fnUntraced(function* (
   pattern: string,
   opts?: { dot?: boolean; scope?: string },
 ) {
+  state.roots.add(root)
   const matches = yield* Effect.tryPromise({
     try: () =>
       Glob.scan(pattern, {
@@ -184,13 +198,14 @@ const scan = Effect.fnUntraced(function* (
   for (const match of matches.toSorted()) {
     state.matches.add(match)
     state.dirs.add(path.dirname(match))
+    state.roots.add(path.dirname(path.dirname(match)))
   }
 })
 
 const discoverStableSkills = Effect.fnUntraced(function* (
   fsys: AppFileSystem.Interface,
 ) {
-  const state: ScanState = { matches: new Set(), dirs: new Set() }
+  const state: ScanState = { matches: new Set(), dirs: new Set(), roots: new Set() }
   const bundledRoots: string[] = []
 
   // Extract builtin skills to disk first (user skills with same name override)
@@ -238,6 +253,7 @@ const discoverStableSkills = Effect.fnUntraced(function* (
   return {
     matches: Array.from(state.matches),
     dirs: Array.from(state.dirs),
+    roots: Array.from(state.roots),
     bundledRoots,
   }
 })
@@ -250,7 +266,11 @@ const discoverSkills = Effect.fnUntraced(function* (
   directory: string,
   worktree: string,
 ) {
-  const state: ScanState = { matches: new Set(stable.matches), dirs: new Set(stable.dirs) }
+  const state: ScanState = {
+    matches: new Set(stable.matches),
+    dirs: new Set(stable.dirs),
+    roots: new Set(stable.roots),
+  }
   const bundledRoots = [...stable.bundledRoots]
 
   const upDirs = yield* fsys
@@ -288,6 +308,7 @@ const discoverSkills = Effect.fnUntraced(function* (
   return {
     matches: Array.from(state.matches),
     dirs: Array.from(state.dirs),
+    roots: Array.from(state.roots),
     bundledRoots,
   }
 })
@@ -321,33 +342,58 @@ export const layer = Layer.effect(
     )
     const state = yield* InstanceState.make(
       Effect.fn("Skill.state")(function* (ctx) {
-        const s: State = { skills: {}, dirs: new Set() }
-        yield* loadSkills(s, yield* InstanceState.get(discovered), bus)
+        const current = yield* InstanceState.get(discovered)
+        const fingerprints = new Map(
+          yield* Effect.forEach(
+            [...new Set([...current.matches, ...current.roots])],
+            (item) => fingerprint(fsys, item).pipe(Effect.map((value) => [item, value] as const)),
+            { concurrency: "unbounded" },
+          ),
+        )
+        const s: State = { skills: {}, dirs: new Set(), fingerprints }
+        yield* loadSkills(s, current, bus)
         return s
       }),
     )
 
+    const reload = Effect.fn("Skill.reload")(function* () {
+      yield* invalidateStable
+      yield* InstanceState.invalidate(discovered)
+      yield* InstanceState.invalidate(state)
+    })
+
+    const fresh = Effect.fnUntraced(function* () {
+      const current = yield* InstanceState.get(state)
+      const changed = yield* Effect.forEach(
+        Array.from(current.fingerprints),
+        ([item, value]) => fingerprint(fsys, item).pipe(Effect.map((next) => next !== value)),
+        { concurrency: "unbounded" },
+      )
+      if (!changed.some(Boolean)) return current
+      yield* reload()
+      return yield* InstanceState.get(state)
+    })
+
     const get = Effect.fn("Skill.get")(function* (name: string) {
-      const s = yield* InstanceState.get(state)
+      const s = yield* fresh()
       return s.skills[name]
     })
 
     const all = Effect.fn("Skill.all")(function* () {
-      const s = yield* InstanceState.get(state)
+      const s = yield* fresh()
       return Object.values(s.skills)
     })
 
     const dirs = Effect.fn("Skill.dirs")(function* () {
+      yield* fresh()
       return (yield* InstanceState.get(discovered)).dirs
     })
 
     // Authorization only: `deny` means unusable by anyone, so this is also the
     // set a user slash invocation resolves against.
     const available = Effect.fn("Skill.available")(function* (agent?: Agent.Info) {
-      const s = yield* InstanceState.get(state)
-      let list: Info[] = Object.values(s.skills)
-
-      list = list.toSorted((a, b) => a.name.localeCompare(b.name))
+      const s = yield* fresh()
+      const list = Object.values(s.skills).toSorted((a, b) => a.name.localeCompare(b.name))
       if (!agent) return list
       return list.filter((skill) => Permission.evaluate("skill", skill.name, agent.permission).action !== "deny")
     })
@@ -356,12 +402,6 @@ export const layer = Layer.effect(
     // reach must come from here, never from `available` or `all`.
     const modelInvocable = Effect.fn("Skill.modelInvocable")(function* (agent?: Agent.Info) {
       return (yield* available(agent)).filter((skill) => !skill.disable_model_invocation)
-    })
-
-    const reload = Effect.fn("Skill.reload")(function* () {
-      yield* invalidateStable
-      yield* InstanceState.invalidate(discovered)
-      yield* InstanceState.invalidate(state)
     })
 
     return Service.of({ get, all, dirs, available, modelInvocable, reload })
