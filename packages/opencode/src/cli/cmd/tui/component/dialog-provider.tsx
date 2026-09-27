@@ -1,20 +1,24 @@
-import { createMemo, createSignal, onMount, Show } from "solid-js"
+import { createMemo, createSignal, For, Match, onMount, Show, Switch } from "solid-js"
+import { createStore } from "solid-js/store"
 import { useSync } from "@tui/context/sync"
 import { map, pipe, sortBy } from "remeda"
-import { DialogSelect } from "@tui/ui/dialog-select"
+import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
 import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { useSDK } from "../context/sdk"
 import { DialogPrompt } from "../ui/dialog-prompt"
 import { Link } from "../ui/link"
 import { useTheme } from "../context/theme"
-import { TextAttributes } from "@opentui/core"
+import { TextareaRenderable, TextAttributes } from "@opentui/core"
 import type { ProviderAuthAuthorization, ProviderAuthMethod } from "@mimo-ai/sdk/v2"
 import { DialogModel } from "./dialog-model"
 import { useKeyboard } from "@opentui/solid"
 import * as Clipboard from "@tui/util/clipboard"
-import { useToast, type ToastContext } from "../ui/toast"
+import { useToast } from "../ui/toast"
 import { isConsoleManagedProvider } from "@tui/util/provider-origin"
 import { isPopularProvider, PROVIDER_PRIORITY } from "@/util/provider-priority"
+import { Keybind } from "@/util"
+import { Spinner } from "./spinner"
+import { fetchProviderModels, type ProviderModel } from "../util/provider-models"
 
 export function createDialogProviderOptions() {
   const sync = useSync()
@@ -134,8 +138,18 @@ export function createDialogProviderOptions() {
         }
       }),
     )
+    const removable = sync.data.provider_next.all.filter((provider) => provider.source === "config")
     return [
       ...list,
+      ...removable.map((provider) => ({
+        title: `Remove ${provider.name}`,
+        value: `__remove__${provider.id}`,
+        description: "Delete provider",
+        category: "Manage",
+        onSelect() {
+          dialog.replace(() => <RemoveCustomProvider providerID={provider.id} name={provider.name} />)
+        },
+      })),
       {
         title: "+ Custom provider",
         value: "__custom__",
@@ -143,8 +157,8 @@ export function createDialogProviderOptions() {
         footer: undefined,
         category: "Other",
         gutter: undefined,
-        async onSelect() {
-          await runCustomProviderWizard({ dialog, sdk, sync, toast })
+        onSelect() {
+          dialog.replace(() => <CustomProviderWizard />)
         },
       },
     ]
@@ -157,84 +171,410 @@ export function DialogProvider() {
   return <DialogSelect title="Connect a provider" options={options()} />
 }
 
-export async function runCustomProviderWizard(opts: {
-  dialog: DialogContext
-  sdk: ReturnType<typeof useSDK>
-  sync: ReturnType<typeof useSync>
-  toast: ToastContext
-}) {
-  const { dialog, sdk, sync, toast } = opts
+function RemoveCustomProvider(props: { providerID: string; name: string }) {
+  const dialog = useDialog()
+  const sdk = useSDK()
+  const sync = useSync()
+  const toast = useToast()
+  const { theme } = useTheme()
+  const [busy, setBusy] = createSignal(false)
 
-  function step(n: number, total: number, title: string, placeholder?: string, value?: string) {
-    return DialogPrompt.show(dialog, `${title} (${n}/${total})`, { placeholder, value })
+  useKeyboard((evt) => {
+    if (evt.name !== "return" || busy()) return
+    evt.preventDefault()
+    void remove()
+  })
+
+  async function remove() {
+    setBusy(true)
+    const authRes = await sdk.client.auth.remove({ providerID: props.providerID })
+    if (authRes.error) {
+      setBusy(false)
+      toast.show({ variant: "error", message: JSON.stringify(authRes.error) })
+      return
+    }
+    const configRes = await sdk.client.global.config.provider.remove({ providerID: props.providerID })
+    if (configRes.error) {
+      setBusy(false)
+      toast.show({ variant: "error", message: JSON.stringify(configRes.error) })
+      return
+    }
+    await sdk.client.instance.dispose()
+    await sync.bootstrap()
+    dialog.clear()
+    toast.show({ variant: "success", message: `Removed provider ${props.name}` })
   }
 
-  const providerIDRaw = await step(1, 6, "Provider id", "e.g. openrouter")
-  if (providerIDRaw === null) return
-  const providerID = providerIDRaw.trim()
-  if (!providerID) return
+  return (
+    <box paddingLeft={2} paddingRight={2} gap={1} paddingBottom={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <text attributes={TextAttributes.BOLD} fg={theme.text}>
+          Remove provider
+        </text>
+        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+          esc cancel
+        </text>
+      </box>
+      <text fg={theme.textMuted}>Remove {props.name} and its stored API key?</text>
+      <Show when={!busy()} fallback={<Spinner color={theme.textMuted}>Removing provider...</Spinner>}>
+        <box flexDirection="row" gap={2}>
+          <text fg={theme.error} onMouseUp={() => void remove()}>
+            Remove <span style={{ fg: theme.textMuted }}>enter</span>
+          </text>
+          <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+            Cancel <span style={{ fg: theme.textMuted }}>esc</span>
+          </text>
+        </box>
+      </Show>
+    </box>
+  )
+}
 
-  const nameRaw = await step(2, 6, "Display name", "e.g. MiMo Router", providerID)
-  if (nameRaw === null) return
-  const name = nameRaw.trim() || providerID
+type CustomProviderProtocol = "@ai-sdk/openai-compatible" | "@ai-sdk/openai" | "@ai-sdk/anthropic"
 
-  const baseURLRaw = await step(3, 6, "Base URL", "https://.../v1")
-  if (baseURLRaw === null) return
-  const baseURL = baseURLRaw.trim()
-  if (!baseURL) return
+const CUSTOM_PROVIDER_PAGES = ["Provider ID", "Display name", "Base URL", "Protocol", "API key", "Models"] as const
+const SAVE_CUSTOM_PROVIDER_MODELS = "__save_custom_provider_models__"
 
-  const apiKeyRaw = await step(4, 6, "API key", "sk-...")
-  if (apiKeyRaw === null) return
-  const apiKey = apiKeyRaw.trim()
-  if (!apiKey) return
+type CustomProviderWizardState = {
+  page: number
+  providerID: string
+  name: string
+  baseURL: string
+  protocol: CustomProviderProtocol
+  apiKey: string
+  selectedModels: ProviderModel[]
+}
 
-  const modelIDRaw = await step(5, 6, "First model id", "e.g. claude-sonnet-4-6")
-  if (modelIDRaw === null) return
-  const modelID = modelIDRaw.trim()
-  if (!modelID) return
+function CustomProviderWizard() {
+  const dialog = useDialog()
+  const sdk = useSDK()
+  const sync = useSync()
+  const toast = useToast()
+  const { theme } = useTheme()
+  const [state, setState] = createStore<CustomProviderWizardState>({
+    page: 0,
+    providerID: "",
+    name: "",
+    baseURL: "",
+    protocol: "@ai-sdk/openai-compatible",
+    apiKey: "",
+    selectedModels: [],
+  })
 
-  const modelNameRaw = await step(6, 6, "First model name", "e.g. Claude Sonnet 4.6", modelID)
-  if (modelNameRaw === null) return
-  const modelName = modelNameRaw.trim() || modelID
+  function back() {
+    if (state.page > 0) {
+      setState("page", state.page - 1)
+      return
+    }
+    dialog.clear()
+  }
 
-  const envKey = `${providerID.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`
-  const patch = {
-    provider: {
-      [providerID]: {
-        name,
-        npm: "@ai-sdk/openai-compatible",
-        env: [envKey],
-        options: {
-          baseURL,
-          setCacheKey: true,
-        },
-        models: {
-          [modelID]: {
-            name: modelName,
+  function next() {
+    if (state.page < CUSTOM_PROVIDER_PAGES.length - 1) setState("page", state.page + 1)
+  }
+
+  function valueForPage(page: number) {
+    return [state.providerID, state.name || state.providerID, state.baseURL, state.protocol, state.apiKey, ""][page]
+  }
+
+  useKeyboard((evt) => {
+    if (evt.name === "escape") {
+      back()
+      evt.preventDefault()
+      evt.stopPropagation()
+      return
+    }
+    if (!evt.ctrl) return
+    if (evt.name === "left") {
+      back()
+      evt.preventDefault()
+      evt.stopPropagation()
+    }
+    if (evt.name === "right") {
+      next()
+      evt.preventDefault()
+      evt.stopPropagation()
+    }
+  })
+
+  function updateText(value: string) {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      toast.show({ variant: "error", message: `${CUSTOM_PROVIDER_PAGES[state.page]} is required` })
+      return
+    }
+    if (state.page === 0) setState("providerID", trimmed)
+    if (state.page === 1) setState("name", trimmed)
+    if (state.page === 2) setState("baseURL", trimmed.replace(/\/+$/, ""))
+    if (state.page === 4) setState("apiKey", trimmed)
+    next()
+  }
+
+  async function save(models: ProviderModel[]) {
+    const patch = {
+      provider: {
+        [state.providerID]: {
+          name: state.name || state.providerID,
+          npm: state.protocol,
+          options: {
+            baseURL: state.baseURL,
+            setCacheKey: true,
+            ...(state.protocol === "@ai-sdk/openai" ? { wireProtocol: "responses" } : {}),
           },
+          models: Object.fromEntries(models.map((model) => [model.id, { name: model.name }])),
         },
       },
-    },
-  } as const
-
-  const updateRes = await sdk.client.global.config.update({ config: patch as any })
-  if (updateRes.error) {
-    toast.show({ variant: "error", message: JSON.stringify(updateRes.error) })
-    return
+    }
+    const updateRes = await sdk.client.global.config.update({ config: patch as never })
+    if (updateRes.error) {
+      toast.show({ variant: "error", message: JSON.stringify(updateRes.error) })
+      return
+    }
+    const authRes = await sdk.client.auth.set({
+      providerID: state.providerID,
+      auth: { type: "api", key: state.apiKey },
+    })
+    if (authRes.error) {
+      toast.show({ variant: "error", message: JSON.stringify(authRes.error) })
+      return
+    }
+    await sdk.client.instance.dispose()
+    await sync.bootstrap()
+    dialog.replace(() => <DialogModel providerID={state.providerID} />)
   }
 
-  const authRes = await sdk.client.auth.set({
-    providerID,
-    auth: { type: "api", key: apiKey },
+  return (
+    <box gap={1} paddingBottom={1}>
+      <box paddingLeft={2} paddingRight={2} gap={1}>
+        <box flexDirection="row" justifyContent="space-between">
+          <text attributes={TextAttributes.BOLD} fg={theme.text}>
+            Add custom provider
+          </text>
+          <text fg={theme.textMuted}>esc back · ctrl←/ctrl→ switch page</text>
+        </box>
+        <box flexDirection="row" gap={1}>
+          <For each={CUSTOM_PROVIDER_PAGES}>
+            {(title, index) => (
+              <text
+                fg={state.page === index() ? theme.primary : theme.textMuted}
+                onMouseUp={() => setState("page", index())}
+              >
+                {state.page === index() ? `[${index() + 1}]` : `${index() + 1}`} {title}
+              </text>
+            )}
+          </For>
+        </box>
+      </box>
+      <Switch>
+        <Match when={state.page === 0}>
+          <CustomProviderTextPage
+            title="Provider ID"
+            placeholder="e.g. openrouter"
+            value={valueForPage(0)}
+            onConfirm={updateText}
+          />
+        </Match>
+        <Match when={state.page === 1}>
+          <CustomProviderTextPage
+            title="Display name"
+            placeholder="e.g. My Provider"
+            value={valueForPage(1)}
+            onConfirm={updateText}
+          />
+        </Match>
+        <Match when={state.page === 2}>
+          <CustomProviderTextPage
+            title="Base URL"
+            placeholder="https://api.example.com/v1"
+            value={valueForPage(2)}
+            onConfirm={updateText}
+          />
+        </Match>
+        <Match when={state.page === 3}>
+          <DialogSelect
+            title="Protocol (4/6)"
+            hint="Choose the wire protocol used by this endpoint."
+            options={[
+              {
+                title: "OpenAI Chat Completions",
+                value: "@ai-sdk/openai-compatible" as const,
+                description: "/chat/completions",
+              },
+              {
+                title: "OpenAI Responses",
+                value: "@ai-sdk/openai" as const,
+                description: "/responses",
+              },
+              {
+                title: "Anthropic Messages",
+                value: "@ai-sdk/anthropic" as const,
+                description: "/messages",
+              },
+            ]}
+            current={state.protocol}
+            onSelect={(option) => {
+              setState("protocol", option.value)
+              next()
+            }}
+          />
+        </Match>
+        <Match when={state.page === 4}>
+          <CustomProviderTextPage title="API key" placeholder="sk-..." value={valueForPage(4)} onConfirm={updateText} />
+        </Match>
+        <Match when={state.page === 5}>
+          <CustomProviderModelsPage
+            providerID={state.providerID}
+            baseURL={state.baseURL}
+            protocol={state.protocol}
+            apiKey={state.apiKey}
+            selected={state.selectedModels}
+            onToggle={(model) => {
+              setState("selectedModels", (current) =>
+                current.some((item) => item.id === model.id)
+                  ? current.filter((item) => item.id !== model.id)
+                  : [...current, model],
+              )
+            }}
+            onSubmit={(models) => {
+              void save(models)
+            }}
+          />
+        </Match>
+      </Switch>
+    </box>
+  )
+}
+
+function CustomProviderTextPage(props: {
+  title: string
+  placeholder: string
+  value: string
+  onConfirm: (value: string) => void
+}) {
+  const dialog = useDialog()
+  const { theme } = useTheme()
+  let textarea: TextareaRenderable
+
+  onMount(() => {
+    dialog.setSize("large")
+    setTimeout(() => {
+      if (!textarea || textarea.isDestroyed) return
+      textarea.focus()
+      textarea.gotoLineEnd()
+    }, 1)
   })
-  if (authRes.error) {
-    toast.show({ variant: "error", message: JSON.stringify(authRes.error) })
-    return
+
+  return (
+    <box paddingLeft={2} paddingRight={2} gap={1}>
+      <text fg={theme.text}>{props.title}</text>
+      <textarea
+        height={3}
+        initialValue={props.value}
+        placeholder={props.placeholder}
+        placeholderColor={theme.textMuted}
+        textColor={theme.text}
+        focusedTextColor={theme.text}
+        cursorColor={theme.primary}
+        keyBindings={[{ name: "return", action: "submit" }]}
+        onSubmit={() => props.onConfirm(textarea.plainText)}
+        ref={(value: TextareaRenderable) => {
+          textarea = value
+        }}
+      />
+      <text fg={theme.textMuted}>enter continue · esc back</text>
+    </box>
+  )
+}
+
+function CustomProviderModelsPage(props: {
+  providerID: string
+  baseURL: string
+  protocol: CustomProviderProtocol
+  apiKey: string
+  selected: ProviderModel[]
+  onToggle: (model: ProviderModel) => void
+  onSubmit: (models: ProviderModel[]) => void
+}) {
+  const [models, setModels] = createSignal<ProviderModel[]>([])
+  const [error, setError] = createSignal<string>()
+  const toast = useToast()
+  const { theme } = useTheme()
+
+  onMount(() => {
+    void fetchProviderModels(props.protocol, props.baseURL, props.apiKey)
+      .then((value) => {
+        if (value.length === 0) {
+          setError("The provider returned no models")
+          return
+        }
+        setModels(value)
+      })
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load models"))
+  })
+
+  function submit() {
+    if (props.selected.length === 0) {
+      toast.show({ variant: "error", message: "Select at least one model" })
+      return
+    }
+    props.onSubmit(props.selected)
   }
 
-  await sdk.client.instance.dispose()
-  await sync.bootstrap()
-  dialog.replace(() => <DialogModel providerID={providerID} />)
+  const options = createMemo<DialogSelectOption<ProviderModel | typeof SAVE_CUSTOM_PROVIDER_MODELS>[]>(() => [
+    ...models().map((model) => ({
+      title: model.name,
+      value: model,
+      description: model.id === model.name ? undefined : model.id,
+      gutter: props.selected.some((item) => item.id === model.id) ? <text fg={theme.success}>✓</text> : undefined,
+      onSelect: () => props.onToggle(model),
+    })),
+    {
+      title: `Save selected models (${props.selected.length})`,
+      value: SAVE_CUSTOM_PROVIDER_MODELS,
+      description: "Finish provider setup",
+      category: "",
+      onSelect: submit,
+    },
+  ])
+
+  return (
+    <Show
+      when={!error()}
+      fallback={
+        <box paddingLeft={2} paddingRight={2} gap={1}>
+          <text attributes={TextAttributes.BOLD} fg={theme.error}>
+            Could not load models
+          </text>
+          <text fg={theme.textMuted}>{error()}</text>
+          <text fg={theme.textMuted}>Check the base URL and API key, then press esc to go back.</text>
+        </box>
+      }
+    >
+      <Show
+        when={models().length > 0}
+        fallback={
+          <box paddingLeft={2} paddingRight={2} gap={1}>
+            <Spinner color={theme.textMuted}>Loading models from {props.providerID}...</Spinner>
+          </box>
+        }
+      >
+        <DialogSelect
+          title="Select models (6/6)"
+          hint={`${props.selected.length} selected · space toggle · enter save`}
+          options={options()}
+          keybind={[
+            {
+              keybind: Keybind.parse("space")[0],
+              title: "Toggle",
+              onTrigger: (option) => {
+                if (option.value !== SAVE_CUSTOM_PROVIDER_MODELS) props.onToggle(option.value)
+              },
+            },
+          ]}
+        />
+      </Show>
+    </Show>
+  )
 }
 
 interface AutoMethodProps {
