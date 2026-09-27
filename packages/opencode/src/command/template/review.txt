@@ -83,6 +83,7 @@ Use best judgement when processing input.
 
 Use these to inform your review:
 
+- **Code reviewer subagent** - If you dispatch a reviewer, use the `actor` tool with `subagent_type` set to `general`. Do not set `subagent_type` to `build`, `plan`, or `compose`; those are primary modes and the actor tool rejects them.
 - **Explore agent** - Find how existing code handles similar problems. Check patterns, conventions, and prior art before claiming something doesn't fit.
 - **Exa Code Context** - Verify correct usage of libraries/APIs before flagging something as wrong.
 - **Exa Web Search** - Research best practices if you're unsure about a pattern.
