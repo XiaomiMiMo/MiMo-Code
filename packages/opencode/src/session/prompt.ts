@@ -131,6 +131,7 @@ import {
   sessionErrorText,
 } from "./trajectory"
 import { prefixCaptureRef } from "./prefix-capture-ref"
+import { planExitContinuationRef } from "./plan-exit-continuation-ref"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Inbox } from "@/inbox"
 import { sessionPromptRef, defaultModelRef } from "@/inbox/inbox-ref"
@@ -6935,6 +6936,32 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       predict,
     })
     sessionPromptRef.current = { loop: impl.loop }
+    planExitContinuationRef.current = {
+      // plan_exit approval landed after the asking turn died (long-idle
+      // transport drop, error, abort): nothing is driving the session, so
+      // start a fresh run from the synthetic build message. Busy → the asking
+      // run is still alive and continues itself; NotFound → no resumable tail.
+      // Both are expected outcomes, not failures.
+      continueFromUserMessage: (input) =>
+        resumeBackground({ sessionID: input.sessionID, userMessageID: input.userMessageID }).pipe(
+          Effect.as(true),
+          Effect.tap(() =>
+            elog.info("plan_exit continuation launched", {
+              sessionID: input.sessionID,
+              userMessageID: input.userMessageID,
+            }),
+          ),
+          Effect.catch((error) =>
+            elog
+              .info("plan_exit continuation skipped", {
+                sessionID: input.sessionID,
+                userMessageID: input.userMessageID,
+                reason: error instanceof Error ? error.message : String(error),
+              })
+              .pipe(Effect.as(false)),
+          ),
+        ),
+    }
     // Expose the project default-model resolver to Inbox.drain's option-2
     // fallback (seed a synthetic message for a turnCount-0 standing peer whose
     // slice has no model-bearing message yet). Reads Provider, which is already
@@ -6944,6 +6971,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         if (sessionPromptRef.current?.loop === impl.loop) sessionPromptRef.current = undefined
+        planExitContinuationRef.current = undefined
         if (defaultModelRef.current === defaultModelResolver) defaultModelRef.current = undefined
       }),
     )

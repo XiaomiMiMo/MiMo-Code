@@ -7,6 +7,7 @@ import { Session } from "../session"
 import { MessageV2 } from "../session/message-v2"
 import { Provider } from "../provider"
 import { Instance } from "../project/instance"
+import { planExitContinuationRef } from "../session/plan-exit-continuation-ref"
 import { type SessionID, MessageID, PartID } from "../session/schema"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 
@@ -39,22 +40,42 @@ export const PlanExitTool = Tool.define(
 
           const info = yield* session.get(ctx.sessionID)
           const plan = path.relative(Instance.worktree, Session.plan(info))
-          const answers = yield* question.ask({
-            sessionID: ctx.sessionID,
-            questions: [
-              {
-                key: "plan_exit",
-                params: { plan },
-                question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
-                header: "Plan",
-                options: [
-                  { label: "Yes", description: "Switch to build agent and start implementing the plan" },
-                  { label: "No", description: "Stay with plan agent to continue refining the plan" },
-                ],
-              },
-            ],
-            tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
-          })
+          const answers = yield* question
+            .ask({
+              sessionID: ctx.sessionID,
+              questions: [
+                {
+                  key: "plan_exit",
+                  params: { plan },
+                  question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
+                  header: "Plan",
+                  options: [
+                    { label: "Yes", description: "Switch to build agent and start implementing the plan" },
+                    { label: "No", description: "Stay with plan agent to continue refining the plan" },
+                  ],
+                },
+              ],
+              tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+            })
+            .pipe(
+              // Dismissing the approval prompt (esc) must not kill the turn:
+              // RejectedError would set ctx.blocked in the processor and abort
+              // the whole LLM conversation. Surface the dismissal as a regular
+              // "stay in plan mode" result so the agent loop auto-continues.
+              Effect.catchIf(
+                (error) => error instanceof Question.RejectedError,
+                () => Effect.succeed(undefined),
+              ),
+            )
+
+          if (!answers) {
+            return {
+              title: "Staying in plan mode",
+              output:
+                "User dismissed the plan approval question without answering. Plan mode is still active — do NOT start implementing. Do not call plan_exit again right away; use the question tool to ask the user whether they want to refine anything in the plan or proceed, and call plan_exit again only after they explicitly confirm they are ready.",
+              metadata: { switched: false, feedback: "" },
+            }
+          }
 
           const answer = answers[0]?.[0]
           if (answer === "No") {
@@ -93,6 +114,43 @@ export const PlanExitTool = Tool.define(
             text: `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
             synthetic: true,
           } satisfies MessageV2.TextPart)
+
+          // The approval must keep the session working even when the turn that
+          // asked died while the user was reading (long-idle transport drop,
+          // error, abort): resume a fresh run from the synthetic build message.
+          // While the asking run is still alive this is a no-op (resume rejects
+          // busy and the live runLoop continues on its own).
+          const continuation = planExitContinuationRef.current
+          const launched = continuation
+            ? yield* continuation.continueFromUserMessage({ sessionID: ctx.sessionID, userMessageID: msg.id })
+            : false
+
+          if (launched && ctx.callID) {
+            // The asking run is dead: its cleanup already stamped this tool
+            // part aborted, so the processor's completion (which only rewrites
+            // `running` parts) will no-op. Rewrite it completed with the
+            // switched metadata so the TUI flips to the build view like the
+            // alive-run path would.
+            const part = MessageV2.parts(ctx.messageID).find(
+              (p) => p.type === "tool" && p.callID === ctx.callID,
+            )
+            if (part?.type === "tool" && (part.state.status === "error" || part.state.status === "pending")) {
+              yield* session.updatePart({
+                ...part,
+                state: {
+                  status: "completed",
+                  input: part.state.input,
+                  output: "User approved switching to build agent. Executing the plan.",
+                  metadata: { switched: true, feedback: "" },
+                  title: "Switching to build agent",
+                  time: {
+                    start: part.state.status === "error" ? part.state.time.start : Date.now(),
+                    end: Date.now(),
+                  },
+                },
+              })
+            }
+          }
 
           return {
             title: "Switching to build agent",
