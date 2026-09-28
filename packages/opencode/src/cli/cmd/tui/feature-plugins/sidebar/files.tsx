@@ -22,8 +22,8 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
         <Show when={list().length <= 2 || open()}>
           <For each={list()}>
             {(item) => (
-              <box flexDirection="row" gap={1} justifyContent="space-between">
-                <text fg={theme().textMuted} wrapMode="none">
+              <box flexDirection="row" gap={1} justifyContent="space-between" alignItems="flex-start">
+                <text fg={theme().textMuted} wrapMode="char" flexGrow={1} flexShrink={1}>
                   {item.file}
                 </text>
                 <box flexDirection="row" gap={1} flexShrink={0}>
