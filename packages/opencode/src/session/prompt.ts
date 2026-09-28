@@ -6888,7 +6888,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         )
         if (!admittedOk) {
           outcomes.push({ actorID: actor.actorID, status: "failed", reason: "not-admitted" })
-          elog.info("subagent-resume-cascade", {
+          yield* elog.info("subagent-resume-cascade", {
             sessionID,
             actorID: actor.actorID,
             status: "failed",
@@ -6897,7 +6897,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           continue
         }
         outcomes.push({ actorID: actor.actorID, status: "resumed" })
-        elog.info("subagent-resume-cascade", {
+        yield* elog.info("subagent-resume-cascade", {
           sessionID,
           actorID: actor.actorID,
           status: "resumed",

@@ -72,7 +72,7 @@ const app = (upgrade: UpgradeWebSocket) =>
           remote = new WebSocket(url, protocols(c.req.raw))
           remote.binaryType = "arraybuffer"
           remote.onopen = () => {
-            for (const item of queue) remote?.send(item)
+            for (const item of queue) remote?.send(item instanceof Uint8Array ? new Uint8Array(item) : item)
             queue.length = 0
           }
           remote.onmessage = (event) => {

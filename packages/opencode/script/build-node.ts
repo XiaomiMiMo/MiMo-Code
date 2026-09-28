@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { Script } from "@mimo-ai/script"
+import { Script } from "../../../script/meta.ts"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"

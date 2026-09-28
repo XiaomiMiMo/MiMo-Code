@@ -28,7 +28,7 @@ if (pinned && Bun.version !== pinned) {
 
 await import("./generate.ts")
 
-import { Script } from "@mimo-ai/script"
+import { Script } from "../../../script/meta.ts"
 import pkg from "../package.json"
 
 const BINARY_PREFIX = "mimocode"

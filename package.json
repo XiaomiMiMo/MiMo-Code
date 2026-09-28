@@ -9,7 +9,7 @@
     "dev": "bun run --cwd packages/opencode script/dev.ts",
     "build:local": "bun run --cwd packages/opencode build:local",
     "lint": "oxlint",
-    "typecheck": "bun turbo typecheck",
+    "typecheck": "bun run --workspaces --if-present --parallel typecheck && tsc --noEmit -p tsconfig.scripts.json",
     "postinstall": "bun run --cwd packages/opencode fix-node-pty",
     "prepare": "husky",
     "test": "echo 'do not run tests from root' && exit 1"
@@ -56,8 +56,7 @@
       "remend": "1.3.0",
       "@playwright/test": "1.59.1",
       "semver": "7.7.4",
-      "typescript": "5.8.2",
-      "@typescript/native-preview": "7.0.0-dev.20251207.1",
+      "typescript": "6.0.2",
       "zod": "4.1.8",
       "remeda": "2.26.0",
       "shiki": "3.20.0",
@@ -76,19 +75,19 @@
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
     "@types/mime-types": "3.0.1",
-    "@typescript/native-preview": "catalog:",
     "glob": "13.0.5",
     "husky": "9.1.7",
     "oxlint": "1.60.0",
     "oxlint-tsgolint": "0.21.0",
     "prettier": "3.6.2",
     "semver": "^7.6.0",
-    "turbo": "2.8.13"
+    "@typescript/native": "npm:typescript@7.0.2",
+    "@types/bun": "catalog:",
+    "@types/semver": "catalog:"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.933.0",
     "@mimo-ai/plugin": "workspace:*",
-    "@mimo-ai/script": "workspace:*",
     "@mimo-ai/sdk": "workspace:*",
     "heap-snapshot-toolkit": "1.1.3",
     "typescript": "catalog:"

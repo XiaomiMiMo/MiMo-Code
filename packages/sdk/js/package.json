@@ -20,7 +20,7 @@
     "access": "public"
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "build": "bun ./script/build.ts"
   },
   "exports": {
@@ -40,8 +40,7 @@
     "@tsconfig/node22": "catalog:",
     "@types/cross-spawn": "catalog:",
     "@types/node": "catalog:",
-    "@typescript/native-preview": "catalog:",
-    "typescript": "catalog:"
+    "@typescript/native": "npm:typescript@7.0.2"
   },
   "dependencies": {
     "cross-spawn": "catalog:"

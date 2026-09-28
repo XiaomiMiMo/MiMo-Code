@@ -543,7 +543,7 @@ auto-reject after 60 seconds with feedback the model can act on instead of hangi
 ```bash
 bun ci                   # Install dependencies (= bun install --frozen-lockfile)
 bun run dev              # Run in development mode
-bun turbo typecheck      # Type check
+bun typecheck               # Type check
 ```
 
 ---

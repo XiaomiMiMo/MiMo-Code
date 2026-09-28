@@ -2,7 +2,7 @@ import { $ } from "bun"
 import semver from "semver"
 import path from "path"
 
-const rootPkgPath = path.resolve(import.meta.dir, "../../../package.json")
+const rootPkgPath = path.resolve(import.meta.dir, "../package.json")
 const rootPkg = await Bun.file(rootPkgPath).json()
 const expectedBunVersion = rootPkg.packageManager?.split("@")[1]
 
@@ -47,7 +47,7 @@ const VERSION = await (async () => {
     const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12)
     return `0.0.0-${CHANNEL}-${ts}`
   }
-  const version = await Bun.file(path.resolve(import.meta.dir, "../../opencode/package.json"))
+  const version = await Bun.file(path.resolve(import.meta.dir, "../packages/opencode/package.json"))
     .json()
     .then((data: any) => data.version)
   const t = env.MIMOCODE_BUMP?.toLowerCase()
@@ -72,4 +72,3 @@ export const Script = {
     return !!env.MIMOCODE_RELEASE
   },
 }
-console.log(`mimocode script`, JSON.stringify(Script, null, 2))

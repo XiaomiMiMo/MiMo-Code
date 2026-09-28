@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { Script } from "@mimo-ai/script"
+import { Script } from "../../../../script/meta.ts"
 import { $ } from "bun"
 import { fileURLToPath } from "url"
 
@@ -17,7 +17,7 @@ const pkg = JSON.parse(originalText) as {
   version: string
   exports: Record<string, unknown>
 }
-function transformExports(exports: Record<string, unknown>) {
+function transformExports(exports: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(exports).map(([key, value]) => {
       if (typeof value === "string") {
@@ -25,7 +25,7 @@ function transformExports(exports: Record<string, unknown>) {
         return [key, { import: file + ".js", types: file + ".d.ts" }]
       }
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-        return [key, transformExports(value)]
+        return [key, transformExports(value as Record<string, unknown>)]
       }
       return [key, value]
     }),
