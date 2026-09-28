@@ -1,40 +1,27 @@
 import * as i18n from "@solid-primitives/i18n"
 import { createMemo, createResource, type ParentProps } from "solid-js"
-import { I18nProvider } from "@mimo-ai/ui/context/i18n"
 import { dict as tuiEn } from "../i18n/en"
-import { dict as uiEn } from "@mimo-ai/ui/i18n/en"
 import { LOCALES, INTL, LABEL_KEY, normalizeLocale, type Locale } from "../i18n/locales"
 import { useKV } from "./kv"
 import { detectSystemLocale } from "../util/system-locale"
 import { createSimpleContext } from "./helper"
 
 type Source = { dict: Record<string, string> }
-const base = i18n.flatten({ ...tuiEn, ...uiEn })
+const base = i18n.flatten(tuiEn)
 type Dictionary = typeof base
 
-const merge = async (ui: Promise<Source>, tui?: Promise<Source>) => {
-  const [u, t] = await Promise.all([ui, tui])
-  const tuiDict = t?.dict ?? {}
-  return { ...base, ...i18n.flatten({ ...tuiDict, ...u.dict }) } as Dictionary
+const merge = async (tui: Promise<Source>) => {
+  const t = await tui
+  return { ...base, ...i18n.flatten(t.dict) } as Dictionary
 }
 
-const loaders: Record<Exclude<Locale, "en">, () => Promise<Dictionary>> = {
-  zh: () => merge(import("@mimo-ai/ui/i18n/zh"), import("../i18n/zh")),
-  zht: () => merge(import("@mimo-ai/ui/i18n/zht"), import("../i18n/zht")),
-  ko: () => merge(import("@mimo-ai/ui/i18n/ko")),
-  de: () => merge(import("@mimo-ai/ui/i18n/de")),
-  es: () => merge(import("@mimo-ai/ui/i18n/es"), import("../i18n/es")),
-  fr: () => merge(import("@mimo-ai/ui/i18n/fr"), import("../i18n/fr")),
-  da: () => merge(import("@mimo-ai/ui/i18n/da")),
-  ja: () => merge(import("@mimo-ai/ui/i18n/ja"), import("../i18n/ja")),
-  pl: () => merge(import("@mimo-ai/ui/i18n/pl")),
-  ru: () => merge(import("@mimo-ai/ui/i18n/ru"), import("../i18n/ru")),
-  ar: () => merge(import("@mimo-ai/ui/i18n/ar")),
-  no: () => merge(import("@mimo-ai/ui/i18n/no")),
-  br: () => merge(import("@mimo-ai/ui/i18n/br")),
-  th: () => merge(import("@mimo-ai/ui/i18n/th")),
-  bs: () => merge(import("@mimo-ai/ui/i18n/bs")),
-  tr: () => merge(import("@mimo-ai/ui/i18n/tr")),
+const loaders: Partial<Record<Exclude<Locale, "en">, () => Promise<Dictionary>>> = {
+  zh: () => merge(import("../i18n/zh")),
+  zht: () => merge(import("../i18n/zht")),
+  es: () => merge(import("../i18n/es")),
+  fr: () => merge(import("../i18n/fr")),
+  ja: () => merge(import("../i18n/ja")),
+  ru: () => merge(import("../i18n/ru")),
 }
 
 const cache = new Map<Locale, Dictionary>([["en", base]])
@@ -42,7 +29,8 @@ async function loadDict(locale: Locale): Promise<Dictionary> {
   const hit = cache.get(locale)
   if (hit) return hit
   if (locale === "en") return base
-  const next = await loaders[locale]()
+  const load = loaders[locale]
+  const next = load ? await load() : base
   cache.set(locale, next)
   return next
 }
@@ -86,8 +74,3 @@ export const { use: useLanguage, provider: LanguageProvider } = createSimpleCont
     }
   },
 })
-
-export function UiI18nBridge(props: ParentProps) {
-  const lang = useLanguage()
-  return <I18nProvider value={{ locale: lang.intl, t: (key: any, params: any) => lang.t(key, params) }}>{props.children}</I18nProvider>
-}

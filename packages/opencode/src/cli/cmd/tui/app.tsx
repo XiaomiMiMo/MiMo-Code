@@ -56,7 +56,7 @@ import { Session as SessionApi } from "@/session"
 import { TuiEvent } from "./event"
 import { KVProvider, useKV } from "./context/kv"
 import { resolveVisualMode, toggleVisualMode } from "./context/visual"
-import { LanguageProvider, UiI18nBridge, useLanguage } from "./context/language"
+import { LanguageProvider, useLanguage } from "./context/language"
 import type { Locale } from "./i18n/locales"
 import { LOCALES } from "./i18n/locales"
 import { DialogSelect } from "./ui/dialog-select"
@@ -176,7 +176,6 @@ export function tui(input: {
             <ExitProvider onBeforeExit={onBeforeExit} onExit={onExit}>
               <KVProvider>
                 <LanguageProvider>
-                  <UiI18nBridge>
                 <ToastProvider>
                   <RouteProvider
                     initialRoute={
@@ -223,7 +222,6 @@ export function tui(input: {
                     </TuiConfigProvider>
                   </RouteProvider>
                 </ToastProvider>
-                  </UiI18nBridge>
                 </LanguageProvider>
               </KVProvider>
             </ExitProvider>
