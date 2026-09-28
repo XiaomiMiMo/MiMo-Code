@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import * as Tool from "../tool"
 import * as McpExa from "../mcp-exa"
+import * as Firecrawl from "../firecrawl"
 import * as MimoWebsearch from "./mimo"
 import { Auth } from "@/auth"
 import { Provider } from "@/provider"
@@ -79,19 +80,21 @@ export const WebSearchTool = Tool.define(
                   }),
                   () => Effect.succeed(undefined),
                 )
-              : yield* McpExa.call(
-                  http,
-                  "web_search_exa",
-                  McpExa.SearchArgs,
-                  {
-                    query: params.query,
-                    type: params.type || "auto",
-                    numResults: params.numResults || 8,
-                    livecrawl: params.livecrawl || "fallback",
-                    contextMaxCharacters: params.contextMaxCharacters,
-                  },
-                  timeout ?? "25 seconds",
-                )
+              : Firecrawl.enabled()
+                ? yield* Firecrawl.search(http, params.query, params.numResults || 8, timeout ?? 25 * 1000)
+                : yield* McpExa.call(
+                    http,
+                    "web_search_exa",
+                    McpExa.SearchArgs,
+                    {
+                      query: params.query,
+                      type: params.type || "auto",
+                      numResults: params.numResults || 8,
+                      livecrawl: params.livecrawl || "fallback",
+                      contextMaxCharacters: params.contextMaxCharacters,
+                    },
+                    timeout ?? "25 seconds",
+                  )
 
           return {
             output: result ?? WEBFETCH_FALLBACK,

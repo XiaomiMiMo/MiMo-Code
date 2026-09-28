@@ -471,6 +471,26 @@ To declare which input modalities a custom model supports (image, audio, video, 
 Max Mode (parallel best-of-N reasoning with judge selection) can be enabled via `experimental.maxMode` in the config.
 
 <details>
+<summary><strong>Web search and pages that block automated requests (<code>FIRECRAWL_API_KEY</code>)</strong></summary>
+
+Some sites answer a direct request with `403`, `429`, or a `5xx` — bot protection, JS-only
+rendering, or aggressive rate limiting. When `FIRECRAWL_API_KEY` is set, `webfetch` retries
+those URLs through [Firecrawl](https://docs.firecrawl.dev), which renders the page and returns
+clean markdown (or HTML, when that is the requested format). The key also enables `websearch`
+for every provider, backed by Firecrawl search (the `xiaomi` provider keeps its built-in search):
+
+```bash
+FIRECRAWL_API_KEY=fc-... mimo
+```
+
+Without the key nothing changes — a request the site refuses is reported as an error, exactly
+as before. Set `FIRECRAWL_API_URL` to talk to a self-hosted Firecrawl instance instead of the
+hosted API; that instance runs unauthenticated, so the URL on its own is enough to enable the
+fallback.
+
+</details>
+
+<details>
 <summary><strong>Allowing the system temp directory (<code>/tmp</code>)</strong></summary>
 
 By default, reading or writing files outside the project working directory triggers an

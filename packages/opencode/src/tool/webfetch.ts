@@ -2,6 +2,7 @@ import z from "zod"
 import { Effect } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import * as Tool from "./tool"
+import * as Firecrawl from "./firecrawl"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { isImageAttachment } from "@/util/media"
@@ -49,6 +50,7 @@ export const WebFetchTool = Tool.define(
           })
 
           const timeout = Math.min((params.timeout ?? DEFAULT_TIMEOUT / 1000) * 1000, MAX_TIMEOUT)
+          const deadline = Date.now() + timeout
 
           // Build Accept header based on requested format with q parameters for fallbacks
           let acceptHeader = "*/*"
@@ -90,8 +92,37 @@ export const WebFetchTool = Tool.define(
                   ),
                 ),
             ),
+            // Hand the URL to Firecrawl instead when the origin still refuses us — it renders
+            // JS and rotates proxies, so pages a direct request cannot reach often work there
+            Effect.catchIf(
+              (err) =>
+                Firecrawl.enabled() &&
+                err.reason._tag === "StatusCodeError" &&
+                (err.reason.response.status === 403 ||
+                  err.reason.response.status === 429 ||
+                  err.reason.response.status >= 500),
+              () => Effect.succeed(undefined),
+            ),
             Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.die(new Error("Request timed out")) }),
           )
+
+          if (!response) {
+            // Firecrawl has no plain-text format, so "text" comes back as HTML and goes
+            // through the same extraction as a direct fetch
+            const scraped = yield* Firecrawl.scrape(
+              http,
+              params.url,
+              params.format === "markdown" ? "markdown" : "html",
+              Math.max(deadline - Date.now(), 0),
+              MAX_RESPONSE_SIZE,
+            )
+            if (!scraped) throw new Error(`Firecrawl returned no ${params.format} content for ${params.url}`)
+            return {
+              output: params.format === "text" ? yield* Effect.promise(() => extractTextFromHTML(scraped)) : scraped,
+              title: `${params.url} (firecrawl)`,
+              metadata: {},
+            }
+          }
 
           // Block SSRF via redirect: if the response was redirected, validate final URL
           const source = (response as any).source as Response | undefined

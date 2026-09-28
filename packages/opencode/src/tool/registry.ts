@@ -15,6 +15,7 @@ import { TaskTool } from "./task"
 import { CronTool } from "./cron"
 import { WorkflowTool } from "./workflow"
 import { WebFetchTool } from "./webfetch"
+import * as Firecrawl from "./firecrawl"
 import { WriteTool } from "./write"
 import { NotebookEditTool } from "./notebook-edit"
 import { InvalidTool } from "./invalid"
@@ -338,7 +339,8 @@ export const layer = Layer.effect(
             return (
               input.providerID === ProviderID.opencode ||
               input.providerID === "xiaomi" ||
-              Flag.MIMOCODE_ENABLE_EXA
+              Flag.MIMOCODE_ENABLE_EXA ||
+              Firecrawl.enabled()
             )
           }
           return input.providerID === ProviderID.opencode || Flag.MIMOCODE_ENABLE_EXA
