@@ -6,6 +6,7 @@ import { ACP } from "@/acp/agent"
 import { Server } from "@/server/server"
 import { createOpencodeClient } from "@mimo-ai/sdk/v2"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
+import { waitForProviders } from "@/acp/wait-for-providers"
 
 const log = Log.create({ service: "acp-command" })
 
@@ -31,6 +32,16 @@ export const AcpCommand = cmd({
       const sdk = createOpencodeClient({
         baseUrl: `http://${server.hostname}:${server.port}`,
       })
+
+      // Wait for providers to be fully loaded after potential DB migration.
+      // Without this, the first request may race with provider initialization
+      // and fall back to Provider.sort() which picks a paid model.
+      const providersReady = await waitForProviders(() =>
+        sdk.config.providers({ directory: args.cwd }, { throwOnError: false }),
+      )
+      if (!providersReady) {
+        log.warn("providers not ready after timeout; relying on config-specified model fallback")
+      }
 
       const input = new WritableStream<Uint8Array>({
         write(chunk) {
