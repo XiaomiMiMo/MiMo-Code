@@ -91,13 +91,21 @@ Catalog / deps:
   runs language-service diagnostics.
 - `tsgo` (`@typescript/native-preview`) is a **separate native binary** that never loads that patched JS
   compiler, so Effect rules never executed — silence was a blind spot, not proof of cleanliness.
-- Same reason `tsc` now surfaces `floatingEffect` / `missingReturnYieldStar` / etc.
+- Same reason a **patched TS6** `tsc` surfaces `floatingEffect` / `missingReturnYieldStar` / etc. (TS7 native `tsc` does not).
 Mitigations: fix 2 real `floatingEffect` (`yield* elog.info` in `prompt.ts`), keep `missingReturnYieldStar`
 as warning, set `ignoreEffect{Warnings,Suggestions}InTscExitCode: true` so plugin chatter stays in the editor
 and does not gate CI. **`@typescript/native` `tsc` is a Go binary** — `@effect/language-service` patches only
 JS `typescript@6` `lib/_tsc.js`, so Effect rules never run in package `tsc --noEmit` (same blind spot as `tsgo`;
 verified with a deliberate `floatingEffect` probe). Do not claim Effect errors gate CI under TS7. Also `types: ["bun"]`
 is required (tsgo auto-included `@types/bun`; tsc does not).
+
+**`typescript` name collision with `@typescript/native` (P2):** `npm:typescript@7.0.2` installs a package
+whose `name` is still `typescript`. Depending on Bun store layout, `require("typescript/lib/tsserverlibrary")`
+(from `@effect/language-service diagnostics`) can resolve to that 7.x copy and crash
+(`ERR_PACKAGE_PATH_NOT_EXPORTED`) — TS7 has no `lib/tsserverlibrary`. Pin via root
+`overrides.typescript: "6.0.2"` so every `require("typescript")` / `typescript/lib/*` hits the JS API package
+while `@typescript/native` still provides the TS7 `tsc` bin. Regression: from `packages/opencode`,
+`bun run effect-language-service diagnostics --file src/effect/logger.ts` must exit 0.
 
 **Bun workspace `tsc` bin shadowing (review CRITICAL):** a package that depends on `typescript` gets
 `packages/<pkg>/node_modules/.bin/tsc → ../typescript/bin/tsc` (the 6.x CLI), which `bun run` puts first on

@@ -255,6 +255,7 @@
   "overrides": {
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
+    "typescript": "6.0.2",
   },
   "catalog": {
     "@cloudflare/workers-types": "4.20251008.0",
