@@ -1387,6 +1387,9 @@ export function Session() {
     ),
   )
 
+  // snap to bottom when returning from subagent (agentID changes)
+  createEffect(on(() => route.data.type === "session" ? route.data.agentID : undefined, toBottom))
+
   return (
     <sessionViewContext.Provider
       value={{
