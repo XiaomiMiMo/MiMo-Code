@@ -1,4 +1,12 @@
 ---
+AIGC:
+  Label: '1'
+  ContentProducer: '001191110108596084056A10000'
+  ProduceID: '3FnKHNkZ3j6Feu6ntFy9cNMyKOcjTZrnX4gODKUHK9vGCJJfOEQ'
+  ReservedCode1: ''
+  ContentPropagator: '001191110108596084056A10000'
+  PropagateID: '3FnKHNkZ3j6Feu6ntFy9cNMyKOcjTZrnX4gODKUHK9vGCJJfOEQ'
+  ReservedCode2: ''
 feature: dead-code-cleanup
 status: in-progress
 updated: 2026-09-28
@@ -28,7 +36,7 @@ typecheck（opencode/plugin/shared/sdk）通过；`mimo --version` smoke 通过�
 **Journey log** —
 - 「无代码引用」不能当唯一判死依据：设计文档、诊断脚本、macro 嵌入资源都会误伤。
 - 钉死 `MODELS_DEV_API_JSON` 才能比哈希；`generate.ts` 现拉 models.dev 会造成无关漂移。
-- Drizzle Kit：**主动停用**而非“路径错误故无用”。理由是工作流已改为手写 `migration.sql`（构建/运行只读 SQL），Kit 未纳入 CI/脚本。旧路径写错不能单独证明 Kit 无用（generate/check 不依赖 DB 文件存在）。
+- Drizzle Kit：**主动停用**未进入 CI/脚本的工具入口（非“路径写错即无用”；generate/check 也不要求 DB 文件存在）。构建/运行直接使用 `migration/**/migration.sql`。
 
 ### Drizzle Kit 停用决策
 
@@ -36,7 +44,7 @@ typecheck（opencode/plugin/shared/sdk）通过；`mimo --version` smoke 通过�
 |---|---|
 | 删除 | `packages/opencode/drizzle.config.ts`、`script/check-migrations.ts`、`package.json` 的 `db` 脚本、`drizzle-kit` devDependency |
 | 保留 | `drizzle-orm`（运行时）、`src/**/*.sql.ts` 表定义、`migration/**/migration.sql`（打进二进制） |
-| 新迁移 | 手写新目录 + `migration.sql`；**不改**已发布 journal（见 AGENTS） |
+| 新迁移 | 在 `packages/opencode/migration/` 新增目录与 `migration.sql`；**不改**已发布 journal（见 AGENTS） |
 | 影响 | TUI / Node / 自动迁移 / 构建发布 / CI 均不读 Kit 配置 |
 
 ## [S1] Problem
@@ -173,3 +181,5 @@ packages/ui           纯 web 组件库；TUI 对其 i18n 的引用已确认无�
 - [x] T4: 删除批次 C 构建脚本并改 `version.ts` — acceptance: changelog 工具链/sync-zed/release/死 script 移除，release 改为手工 notes 或占位 (covers: S2; depends: T3)
 - [x] T5: 删除 packages/ui 并去掉 TUI 侧引用 — acceptance: 无 `@mimo-ai/ui` 引用，typecheck 通过，tui 词典仍在二进制 (covers: S2)
 - [x] T6: 后续清理（.mimocode smoke、skills→.agents、vscode example、停用 Drizzle Kit）+ PR — acceptance: 功能一致验收记入 Report，PR 已开 (covers: S2; depends: T5)
+
+（AI生成）
