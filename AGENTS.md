@@ -10,7 +10,7 @@
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 - Install deps with `bun ci` (= `bun install --frozen-lockfile`) — install per `bun.lock`, don't mutate the lockfile. ⛔ Do NOT use `bun install`/`npm install`.
 - Comments, docs, shipped skill content and test assertions use synthetic values, never machine-specific ones — `/tmp/example` for paths, `test/model` for model refs, `feat/example` for branches.
-- Do not edit `packages/opencode/migration/*` — migrations are immutable once shipped.
+- Do not edit `packages/opencode/migration/*/migration.sql` that already shipped — engines have applied those journals; new schema changes get a **new** migration directory with a hand-written `migration.sql` (no Drizzle Kit in the workflow).
 
 ## Core Focus
 

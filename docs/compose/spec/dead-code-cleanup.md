@@ -13,7 +13,7 @@ commits:
 **What was built** — `chore/dead-code-cleanup` 把 monorepo 收成 TUI + plugin/sdk 面。
 
 - **批次 A/B/C（包 / 基建 / 脚本）**：删 app、desktop、console/*、web、storybook、enterprise、function、slack、containers、extensions、identity；nix/flake（旧打包与 devShell，不是“Bun 就不需要”）、infra/sst、sdks/vscode、plans；根 `dev:*`/玩具脚本；changelog 工具链、sync-zed、损坏的 `release`、close-issues、sign-windows。`build-node`/`sdk`/plugin/shared/script **保留**（mimo-desktop + npm）。
-- **后续（非 bit-identical）**：整包删 `packages/ui`（`useI18n` 无消费者，`ui.*` 键 TUI 不展示）；`language.tsx` 只留 TUI 词典；skills → `.agents/skills`；去掉 `.mimocode` plugin smoke 与 `mimocode.jsonc`（约束写入 AGENTS）；去掉 `.vscode` example；`drizzle.config.ts` 路径对齐 runtime。
+- **后续（非 bit-identical）**：整包删 `packages/ui`（`useI18n` 无消费者，`ui.*` 键 TUI 不展示）；`language.tsx` 只留 TUI 词典；skills → `.agents/skills`；去掉 `.mimocode` plugin smoke 与 `mimocode.jsonc`（约束写入 AGENTS）；去掉 `.vscode` example；**停用 Drizzle Kit 工具链**（`drizzle.config.ts` / `check-migrations.ts` / `db` script / `drizzle-kit` devDep），保留 `drizzle-orm` 与 `migration/**/migration.sql`。
 - `docs/architecture`、`docs/harness` 误删后恢复。lockfile 为刻意变更。
 
 **Verification** — 以 `MODELS_DEV_API_JSON` 钉死 models 快照：
@@ -28,7 +28,16 @@ typecheck（opencode/plugin/shared/sdk）通过；`mimo --version` smoke 通过�
 **Journey log** —
 - 「无代码引用」不能当唯一判死依据：设计文档、诊断脚本、macro 嵌入资源都会误伤。
 - 钉死 `MODELS_DEV_API_JSON` 才能比哈希；`generate.ts` 现拉 models.dev 会造成无关漂移。
-- `MIMOCODE_DB` 相对路径要 join 到 `Global.Path.data`，与 runtime 同规则。
+- Drizzle Kit：**主动停用**而非“路径错误故无用”。理由是工作流已改为手写 `migration.sql`（构建/运行只读 SQL），Kit 未纳入 CI/脚本。旧路径写错不能单独证明 Kit 无用（generate/check 不依赖 DB 文件存在）。
+
+### Drizzle Kit 停用决策
+
+| 项 | 决定 |
+|---|---|
+| 删除 | `packages/opencode/drizzle.config.ts`、`script/check-migrations.ts`、`package.json` 的 `db` 脚本、`drizzle-kit` devDependency |
+| 保留 | `drizzle-orm`（运行时）、`src/**/*.sql.ts` 表定义、`migration/**/migration.sql`（打进二进制） |
+| 新迁移 | 手写新目录 + `migration.sql`；**不改**已发布 journal（见 AGENTS） |
+| 影响 | TUI / Node / 自动迁移 / 构建发布 / CI 均不读 Kit 配置 |
 
 ## [S1] Problem
 
@@ -163,4 +172,4 @@ packages/ui           纯 web 组件库；TUI 对其 i18n 的引用已确认无�
 - [x] T3: 删除批次 B 基建/根目录 — acceptance: nix/infra/sdks/plans 及根 `dev:*`/玩具脚本移除；`docs/architecture`、`docs/harness` 保留 (covers: S2)
 - [x] T4: 删除批次 C 构建脚本并改 `version.ts` — acceptance: changelog 工具链/sync-zed/release/死 script 移除，release 改为手工 notes 或占位 (covers: S2; depends: T3)
 - [x] T5: 删除 packages/ui 并去掉 TUI 侧引用 — acceptance: 无 `@mimo-ai/ui` 引用，typecheck 通过，tui 词典仍在二进制 (covers: S2)
-- [x] T6: 后续清理（.mimocode smoke、skills→.agents、vscode example、drizzle 路径）+ PR — acceptance: 功能一致验收记入 Report，PR 已开 (covers: S2; depends: T5)
+- [x] T6: 后续清理（.mimocode smoke、skills→.agents、vscode example、停用 Drizzle Kit）+ PR — acceptance: 功能一致验收记入 Report，PR 已开 (covers: S2; depends: T5)
