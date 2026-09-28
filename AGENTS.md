@@ -137,4 +137,4 @@ guard typechecks, reads correctly in review, and does nothing.
 
 ## Type Checking
 
-- Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
+- Always run `bun run typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.

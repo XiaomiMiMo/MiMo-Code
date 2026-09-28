@@ -92,13 +92,13 @@ Replace `<platform>` with your platform, e.g. `darwin-arm64` or `linux-x64`.
 ### Checks before you push
 
 ```bash
-bun typecheck                        # from the repo root
+bun run typecheck                        # from the repo root
 bun lint
 bun run --cwd packages/opencode test # tests cannot run from the repo root
 ./script/format.ts                   # prettier, if your editor does not do it
 ```
 
-A `pre-push` hook runs `bun typecheck`, so a broken build will not reach the remote.
+A `pre-push` hook runs `bun run typecheck`, so a broken build will not reach the remote.
 
 If you change the server API, regenerate the SDK and OpenAPI schema:
 

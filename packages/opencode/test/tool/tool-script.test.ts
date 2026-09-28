@@ -696,7 +696,7 @@ return r.output;`,
       `const results = await Promise.allSettled([
         tools.bash({ command: "git status --short --branch && git diff --check", description: "Confirm branch state and check diff whitespace", timeout: 120000 }),
         tools.bash({ command: "bun test --timeout 30000", workdir: ${JSON.stringify(tmp)}, description: "Run the complete opencode test suite", timeout: 600000 }),
-        tools.bash({ command: "bun typecheck", workdir: ${JSON.stringify(tmp)}, description: "Run opencode TypeScript checks", timeout: 600000 }),
+        tools.bash({ command: "bun run typecheck", workdir: ${JSON.stringify(tmp)}, description: "Run opencode TypeScript checks", timeout: 600000 }),
       ]);
       return results.map((x, i) => x.status === "fulfilled"
         ? { index: i, output: x.value.output, metadata: x.value.metadata }
