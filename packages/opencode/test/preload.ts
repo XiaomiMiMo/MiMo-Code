@@ -89,6 +89,10 @@ delete process.env["MIMOCODE_HOME"]
 // Use in-memory sqlite
 process.env["MIMOCODE_DB"] = ":memory:"
 
+// Slow-prediction timing store: a per-process file, so bash tests never write
+// the real user history (or read leftovers from a previous run).
+process.env["MIMOCODE_BASH_TIMING_PATH"] = path.join(dir, "bash-timing.json")
+
 // Now safe to import from src/
 const { Log } = await import("../src/util")
 const { initProjectors } = await import("../src/server/projectors")

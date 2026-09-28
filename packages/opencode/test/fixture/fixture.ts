@@ -191,12 +191,7 @@ export function provideTmpdirInstance<A, E, R>(
 
     yield* Effect.addFinalizer(() =>
       provided
-        ? Effect.promise(() =>
-            Instance.provide({
-              directory: path,
-              fn: () => Instance.dispose(),
-            }),
-          ).pipe(Effect.ignore)
+        ? Effect.promise(() => Instance.disposeDirectory(path)).pipe(Effect.ignore)
         : Effect.void,
     )
 

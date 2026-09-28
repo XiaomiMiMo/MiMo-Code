@@ -351,6 +351,49 @@ export const Flag = {
     copy === undefined ? process.platform === "win32" : truthy("MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT"),
   MIMOCODE_ENABLE_EXA: truthy("MIMOCODE_ENABLE_EXA") || MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_EXA"),
   MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS: number("MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS"),
+  // Background-job mode for bash invocations of PROJECT-BUILT executables —
+  // commands whose head token is a path resolving inside the project directory
+  // or worktree (./dist/app, target/debug/foo, …), i.e. programs whose runtime
+  // cannot be predicted, as opposed to OS tools like ls/git. Default ON: when
+  // no explicit `timeout` param is given, the tool runs the command
+  // synchronously for GRACE_MS and, if it is still running, hands the process
+  // to an instance-scoped monitor instead of killing it at the default timeout.
+  // The monitor stops a process that produces no output for STALL_MS while
+  // still alive (the serious-problem case) and delivers every terminal outcome
+  // back to the session as an inbox message so the model can continue. An
+  // explicit `timeout` param keeps the classic kill-at-timeout behavior as a
+  // predictable opt-out. Set MIMOCODE_EXPERIMENTAL_BASH_JOB=0 to disable.
+  // Getters so tests and embedders can flip the env at runtime.
+  get MIMOCODE_EXPERIMENTAL_BASH_JOB() {
+    return !falsy("MIMOCODE_EXPERIMENTAL_BASH_JOB")
+  },
+  get MIMOCODE_EXPERIMENTAL_BASH_JOB_GRACE_MS() {
+    return number("MIMOCODE_EXPERIMENTAL_BASH_JOB_GRACE_MS") ?? 60_000
+  },
+  get MIMOCODE_EXPERIMENTAL_BASH_JOB_STALL_MS() {
+    return number("MIMOCODE_EXPERIMENTAL_BASH_JOB_STALL_MS") ?? 120_000
+  },
+  // Slow-command prediction for bash: classify commands as possibly-slow via
+  // static families (build/test/install/…) or a per-project history of past
+  // durations (median of recorded samples), so bare-name commands like
+  // `bun run build` can also enter background-job mode instead of dying at the
+  // default timeout — and, when history predicts a long run, skip most of the
+  // synchronous grace window. Misclassification is cheap: a predicted-slow
+  // command that exits within its grace returns synchronously, exactly like
+  // the classic path. Set MIMOCODE_EXPERIMENTAL_BASH_PREDICT=0 to disable.
+  get MIMOCODE_EXPERIMENTAL_BASH_PREDICT() {
+    return !falsy("MIMOCODE_EXPERIMENTAL_BASH_PREDICT")
+  },
+  // Median recorded duration at or above which a command counts as slow.
+  get MIMOCODE_EXPERIMENTAL_BASH_PREDICT_SLOW_MS() {
+    return number("MIMOCODE_EXPERIMENTAL_BASH_PREDICT_SLOW_MS") ?? 30_000
+  },
+  // When history predicts a run longer than the grace window, only wait this
+  // warmup (catches command-not-found and other instant failures synchronously)
+  // before handing the job to the background monitor.
+  get MIMOCODE_EXPERIMENTAL_BASH_PREDICT_WARMUP_MS() {
+    return number("MIMOCODE_EXPERIMENTAL_BASH_PREDICT_WARMUP_MS") ?? 1_000
+  },
   // Token-efficient post-cleanse: strip ANSI / fold \r progress bars / redact
   // secrets / elide super-long lines from bash tool output before it is
   // returned to the model. Only applies when the output fits inline — if the
