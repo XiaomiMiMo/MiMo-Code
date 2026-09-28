@@ -5,6 +5,7 @@ import path from "path"
 import fs from "fs/promises"
 import * as Filesystem from "../../../../util/filesystem"
 import * as Process from "../../../../util/process"
+import { errorMessage } from "../../../../util/error"
 
 // Lazy load which and clipboardy to avoid expensive execa/which/isexe chain at startup
 const getWhich = lazy(async () => {
@@ -34,6 +35,47 @@ function writeOsc52(text: string): void {
 export interface Content {
   data: string
   mime: string
+}
+
+export type LinuxCopyCommand = {
+  name: string
+  command: string[]
+}
+
+export function getLinuxCopyCommands(env: NodeJS.ProcessEnv, which: (command: string) => unknown): LinuxCopyCommand[] {
+  return [
+    ...(env["WAYLAND_DISPLAY"] && which("wl-copy") ? [{ name: "wl-copy", command: ["wl-copy"] }] : []),
+    ...(which("xclip") ? [{ name: "xclip", command: ["xclip", "-selection", "clipboard"] }] : []),
+    ...(which("xsel") ? [{ name: "xsel", command: ["xsel", "--clipboard", "--input"] }] : []),
+  ]
+}
+
+async function writeToCopyCommand(command: LinuxCopyCommand, text: string): Promise<void> {
+  const proc = Process.spawn(command.command, { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
+  if (!proc.stdin) throw new Error(`${command.name} did not accept stdin`)
+  proc.stdin.write(text)
+  proc.stdin.end()
+  const code = await proc.exited
+  if (code !== 0) throw new Error(`${command.name} exited with code ${code}`)
+}
+
+export async function runLinuxCopyCommands(
+  text: string,
+  commands: LinuxCopyCommand[],
+  write: (command: LinuxCopyCommand, text: string) => Promise<void> = writeToCopyCommand,
+): Promise<void> {
+  const failures: string[] = []
+  for (const command of commands) {
+    try {
+      await write(command, text)
+      return
+    } catch (error) {
+      failures.push(`${command.name}: ${errorMessage(error)}`)
+    }
+  }
+
+  const details = failures.length ? ` Tried ${failures.join("; ")}.` : ""
+  throw new Error(`Failed to copy to the clipboard on Linux. Install wl-clipboard, xclip, or xsel.${details}`)
 }
 
 export async function spillImage(content: { data: string; mime: string }): Promise<string> {
@@ -192,42 +234,21 @@ const getCopyMethod = lazy(async () => {
   }
 
   if (os === "linux") {
-    if (process.env["WAYLAND_DISPLAY"] && which("wl-copy")) {
-      console.log("clipboard: using wl-copy")
-      return async (text: string) => {
-        const proc = Process.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
-      }
+    const commands = getLinuxCopyCommands(process.env, (command) => which(command))
+    if (commands.length) {
+      console.log(`clipboard: using ${commands.map((command) => command.name).join(", ")}`)
+      return async (text: string) => runLinuxCopyCommands(text, commands)
     }
-    if (which("xclip")) {
-      console.log("clipboard: using xclip")
-      return async (text: string) => {
-        const proc = Process.spawn(["xclip", "-selection", "clipboard"], {
-          stdin: "pipe",
-          stdout: "ignore",
-          stderr: "ignore",
-        })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
-      }
-    }
-    if (which("xsel")) {
-      console.log("clipboard: using xsel")
-      return async (text: string) => {
-        const proc = Process.spawn(["xsel", "--clipboard", "--input"], {
-          stdin: "pipe",
-          stdout: "ignore",
-          stderr: "ignore",
-        })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
+
+    console.log("clipboard: using clipboardy")
+    return async (text: string) => {
+      try {
+        const clipboardy = await getClipboardy()
+        await clipboardy.write(text)
+      } catch (error) {
+        throw new Error(
+          `Failed to copy to the clipboard on Linux. Install wl-clipboard, xclip, or xsel. ${errorMessage(error)}`,
+        )
       }
     }
   }
@@ -261,7 +282,7 @@ const getCopyMethod = lazy(async () => {
   console.log("clipboard: no native support")
   return async (text: string) => {
     const clipboardy = await getClipboardy()
-    await clipboardy.write(text).catch(() => {})
+    await clipboardy.write(text)
   }
 })
 
