@@ -86,6 +86,8 @@ packages/identity     品牌图片，零引用
 | `script/version.ts` 中对 `changelog.ts` 的调用 | 与 C 一并去掉（保留 release notes 回退） |
 | `script/sync-zed.ts` | 只服务 `packages/extensions` |
 | `script/release`（shell） | 调不存在的 `publish.yml`，损坏 |
+| `script/github/close-issues.ts` | 零引用；且硬编码旧仓库 `anomalyco/opencode` |
+| `script/sign-windows.ps1` | 原调用方是已删的 `packages/desktop`；publish/build/release 均不调 |
 | `packages/opencode/script/actor-notification-cases.ts` | 无引用 |
 | `packages/opencode/script/subagent-resume-cases.ts` | 无引用 |
 | `packages/opencode/script/time.ts` | 无引用 |
@@ -98,7 +100,7 @@ packages/identity     品牌图片，零引用
 | `script/build-node.ts` + `src/node.ts` | **mimo-desktop 依赖** |
 | `packages/sdk/**` | **npm 发布 `@mimo-ai/sdk`** |
 | `script/publish.ts` `release.ts` `version.ts` `generate.ts` `format.ts` | 发布/工具链 |
-| `script/build-install-ps1.ts` `sign-windows.ps1` `sync-registry.ts` | 安装与产物 |
+| `script/build-install-ps1.ts` `sync-registry.ts` | 安装与产物 |
 | `install` `install.ps1` `install-utf8.ps1` `local-install.sh` | 安装入口 |
 | `patches/` `packages/script/` `bin/mimo` | 运行/构建链 |
 | `docs/architecture/` `docs/harness/` | 仍在用的设计文档（勿按「无代码引用」误删） |
@@ -108,8 +110,8 @@ packages/identity     品牌图片，零引用
 
 ### 耦合点（删除时一并处理）
 
-1. **workspaces**：`package.json` 的 `packages/*` / `packages/console/*` / `packages/slack`；删目录后跑一次 `bun install` 更新 `bun.lock`（与 AGENTS「勿随意改 lock」的张力：本清理属于刻意变更，单独提交 lock）
-2. **CI typecheck**：`bun turbo typecheck` 会缩到剩余包，不炸
+1. **workspaces**：已收成 `packages/*` + `packages/sdk/js`；`bun.lock` 已随删除刻意更新
+2. **CI typecheck 仍走 turbo**：根 `typecheck` = `bun turbo typecheck`，`typecheck.yml` 与 pre-push 都调它；**CI 并未排除 turbo**（仅 `test.yml` 直接 `bun test`）。仍有 typecheck 的包：`opencode` `plugin` `shared` `ui` `sdk/js`
 3. **根脚本引用**：上面 A/B 列出的 `dev:*` 与玩具脚本
 4. **`version.ts`**：摘掉 `changelog.ts` 调用
 
@@ -128,11 +130,11 @@ packages/identity     品牌图片，零引用
 | `packages/ui` 拆出 web 组件只留 i18n | COUPLED，需单独设计 |
 | `build.ts` 内 `createEmbeddedWebUIBundle` / `skipEmbedWebUi` / `routes/ui.ts` / `Flag.MIMOCODE_DISABLE_EMBEDDED_WEB_UI` | 随 ui/app 清理一并做 |
 | `packages/opencode/src` 内部零引用模块 | 已有清单，暂不删 |
-| turbo → 朴素 `bun run <task>` | 收窄后 turbo 无并行意义，可后迁 |
+| turbo → 朴素 `bun run <task>` | `turbo.json`/依赖暂留；typecheck 仍是 `bun turbo typecheck`（CI + pre-push），可后改成串/并联 `bun run --cwd … typecheck` |
 | opencode → core 改名 | 另一议题 |
 | 根 `package.json` `name: "opencode"` 命名 | 同上 |
 
-内部零引用备忘（**不在范围**）：`util/scrap.ts`、`cli/cmd/web.ts`、`session/message.ts`、若干死 barrel、0 字节文件、未挂载 TUI 组件等 — 详见 `docs/compose/spec/dead-code-inventory.md`。
+内部零引用备忘（**不在范围**）：`util/scrap.ts`、`cli/cmd/web.ts`、`session/message.ts`、若干死 barrel、0 字节文件、未挂载 TUI 组件等。
 
 ## Tasks
 
