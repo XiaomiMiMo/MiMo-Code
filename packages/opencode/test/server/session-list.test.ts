@@ -45,6 +45,28 @@ describe("session.list", () => {
     })
   })
 
+  test("matches a directory that only differs in casing on Windows", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const created = await svc.create({ title: "case-probe" })
+        const variant =
+          tmp.path === tmp.path.toUpperCase() ? tmp.path.toLowerCase() : tmp.path.toUpperCase()
+
+        const exact = [...svc.list({ directory: tmp.path })].map((s) => s.id)
+        expect(exact).toContain(created.id)
+
+        const flipped = [...svc.list({ directory: variant })].map((s) => s.id)
+        if (process.platform === "win32") {
+          expect(flipped).toContain(created.id)
+        } else {
+          expect(flipped).not.toContain(created.id)
+        }
+      },
+    })
+  })
+
   test("filters root sessions", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
