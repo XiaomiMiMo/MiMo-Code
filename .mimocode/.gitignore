@@ -1,8 +1,0 @@
-.cron-lock
-plans/
-scheduled_tasks.json
-references/
-package.json
-package-lock.json
-bun.lock
-node_modules
