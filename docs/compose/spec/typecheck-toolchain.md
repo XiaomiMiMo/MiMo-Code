@@ -3,7 +3,7 @@ feature: typecheck-toolchain
 status: delivered
 updated: 2026-09-28
 branch: typecheck/ts7-drop-turbo
-commits: 
+commits: f0293bf8..ad4ed4ac
 ---
 
 # Typecheck Toolchain: Drop Turbo, TypeScript 7, Scripts Project
