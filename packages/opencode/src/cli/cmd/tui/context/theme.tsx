@@ -715,12 +715,12 @@ function generateGrayScale(bg: RGBA, isDark: boolean): Record<number, RGBA> {
 
     if (isDark) {
       if (luminance < 10) {
-        grayValue = Math.floor(factor * 0.4 * 255)
+        grayValue = Math.floor(factor * 0.5 * 255)
         newR = grayValue
         newG = grayValue
         newB = grayValue
       } else {
-        const newLum = luminance + (255 - luminance) * factor * 0.4
+        const newLum = luminance + (255 - luminance) * factor * 0.5
 
         const ratio = newLum / luminance
         newR = Math.min(bgR * ratio, 255)
@@ -729,12 +729,12 @@ function generateGrayScale(bg: RGBA, isDark: boolean): Record<number, RGBA> {
       }
     } else {
       if (luminance > 245) {
-        grayValue = Math.floor(255 - factor * 0.4 * 255)
+        grayValue = Math.floor(255 - factor * 0.5 * 255)
         newR = grayValue
         newG = grayValue
         newB = grayValue
       } else {
-        const newLum = luminance * (1 - factor * 0.4)
+        const newLum = luminance * (1 - factor * 0.5)
 
         const ratio = newLum / luminance
         newR = Math.max(bgR * ratio, 0)
@@ -761,19 +761,15 @@ function generateMutedTextColor(bg: RGBA, isDark: boolean): RGBA {
 
   if (isDark) {
     if (bgLum < 10) {
-      // Very dark/black background
-      grayValue = 180 // #b4b4b4
+      grayValue = 195
     } else {
-      // Scale up for lighter dark backgrounds
-      grayValue = Math.min(Math.floor(160 + bgLum * 0.3), 200)
+      grayValue = Math.min(Math.floor(180 + bgLum * 0.3), 210)
     }
   } else {
     if (bgLum > 245) {
-      // Very light/white background
-      grayValue = 75 // #4b4b4b
+      grayValue = 70
     } else {
-      // Scale down for darker light backgrounds
-      grayValue = Math.max(Math.floor(100 - (255 - bgLum) * 0.2), 60)
+      grayValue = Math.max(Math.floor(90 - (255 - bgLum) * 0.2), 55)
     }
   }
 
