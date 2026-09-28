@@ -343,11 +343,70 @@ export const ActorTool = Tool.define(
         if (op.action ==="wait") {
           const found = yield* findActor(op.actor_id)
           if (!found) return unknownResponse("wait", op.actor_id)
-          const snap = yield* waiter.wait({
+          // `wait` resolves off the ActorStatusChanged bus event, not off the work
+          // fiber, so it has no equivalent of the `run` path's stuck-fiber problem.
+          // It can still outlive the user's intent though: the default timeout is
+          // 10 minutes, during which the session is not idle and the TUI is
+          // unresponsive. Make ESC authoritative here too - settle on abort so the
+          // call returns immediately with the actor's current state. Effect.timeout
+          // interrupts the inner effect, so the acquireUseRelease cleanup in
+          // ActorWaiter.wait still runs and the bus subscription is released.
+          const actorID = op.actor_id
+          // On abort, produce a full WaitResult-shaped value so `snap` below keeps the
+          // same type as the normal (non-aborted) result.
+          const waitAbort = yield* Deferred.make<ActorWaiter.WaitResult>()
+          function waitCancelHandler() {
+            // Must RUN the effect, not just build it - `Deferred.succeed` returns an
+            // Effect, and a discarded Effect never executes. Same idiom as
+            // ActorWaiter's bus subscription (actor/waiter.ts), which also settles
+            // a Deferred from inside a plain event callback.
+            //
+            // Deferred.succeed is first-write-wins, so racing the real waiter is
+            // safe. `status` is the scheduler state (idle/running/...); "cancelled"
+            // is an executionState, so it goes in that field, not in status.
+            Effect.runFork(
+              Deferred.succeed(waitAbort, {
+                status: "idle",
+                executionState: "cancelled",
+                lastOutcome: "cancelled",
+                actor_id: actorID,
+              } as ActorWaiter.WaitResult),
+            )
+          }
+          ctx.abort.addEventListener("abort", waitCancelHandler)
+
+          // The abort branch re-reads the actor so a subagent that finished in the
+          // same instant is reported as completed rather than cancelled.
+          const onAbort = Deferred.await(waitAbort).pipe(
+            Effect.flatMap((cancelled) =>
+              Effect.gen(function* () {
+                const entry = yield* actorRegistry.get(found.sessionID, actorID)
+                if (entry && entry.status === "idle") {
+                  const live = yield* waiter.status(entry)
+                  return {
+                    ...live,
+                    actor_id: live.actorID,
+                  } as ActorWaiter.WaitResult
+                }
+                return cancelled
+              }),
+            ),
+          )
+
+          const normalWait = waiter.wait({
             sessionID: found.sessionID,
-            actor_id: op.actor_id,
+            actor_id: actorID,
             timeout_ms: op.timeout_ms,
           })
+
+          const snap: ActorWaiter.WaitResult = yield* Effect.acquireUseRelease(
+            Effect.sync(() => {}),
+            () => Effect.race(normalWait, onAbort),
+            () =>
+              Effect.sync(() => {
+                ctx.abort.removeEventListener("abort", waitCancelHandler)
+              }),
+          )
           return {
             title: `Actor wait: ${snap.status}${snap.lastOutcome ? "/" + snap.lastOutcome : ""}`,
             output: JSON.stringify(snap),
@@ -533,7 +592,32 @@ export const ActorTool = Tool.define(
         // preStop loop (and before the fire-and-forget postStop loop), so the
         // parent sees the settled status/summary — unlike ActorWaiter, which
         // resolves on the row's first `idle`.
+        // The user pressed ESC. Two things must happen:
+        //
+        //  1. Gracefully cancel the subagent so it stops burning tokens.
+        //  2. RETURN FROM THIS TOOL CALL NOW.
+        //
+        // (2) is why we settle `outcome` here. `outcome` is otherwise only settled
+        // by the work fiber's own failure handler (spawn.ts: onFailure), which runs
+        // only once that fiber actually unwinds. If the subagent is parked on
+        // something that never unwinds promptly - a provider stream, an MCP call, a
+        // bash child - the caller keeps waiting even though the user has explicitly
+        // asked to stop. The session never goes idle, so the TUI stops accepting
+        // input and ESC appears to do nothing.
+        //
+        // Settling it here makes the abort authoritative for the caller. The subagent
+        // is still cancelled via (1); if its fiber unwinds later it will call
+        // Deferred.succeed on an already-settled Deferred, which is a no-op. So this
+        // is safe to race, and it returns the tool call on the user's timeline
+        // instead of the subagent's.
         function cancelHandler() {
+          // Settle the caller FIRST, and independently of the cancel. `actor.cancel`
+          // itself awaits registry and provider work; sequencing the settle behind it
+          // would let a slow cancel reintroduce exactly the hang being fixed here.
+          // `Deferred.succeed` is context-free, so runFork needs no services.
+          Effect.runFork(Deferred.succeed(spawnResult.outcome, { status: "cancelled" as const }))
+          // The subagent keeps its own lifecycle: cancel is fire-and-forget and the
+          // registry row still ends up idle/cancelled.
           bridge.fork(actor.cancel(spawnResult.sessionID, spawnResult.actorID, "graceful"))
         }
         const outcome = yield* Effect.acquireUseRelease(
