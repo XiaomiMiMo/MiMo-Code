@@ -10,7 +10,7 @@
   "private": true,
   "scripts": {
     "prepare": "effect-language-service patch || true",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "bun test --timeout 30000",
     "test:ci": "mkdir -p .artifacts/unit && bun test --timeout 120000 --reporter=junit --reporter-outfile=.artifacts/unit/junit.xml",
     "build": "bun run script/build.ts",
@@ -80,7 +80,7 @@
     "vscode-languageserver-types": "3.17.5",
     "why-is-node-running": "3.2.2",
     "zod-to-json-schema": "3.24.5",
-    "@typescript/native": "npm:typescript@7.0.2"
+    "@typescript/native-preview": "catalog:"
   },
   "dependencies": {
     "@actions/core": "1.11.1",

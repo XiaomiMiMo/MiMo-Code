@@ -9,7 +9,7 @@
     "dev": "bun run --cwd packages/opencode script/dev.ts",
     "build:local": "bun run --cwd packages/opencode build:local",
     "lint": "oxlint",
-    "typecheck": "bun run --workspaces --if-present --parallel typecheck && tsc --noEmit -p tsconfig.scripts.json",
+    "typecheck": "bun run --workspaces --if-present --parallel typecheck && tsgo --noEmit -p tsconfig.scripts.json",
     "postinstall": "bun run --cwd packages/opencode fix-node-pty",
     "prepare": "husky",
     "test": "echo 'do not run tests from root' && exit 1"
@@ -56,7 +56,7 @@
       "remend": "1.3.0",
       "@playwright/test": "1.59.1",
       "semver": "7.7.4",
-      "typescript": "6.0.2",
+      "typescript": "5.8.2",
       "zod": "4.1.8",
       "remeda": "2.26.0",
       "shiki": "3.20.0",
@@ -69,7 +69,8 @@
       "@solidjs/start": "https://pkg.pr.new/@solidjs/start@dfb2020",
       "solid-js": "1.9.10",
       "vite-plugin-solid": "2.11.10",
-      "@lydell/node-pty": "1.2.0-beta.10"
+      "@lydell/node-pty": "1.2.0-beta.10",
+      "@typescript/native-preview": "7.0.0-dev.20260707.2"
     }
   },
   "devDependencies": {
@@ -81,9 +82,9 @@
     "oxlint-tsgolint": "0.21.0",
     "prettier": "3.6.2",
     "semver": "^7.6.0",
-    "@typescript/native": "npm:typescript@7.0.2",
     "@types/bun": "catalog:",
-    "@types/semver": "catalog:"
+    "@types/semver": "catalog:",
+    "@typescript/native-preview": "catalog:"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.933.0",
@@ -120,7 +121,6 @@
     "@standard-community/standard-openapi@0.2.9": "patches/@standard-community%2Fstandard-openapi@0.2.9.patch",
     "solid-js@1.9.10": "patches/solid-js@1.9.10.patch",
     "@opentui/core@0.1.101": "patches/@opentui%2Fcore@0.1.101.patch",
-    "@ai-sdk/openai-compatible@2.0.41": "patches/@ai-sdk%2Fopenai-compatible@2.0.41.patch",
-    "@effect/language-service@0.84.2": "patches/@effect%2Flanguage-service@0.84.2.patch"
+    "@ai-sdk/openai-compatible@2.0.41": "patches/@ai-sdk%2Fopenai-compatible@2.0.41.patch"
   }
 }

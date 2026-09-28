@@ -10,7 +10,7 @@
   "private": true,
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsgo --noEmit"
   },
   "bin": {
     "opencode": "./bin/opencode"
@@ -24,7 +24,7 @@
     "@types/semver": "catalog:",
     "@types/bun": "catalog:",
     "@types/npmcli__arborist": "6.3.3",
-    "@typescript/native": "npm:typescript@7.0.2"
+    "@typescript/native-preview": "catalog:"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
