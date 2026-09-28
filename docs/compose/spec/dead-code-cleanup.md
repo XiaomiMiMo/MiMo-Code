@@ -10,20 +10,31 @@ commits:
 
 ## Report
 
-**What was built** — 在 `chore/dead-code-cleanup` 分支删除 opencode 遗留面：11 个死包（app/desktop/console/web/storybook/enterprise/function/slack/containers/extensions/identity）、nix/flake、infra/sst、sdks/vscode、plans、根 `dev:*` 与玩具脚本、changelog/raw-changelog/sync-zed/release 及 4 个无引用 script。`version.ts` 摘掉 changelog 调用。workspaces 收成 `packages/*` + `packages/sdk/js`，lockfile 刻意更新。`docs/architecture`、`docs/harness` 误删后已恢复（仍在用）。`build-node`/`sdk`/plugin/shared/ui/script 保留。
+**What was built** — `chore/dead-code-cleanup` 把 monorepo 收成 TUI + plugin/sdk 面。
 
-**Verification** — `MIMOCODE_VERSION=local MIMOCODE_CHANNEL=local` 的 `bin/mimo` 与 `dist/node/*` 清理前后 sha256 **逐文件一致**；`packages/{opencode,plugin,shared,ui,sdk/js}` typecheck 通过；`test/installation` + models-catalog 烟测 39 pass。全量 `bun test` 本地超时（CI 本就分 4 shard），未在本机跑完。
+- **批次 A/B/C（包 / 基建 / 脚本）**：删 app、desktop、console/*、web、storybook、enterprise、function、slack、containers、extensions、identity；nix/flake（旧打包与 devShell，不是“Bun 就不需要”）、infra/sst、sdks/vscode、plans；根 `dev:*`/玩具脚本；changelog 工具链、sync-zed、损坏的 `release`、close-issues、sign-windows。`build-node`/`sdk`/plugin/shared/script **保留**（mimo-desktop + npm）。
+- **后续（非 bit-identical）**：整包删 `packages/ui`（`useI18n` 无消费者，`ui.*` 键 TUI 不展示）；`language.tsx` 只留 TUI 词典；skills → `.agents/skills`；去掉 `.mimocode` plugin smoke 与 `mimocode.jsonc`（约束写入 AGENTS）；去掉 `.vscode` example；`drizzle.config.ts` 路径对齐 runtime。
+- `docs/architecture`、`docs/harness` 误删后恢复。lockfile 为刻意变更。
+
+**Verification** — 以 `MODELS_DEV_API_JSON` 钉死 models 快照：
+
+| 批次 | 产物 |
+|---|---|
+| 仅删死包/基建/脚本（`dbf05bfa`） | `bin/mimo` + `dist/node/*` 相对最初基线 **逐文件 sha256 一致** |
+| `packages/ui` + 后续（`a826a8a9`…） | **功能一致**：wasm/package.json/README 仍一致；`bin/mimo` 仅少未使用的 `ui.*` 词典与 `UiI18nBridge`（`tui.*` 仍在）；`dist/node` 无 `ui.*` 两侧相同 |
+
+typecheck（opencode/plugin/shared/sdk）通过；`mimo --version` smoke 通过。独立审查：`bun ci`、4 包 typecheck、57 tests、TUI/Node 构建与 CI（`c132afe7`）全绿。全量 `bun test` 本地未跑完（CI 分 shard）。
 
 **Journey log** —
-- 仅凭「无代码引用」会误伤设计文档：docs/architecture、docs/harness 被删后用户纠正并恢复。
-- 嵌入资源（skill `.bundle` / workflow builtin）不可按 import 图判死。
-- lockfile 变更属刻意（AGENTS 禁止随意 install），与删除同提交语义。
+- 「无代码引用」不能当唯一判死依据：设计文档、诊断脚本、macro 嵌入资源都会误伤。
+- 钉死 `MODELS_DEV_API_JSON` 才能比哈希；`generate.ts` 现拉 models.dev 会造成无关漂移。
+- `MIMOCODE_DB` 相对路径要 join 到 `Global.Path.data`，与 runtime 同规则。
 
 ## [S1] Problem
 
 仓库仍是 opencode monorepo 形态，混有 web / desktop / console / cloud 面、nix 打包、过时构建脚本和根目录杂物。产品面已收窄为 TUI（`packages/opencode`）+ plugin/sdk 体系；外部消费者还包括 `~/src/mimo-desktop`（经 `script/build-node.ts` 的 `dist/node`）和 npm 发布的 `@mimo-ai/cli` / `@mimo-ai/sdk` / `@mimo-ai/plugin`。
 
-需要删掉确定用不到的目录与脚本，且 **TUI 二进制与 `dist/node` 构建产出严格一致**。
+需要删掉确定用不到的目录与脚本。验收分两档：**删死包/基建/脚本**要求 TUI 二进制与 `dist/node` 逐文件哈希一致；**TUI 侧源码变更**（如 `packages/ui`）按功能一致验收（`tui.*` 文案与 smoke 完好，仅去掉未消费的 `ui.*`）。
 
 ## [S2] Design
 
@@ -70,7 +81,7 @@ packages/ui           纯 web 组件库；TUI 对其 i18n 的引用已确认无�
 
 | 路径 | 说明 |
 |---|---|
-| `nix/` + `flake.nix` + `flake.lock` | 纯 Bun 生态用不到；`desktop.nix` 只服务已死的 desktop |
+| `nix/` + `flake.nix` + `flake.lock` | 弃用旧打包/devShell 通道：仍描述 `opencode`/`opencode-desktop` 产物与 `desktop.nix`，与现行 `packages/opencode/script/build.ts` + `bin/mimo` 发布路径、纯 Bun workspace 失配 |
 | `infra/` | SST 部署 function/console/enterprise |
 | `sst.config.ts` | 只 load `infra/*` |
 | `sdks/vscode/` | VS Code 扩展 |
@@ -81,15 +92,15 @@ packages/ui           纯 web 组件库；TUI 对其 i18n 的引用已确认无�
 
 | 路径 | 说明 |
 |---|---|
-| `script/changelog.ts` | 无实际用途；`version.ts` 里已 `.nothrow()` 且读不到 changelog 时回退 `"No notable changes"` |
-| `script/raw-changelog.ts` | 同上；路径映射仍指向 desktop/app/vscode/zed |
-| `script/version.ts` 中对 `changelog.ts` 的调用 | 与 C 一并去掉（保留 release notes 回退） |
+| `script/changelog.ts` | 停用自动生成 release notes；`version.ts` 改为读手工 `UPCOMING_CHANGELOG.md` 或占位 `"No notable changes"`（`.nothrow()`/fallback 只说明可降级，不等于脚本无用） |
+| `script/raw-changelog.ts` | 同上停用；路径映射还覆盖 Core/TUI/SDK 与已删 desktop/app/vscode/zed |
+| `script/version.ts` 中对 `changelog.ts` 的调用 | 与上一并去掉（保留 notes 回退） |
 | `script/sync-zed.ts` | 只服务 `packages/extensions` |
 | `script/release`（shell） | 调不存在的 `publish.yml`，损坏 |
 | `script/github/close-issues.ts` | 零引用；且硬编码旧仓库 `anomalyco/opencode` |
 | `script/sign-windows.ps1` | 原调用方是已删的 `packages/desktop`；publish/build/release 均不调 |
-| `packages/opencode/script/actor-notification-cases.ts` | 无引用 |
-| `packages/opencode/script/subagent-resume-cases.ts` | 无引用 |
+| `packages/opencode/script/actor-notification-cases.ts` | 人工诊断入口（warning/failure 情景）；由 `test/inbox/parse-actor-notification.test.ts` 与 actor resume 相关测试覆盖解析/告警路径，**弃用手动矩阵**（非“无引用即无效”） |
+| `packages/opencode/script/subagent-resume-cases.ts` | 人工矩阵 [TP-RUN-R12-32..34]；同 TP 已由 `test/actor/subagent-resume-*.test.ts` 自动化，**弃用手动 runner** |
 | `packages/opencode/script/time.ts` | 无引用 |
 | `packages/opencode/script/trace-imports.ts` | 硬编码旧机器路径，死工具 |
 
@@ -127,8 +138,8 @@ packages/ui           纯 web 组件库；TUI 对其 i18n 的引用已确认无�
 
 ### 验证
 
-1. **哈希**：用 `MODELS_DEV_API_JSON` 钉死 models.dev 快照再比（`generate.ts` 现拉会导致无关漂移）。死包/基建/脚本批次前后 `bin/mimo` + `dist/node/*` sha256 一致。
-2. **ui 整包删除**：非 bit-identical（去掉未使用的 `ui.*` 词典字符串）；`tui.*` 键仍在，`ui.sessionReview.*` 等已消失，`mimo --version` smoke 通过。按功能一致验收。
+1. **哈希**：用 `MODELS_DEV_API_JSON` 钉死 models.dev 快照再比（`generate.ts` 现拉会导致无关漂移）。**仅删死包/基建/脚本**批次前后 `bin/mimo` + `dist/node/*` sha256 一致。
+2. **ui 整包删除及后续**：**不以 bit-identical 为门禁**；功能一致 — 未使用的 `ui.*` 词典从 TUI 消失，`tui.*` 保留，smoke/typecheck 通过。
 3. typecheck：`opencode` / `plugin` / `shared` / `sdk/js` 通过。
 
 ## [S3] Out of Scope
@@ -147,9 +158,9 @@ packages/ui           纯 web 组件库；TUI 对其 i18n 的引用已确认无�
 
 ## Tasks
 
-- [x] T1: 建立构建哈希基线 — acceptance: `build:local` 与 `build-node` 两次产物哈希可比对，或已确定替代 oracle (covers: S2)
-- [x] T2: 删除批次 A 整包 — acceptance: workspaces/bun.lock 更新，`bun install` 成功 (covers: S2; depends: T1)
+- [x] T1: 建立构建哈希基线 — acceptance: 产物可比对，或钉死 `MODELS_DEV_API_JSON` 后可比 (covers: S2)
+- [x] T2: 删除批次 A 整包 — acceptance: workspaces/bun.lock 更新，`bun ci` 成功 (covers: S2; depends: T1)
 - [x] T3: 删除批次 B 基建/根目录 — acceptance: nix/infra/sdks/plans 及根 `dev:*`/玩具脚本移除；`docs/architecture`、`docs/harness` 保留 (covers: S2)
-- [x] T4: 删除批次 C 构建脚本并改 `version.ts` — acceptance: changelog/raw-changelog/sync-zed/release/死 script 移除，release 流程仍能生成 notes (covers: S2; depends: T3)
-- [ ] T5: 删除 packages/ui 并去掉 TUI 侧引用 — acceptance: 无 `@mimo-ai/ui` 引用，typecheck 通过，tui 词典仍在二进制 (covers: S2)
-- [ ] T6: 验证 + 提交 — acceptance: smoke 通过，变更可评审 (covers: S2; depends: T5)
+- [x] T4: 删除批次 C 构建脚本并改 `version.ts` — acceptance: changelog 工具链/sync-zed/release/死 script 移除，release 改为手工 notes 或占位 (covers: S2; depends: T3)
+- [x] T5: 删除 packages/ui 并去掉 TUI 侧引用 — acceptance: 无 `@mimo-ai/ui` 引用，typecheck 通过，tui 词典仍在二进制 (covers: S2)
+- [x] T6: 后续清理（.mimocode smoke、skills→.agents、vscode example、drizzle 路径）+ PR — acceptance: 功能一致验收记入 Report，PR 已开 (covers: S2; depends: T5)
