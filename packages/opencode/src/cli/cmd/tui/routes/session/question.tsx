@@ -210,11 +210,13 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
     if (evt.name === "left" || evt.name === "h") {
       evt.preventDefault()
+      evt.stopPropagation()
       selectTab((store.tab - 1 + tabs()) % tabs())
     }
 
     if (evt.name === "right" || evt.name === "l") {
       evt.preventDefault()
+      evt.stopPropagation()
       selectTab((store.tab + 1) % tabs())
     }
 
