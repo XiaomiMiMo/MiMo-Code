@@ -11,6 +11,7 @@ Before executing the command, please follow these steps:
 1. Directory Verification:
    - If the command will create new directories or files, first use `ls` to verify the parent directory exists and is the correct location
    - For example, before running "mkdir foo/bar", first use `ls foo` to check that "foo" exists and is the intended parent directory
+   - If you need temporary verification scripts or scratch files only to run checks, create them under the OS temp directory (for example with `mktemp` or a runtime temp API), not in the project workspace, and remove them when the check is done. Do not leave `verify_*` or other ad-hoc scripts in the workspace unless the user explicitly asks for a repo file.
 
 2. Command Execution:
    - Always quote file paths that contain spaces with double quotes (e.g., rm "path with spaces/file.txt")
