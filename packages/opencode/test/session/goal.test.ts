@@ -103,4 +103,16 @@ describe("Goal state machine", () => {
     expect(got?.condition).toBe("b")
     expect(got?.react).toBe(0)
   })
+
+  test("set rewrites question goals into answer conditions", async () => {
+    await using tmp = await tmpdir({})
+    const got = await runGoal(tmp.path, (goal) =>
+      Effect.gen(function* () {
+        yield* goal.set(ses, "What is cache?")
+        return yield* goal.get(ses)
+      }),
+    )
+    expect(got?.condition).toBe('The assistant has directly answered this question: "What is cache?"')
+    expect(got?.react).toBe(0)
+  })
 })
