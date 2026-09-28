@@ -19,6 +19,10 @@ function detectPlatformAndArch() {
     case "linux":
       platform = "linux"
       break
+    case "android":
+      // Termux/Android — use linux-arm64 binary via grun (glibc runner)
+      platform = "linux"
+      break
     case "win32":
       platform = "windows"
       break
