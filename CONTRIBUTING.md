@@ -110,7 +110,7 @@ Please follow the [style guide](./AGENTS.md#style-guide).
 
 ### Setting up a debugger
 
-Bun debugging is rough around the edges. The most reliable approach is to run MiMoCode manually with `bun run --inspect=<url> dev ...` and attach your debugger to that URL. Other methods can map breakpoints incorrectly, at least in VSCode.
+Bun debugging is rough around the edges. The most reliable approach is to run MiMoCode manually with `bun run --inspect=<url> dev ...` and attach any CDP client to that URL (Chrome DevTools, JetBrains, VSCode, …). Other methods can map breakpoints incorrectly.
 
 Tips:
 
@@ -119,8 +119,7 @@ Tips:
   - TUI: `bun run --inspect=ws://localhost:6499/ --cwd packages/opencode --conditions=browser ./src/index.ts`
 - `--inspect-wait` / `--inspect-brk` may suit your workflow better than `--inspect`.
 - Instead of repeating the flag, `export BUN_OPTIONS=--inspect=ws://localhost:6499/`.
-
-VSCode users can start from [.vscode/launch.example.json](.vscode/launch.example.json), which attaches to the inspector URL above. Avoid `"request": "launch"` configurations and the `JavaScript Debug Terminal`; both tend to misplace breakpoints.
+- Prefer **attach** to the inspector URL. Avoid `"request": "launch"` configurations and IDE “JavaScript Debug Terminal” modes; both tend to misplace breakpoints.
 
 ## Pull request expectations
 

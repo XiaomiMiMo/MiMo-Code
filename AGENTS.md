@@ -11,6 +11,7 @@
 - Install deps with `bun ci` (= `bun install --frozen-lockfile`) — install per `bun.lock`, don't mutate the lockfile. ⛔ Do NOT use `bun install`/`npm install`.
 - Comments, docs, shipped skill content and test assertions use synthetic values, never machine-specific ones — `/tmp/example` for paths, `test/model` for model refs, `feat/example` for branches.
 - Do not edit `packages/opencode/migration/*` — migrations are immutable once shipped.
+- Do not add `.vscode/` launch/debug configs; debug via `bun run --inspect=…` and a CDP attach client (see CONTRIBUTING).
 
 ## Core Focus
 
