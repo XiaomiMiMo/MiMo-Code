@@ -10,11 +10,11 @@ commits: f0293bf8..ad4ed4ac
 
 ## Report
 
-**What was built** — Dropped turbo in favor of `bun run --workspaces --if-present --parallel` plus a root `tsconfig.scripts.json` project for tooling scripts. Migrated typecheck/emit to TypeScript 7 (`@typescript/native` → `tsc` 7.0.2) while keeping the JS Compiler API on `typescript@6.0.2` for `tool-script.ts`. Folded `packages/script` into `script/meta.ts` with relative imports; deleted the workspace package. Added thin `script/tsconfig.json` wrappers so IDEs resolve the shared scripts project, set `types: ["bun"]` where `@types/bun` is needed, and stopped the root `tsconfig.json` from claiming every `.ts` file (solution-style `files: []` + references). Effect language-service diagnostics that only `tsc` (not `tsgo`) reports were triaged: two real `floatingEffect` bugs fixed; remaining plugin noise does not gate CI.
+**What was built** — Dropped turbo in favor of `bun run --workspaces --if-present --parallel` plus a root `tsconfig.scripts.json` project for tooling scripts. Migrated typecheck/emit to TypeScript 7 (`@typescript/native` → `tsc` 7.0.2) while keeping the JS Compiler API on `typescript@6.0.2` for `tool-script.ts`. Folded `packages/script` into `script/meta.ts` with relative imports; deleted the workspace package. Added thin `script/tsconfig.json` wrappers so IDEs resolve the shared scripts project, set `types: ["bun"]` where `@types/bun` is needed, and stopped the root `tsconfig.json` from claiming every `.ts` file (solution-style `files: []` + references). Two real `floatingEffect` bugs fixed (visible to TS6/editor). Note: TS7 native `tsc` does not load `@effect/language-service`, so those rules do not gate CI (same as `tsgo`).
 
 **Verification** — `bun typecheck` PASS (workspaces + scripts project); `tsc --noEmit -p tsconfig.scripts.json` PASS; per-package `bun run typecheck` PASS on opencode/plugin/shared/sdk/js with `tsc --version` = 7.0.2; `require("typescript").transpileModule` is a function (6.0.2); `packages/plugin` `bun run build` (tsc emit) PASS; `packages/shared` `bun test` 55 pass / 0 fail; `script/meta.ts` runtime smoke PASS. Independent review caught package-local `tsc` resolving to TS 6 via workspace bin shadowing — fixed by declaring `@typescript/native` on every package that runs `tsc`. JSON reformat drift (`keywords` arrays) restored to repo style.
 
-**Journey log** — 1) bun 1.3.14 nested `npm:` aliases break `@typescript/typescript6` (empty JS API); use real `typescript@6` + `@typescript/native@7` instead. 2) `tsgo` never loaded `@effect/language-service` (patch targets the JS compiler); silence was a blind spot. 3) Workspace packages pin `tsc` to their own `typescript` dep — root `@typescript/native` does not win `bun run` PATH. 4) `JSON.stringify`/`json.dumps` rewrite of package.json/tsconfig produces noisy diffs — edit in place. 5) Root tsconfig with default include fights nested script tsconfigs in VS Code; make it a `files: []` solution stub.
+**Journey log** — 1) bun 1.3.14 nested `npm:` aliases break `@typescript/typescript6` (empty JS API); use real `typescript@6` + `@typescript/native@7` instead. 2) Neither `tsgo` nor TS7 native `tsc` loads `@effect/language-service` (patch is JS-compiler-only); Effect rules are editor-only. 3) Workspace packages pin `tsc` to their own `typescript` dep — root `@typescript/native` does not win `bun run` PATH. 4) `JSON.stringify`/`json.dumps` rewrite of package.json/tsconfig produces noisy diffs — edit in place. 5) Root tsconfig with default include fights nested script tsconfigs in VS Code; make it a `files: []` solution stub.
 
 ## [S1] Problem
 
@@ -94,7 +94,10 @@ Catalog / deps:
 - Same reason `tsc` now surfaces `floatingEffect` / `missingReturnYieldStar` / etc.
 Mitigations: fix 2 real `floatingEffect` (`yield* elog.info` in `prompt.ts`), keep `missingReturnYieldStar`
 as warning, set `ignoreEffect{Warnings,Suggestions}InTscExitCode: true` so plugin chatter stays in the editor
-and does not gate CI (effect **errors** still gate; `ignoreEffectErrorsInTscExitCode` is off). Also `types: ["bun"]` is required (tsgo auto-included `@types/bun`; tsc does not).
+and does not gate CI. **`@typescript/native` `tsc` is a Go binary** — `@effect/language-service` patches only
+JS `typescript@6` `lib/_tsc.js`, so Effect rules never run in package `tsc --noEmit` (same blind spot as `tsgo`;
+verified with a deliberate `floatingEffect` probe). Do not claim Effect errors gate CI under TS7. Also `types: ["bun"]`
+is required (tsgo auto-included `@types/bun`; tsc does not).
 
 **Bun workspace `tsc` bin shadowing (review CRITICAL):** a package that depends on `typescript` gets
 `packages/<pkg>/node_modules/.bin/tsc → ../typescript/bin/tsc` (the 6.x CLI), which `bun run` puts first on
