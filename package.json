@@ -113,14 +113,14 @@
   ],
   "overrides": {
     "@types/bun": "catalog:",
-    "@types/node": "catalog:",
-    "typescript": "6.0.2"
+    "@types/node": "catalog:"
   },
   "patchedDependencies": {
     "@npmcli/agent@4.0.0": "patches/@npmcli%2Fagent@4.0.0.patch",
     "@standard-community/standard-openapi@0.2.9": "patches/@standard-community%2Fstandard-openapi@0.2.9.patch",
     "solid-js@1.9.10": "patches/solid-js@1.9.10.patch",
     "@opentui/core@0.1.101": "patches/@opentui%2Fcore@0.1.101.patch",
-    "@ai-sdk/openai-compatible@2.0.41": "patches/@ai-sdk%2Fopenai-compatible@2.0.41.patch"
+    "@ai-sdk/openai-compatible@2.0.41": "patches/@ai-sdk%2Fopenai-compatible@2.0.41.patch",
+    "@effect/language-service@0.84.2": "patches/@effect%2Flanguage-service@0.84.2.patch"
   }
 }

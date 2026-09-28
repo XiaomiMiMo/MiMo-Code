@@ -102,9 +102,10 @@ is required (tsgo auto-included `@types/bun`; tsc does not).
 **`typescript` name collision with `@typescript/native` (P2):** `npm:typescript@7.0.2` installs a package
 whose `name` is still `typescript`. Depending on Bun store layout, `require("typescript/lib/tsserverlibrary")`
 (from `@effect/language-service diagnostics`) can resolve to that 7.x copy and crash
-(`ERR_PACKAGE_PATH_NOT_EXPORTED`) — TS7 has no `lib/tsserverlibrary`. Pin via root
-`overrides.typescript: "6.0.2"` so every `require("typescript")` / `typescript/lib/*` hits the JS API package
-while `@typescript/native` still provides the TS7 `tsc` bin. Regression: from `packages/opencode`,
+(`ERR_PACKAGE_PATH_NOT_EXPORTED`) — TS7 has no `lib/tsserverlibrary`. Do **not** pin `typescript` globally
+(affects every package). Scope to the Effect tooling only: `patchedDependencies` on
+`@effect/language-service@0.84.2` adds `dependencies.typescript: "6.0.2"` so its own `require("typescript")`
+hits the JS API; `@typescript/native` still provides the TS7 `tsc` bin. Regression: from `packages/opencode`,
 `bun run effect-language-service diagnostics --file src/effect/logger.ts` must exit 0.
 
 **Bun workspace `tsc` bin shadowing (review CRITICAL):** a package that depends on `typescript` gets
