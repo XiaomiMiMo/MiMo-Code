@@ -161,8 +161,8 @@
     "/global/upgrade": {
       "post": {
         "operationId": "global.upgrade",
-        "summary": "Upgrade opencode",
-        "description": "Upgrade opencode to the specified version or latest if not specified.",
+        "summary": "Upgrade MiMoCode",
+        "description": "Upgrade MiMoCode to the specified version or latest if not specified.",
         "responses": {
           "200": {
             "description": "Upgrade result",
