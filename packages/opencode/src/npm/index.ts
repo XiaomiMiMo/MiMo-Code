@@ -39,7 +39,7 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Npm") {}
 
-const illegal = process.platform === "win32" ? new Set(["<", ">", ":", '"', "|", "?", "*"]) : undefined
+const illegal = process.platform === "win32" ? new Set(["<", ">", ":", '"', "|", "?", "*", " "]) : undefined
 
 export function sanitize(pkg: string) {
   if (!illegal) return pkg
