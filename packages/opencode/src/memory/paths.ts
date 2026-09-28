@@ -43,7 +43,15 @@ function detectType(key: string): MemoryType {
 }
 
 export function parsePath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
+  // Normalize Windows separators before matching. The pattern below is
+  // POSIX-only, but every path reaching here was built with path.join(), which
+  // emits "\" on win32. Without this, no Windows path ever matches and
+  // reconcileMemory logs "path outside memory layout, skipping" for every
+  // file, leaving the FTS index permanently empty on Windows.
+  const m = absPath
+    .replace(/\\/g, "/")
+    .match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
+
   if (!m) return null
   const [, scope, idMaybe, keyRaw] = m
   const scope_id = scope === "global" ? "" : (idMaybe ?? "")
@@ -54,10 +62,12 @@ export function parsePath(absPath: string): MemoryLocator | null {
 // Match: <anything>/.claude/projects/<slug>/memory/<key>.md
 // <slug> is a single path segment (CC's path-derived project identifier).
 // <key> may contain '/' for nested dirs.
-const CC_PATH_RE = /\/\.claude\/projects\/([^/]+)\/memory\/(.+)\.md$/
+const CC_PATH_RE = /\.claude\/projects\/([^/]+)\/memory\/(.+)\.md$/
 
 export function parseCcPath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(CC_PATH_RE)
+  // Same Windows-separator normalization as parsePath — CC memory lives under
+  // ~/.claude/projects, which is a backslash path on win32.
+  const m = absPath.replace(/\\/g, "/").match(CC_PATH_RE)
   if (!m) return null
   const [, slug, keyRaw] = m
   return {
