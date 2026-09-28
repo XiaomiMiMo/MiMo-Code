@@ -10,6 +10,15 @@ import { Worktree } from "../../src/worktree"
 import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { WorkflowRuntime } from "../../src/workflow/runtime"
+import { ActorRegistry } from "../../src/actor/registry"
+import { ActorExecution } from "../../src/actor/execution"
+import { Actor } from "../../src/actor/spawn"
+import { SessionPrompt } from "../../src/session/prompt"
+import { Database, eq } from "../../src/storage"
+import { InboxTable } from "../../src/inbox/inbox.sql"
+import { SessionTable } from "../../src/session/session.sql"
+import { classifySession } from "../../src/session/visibility"
+import { pathToFileURL } from "node:url"
 import { makeLayer, ref, providerCfg } from "./lib"
 
 // Worktree isolation lives in its own file: it boots a real Instance per isolated
@@ -28,6 +37,57 @@ const fileExists = (p: string) =>
     .catch(() => false)
 
 describe("WorkflowRuntime worktree isolation", () => {
+  it.live("spawn paths preserve hook mode independently of parent session identity", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ dir, llm }) {
+        const hook = path.join(dir, "observe-hook.mjs")
+        const observations = path.join(dir, "hooks.jsonl")
+        yield* Effect.promise(async () => {
+          await fsp.writeFile(hook, `import { appendFile } from 'node:fs/promises';
+            export default async () => Object.fromEntries(['actor.preStop', 'actor.postStop'].map(phase => [phase, {
+              matcher: { agentType: ['general'] },
+              run: async input => { await appendFile(${JSON.stringify(observations)}, JSON.stringify({phase, mode: input.mode, sessionID: input.sessionID, actorID: input.actorID}) + '\\n') }
+            }]));`)
+          const configPath = path.join(dir, "mimocode.json")
+          const cfg = JSON.parse(await fsp.readFile(configPath, "utf8"))
+          await fsp.writeFile(configPath, JSON.stringify({ ...cfg, plugin: [pathToFileURL(hook).href] }))
+        })
+        const sessions = yield* Session.Service
+        const actors = yield* Actor.Service
+        const parent = yield* sessions.create({ permission: [{ permission: "*", pattern: "*", action: "allow" }] })
+        const host = yield* sessions.create({ parentID: parent.id })
+        const notifyOnCompletion = yield* Deferred.make<boolean>()
+        yield* Deferred.succeed(notifyOnCompletion, false)
+        const spawned: { sessionID: string; actorID: string; mode: string }[] = []
+        for (const mode of ["subagent", "peer"] as const) {
+          yield* llm.text("done")
+          const child = yield* actors.spawn({
+            mode,
+            sessionID: mode === "subagent" ? host.id : parent.id,
+            parentSessionID: parent.id,
+            parentActorID: "main",
+            agentType: "general",
+            task: "report done",
+            context: "none",
+            tools: [],
+            background: true,
+            notifyOnCompletion,
+            model: ref,
+          })
+          expect((yield* Deferred.await(child.outcome)).status).toBe("success")
+          spawned.push({ sessionID: child.sessionID, actorID: child.actorID, mode })
+        }
+        const records = (yield* Effect.promise(() => fsp.readFile(observations, "utf8"))).trim().split("\n").map((s) => JSON.parse(s))
+        for (const child of spawned) {
+          expect(records.filter((r) => r.sessionID === child.sessionID && r.actorID === child.actorID)).toEqual([
+            { ...child, phase: "actor.preStop" },
+            { ...child, phase: "actor.postStop" },
+          ])
+        }
+      }),
+      { git: true, config: providerCfg },
+    ), 30000,
+  )
   it.live("an isolated agent's relative file write lands in its worktree, not the parent tree", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ dir, llm }) {
@@ -103,7 +163,32 @@ describe("WorkflowRuntime worktree isolation", () => {
         const outcome = yield* runtime.wait({ runID })
         expect(outcome.status).toBe("completed")
         // Untouched (pristine) -> no envelope, just the plain finalText; tree removed.
-        expect((outcome as { result: any }).result).toBe("done")
+        expect((outcome as { result: unknown }).result).toBe("done")
+        const node = (yield* runtime.structure({ runID })).nodes.find((n) => n.type === "agent")
+        expect(node?.type).toBe("agent")
+        if (!node || node.type !== "agent" || !node.sessionID || !node.actorID) throw new Error("missing trace address")
+        const child = yield* session.get(node.sessionID)
+        expect(child.id).not.toBe(parent.id)
+        expect(child.parentID).toBe(parent.id)
+        expect(child.directory).not.toBe(dir)
+        expect(child.permission).toEqual(parent.permission)
+        expect(child.contextFrom).toBeUndefined()
+        expect(yield* Effect.promise(() => fileExists(child.directory))).toBe(false)
+        const registry = yield* ActorRegistry.Service
+        const row = yield* registry.get(child.id, node.actorID)
+        expect(row?.mode).toBe("subagent")
+        expect(row?.lifecycle).toBe("ephemeral")
+        expect(row?.contextMode).toBe("none")
+        expect(yield* session.children(parent.id, { visible: true })).toEqual([])
+        expect(classifySession(child, yield* registry.listBySession(child.id))).toEqual({ renderable: true })
+        const messages = yield* session.messages({ sessionID: child.id, agentID: node.actorID })
+        expect(messages.flatMap((m) => m.parts).some((p) => p.type === "text" && p.text === "done")).toBe(true)
+        expect(yield* session.messages({ sessionID: parent.id, agentID: node.actorID })).toEqual([])
+        const notifications = Database.use((db) => db.select().from(InboxTable)
+          .where(eq(InboxTable.sender_session_id, child.id)).all())
+        expect(notifications).toEqual([])
+        yield* session.remove(parent.id)
+        expect(Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, child.id)).get())).toBeUndefined()
       }),
       { git: true, config: providerCfg },
     ),
@@ -161,7 +246,7 @@ describe("WorkflowRuntime worktree isolation", () => {
     120_000,
   )
 
-  it.live("cancel removes worktrees of in-flight isolated agents", () =>
+  for (const stop of ["workflow", "parent"] as const) it.live(`${stop} cancel stops the real isolated execution and removes its worktree`, () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ dir, llm }) {
         const runtime = yield* WorkflowRuntime.Service
@@ -181,12 +266,22 @@ describe("WorkflowRuntime worktree isolation", () => {
           `return await agent("x", { isolation: "worktree" })`,
         ].join("\n")
         const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
-        yield* Effect.sleep("600 millis") // let the worktree get created + agent spawn
-        yield* runtime.cancel({ runID })
-        // Release the hang so the agent unwinds cleanly (no leaked fiber).
+        yield* llm.wait(1).pipe(Effect.timeout(10000))
+        const node = (yield* runtime.structure({ runID })).nodes.find((n) => n.type === "agent")
+        if (!node || node.type !== "agent" || !node.sessionID || !node.actorID) throw new Error("missing live child")
+        const child = yield* session.get(node.sessionID)
+        const executions = yield* ActorExecution.Service
+        expect(yield* executions.current(child.id, node.actorID)).toBeDefined()
+        if (stop === "parent") yield* (yield* SessionPrompt.Service).cancel(parent.id)
+        else yield* runtime.cancel({ runID })
+        expect(yield* runtime.wait({ runID })).toEqual({ status: "cancelled" })
+        expect(yield* executions.current(child.id, node.actorID)).toBeUndefined()
+        expect((yield* (yield* ActorRegistry.Service).get(child.id, node.actorID))?.lastOutcome).toBe("cancelled")
+        expect(yield* Effect.promise(() => fileExists(child.directory))).toBe(false)
         yield* Deferred.succeed(release, undefined)
-        const s = yield* runtime.status({ runID })
-        expect(s.status).toBe("cancelled")
+        expect(yield* llm.calls).toBe(1)
+        expect((yield* session.messages({ sessionID: parent.id, agentID: "main" })).filter((m) => m.info.role === "assistant")).toEqual([])
+        expect(Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.sender_session_id, child.id)).all())).toEqual([])
       }),
       { git: true, config: providerCfg },
     ),
@@ -217,7 +312,15 @@ describe("WorkflowRuntime worktree isolation", () => {
           scriptDeadlineMs: 2000,
         })
         const outcome = yield* runtime.wait({ runID })
-        expect(["failed", "cancelled"]).toContain(outcome.status)
+        expect(outcome).toEqual({ status: "failed", error: "workflow script deadline exceeded" })
+        const registry = yield* ActorRegistry.Service
+        const executions = yield* ActorExecution.Service
+        for (const child of yield* session.children(parent.id)) {
+          for (const actor of (yield* registry.listBySession(child.id)).filter((a) => a.actorID !== "main")) {
+            expect(yield* executions.current(child.id, actor.actorID)).toBeUndefined()
+            expect(actor.lastOutcome).toBe("cancelled")
+          }
+        }
         yield* Effect.gen(function* () {
           while ((yield* Effect.promise(() => fsp.readdir(root).catch(() => [] as string[]))).length) {
             yield* Effect.sleep(50)
@@ -267,6 +370,11 @@ describe("WorkflowRuntime worktree isolation", () => {
         expect(outcome.status).toBe("completed")
         const result = (outcome as { result: unknown }).result
         expect(result === null || result === undefined).toBe(true)
+        expect(yield* llm.calls).toBe(1)
+        const node = (yield* runtime.structure({ runID })).nodes.find((n) => n.type === "agent")
+        if (!node || node.type !== "agent" || !node.sessionID || !node.actorID) throw new Error("missing timed-out child")
+        expect(yield* (yield* ActorExecution.Service).current(node.sessionID, node.actorID)).toBeUndefined()
+        expect((yield* (yield* ActorRegistry.Service).get(node.sessionID, node.actorID))?.lastOutcome).toBe("cancelled")
         // No worktree leaked: the timed-out isolated agent's tree was removed.
         const left = yield* Effect.promise(() => fsp.readdir(root).catch(() => [] as string[]))
         expect(left.length).toBe(0)

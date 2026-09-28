@@ -88,6 +88,7 @@ export type WorkflowNode =
       schema?: boolean
       isolation?: boolean
       actorID?: string
+      sessionID?: string
       durationMs?: number
       resultSummary?: string
       resultFull?: string

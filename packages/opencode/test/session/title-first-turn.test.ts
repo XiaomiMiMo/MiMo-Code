@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test"
-import { Database, sql } from "../../src/storage"
+import { Database, eq, sql } from "../../src/storage"
+import { TurnReceiptTable } from "../../src/turn-queue/turn-queue.sql"
 import { Effect } from "effect"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -352,7 +353,7 @@ test("source model threads through persisted prompt, command user model and hist
     await using tmp = await tmpdir({ git: true, config: {
       enabled_providers: ["fixture"], model: "fixture/other",
       provider: { fixture: { npm: "@ai-sdk/openai-compatible", env: [], options: { apiKey: "fixture", baseURL: `http://localhost:${server.port}/v1` }, models: Object.fromEntries(["source", "other", "task"].map(id => [id, { name: id, tool_call: true, limit: { context: 128000, output: 1000 }, modalities: { input: ["text"], output: ["text"] } }])) } },
-      command: { regular: { template: "TEMPLATE $ARGUMENTS", model: "fixture/task" }, delegated: { template: "TEMPLATE $ARGUMENTS", agent: "explore", model: "fixture/task", subtask: true } },
+      command: { regular: { template: "TEMPLATE $ARGUMENTS", model: "fixture/task" }, delegated: { template: "TEMPLATE $ARGUMENTS", description: "Delegate command request", agent: "explore", model: "fixture/task", subtask: true } },
     } })
     await Instance.provide({ directory: tmp.path, fn: async () => {
       const run = AppRuntime.runPromise
@@ -368,6 +369,19 @@ test("source model threads through persisted prompt, command user model and hist
         await until(() => titles.length === (command === "regular" ? 2 : 3))
         expect(titles.at(-1)?.model).toBe(command === "regular" ? "task" : "source")
         expect(JSON.stringify(titles.at(-1)?.messages)).not.toContain("TEMPLATE")
+        if (command === "delegated") {
+          const messages = await run(Session.Service.use(svc => svc.messages({ sessionID: session.id, agentID: "main" })))
+          const delegated = messages.filter(message => message.parts.some(part => part.type === "tool" && part.tool === "actor"))
+          expect(delegated).toHaveLength(1)
+          expect(delegated[0].parts.find(part => part.type === "tool" && part.tool === "actor")).toMatchObject({ state: { status: "completed" } })
+          const receipt = Database.use(db => db.select().from(TurnReceiptTable).where(eq(TurnReceiptTable.session_id, session.id)).all())
+            .find(receipt => receipt.agent_id === "main" && receipt.intent.kind === "prompt")
+          expect(receipt).toMatchObject({ state: "settled", consumed: true, delivery_message_id: delegated[0].info.id })
+          await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: session.id, model: source, parts: [{ type: "text", text: "Follow up without repeating delegation" }] })))
+          const later = await run(Session.Service.use(svc => svc.messages({ sessionID: session.id, agentID: "main" })))
+          expect(later.flatMap(message => message.parts).filter(part => part.type === "tool" && part.tool === "actor")).toHaveLength(1)
+          expect(later.at(-1)?.parts).toContainEqual(expect.objectContaining({ type: "text", text: "Done" }))
+        }
       }
       for (const entry of ["prompt", "command"] as const) {
         const session = await run(Session.Service.use(svc => svc.create()))

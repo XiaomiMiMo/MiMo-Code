@@ -63,11 +63,10 @@ export function recoverErrorMessage(error: unknown): { message: string; variant:
   return { message, variant: isBusyToken(message) ? "busy" : "error" }
 }
 
-/** TUI /recover entry: pick candidate, dispatch resume, map 202/reject/busy. */
+/** TUI /recover entry: pick candidate, dispatch resume, map 202/reject. */
 export async function runSessionRecover(deps: RecoverDeps): Promise<RecoverOutcome> {
-  if (deps.status?.type === "busy" || deps.status?.type === "retry") {
-    return { type: "busy" }
-  }
+  // Cached status cannot decide whether the selected target is still recoverable;
+  // the resume endpoint owns freshness and exclusive-admission checks.
   let list: RecoverCandidate[]
   try {
     list = await deps.listCandidates()

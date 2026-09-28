@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 780" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6" fill="none" stroke="#334155" stroke-width="1"/>
+    </marker>
+    <marker id="ag" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6" fill="none" stroke="#059669" stroke-width="1"/>
+    </marker>
+    <marker id="ar2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6" fill="none" stroke="#0F766E" stroke-width="1"/>
+    </marker>
+  </defs>
+  <rect width="800" height="780" fill="#F8FAFC"/>
+  <text x="400" y="28" font-size="14" font-weight="500" text-anchor="middle" fill="#0F172A">Turn Queue（rev3 · 已 approve）— 调度 + 执行 + steer</text>
+
+  <!-- Clients -->
+  <text x="32" y="58" font-size="12" font-weight="500" fill="#0F172A">客户端</text>
+  <rect x="32" y="68" width="150" height="40" rx="8" fill="#E0F2FE" stroke="#0284C7" stroke-width="0.5"/>
+  <text x="107" y="86" font-size="11" text-anchor="middle" fill="#0C4A6E">TUI</text>
+  <text x="107" y="100" font-size="10" text-anchor="middle" fill="#0369A1">promptAsync</text>
+  <rect x="198" y="68" width="150" height="40" rx="8" fill="#E0F2FE" stroke="#0284C7" stroke-width="0.5"/>
+  <text x="273" y="86" font-size="11" text-anchor="middle" fill="#0C4A6E">Desktop / App</text>
+  <text x="273" y="100" font-size="10" text-anchor="middle" fill="#0369A1">promptAsync</text>
+  <rect x="364" y="68" width="150" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="0.5"/>
+  <text x="439" y="86" font-size="11" text-anchor="middle" fill="#334155">SDK sync</text>
+  <text x="439" y="100" font-size="10" text-anchor="middle" fill="#64748B">POST /message</text>
+  <rect x="530" y="68" width="120" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="0.5"/>
+  <text x="590" y="86" font-size="11" text-anchor="middle" fill="#334155">abort</text>
+  <text x="590" y="100" font-size="10" text-anchor="middle" fill="#64748B">queuedPolicy</text>
+  <rect x="666" y="68" width="102" height="40" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="0.5"/>
+  <text x="717" y="86" font-size="11" text-anchor="middle" fill="#065F46">GET receipt</text>
+  <text x="717" y="100" font-size="10" text-anchor="middle" fill="#047857">必选 · 可轮询</text>
+
+  <!-- HTTP contract -->
+  <rect x="32" y="128" width="736" height="52" rx="8" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="48" y="148" font-size="11" font-weight="500" fill="#0F172A">HTTP 契约</text>
+  <text x="48" y="168" font-size="10" fill="#475569">prompt_async → 202+receiptId（兼容 204）　|　/message → 立刻 claim 则 200 stream；否则 202+receipt 且结束响应（禁止 202 再 stream）　|　busy 永不 409　|　disconnect 只 detach，不 abort</text>
+
+  <line x1="107" y1="108" x2="107" y2="128" stroke="#334155" stroke-width="1" marker-end="url(#ar)"/>
+  <line x1="273" y1="108" x2="273" y2="128" stroke="#334155" stroke-width="1" marker-end="url(#ar)"/>
+  <line x1="439" y1="108" x2="439" y2="128" stroke="#334155" stroke-width="1" marker-end="url(#ar)"/>
+  <line x1="590" y1="108" x2="590" y2="128" stroke="#334155" stroke-width="1" marker-end="url(#ar)"/>
+
+  <!-- persist+admit -->
+  <rect x="32" y="200" width="360" height="72" rx="8" fill="#FEF3C7" stroke="#D97706" stroke-width="0.5"/>
+  <text x="212" y="222" font-size="12" font-weight="500" text-anchor="middle" fill="#78350F">persist user message → admit（同一 Effect）</text>
+  <text x="212" y="240" font-size="10" text-anchor="middle" fill="#92400E">receipt 尽量同事务；否则 message 先、receipt 后</text>
+  <text x="212" y="258" font-size="10" text-anchor="middle" fill="#B45309">boot：consumedFrontier 后无 receipt 的 user → 合成 accepted</text>
+  <line x1="212" y1="180" x2="212" y2="200" stroke="#334155" stroke-width="1" marker-end="url(#ar)"/>
+
+  <rect x="412" y="200" width="356" height="72" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="0.5"/>
+  <text x="590" y="222" font-size="12" font-weight="500" text-anchor="middle" fill="#4C1D95">Intent（异构）+ Receipt（durable）</text>
+  <text x="590" y="240" font-size="10" text-anchor="middle" fill="#5B21B6">prompt | resume | wake(coalesce) | shell</text>
+  <text x="590" y="258" font-size="10" text-anchor="middle" fill="#6D28D9">idempotencyKey 按 session 唯一 · epoch 落盘</text>
+  <line x1="392" y1="236" x2="412" y2="236" stroke="#334155" stroke-width="1" marker-end="url(#ar)"/>
+
+  <!-- LaneController -->
+  <rect x="32" y="296" width="736" height="200" rx="10" fill="#FFFFFF" stroke="#059669" stroke-width="1.2"/>
+  <text x="48" y="320" font-size="13" font-weight="500" fill="#065F46">LaneController　lane = (sessionID, agentID)　—— 唯一调度权</text>
+
+  <rect x="48" y="336" width="220" height="140" rx="8" fill="#FEF3C7" stroke="#D97706" stroke-width="0.5"/>
+  <text x="158" y="358" font-size="12" font-weight="500" text-anchor="middle" fill="#78350F">Mailbox</text>
+  <text x="158" y="378" font-size="10" text-anchor="middle" fill="#92400E">按 eligible 顺序出队</text>
+  <text x="158" y="396" font-size="10" text-anchor="middle" fill="#92400E">prompt &gt; resume &gt; wake &gt; shell</text>
+  <text x="158" y="414" font-size="10" text-anchor="middle" fill="#92400E">wake 可 coalesce（max watermark）</text>
+  <text x="158" y="432" font-size="10" text-anchor="middle" fill="#B45309">inputRevision++（prompt）</text>
+  <text x="158" y="450" font-size="10" text-anchor="middle" fill="#B45309">旧 epoch 永不 claim</text>
+
+  <rect x="284" y="336" width="240" height="140" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="0.5"/>
+  <text x="404" y="358" font-size="12" font-weight="500" text-anchor="middle" fill="#4C1D95">Claim / Ack（MessageID frontier）</text>
+  <text x="404" y="378" font-size="10" text-anchor="middle" fill="#5B21B6">claimFrontier: MessageID</text>
+  <text x="404" y="396" font-size="10" text-anchor="middle" fill="#5B21B6">仅消费 id ≤ claimFrontier</text>
+  <text x="404" y="414" font-size="10" text-anchor="middle" fill="#5B21B6">assistant 落库后 ack + settle</text>
+  <text x="404" y="432" font-size="10" text-anchor="middle" fill="#6D28D9">中途新 user → extendClaim 或结束 turn</text>
+  <text x="404" y="450" font-size="10" text-anchor="middle" fill="#6D28D9">失败未消费 → never_ran（不自动重入队）</text>
+
+  <rect x="540" y="336" width="212" height="140" rx="8" fill="#FEE2E2" stroke="#DC2626" stroke-width="0.5"/>
+  <text x="646" y="358" font-size="12" font-weight="500" text-anchor="middle" fill="#7F1D1D">Session Epoch</text>
+  <text x="646" y="378" font-size="10" text-anchor="middle" fill="#991B1B">abort → epoch++（持久化）</text>
+  <text x="646" y="396" font-size="10" text-anchor="middle" fill="#991B1B">drop：cancelled</text>
+  <text x="646" y="414" font-size="10" text-anchor="middle" fill="#991B1B">keep-suspended：cancelled</text>
+  <text x="646" y="432" font-size="10" text-anchor="middle" fill="#B91C1C">+ suspended，不可再 claim</text>
+  <text x="646" y="450" font-size="10" text-anchor="middle" fill="#B91C1C">boot 先读 epoch，拒旧 work</text>
+
+  <line x1="268" y1="406" x2="284" y2="406" stroke="#334155" stroke-width="1" marker-end="url(#ar)"/>
+  <line x1="524" y1="406" x2="540" y2="406" stroke="#334155" stroke-width="1" stroke-dasharray="3 2"/>
+
+  <!-- Runner + Steer -->
+  <rect x="32" y="520" width="360" height="120" rx="10" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="48" y="544" font-size="12" font-weight="500" fill="#0F172A">Runner（独占 lease，不再 pending 准入）</text>
+  <text x="48" y="566" font-size="10" fill="#475569">仅 Controller 调用 ensureExclusive / startOwned / startShell</text>
+  <text x="48" y="584" font-size="10" fill="#475569">占用则拒绝；finalizer barrier / orphan sweep 保留</text>
+  <text x="48" y="602" font-size="10" fill="#475569">执行 Claim batch → runLoop</text>
+  <text x="48" y="620" font-size="10" fill="#64748B">T0：inventory 全部 loop/Runner 入口</text>
+  <line x1="212" y1="496" x2="212" y2="520" stroke="#059669" stroke-width="1.2" marker-end="url(#ag)"/>
+  <text x="220" y="512" font-size="10" fill="#047857">execute(claim)</text>
+
+  <rect x="412" y="520" width="356" height="120" rx="10" fill="#CCFBF1" stroke="#0F766E" stroke-width="1.2"/>
+  <text x="428" y="544" font-size="12" font-weight="500" fill="#134E4A">Steer：observeInput(lane, afterRev)</text>
+  <text x="428" y="566" font-size="10" fill="#115E59">level-triggered · check+subscribe 原子</text>
+  <text x="428" y="584" font-size="10" fill="#115E59">actor wait 订的是 main lane 的 revision</text>
+  <text x="428" y="602" font-size="10" fill="#115E59">interrupted ≠ cancel 子代理</text>
+  <text x="428" y="620" font-size="10" fill="#0F766E">替代 PromptQueued / 双 user 启发式</text>
+  <line x1="212" y1="496" x2="500" y2="520" stroke="#0F766E" stroke-width="1" stroke-dasharray="3 2"/>
+
+  <!-- bottom -->
+  <rect x="32" y="668" width="240" height="48" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="0.5"/>
+  <text x="152" y="688" font-size="11" text-anchor="middle" fill="#334155">runLoop</text>
+  <text x="152" y="706" font-size="10" text-anchor="middle" fill="#64748B">ack 钩子 · extendClaim</text>
+
+  <rect x="288" y="668" width="240" height="48" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="0.5"/>
+  <text x="408" y="688" font-size="11" text-anchor="middle" fill="#334155">actor wait</text>
+  <text x="408" y="706" font-size="10" text-anchor="middle" fill="#64748B">observeInput → interrupted</text>
+
+  <rect x="544" y="668" width="224" height="48" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="0.5"/>
+  <text x="656" y="688" font-size="11" text-anchor="middle" fill="#065F46">session.receipt.updated</text>
+  <text x="656" y="706" font-size="10" text-anchor="middle" fill="#047857">SSE 最佳努力 · GET 为准</text>
+
+  <line x1="212" y1="640" x2="152" y2="668" stroke="#334155" stroke-width="1" marker-end="url(#ar)"/>
+  <line x1="500" y1="640" x2="408" y2="668" stroke="#0F766E" stroke-width="1" marker-end="url(#ar2)"/>
+  <line x1="700" y1="496" x2="700" y2="668" stroke="#10B981" stroke-width="1" stroke-dasharray="3 2"/>
+
+  <text x="400" y="748" font-size="10" text-anchor="middle" fill="#64748B">Oracle：consumedFrontier 之后的 durable user 消息 ⇔ 必有 receipt ∈ {accepted, claimed, settled}</text>
+  <text x="400" y="766" font-size="10" text-anchor="middle" fill="#94A3B8">T0 inventory → T1 durable controller → … → T9 oracles（spec rev3 已 approve）</text>
+</svg>

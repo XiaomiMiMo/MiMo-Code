@@ -4,7 +4,6 @@ import { Instance } from "../../src/project/instance"
 import { GlobalRoutes } from "../../src/server/routes/global"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { SessionRunState } from "../../src/session/run-state"
-import { SessionID } from "../../src/session/schema"
 import { ActorExecution } from "../../src/actor/execution"
 import { Session } from "../../src/session"
 import { Server } from "../../src/server/server"
@@ -87,7 +86,8 @@ test("prompt_async acknowledgement retains the instance until its background run
         parts: [{ type: "text", text: "Continue" }],
       }),
     })
-    expect(response.status).toBe(204)
+    expect(response.status).toBe(202)
+    expect(await response.json()).toMatchObject({ receiptId: expect.any(String) })
     await entered.promise
     await Instance.disposeAll()
     expect(Instance.refreshStatus(tmp.path).state).toBe("pending")
@@ -100,9 +100,29 @@ test("prompt_async acknowledgement retains the instance until its background run
   }
 }, 15_000)
 
+test("rejected prompt_async admission releases its instance claim", async () => {
+  await using tmp = await tmpdir()
+  const session = await Instance.provide({
+    directory: tmp.path,
+    fn: () => AppRuntime.runPromise(Session.Service.use((svc) => svc.create({ title: "rejected admission" }))),
+  })
+  const response = await Server.Default().app.request(`/session/${session.id}/prompt_async?directory=${encodeURIComponent(tmp.path)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent: "missing-agent", parts: [{ type: "text", text: "Continue" }] }),
+  })
+  expect(response.status).toBe(500)
+  expect(await response.json()).not.toHaveProperty("receiptId")
+  await Instance.disposeAll()
+  expect(Instance.refreshStatus(tmp.path).state).toBe("applied")
+})
+
 test("a detached main runner keeps its instance alive after the request exits", async () => {
   await using tmp = await tmpdir()
-  const id = SessionID.make("ses_detached_refresh")
+  const { id } = await Instance.provide({
+    directory: tmp.path,
+    fn: () => AppRuntime.runPromise(Session.Service.use((svc) => svc.create({ title: "detached refresh" }))),
+  })
   let disposals = 0
   const unregister = registerDisposer(async (directory) => {
     if (directory === tmp.path) disposals++
@@ -131,7 +151,10 @@ test("a detached main runner keeps its instance alive after the request exits", 
 
 test("an actor reservation protects the directory before its runner starts", async () => {
   await using tmp = await tmpdir()
-  const id = SessionID.make("ses_actor_reserved")
+  const { id } = await Instance.provide({
+    directory: tmp.path,
+    fn: () => AppRuntime.runPromise(Session.Service.use((svc) => svc.create({ title: "actor reservation" }))),
+  })
   let disposals = 0
   const unregister = registerDisposer(async (directory) => {
     if (directory === tmp.path) disposals++
@@ -157,7 +180,10 @@ test("an actor reservation protects the directory before its runner starts", asy
 
 test("actor acquire waiter retains the old instance across an owner handoff", async () => {
   await using tmp = await tmpdir()
-  const id = SessionID.make("ses_actor_handoff")
+  const { id } = await Instance.provide({
+    directory: tmp.path,
+    fn: () => AppRuntime.runPromise(Session.Service.use((svc) => svc.create({ title: "actor handoff" }))),
+  })
   const ctx = await Instance.provide({ directory: tmp.path, fn: () => Instance.current })
   const owner = await Instance.restore(ctx, () => AppRuntime.runPromise(ActorExecution.Service.use((svc) => svc.reserve(id, "actor-1"))))
   const waiter = Instance.restore(ctx, () => AppRuntime.runPromise(ActorExecution.Service.use((svc) => svc.acquire(id, "actor-1"))))

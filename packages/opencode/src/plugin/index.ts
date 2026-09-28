@@ -330,12 +330,12 @@ export const layer = Layer.effect(
         if (Flag.MIMOCODE_PURE && cfg.plugin_origins?.length) {
           log.info("skipping external plugins in pure mode", { count: cfg.plugin_origins.length })
         }
-        if (plugins.length) yield* config.waitForDependencies()
 
         const loaded = yield* Effect.promise(() =>
           PluginLoader.loadExternal({
             items: plugins,
             kind: "server",
+            wait: () => bridge.promise(config.waitForDependencies()),
             report: {
               start(candidate) {
                 log.info("loading plugin", { path: candidate.plan.spec })

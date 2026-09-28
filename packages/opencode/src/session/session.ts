@@ -12,6 +12,10 @@ import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt 
 import { SyncEvent } from "../sync"
 import type { SQL } from "../storage"
 import { PartTable, SessionTable, MessageTable } from "./session.sql"
+import { TurnLegacyBootstrapTable, TurnReceiptTable, TurnSessionEpochTable } from "../turn-queue/turn-queue.sql"
+import { monotonicFactory } from "ulid"
+import { ExecutionOwnership } from "./execution-ownership"
+import * as QueueSync from "../turn-queue/sync"
 import { ActorRegistryTable } from "../actor/actor.sql"
 import { ProjectTable } from "../project/project.sql"
 import { Storage } from "@/storage"
@@ -500,6 +504,11 @@ export interface Interface {
   readonly children: (parentID: SessionID, options?: { visible?: boolean }) => Effect.Effect<Info[]>
   readonly remove: (sessionID: SessionID) => Effect.Effect<void>
   readonly updateMessage: <T extends MessageV2.Info>(msg: T) => Effect.Effect<T>
+  readonly persistQueuedUser: (input: {
+    message: MessageV2.User
+    parts: MessageV2.Part[]
+    dispatch: boolean
+  }) => Effect.Effect<MessageV2.User>
   readonly removeMessage: (input: { sessionID: SessionID; messageID: MessageID }) => Effect.Effect<MessageID>
   readonly removePart: (input: { sessionID: SessionID; messageID: MessageID; partID: PartID }) => Effect.Effect<PartID>
   readonly getPart: (input: {
@@ -620,17 +629,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       if (!options?.visible) return rows.map(fromRow)
       if (!rows.length) return []
       // visible: only children a user should see in session lists. Peer actors
-      // register under the child session with actor_id === session id. Exactly
-      // three code paths create a child session, so the two dropped here are
-      // the checkpoint-writer host (session/checkpoint.ts:851, mode "subagent")
-      // and the HTTP `/ask` fork-query host (tool/session.ts forkQuery, title
-      // `ask: …`, mode "subagent"); a pre-registry child with no actor row at
-      // all is dropped too.
-      //
-      // ⚠️This list used to also name "workflow subagent sessions". There is no
-      // such session: a workflow's agent() calls actor.spawn with
-      // sessionID = its OWN session (workflow/runtime.ts:814-816, :945-948), so
-      // it registers an actor, not a child session.
+      // register under the child session with actor_id === session id. Subagent
+      // hosts (checkpoint writer, fork-query and isolated workflow attempts) are
+      // omitted from this list, as are children without an actor row.
       //
       // ⚠️This filter is NOT the render prohibition. Being absent here means
       // "not offered in a list"; what may never be RENDERED is narrower and
@@ -709,6 +710,31 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         return part
       }).pipe(Effect.withSpan("Session.updatePart"))
 
+    const persistQueuedUser: Interface["persistQueuedUser"] = Effect.fn("Session.persistQueuedUser")(function* (input) {
+      const identity = yield* ExecutionOwnership.captureIdentity
+      return yield* Effect.sync(() => Database.transaction((tx) => {
+        const { message, parts, dispatch } = input
+        ExecutionOwnership.assertOwnership(tx, message.sessionID, identity)
+        if ((message.agentID ?? "main") !== "main") throw new Error("Queued user input must belong to the main lane")
+        if (parts.some((part) => part.sessionID !== message.sessionID || part.messageID !== message.id))
+          throw new Error("Queued user parts must belong to the saved message")
+        if (!tx.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, message.sessionID)).get())
+          throw new NotFoundError({ message: `Session not found: ${message.sessionID}` })
+        const epoch = tx.select({ epoch: TurnSessionEpochTable.epoch }).from(TurnSessionEpochTable)
+          .where(eq(TurnSessionEpochTable.session_id, message.sessionID)).get()?.epoch ?? 0
+        const saved: MessageV2.User = { ...message, queueAdmission: { epoch, ready: true, dispatch } }
+        SyncEvent.run(MessageV2.Event.Updated, { sessionID: saved.sessionID, info: saved })
+        for (const part of parts) {
+          SyncEvent.run(MessageV2.Event.PartUpdated, {
+            sessionID: part.sessionID,
+            part: structuredClone(part),
+            time: Date.now(),
+          })
+        }
+        return saved
+      }, { behavior: "immediate" }))
+    })
+
     const getPart: Interface["getPart"] = Effect.fn("Session.getPart")(function* (input) {
       const row = Database.use((db) =>
         db
@@ -769,31 +795,83 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         title,
         prompt: original.prompt,
       })
-      const msgs = yield* messages({ sessionID: input.sessionID, agentID: "*" })
-      const idMap = new Map<string, MessageID>()
-
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
-        const newID = MessageID.ascending()
-        idMap.set(msg.info.id, newID)
-
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
-        const cloned = yield* updateMessage({
-          ...msg.info,
-          sessionID: session.id,
-          id: newID,
-          ...(parentID && { parentID }),
-        })
-
-        for (const part of msg.parts) {
-          yield* updatePart({
-            ...part,
-            id: PartID.ascending(),
-            messageID: cloned.id,
-            sessionID: session.id,
-          })
+      yield* Effect.sync(() => Database.transaction((tx) => {
+        const msgs = Array.from(MessageV2.stream(input.sessionID, { agentID: "*" })).reverse()
+        const copied = msgs.filter((msg) => !input.messageID || msg.info.id < input.messageID)
+        const idMap = new Map(copied.map((msg) => [msg.info.id, MessageID.ascending()]))
+        const receipts = tx.select().from(TurnReceiptTable)
+          .where(eq(TurnReceiptTable.session_id, input.sessionID)).orderBy(TurnReceiptTable.id).all()
+        const bootstrap = tx.select().from(TurnLegacyBootstrapTable)
+          .where(eq(TurnLegacyBootstrapTable.session_id, input.sessionID)).get()
+        const frozen = new Set(bootstrap?.message_ids ?? [])
+        const legacyUsers = new Set(msgs.filter((msg) =>
+          frozen.has(msg.info.id) && msg.info.role === "user" && (msg.info.agentID ?? "main") === "main" &&
+          !msg.info.provenance && msg.parts.some((part) => part.type === "file" || part.type === "subtask" ||
+            (part.type === "text" && !part.synthetic && !part.ignored && part.text.trim() !== "")),
+        ).map((msg) => msg.info.id))
+        const responses = msgs.flatMap((msg) => {
+          const info = msg.info
+          if (!frozen.has(info.id) || info.role !== "assistant" || (info.agentID ?? "main") !== "main" ||
+              !legacyUsers.has(info.parentID) || info.time.completed === undefined ||
+              (info.finish !== "stop" && info.finish !== "other" && !info.error && info.structured === undefined)) return []
+          return [info]
+        }).sort((a, b) => a.parentID.localeCompare(b.parentID) || a.id.localeCompare(b.id))
+        const now = Date.now()
+        const receiptID = monotonicFactory()
+        const covered = new Set<MessageID>()
+        for (const row of receipts) {
+          if (row.intent.kind !== "prompt") continue
+          const sourceID = row.intent.messageID as MessageID
+          const messageID = idMap.get(sourceID)
+          if (!messageID) continue
+          covered.add(sourceID)
+          tx.insert(TurnReceiptTable).values({
+            id: receiptID(), session_id: session.id, agent_id: row.agent_id, epoch: 0,
+            intent: { ...row.intent, messageID }, state: row.consumed ? "settled" : "cancelled",
+            consumed: row.consumed, outcome: row.consumed ? row.outcome : "never_ran",
+            claim_frontier: row.consumed && row.claim_frontier ? idMap.get(row.claim_frontier) ?? null : null,
+            message_id: row.message_id ? idMap.get(row.message_id) ?? null : null,
+            delivery_message_id: row.delivery_message_id ? idMap.get(row.delivery_message_id) ?? null : null,
+            error: row.consumed ? row.error : null, time_created: now, time_updated: now,
+          }).run()
         }
-      }
+        for (const msg of copied) {
+          const info = { ...msg.info, sessionID: session.id, id: idMap.get(msg.info.id)! }
+          if (info.role === "user") {
+            delete info.queueAdmission
+            if (!covered.has(msg.info.id) && !info.provenance) {
+              // Only frozen pre-queue membership permits prefix-consumption inference.
+              const response = legacyUsers.has(msg.info.id)
+                ? responses.find((response) => response.parentID >= msg.info.id)
+                : undefined
+              tx.insert(TurnReceiptTable).values({
+                id: receiptID(), session_id: session.id, agent_id: info.agentID ?? "main", epoch: 0,
+                intent: { kind: "prompt", messageID: info.id }, state: response ? "settled" : "cancelled",
+                consumed: !!response, outcome: response ? response.error ? "assistant_error" : "success" : "never_ran",
+                claim_frontier: response ? info.id : null,
+                message_id: response ? idMap.get(response.id) ?? null : null,
+                error: response?.error ? JSON.stringify(response.error) : null, time_created: now, time_updated: now,
+              }).run()
+            }
+          } else {
+            info.parentID = idMap.get(info.parentID) ?? info.parentID
+          }
+          SyncEvent.run(MessageV2.Event.Updated, { sessionID: session.id, info })
+          for (const part of msg.parts) {
+            SyncEvent.run(MessageV2.Event.PartUpdated, {
+              sessionID: session.id,
+              part: { ...structuredClone(part), id: PartID.ascending(), messageID: info.id, sessionID: session.id },
+              time: now,
+            })
+          }
+        }
+        tx.insert(TurnLegacyBootstrapTable).values({
+          session_id: session.id, message_ids: [], completed: true, time_updated: now,
+        }).run()
+        QueueSync.snapshot(session.id)
+      }, { behavior: "immediate" })).pipe(Effect.catchCause((cause) =>
+        remove(session.id).pipe(Effect.andThen(Effect.failCause(cause))),
+      ))
       return session
     })
 
@@ -988,6 +1066,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       children,
       remove,
       updateMessage,
+      persistQueuedUser,
       removeMessage,
       removePart,
       updatePart,

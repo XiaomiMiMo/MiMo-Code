@@ -1,11 +1,14 @@
-import { Context, Deferred, Effect, Fiber, Layer, Scheduler, Scope } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Scheduler, Scope } from "effect"
 import type { SessionID } from "@/session/schema"
 import { Instance } from "@/project/instance"
 import { InstanceState } from "@/effect"
+import { Database } from "@/storage"
+import { ExecutionOwnership } from "@/session/execution-ownership"
 
 export interface Execution {
   readonly sessionID: SessionID
   readonly actorID: string
+  readonly identity: ExecutionOwnership.Identity
   readonly done: Deferred.Deferred<void>
   fiber?: Fiber.Fiber<unknown, unknown>
   cancelled: boolean
@@ -22,11 +25,14 @@ export interface Interface {
   readonly reserve: (sessionID: SessionID, actorID: string, directory?: string) => Effect.Effect<Execution>
   readonly acquire: (sessionID: SessionID, actorID: string) => Effect.Effect<Execution>
   readonly current: (sessionID: SessionID, actorID: string) => Effect.Effect<Execution | undefined>
+  readonly currentUnsafe: (sessionID: SessionID, actorID: string) => Execution | undefined
+  readonly hasActiveUnsafe: (sessionID: SessionID) => boolean
   readonly attach: (execution: Execution) => Effect.Effect<void>
   readonly fork: (
     execution: Execution,
     work: Effect.Effect<void>,
     scope: Scope.Scope,
+    onRejected?: (cause: Cause.Cause<never>) => Effect.Effect<void>,
   ) => Effect.Effect<Fiber.Fiber<void>>
   readonly release: (execution: Execution) => Effect.Effect<void>
   readonly requestCancel: (execution: Execution) => Effect.Effect<void>
@@ -42,13 +48,15 @@ export const layer = Layer.effect(
     const key = (sessionID: SessionID, actorID: string) => `${sessionID}:${actorID}`
     const current = (sessionID: SessionID, actorID: string) => Effect.sync(() => active.get(key(sessionID, actorID)))
     const reserve = Effect.fn("ActorExecution.reserve")(function* (sessionID: SessionID, actorID: string, directory?: string) {
+      const identity = yield* ExecutionOwnership.captureIdentity
       const done = yield* Deferred.make<void>()
       const dir = directory ?? (yield* InstanceState.directory)
       return yield* Effect.sync(() => {
+        Database.use((db) => ExecutionOwnership.assertOwnership(db, sessionID, identity))
         const id = key(sessionID, actorID)
         if (active.has(id)) throw new Error(`Actor execution already active: ${id}`)
         const releaseInstance = Instance.claim(dir)
-        const execution: Execution = { sessionID, actorID, done, cancelled: false, releaseInstance }
+        const execution: Execution = { sessionID, actorID, identity, done, cancelled: false, releaseInstance }
         active.set(id, execution)
         return execution
       })
@@ -64,20 +72,28 @@ export const layer = Layer.effect(
         })
         yield* Deferred.succeed(execution.done, undefined)
       }).pipe(Effect.asVoid, Effect.uninterruptible)
+    const checkOwnership = (execution: Execution, onRejected?: (cause: Cause.Cause<never>) => Effect.Effect<void>) =>
+      Effect.sync(() => Database.use((db) =>
+        ExecutionOwnership.assertOwnership(db, execution.sessionID, execution.identity),
+      )).pipe(Effect.onExit((exit) => Exit.isFailure(exit)
+        ? Effect.suspend(() => onRejected ? onRejected(exit.cause) : Effect.void).pipe(Effect.ensuring(release(execution)))
+        : Effect.void))
     return Service.of({
       reserve,
       acquire: (sessionID, actorID) =>
         Effect.gen(function* () {
+          const identity = yield* ExecutionOwnership.captureIdentity
           const directory = yield* InstanceState.directory
           const releaseInstance = yield* Effect.sync(() => Instance.claim(directory))
           let transferred = false
           return yield* Effect.gen(function* () {
             for (;;) {
               const claim = yield* Effect.sync(() => {
+                Database.use((db) => ExecutionOwnership.assertOwnership(db, sessionID, identity))
                 const id = key(sessionID, actorID)
                 const existing = active.get(id)
                 if (existing) return { owned: false, execution: existing }
-                const execution: Execution = { sessionID, actorID, done: Deferred.makeUnsafe<void>(), cancelled: false, releaseInstance }
+                const execution: Execution = { sessionID, actorID, identity, done: Deferred.makeUnsafe<void>(), cancelled: false, releaseInstance }
                 active.set(id, execution)
                 transferred = true
                 return { owned: true, execution }
@@ -88,17 +104,20 @@ export const layer = Layer.effect(
           }).pipe(Effect.ensuring(Effect.sync(() => { if (!transferred) releaseInstance() })))
         }),
       current,
+      currentUnsafe: (sessionID, actorID) => active.get(key(sessionID, actorID)),
+      hasActiveUnsafe: (sessionID) => [...active.values()].some((execution) => execution.sessionID === sessionID),
       attach: (execution) =>
-        Effect.withFiber((fiber) =>
-          Effect.sync(() => {
+        Effect.withFiber((fiber) => checkOwnership(execution).pipe(
+          Effect.andThen(Effect.sync(() => {
             execution.fiber = fiber
-          }),
-        ),
-      fork: (execution, work, scope) =>
+          })),
+        )),
+      fork: (execution, work, scope, onRejected) =>
         Effect.gen(function* () {
           const preventYield = yield* Scheduler.PreventSchedulerYield
           return yield* Effect.gen(function* () {
-            const fiber = yield* work.pipe(
+            const fiber = yield* checkOwnership(execution, onRejected).pipe(
+              Effect.andThen(work),
               Effect.provideService(Scheduler.PreventSchedulerYield, preventYield),
               Effect.forkIn(scope, { uninterruptible: true }),
             )

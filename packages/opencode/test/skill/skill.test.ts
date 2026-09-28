@@ -1,5 +1,7 @@
-import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { describe, expect, spyOn } from "bun:test"
+import { Cause, Effect, Exit, Fiber, Layer, Scope } from "effect"
+import { Glob } from "@mimo-ai/shared/util/glob"
+import { Instance } from "../../src/project/instance"
 import { Skill } from "../../src/skill"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideInstance, provideTmpdirInstance, tmpdir } from "../fixture/fixture"
@@ -306,6 +308,54 @@ description: A skill in the .claude/skills directory.
           ])
         }),
       )
+    }),
+    30_000,
+  )
+
+  it.live("interrupted global discovery does not poison later project instances", () =>
+    Effect.gen(function* () {
+      const temp = () => Effect.acquireRelease(
+        Effect.promise(() => tmpdir({ git: true })),
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      )
+      const home = yield* temp()
+      const firstProject = yield* temp()
+      const secondProject = yield* temp()
+      yield* withHome(home.path, Effect.gen(function* () {
+        yield* Effect.promise(() => createSkill(home.path, ".claude", "after-interrupt", "Recovered discovery"))
+        const entered = Promise.withResolvers<void>()
+        const release = Promise.withResolvers<void>()
+        const original = Glob.scan
+        let scans = 0
+        yield* Effect.acquireRelease(
+          Effect.sync(() => spyOn(Glob, "scan").mockImplementation(async (...args) => {
+            if (args[0] === "skills/**/SKILL.md" && args[1]?.cwd === path.join(home.path, ".claude")) {
+              scans++
+              if (scans === 1) {
+                entered.resolve()
+                await release.promise
+              }
+            }
+            return original(...args)
+          })),
+          (spy) => Effect.sync(() => { release.resolve(); spy.mockRestore() }),
+        )
+        const skill = yield* Skill.Service
+        const scope = yield* Scope.Scope
+        const first = yield* skill.all().pipe(Effect.forkIn(scope), provideInstance(firstProject.path))
+        yield* Effect.promise(() => entered.promise).pipe(Effect.timeout("5 seconds"))
+        yield* Fiber.interrupt(first)
+        const interrupted = yield* Fiber.await(first)
+        expect(Exit.isFailure(interrupted) && Cause.hasInterruptsOnly(interrupted.cause)).toBe(true)
+        release.resolve()
+        yield* Effect.promise(() => Instance.provide({ directory: firstProject.path, fn: () => Instance.dispose() }))
+        const recovered = yield* skill.all().pipe(provideInstance(secondProject.path))
+        expect(recovered.map((item) => item.name)).toEqual(["after-interrupt"])
+        expect(scans).toBe(2)
+        expect((yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name))
+          .toEqual(["after-interrupt"])
+        expect(scans).toBe(2)
+      }))
     }),
     30_000,
   )

@@ -92,6 +92,19 @@ export type EventInboxArrived = {
   }
 }
 
+export type EventSessionReceiptUpdated = {
+  type: "session.receipt.updated"
+  properties: {
+    sessionID: string
+    receiptId: string
+    agentID: string
+    state: "accepted" | "claimed" | "settled" | "cancelled" | "rejected"
+    outcome?: "success" | "assistant_error" | "interrupted" | "never_ran"
+    messageId?: string
+    epoch: number
+  }
+}
+
 export type EventTaskCreated = {
   type: "task.created"
   properties: {
@@ -1023,6 +1036,11 @@ export type UserMessage = {
     [key: string]: boolean
   }
   provenance?: Provenance
+  queueAdmission?: {
+    epoch: number
+    ready: true
+    dispatch: boolean
+  }
 }
 
 export type AssistantMessage = {
@@ -1624,6 +1642,7 @@ export type GlobalEvent = {
     | EventActorStalled
     | EventWriterCachePerf
     | EventInboxArrived
+    | EventSessionReceiptUpdated
     | EventTaskCreated
     | EventTaskUpdated
     | EventTuiPromptAppend
@@ -3240,6 +3259,7 @@ export type Event =
   | EventActorStalled
   | EventWriterCachePerf
   | EventInboxArrived
+  | EventSessionReceiptUpdated
   | EventTaskCreated
   | EventTaskUpdated
   | EventTuiPromptAppend
@@ -5017,7 +5037,9 @@ export type SessionForkResponses = {
 export type SessionForkResponse = SessionForkResponses[keyof SessionForkResponses]
 
 export type SessionAbortData = {
-  body?: never
+  body?: {
+    queuedPolicy?: "drop" | "keep-suspended"
+  }
   path: {
     sessionID: string
   }
@@ -5045,7 +5067,10 @@ export type SessionAbortResponses = {
   /**
    * Aborted session
    */
-  200: boolean
+  200: {
+    ok: boolean
+    epoch: number
+  }
 }
 
 export type SessionAbortResponse = SessionAbortResponses[keyof SessionAbortResponses]
@@ -5329,10 +5354,6 @@ export type SessionPromptErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict — session resource is busy
-   */
-  409: ConflictError
 }
 
 export type SessionPromptError = SessionPromptErrors[keyof SessionPromptErrors]
@@ -5345,6 +5366,18 @@ export type SessionPromptResponses = {
     info: AssistantMessage
     parts: Array<Part>
   }
+  /**
+   * Queued (busy) — durable receipt; poll GET /receipt/:id
+   */
+  202: {
+    info: UserMessage
+    parts: Array<Part>
+    receiptId: string
+  }
+  /**
+   * No user turn admitted
+   */
+  204: void
 }
 
 export type SessionPromptResponse = SessionPromptResponses[keyof SessionPromptResponses]
@@ -5697,12 +5730,59 @@ export type SessionPromptAsyncError = SessionPromptAsyncErrors[keyof SessionProm
 
 export type SessionPromptAsyncResponses = {
   /**
-   * Prompt accepted
+   * Accepted — durable receipt
+   */
+  202: {
+    receiptId: string
+  }
+  /**
+   * No user turn admitted
    */
   204: void
 }
 
 export type SessionPromptAsyncResponse = SessionPromptAsyncResponses[keyof SessionPromptAsyncResponses]
+
+export type SessionReceiptData = {
+  body?: never
+  path: {
+    sessionID: string
+    receiptId: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/receipt/{receiptId}"
+}
+
+export type SessionReceiptErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionReceiptError = SessionReceiptErrors[keyof SessionReceiptErrors]
+
+export type SessionReceiptResponses = {
+  /**
+   * Receipt
+   */
+  200: {
+    id: string
+    state: "accepted" | "claimed" | "settled" | "cancelled" | "rejected"
+    outcome?: "success" | "assistant_error" | "interrupted" | "never_ran"
+    messageId?: string
+    error?: string
+  }
+}
+
+export type SessionReceiptResponse = SessionReceiptResponses[keyof SessionReceiptResponses]
 
 export type SessionCommandData = {
   body?: {

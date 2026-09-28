@@ -1,4 +1,5 @@
-import { NotFoundError, eq, and, sql } from "../storage"
+import { NotFoundError, eq, and, sql, type Database } from "../storage"
+import type { MessageID, PartID, SessionID } from "./schema"
 import { SyncEvent } from "@/sync"
 import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
@@ -67,12 +68,26 @@ export function toPartialRow(info: DeepPartial<Session.Info>) {
   return Object.fromEntries(Object.entries(obj).filter(([_, val]) => val !== undefined))
 }
 
+function assertMessageOwner(db: Database.TxOrDb, sessionID: SessionID, messageID: MessageID) {
+  const current = db.select({ sessionID: MessageTable.session_id }).from(MessageTable).where(eq(MessageTable.id, messageID)).get()
+  if (current && current.sessionID !== sessionID) throw new SyncEvent.ReplayValidationError("Message ID belongs to another session")
+}
+
+function assertPartOwner(db: Database.TxOrDb, sessionID: SessionID, messageID: MessageID, partID: PartID) {
+  assertMessageOwner(db, sessionID, messageID)
+  const current = db.select({ sessionID: PartTable.session_id, messageID: PartTable.message_id }).from(PartTable).where(eq(PartTable.id, partID)).get()
+  if (current && (current.sessionID !== sessionID || current.messageID !== messageID))
+    throw new SyncEvent.ReplayValidationError("Part ID belongs to another message or session")
+}
+
 export default [
   SyncEvent.project(Session.Event.Created, (db, data) => {
+    if (data.info.id !== data.sessionID) throw new SyncEvent.ReplayValidationError("Created session ID does not match aggregate")
     db.insert(SessionTable).values(Session.toRow(data.info)).run()
   }),
 
   SyncEvent.project(Session.LegacyUpdated, (db, data) => {
+    if (data.info.id !== undefined && data.info.id !== data.sessionID) throw new SyncEvent.ReplayValidationError("Updated session ID does not match aggregate")
     const current = db.select().from(SessionTable).where(eq(SessionTable.id, data.sessionID)).get()
     if (!current) throw new NotFoundError({ message: `Session not found: ${data.sessionID}` })
     const { title, ...rest } = data.info
@@ -87,6 +102,7 @@ export default [
   }),
 
   SyncEvent.project(Session.Event.Updated, (db, data) => {
+    if (data.info.id !== undefined && data.info.id !== data.sessionID) throw new SyncEvent.ReplayValidationError("Updated session ID does not match aggregate")
     const info = data.info
     if ("title" in info || "titleSource" in info || "titleRevision" in info) {
       const current = db.select().from(SessionTable).where(eq(SessionTable.id, data.sessionID)).get()
@@ -107,10 +123,14 @@ export default [
   }),
 
   SyncEvent.project(Session.Event.Deleted, (db, data) => {
+    if (data.info.id !== data.sessionID) throw new SyncEvent.ReplayValidationError("Deleted session ID does not match aggregate")
     db.delete(SessionTable).where(eq(SessionTable.id, data.sessionID)).run()
   }),
 
   SyncEvent.project(MessageV2.Event.Updated, (db, data) => {
+    MessageV2.Event.Updated.schema.parse(data)
+    if (data.info.sessionID !== data.sessionID) throw new SyncEvent.ReplayValidationError("Message belongs to another session")
+    assertMessageOwner(db, data.sessionID, data.info.id)
     const time_created = data.info.time.created
     const { id, sessionID, agentID, ...rest } = data.info
 
@@ -132,18 +152,25 @@ export default [
   }),
 
   SyncEvent.project(MessageV2.Event.Removed, (db, data) => {
+    MessageV2.Event.Removed.schema.parse(data)
+    assertMessageOwner(db, data.sessionID, data.messageID)
     db.delete(MessageTable)
       .where(and(eq(MessageTable.id, data.messageID), eq(MessageTable.session_id, data.sessionID)))
       .run()
   }),
 
   SyncEvent.project(MessageV2.Event.PartRemoved, (db, data) => {
+    MessageV2.Event.PartRemoved.schema.parse(data)
+    assertPartOwner(db, data.sessionID, data.messageID, data.partID)
     db.delete(PartTable)
       .where(and(eq(PartTable.id, data.partID), eq(PartTable.session_id, data.sessionID)))
       .run()
   }),
 
   SyncEvent.project(MessageV2.Event.PartUpdated, (db, data) => {
+    MessageV2.Event.PartUpdated.schema.parse(data)
+    if (data.part.sessionID !== data.sessionID) throw new SyncEvent.ReplayValidationError("Part belongs to another session")
+    assertPartOwner(db, data.sessionID, data.part.messageID, data.part.id)
     const { id, messageID, sessionID, ...rest } = data.part
 
     try {

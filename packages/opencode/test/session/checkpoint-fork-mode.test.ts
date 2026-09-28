@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { Deferred, Effect, Layer } from "effect"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { Bus } from "../../src/bus"
 import { Config } from "../../src/config"
 import { Agent } from "../../src/agent/agent"
@@ -12,7 +12,7 @@ import { prefixCaptureRef, type PrefixCaptureFn } from "../../src/session/prefix
 import { TaskRegistry } from "../../src/task/registry"
 import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { Database } from "../../src/storage"
-import { SessionTable } from "../../src/session/session.sql"
+import { MessageTable, PartTable, SessionTable } from "../../src/session/session.sql"
 import { Log } from "../../src/util"
 import { Plugin } from "../../src/plugin"
 import { provideTmpdirInstance } from "../fixture/fixture"
@@ -123,22 +123,9 @@ const reset = Effect.sync(() => {
   prefixCaptureRef.current = undefined
 })
 
-// Seed parent session with msgs sequence: u1(text)/a1(tool)/u2(tool_result)/a2(text)
-// a2 has finish="stop" so computeBoundary picks lastAsstIdx=3, startIdx=2 (u2)
-// → endMessageID = u2.id, watermarkIdx = 2.
-//
-// computeBoundary requires the natural tail (msgs[startIdx..]) to be ≥ 20K tokens
-// (TAIL_MAX_TOKENS) — otherwise it walks back further to satisfy the floor.
-// We pad u2's tool_result body and a2's text with ~50K chars each (~12.5K tokens
-// each, ~25K combined) so the tail at startIdx=2 already exceeds TAIL_MAX_TOKENS
-// and the boundary stays at u2.
-//
-// u2 is seeded with a synthetic part of type "tool_result" to exercise the
-// alignToNonToolResultUser helper: when rawDeltaStart=2 (u2), align must walk
-// back past u2 to u1 (idx 0) because u2's parts are all tool_result-only.
-// OpenCode's storage doesn't normally produce tool_result parts (tools are
-// unified on assistants), so we use `as never` to bypass the discriminated
-// union — the helper only inspects part.type as a string.
+// Seed u1(text)/a1(tool)/u2(text)/a2(text). Padding u2 and a2 keeps the
+// natural tail above TAIL_MAX_TOKENS, so the boundary stays at u2 (idx 2).
+// Only the legacy alignment test replaces u2's persisted part with tool_result.
 const PAD = "x ".repeat(25_000)  // ~50K chars → ~12.5K tokens
 const seedFourMessages = Effect.fn("seedFourMessages")(function* () {
   const ssn = yield* SessionNs.Service
@@ -201,19 +188,13 @@ const seedFourMessages = Effect.fn("seedFourMessages")(function* () {
     model: ref,
     time: { created: t0 + 3 },
   })
-  // Synthetic tool_result part: alignToNonToolResultUser keys on
-  // parts.every(p => p.type === "tool_result"); cast through `as never`
-  // because OpenCode's MessageV2.Part discriminator does not include
-  // tool_result. The Part data is round-tripped as JSON unchanged.
-  // Padded body so the natural tail at startIdx=2 exceeds TAIL_MAX_TOKENS
-  // and computeBoundary doesn't walk back further than idx=2.
   yield* ssn.updatePart({
     id: PartID.ascending(),
     messageID: u2.id,
     sessionID: info.id,
-    type: "tool_result",
-    body: PAD,
-  } as never)
+    type: "text",
+    text: PAD,
+  })
 
   const a2 = yield* ssn.updateMessage({
     id: MessageID.ascending(),
@@ -296,6 +277,20 @@ describe("checkpoint writer forkContext shape per mode", () => {
           const svc = yield* SessionCheckpoint.Service
           const { info, u1, a1, u2 } = yield* seedFourMessages()
 
+          // Historical DB fixture: current writes store tool results on assistant
+          // tool parts, but old tool_result-only users must still align on read.
+          yield* Effect.sync(() =>
+            Database.use((d) =>
+              d.update(PartTable)
+                .set({ data: sql`${JSON.stringify({ type: "tool_result", body: PAD })}` })
+                .where(eq(PartTable.message_id, u2.id))
+                .run(),
+            ),
+          )
+          const ssn = yield* SessionNs.Service
+          const history = yield* ssn.messages({ sessionID: info.id })
+          expect(history.find((m) => m.info.id === u2.id)?.parts.map((p): string => p.type)).toEqual(["tool_result"])
+
           // Set parent's last_checkpoint_message_id to a1.id BEFORE invoking writer
           // → rawDeltaStart = msgs.findIndex(a1.id) + 1 = 1 + 1 = 2 (u2).
           // u2 has parts=[{type: "tool_result"}], so align must walk back to u1 (idx 0).
@@ -347,13 +342,8 @@ describe("checkpoint writer forkContext shape per mode", () => {
           const info = yield* ssn.create({})
           const t0 = Date.now()
 
-          // u1 keeps `agent: "build"` so seed is realistic; u2 (the watermark)
-          // omits the agent field. Cast through `as never` to bypass the static
-          // T extends MessageV2.Info check — Session.updateMessage itself does
-          // no schema validation (it emits Event.Updated and returns the msg
-          // verbatim), so the resulting info.agent === undefined at the
-          // watermark. Pre-fix this downgraded fork:false to no forkContext;
-          // post-fix the writer should still get a real forkCtx.
+          // Current messages use the write API; the missing-agent watermark is
+          // seeded separately at the historical DB boundary below.
           const u1 = yield* ssn.updateMessage({
             id: MessageID.ascending(),
             role: "user",
@@ -402,20 +392,22 @@ describe("checkpoint writer forkContext shape per mode", () => {
             },
           })
 
-          // u2 — the watermark — intentionally has `agent` set to undefined
-          // so info.agent === undefined at runtime. The schema requires
-          // agent: string, but Session.updateMessage does no validation —
-          // it emits Event.Updated and returns the msg verbatim. Cast just
-          // the field (not the whole object) so TypeScript still infers
-          // the return type properly downstream.
-          const u2 = yield* ssn.updateMessage({
-            id: MessageID.ascending(),
-            role: "user",
-            sessionID: info.id,
-            agent: undefined as unknown as string,
-            model: ref,
-            time: { created: t0 + 3 },
-          })
+          // Historical DB fixture: no agent key in the stored JSON. This tests
+          // hydration of old data, not acceptance of an invalid current write.
+          const u2 = { id: MessageID.ascending() }
+          yield* Effect.sync(() =>
+            Database.use((d) =>
+              d.insert(MessageTable)
+                .values({
+                  id: u2.id,
+                  session_id: info.id,
+                  agent_id: "main",
+                  time_created: t0 + 3,
+                  data: sql`${JSON.stringify({ role: "user", model: ref, time: { created: t0 + 3 } })}`,
+                })
+                .run(),
+            ),
+          )
           yield* ssn.updatePart({
             id: PartID.ascending(),
             messageID: u2.id,
@@ -447,7 +439,7 @@ describe("checkpoint writer forkContext shape per mode", () => {
             text: PAD,
           })
 
-          // Sanity: verify the watermark really has no agent (schema-bypass worked).
+          // Sanity: verify hydration preserves the missing agent in the historical row.
           // Use messages() and find u2 — this is the only public lookup API on
           // the Session.Service interface.
           const all = yield* ssn.messages({ sessionID: info.id })
@@ -543,10 +535,6 @@ describe("checkpoint writer forkContext shape per mode", () => {
           // `isForkAgent && !forkCtx → break` → silent watermark re-advance.
           // Post-fix the writer must short-circuit to "skipped" BEFORE creating
           // a child session and BEFORE invoking actor.spawn.
-          //
-          // Setting last to == endMessageID (u2.id) wouldn't trigger this path
-          // because alignToNonToolResultUser walks back past u2 (which has only
-          // tool_result parts) to u1, producing a non-empty delta=[u1,a1,u2].
           yield* Effect.sync(() =>
             Database.use((d) =>
               d.update(SessionTable)

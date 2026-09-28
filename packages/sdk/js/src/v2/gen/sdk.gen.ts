@@ -170,6 +170,8 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionReceiptErrors,
+  SessionReceiptResponses,
   SessionRecoveryErrors,
   SessionRecoveryResponses,
   SessionResumeErrors,
@@ -2221,6 +2223,7 @@ export class Session2 extends HeyApiClient {
       sessionID: string
       directory?: string
       workspace?: string
+      queuedPolicy?: "drop" | "keep-suspended"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2232,6 +2235,7 @@ export class Session2 extends HeyApiClient {
             { in: "path", key: "sessionID" },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "body", key: "queuedPolicy" },
           ],
         },
       ],
@@ -2240,6 +2244,11 @@ export class Session2 extends HeyApiClient {
       url: "/session/{sessionID}/abort",
       ...options,
       ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 
@@ -2468,7 +2477,7 @@ export class Session2 extends HeyApiClient {
   /**
    * Send message
    *
-   * Create and send a new message to a session, streaming the AI response.
+   * Create and send a new message to a session. Busy never 409: admit queues with 202+receiptId; idle streams 200.
    */
   public prompt<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2743,7 +2752,7 @@ export class Session2 extends HeyApiClient {
   /**
    * Send async message
    *
-   * Create and send a new message to a session asynchronously, starting the session if needed and returning immediately.
+   * Create and send a message asynchronously. Returns 202 with a durable receiptId, or 204 when no user turn is admitted.
    */
   public promptAsync<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2813,6 +2822,40 @@ export class Session2 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Get turn receipt
+   *
+   * Durable receipt for an admitted prompt/resume/wake. Source of truth after HTTP 202.
+   */
+  public receipt<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      receiptId: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "receiptId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionReceiptResponses, SessionReceiptErrors, ThrowOnError>({
+      url: "/session/{sessionID}/receipt/{receiptId}",
+      ...options,
+      ...params,
     })
   }
 

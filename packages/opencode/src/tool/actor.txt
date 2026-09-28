@@ -9,8 +9,8 @@ JSON calls wrap the action payload inside an `operation` object; `action` is the
 
 **`spawn` is the DEFAULT.** It launches the subagent in the BACKGROUND and returns
 its actor_id immediately, so several subagents run in PARALLEL and you keep
-responding to the user while they work. `run` BLOCKS the entire conversation until
-the subagent finishes — it is the rare exception, not the normal path.
+responding to the user while they work. `run` waits for the subagent's result until
+completion, user input, or timeout — it is the rare exception, not the normal path.
 
 Examples:
 {"operation":{"action":"spawn","subagent_type":"explore","description":"Find error recovery","prompt":"<full task>"}}
@@ -30,12 +30,16 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
           implementation, long searches — anything that takes real time.
           required: subagent_type, description, prompt
           optional: command
-- run:    **RARE EXCEPTION.** Same launch, but BLOCKS the whole conversation until
-          the subagent finishes; result returned inline. Allowed ONLY when you
+- run:    **RARE EXCEPTION.** Same launch, but waits for the result inline until
+          completion, user input, or timeout. Allowed ONLY when you
           cannot make your very next decision without the result in THIS turn, and
           the work is a tiny, fast, strictly-blocking lookup. NEVER use `run` for
           ordinary analysis, review, or implementation work — those go to `spawn`.
-          If you are unsure, use `spawn`.
+          If you are unsure, use `spawn`. Like `wait`, user input or timeout returns
+          actor_id and the latest execution snapshot without cancelling the child.
+          Handle the user first after interruption; do not immediately wait again.
+          The timeout is a fixed wait deadline, not a failure or cancellation signal.
+          Inspect status and concrete outputs before deciding to send, wait, or cancel.
           required: subagent_type, description, prompt
           optional: timeout_ms, command
 - status: poll actor state without blocking. required: actor_id.
@@ -70,13 +74,24 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
 
 `spawn` hands you an actor_id, not a result. Three ways to pick the result up:
 
-- **Notification (preferred)**: when the background actor finishes, its result arrives as a
-  notification in this conversation. Your turn does NOT auto-wake — you'll see it the next
-  time you respond. Keep working or keep talking to the user in the meantime.
+- **Notification (preferred)**: when a background subagent finishes, its result arrives as a
+  notification in this conversation. Keep working while it runs. Before the main turn can
+  finish, the engine waits for active subagents and returns their notifications to the loop.
+  Each automatic wait window has a fixed 10-minute deadline; activity and partial completion
+  do not extend it. On timeout, control returns to main with the still-active actor IDs:
+  inspect status and available results, request concrete progress or partial results via send,
+  or cancel if necessary and confirm execution has exited. Do not blindly repeat waits.
+  User input can interrupt that wait without cancelling the subagents; handle the input first.
+  Waiting after handling new user input starts a fresh window.
 - **`wait`**: block on one actor_id only when you have genuinely run out of other work and
-  must have that result before continuing.
-- **`status`**: non-blocking poll of one actor (pending/running/idle) — use it to report
-  progress without stalling the conversation.
+  must have that result before continuing. `timeout_ms` limits this wait, not the actor's
+  execution; timeout and user-input interruption do not cancel the actor. Both include
+  the latest execution snapshot.
+- **`status`**: non-blocking execution snapshot. `executionActive` reflects a live fiber or
+  a reserved execution awaiting attachment, not a persisted running label. A completed
+  fiber is inactive even if its Runner still says busy. `executionState: stopped` means
+  no live execution and no trustworthy terminal outcome; never treat it as success.
+  Old outcome/error/result fields are omitted while a new execution is active or orphaned.
 
 Fan-out then fan-in: `spawn` 2-3 subagents in one message, then `wait` on each in turn.
 
@@ -121,7 +136,7 @@ postStop check then becomes a no-op.
 
 ## Usage notes
 
-- **`spawn` vs `run` result delivery**: `spawn` returns the actor_id immediately; when the background actor finishes, its result appears as a notification in this conversation — your turn does NOT auto-wake to process it; you'll see it the next time you respond to the user. Use `wait` to block on the actor_id explicitly. `run` instead blocks the conversation and returns the result inline — that stall is exactly why it's the exception.
+- **`spawn` vs `run` result delivery**: `spawn` returns the actor_id immediately and lets you continue useful work. Use `wait` when you need its result; the main turn also waits for active subagents before finishing. These waits are interruptible by user input without cancelling the child. An actor with no live execution is stopped, not still running merely because its stored status says so. Lack of recent activity alone does not prove failure. `run` waits for its result inline without a duplicate completion notification. After a run wait is interrupted or times out, the child continues and its result is delivered as a completion notification instead.
 - **`wait` on persistent peers caveat**: `wait` is designed for ephemeral subagents you spawned via `spawn`/`run`. Persistent peers idle between turns and never produce a "done" outcome on success — `wait` on a peer will block until that peer fails or is cancelled. Use `send` + `status` to coordinate with peers instead.
 - **`send` semantics**: fire-and-forget; returns within ~5 ms regardless of receiver load. It also WAKES the receiver — an idle subagent runs another turn on its own history, so `send` is how you give one follow-up work. The woken turn's result reaches you as a completion notification, not from the `send` call. On unknown `to_actor_id`, `send` returns `{inboxID: null, error: "receiver not found"}` rather than throwing — handle the error path.
 - **Subagent failure is not final**: if `status`/`wait` reports `idle` + `failure` (including process-restart abandon), the subagent can often still continue. Prefer a follow-up `{"operation":{"action":"send","to_actor_id":"<id>","content":"<message>"}}`, then `wait`/`status`. Only re-`spawn` if send does not recover it or the task needs a clean slate.

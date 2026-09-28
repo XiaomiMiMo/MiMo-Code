@@ -33,8 +33,8 @@ function agentMeta(n: AgentNode) {
 // that subagent's full conversation.
 function AgentCard(props: {
   node: AgentNode
-  onOpenAgent?: (actorID: string) => void
-  liveActivity?: (actorID: string) => string | undefined
+  onOpenAgent?: (actorID: string, sessionID?: string) => void
+  liveActivity?: (actorID: string, sessionID?: string) => string | undefined
 }) {
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
@@ -43,7 +43,7 @@ function AgentCard(props: {
   const spine = () =>
     n().status === "succeeded" ? theme.success : n().status === "failed" ? theme.error : theme.warning
   const clickable = () => Boolean(n().actorID && props.onOpenAgent)
-  const live = () => (running() && n().actorID && props.liveActivity ? props.liveActivity(n().actorID!) : undefined)
+  const live = () => (running() && n().actorID && props.liveActivity ? props.liveActivity(n().actorID!, n().sessionID) : undefined)
 
   return (
     <box
@@ -60,7 +60,7 @@ function AgentCard(props: {
       onMouseOut={() => setHover(false)}
       onMouseUp={() => {
         const a = n()
-        if (a.actorID) props.onOpenAgent?.(a.actorID)
+        if (a.actorID) props.onOpenAgent?.(a.actorID, a.sessionID)
       }}
     >
       <box flexDirection="row" gap={1} alignItems="center">
@@ -143,8 +143,8 @@ function WorkflowCard(props: { node: WfNode; onOpenChild?: (childRunID: string) 
 export function WorkflowTree(props: {
   nodes: WorkflowNode[]
   onOpenChild?: (childRunID: string) => void
-  onOpenAgent?: (actorID: string) => void
-  liveActivity?: (actorID: string) => string | undefined
+  onOpenAgent?: (actorID: string, sessionID?: string) => void
+  liveActivity?: (actorID: string, sessionID?: string) => string | undefined
 }) {
   const { theme } = useTheme()
   return (

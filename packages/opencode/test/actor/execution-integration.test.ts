@@ -13,6 +13,7 @@ import { TaskRegistry } from "../../src/task/registry"
 import { ActorWaiter } from "../../src/actor/waiter"
 import { Inbox } from "../../src/inbox"
 import { sessionPromptRef } from "../../src/inbox/inbox-ref"
+import { schedulerRef } from "../../src/turn-queue"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
 import { Config } from "../../src/config"
@@ -373,10 +374,11 @@ test("inbox waits for the entire spawn execution before starting a continuation"
             const inbox = yield* Inbox.Service
             const prompt = yield* SessionPrompt.Service
             const previous = sessionPromptRef.current
-            sessionPromptRef.current = { loop: prompt.loop }
+            const previousScheduler = schedulerRef.current
             yield* Effect.addFinalizer(() =>
               Effect.sync(() => {
                 sessionPromptRef.current = previous
+                schedulerRef.current = previousScheduler
               }),
             )
             const parent = yield* sessions.create({
@@ -399,6 +401,9 @@ test("inbox waits for the entire spawn execution before starting a continuation"
             )
               yield* Effect.sleep("10 millis")
             expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "entered")).exists())).toBe(true)
+            // Spawn initialization can replace global refs with another runtime's services.
+            sessionPromptRef.current = { loop: prompt.loop }
+            schedulerRef.current = previousScheduler
             const bus = yield* Bus.Service
             const context = yield* Effect.context<Services>()
             let completions = 0
