@@ -1,22 +1,24 @@
 ---
 feature: typecheck-toolchain
 status: delivered
-updated: 2026-09-28
+updated: 2026-09-29
 branch: typecheck/ts7-drop-turbo
-commits: f0293bf8..ad4ed4ac
+commits: f0293bf8..8c1b5b14
 ---
 
-# Typecheck Toolchain: Drop Turbo, TypeScript 7, Scripts Project
+# Typecheck Toolchain: Drop Turbo, Upgrade tsgo, Scripts Project
 
 ## Report
 
-**What was built** — Dropped turbo in favor of `bun run --workspaces --if-present --parallel` plus a root `tsconfig.scripts.json` project for tooling scripts. Migrated typecheck/emit to TypeScript 7 (`@typescript/native` → `tsc` 7.0.2) while keeping the JS Compiler API on `typescript@6.0.2` for `tool-script.ts`. Folded `packages/script` into `script/meta.ts` with relative imports; deleted the workspace package. Added thin `script/tsconfig.json` wrappers so IDEs resolve the shared scripts project, set `types: ["bun"]` where `@types/bun` is needed, and stopped the root `tsconfig.json` from claiming every `.ts` file (solution-style `files: []` + references). Two real `floatingEffect` bugs fixed (visible to TS6/editor). Note: TS7 native `tsc` does not load `@effect/language-service`, so those rules do not gate CI (same as `tsgo`).
+**What was built** — Removed `turbo` (it only orchestrated a single empty `typecheck` task). Root typecheck is `bun run --workspaces --if-present --parallel typecheck && tsgo --noEmit -p tsconfig.scripts.json`. Upgraded the native compiler pin to `@typescript/native-preview@7.0.0-dev.20260707.2` (bin `tsgo`; the previous pin was 2025-12). `typescript@5.8.2` remains the JS Compiler API for `tool-script.ts` / one AST test and the `tsc` used by plugin/sdk emit. Folded `packages/script` into `script/meta.ts` and dropped the `@mimo-ai/script` workspace package. Added `tsconfig.scripts.json` plus thin `script/tsconfig.json` wrappers so IDEs resolve tooling scripts; root `tsconfig.json` is a `files: []` solution stub so it no longer claims every `.ts` file.
 
-**Verification** — `bun typecheck` PASS (workspaces + scripts project); `tsc --noEmit -p tsconfig.scripts.json` PASS; per-package `bun run typecheck` PASS on opencode/plugin/shared/sdk/js with `tsc --version` = 7.0.2; `require("typescript").transpileModule` is a function (6.0.2); `packages/plugin` `bun run build` (tsc emit) PASS; `packages/shared` `bun test` 55 pass / 0 fail; `script/meta.ts` runtime smoke PASS. Independent review caught package-local `tsc` resolving to TS 6 via workspace bin shadowing — fixed by declaring `@typescript/native` on every package that runs `tsc`. JSON reformat drift (`keywords` arrays) restored to repo style.
+**Final layout (delivered)** — `tsgo` = typecheck; `typescript@5.8.2` = JS API + plugin/sdk `tsc` emit. No `turbo`, no `@typescript/native` alias, no `overrides.typescript`. A TS7-as-`tsc` dual-package experiment was tried and **reverted**: npm/bun cannot rename another package's `bin`, so `typescript@7` + `@typescript/typescript6` still collide on `tsc`. `@effect/language-service diagnostics` works again with stock `typescript` (it has `tsserverlibrary`).
 
-**Amendment (2026-09-29)** — Reverted the TS7-as-`tsc` dual-package layout. npm/bun cannot rename another package's `bin`; `@typescript/native` (`npm:typescript@7`) and `@typescript/typescript6` still collide on `tsc` / steal `.bin/tsc`. Simplified to the `tsgo` line with an upgraded pin: `@typescript/native-preview@7.0.0-dev.20260707.2` (bin `tsgo`), `typescript@5.8.2` stays the JS API (`tool-script.ts`). No global `overrides.typescript`, no `@typescript/native` alias. Turbo removal, `script/meta.ts`, and `tsconfig.scripts.json` remain. ELS `diagnostics` works without a typescript patch again.
+**Verification** — `bun run typecheck` PASS; `tsgo --noEmit -p tsconfig.scripts.json` PASS; per-package typecheck PASS with `tsgo --version` = 7.0.0-dev.20260707.2; `require("typescript").transpileModule` is a function (5.8.2); `packages/plugin` `bun run build` PASS; `packages/shared` `bun test` 55 pass / 0 fail; `bun run effect-language-service diagnostics --file src/effect/logger.ts` exit 0; `script/meta.ts` runtime smoke PASS.
 
-**Journey log** — 1) bun 1.3.14 nested `npm:` aliases break `@typescript/typescript6` (empty JS API); use real `typescript@6` + `@typescript/native@7` instead. 2) Neither `tsgo` nor TS7 native `tsc` loads `@effect/language-service` (patch is JS-compiler-only); Effect rules are editor-only. 3) Workspace packages pin `tsc` to their own `typescript` dep — root `@typescript/native` does not win `bun run` PATH. 4) `JSON.stringify`/`json.dumps` rewrite of package.json/tsconfig produces noisy diffs — edit in place. 5) Root tsconfig with default include fights nested script tsconfigs in VS Code; make it a `files: []` solution stub.
+**Amendment (2026-09-29)** — Kept the TS7 dual-package path only as a dead end. npm/bun have no bin-rename on import; `@typescript/native` / `@typescript/typescript6` steal `.bin/tsc`. Settled on latest `tsgo` pin instead.
+
+**Journey log** — 1) `turbo` after #2573 was a one-task leftover; `bun run --workspaces --if-present --parallel` replaces it. 2) `@typescript/typescript6` / `@typescript/native` dual install cannot give a clean `tsc` vs `tsc6` split under bun without fighting over `.bin/tsc`. 3) Neither `tsgo` nor TS7 native `tsc` loads `@effect/language-service` (patch is JS-compiler-only); those rules stay editor-only. 4) Workspace packages must not rely on root `.bin/tsc` — a local `typescript` dep shadows it. 5) `JSON.stringify` rewrites of package.json/tsconfig create noisy diffs — edit in place. 6) Root tsconfig with default include fights nested script tsconfigs in VS Code; use a `files: []` stub.
 
 ## [S1] Problem
 
