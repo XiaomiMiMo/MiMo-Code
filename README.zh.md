@@ -524,7 +524,7 @@ MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS=1 mimo
 ```bash
 bun ci                   # 安装依赖(= bun install --frozen-lockfile)
 bun run dev              # 开发模式运行
-bun run typecheck               # 类型检查
+bun run typecheck          # 类型检查
 ```
 
 ---

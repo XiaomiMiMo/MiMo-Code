@@ -93,8 +93,8 @@ Catalog / deps:
   compiler, so Effect rules never executed — silence was a blind spot, not proof of cleanliness.
 - Same reason `tsc` now surfaces `floatingEffect` / `missingReturnYieldStar` / etc.
 Mitigations: fix 2 real `floatingEffect` (`yield* elog.info` in `prompt.ts`), keep `missingReturnYieldStar`
-as warning, set `ignoreEffect{Errors,Warnings,Suggestions}InTscExitCode: true` so plugin chatter stays in
-the editor and does not gate CI. Also `types: ["bun"]` is required (tsgo auto-included `@types/bun`; tsc does not).
+as warning, set `ignoreEffect{Warnings,Suggestions}InTscExitCode: true` so plugin chatter stays in the editor
+and does not gate CI (effect **errors** still gate; `ignoreEffectErrorsInTscExitCode` is off). Also `types: ["bun"]` is required (tsgo auto-included `@types/bun`; tsc does not).
 
 **Bun workspace `tsc` bin shadowing (review CRITICAL):** a package that depends on `typescript` gets
 `packages/<pkg>/node_modules/.bin/tsc → ../typescript/bin/tsc` (the 6.x CLI), which `bun run` puts first on

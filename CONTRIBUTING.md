@@ -92,7 +92,7 @@ Replace `<platform>` with your platform, e.g. `darwin-arm64` or `linux-x64`.
 ### Checks before you push
 
 ```bash
-bun run typecheck                        # from the repo root
+bun run typecheck                # from the repo root
 bun lint
 bun run --cwd packages/opencode test # tests cannot run from the repo root
 ./script/format.ts                   # prettier, if your editor does not do it

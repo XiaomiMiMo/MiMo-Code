@@ -22,8 +22,7 @@
           "missingreturnyieldstar": "warning"
         },
         "ignoreEffectWarningsInTscExitCode": true,
-        "ignoreEffectSuggestionsInTscExitCode": true,
-        "ignoreEffectErrorsInTscExitCode": true
+        "ignoreEffectSuggestionsInTscExitCode": true
       }
     ]
   }
