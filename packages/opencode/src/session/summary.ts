@@ -71,6 +71,18 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionSummary") {}
 
+// Patch bodies persisted onto a message row are reloaded by `summarize` on every
+// turn, so an unbounded body grows the message table without limit. Keep a short
+// preview for display; the full patches live in the session-level session_diff file.
+const PERSISTED_PATCH_PREVIEW = 4 * 1024
+function trimForPersist(diffs: Snapshot.FileDiff[]) {
+  return diffs.map((item) =>
+    item.patch.length > PERSISTED_PATCH_PREVIEW
+      ? { ...item, patch: item.patch.slice(0, PERSISTED_PATCH_PREVIEW) + "\n... [preview truncated]\n" }
+      : item,
+  )
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -103,10 +115,27 @@ export const layer = Layer.effect(
       sessionID: SessionID
       messageID: MessageID
     }) {
+      const loadedAt = Date.now()
       const all = yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" })
       if (!all.length) return
+      log.info("summarize: messages loaded", {
+        count: all.length,
+        loadMs: Date.now() - loadedAt,
+        partCount: all.reduce((n, m) => n + m.parts.length, 0),
+        approxLoadMB: Math.round(
+          all.reduce((n, m) => n + m.parts.reduce((k, part) => k + JSON.stringify(part).length, 0), 0) / 1048576,
+        ),
+        rssMB: Math.round(process.memoryUsage().rss / 1048576),
+      })
 
+      const diffStarted = Date.now()
       const diffs = yield* computeDiff({ messages: all })
+      log.info("summarize: diff computed", {
+        ms: Date.now() - diffStarted,
+        files: diffs.length,
+        patchMB: Math.round(diffs.reduce((n, d) => n + d.patch.length, 0) / 1048576),
+        rssMB: Math.round(process.memoryUsage().rss / 1048576),
+      })
       yield* sessions.setSummary({
         sessionID: input.sessionID,
         summary: {
@@ -124,8 +153,14 @@ export const layer = Layer.effect(
       const target = messages.find((m) => m.info.id === input.messageID)
       if (!target || target.info.role !== "user") return
       const msgDiffs = yield* computeDiff({ messages })
-      target.info.summary = { ...target.info.summary, diffs: msgDiffs }
+      const trimmed = trimForPersist(msgDiffs)
+      target.info.summary = { ...target.info.summary, diffs: trimmed }
       yield* sessions.updateMessage(target.info)
+      log.info("summarize: per-message diff persisted", {
+        files: trimmed.length,
+        patchMB: Math.round(trimmed.reduce((n, d) => n + d.patch.length, 0) / 1048576),
+        rssMB: Math.round(process.memoryUsage().rss / 1048576),
+      })
     })
 
     const diff = Effect.fn("SessionSummary.diff")(function* (input: { sessionID: SessionID; messageID?: MessageID }) {
