@@ -12,6 +12,8 @@ interface MockClientState {
   listToolsError: string
   listPromptsShouldFail: boolean
   listResourcesShouldFail: boolean
+  listPromptsHangs: boolean
+  listResourcesHangs: boolean
   prompts: Array<{ name: string; description?: string }>
   resources: Array<{ name: string; uri: string; description?: string }>
   closed: boolean
@@ -20,8 +22,11 @@ interface MockClientState {
   serverCapabilities: Record<string, unknown>
   toolCalls: Array<Record<string, unknown>>
   toolCallSignals: Array<AbortSignal | undefined>
+  requestTimeouts: Array<{ method: string; timeout?: number }>
   toolCallHangs: boolean
   toolCallAbortCount: number
+  getPromptHangs: boolean
+  readResourceHangs: boolean
   notifications: Array<Record<string, unknown>>
   notificationCalls: number
   notificationInFlight: number
@@ -53,6 +58,8 @@ function getOrCreateClientState(name?: string): MockClientState {
       listToolsError: "listTools failed",
       listPromptsShouldFail: false,
       listResourcesShouldFail: false,
+      listPromptsHangs: false,
+      listResourcesHangs: false,
       prompts: [],
       resources: [],
       closed: false,
@@ -61,8 +68,11 @@ function getOrCreateClientState(name?: string): MockClientState {
       serverCapabilities: {},
       toolCalls: [],
       toolCallSignals: [],
+      requestTimeouts: [],
       toolCallHangs: false,
       toolCallAbortCount: 0,
+      getPromptHangs: false,
+      readResourceHangs: false,
       notifications: [],
       notificationCalls: 0,
       notificationInFlight: 0,
@@ -120,6 +130,15 @@ class MockSSE {
   async close() {
     transportCloseCount++
   }
+}
+
+type MockRequestOptions = { timeout?: number }
+
+function waitForRequestTimeout(timeout?: number) {
+  return new Promise<never>((_resolve, reject) => {
+    if (timeout == null) return
+    setTimeout(() => reject(new Error("MCP request timed out")), timeout)
+  })
 }
 
 // connectLocal uses the host-owned stdio transport, not the SDK client transport.
@@ -219,7 +238,8 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
       }
     }
 
-    async listTools() {
+    async listTools(_params?: unknown, options?: MockRequestOptions) {
+      this._state?.requestTimeouts.push({ method: "tools/list", timeout: options?.timeout })
       if (this._state) this._state.listToolsCalls++
       if (this._state?.listToolsShouldFail) {
         throw new Error(this._state.listToolsError)
@@ -227,18 +247,34 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
       return { tools: this._state?.tools ?? [] }
     }
 
-    async listPrompts() {
+    async listPrompts(_params?: unknown, options?: MockRequestOptions) {
+      this._state?.requestTimeouts.push({ method: "prompts/list", timeout: options?.timeout })
+      if (this._state?.listPromptsHangs) await waitForRequestTimeout(options?.timeout)
       if (this._state?.listPromptsShouldFail) {
         throw new Error("listPrompts failed")
       }
       return { prompts: this._state?.prompts ?? [] }
     }
 
-    async listResources() {
+    async listResources(_params?: unknown, options?: MockRequestOptions) {
+      this._state?.requestTimeouts.push({ method: "resources/list", timeout: options?.timeout })
+      if (this._state?.listResourcesHangs) await waitForRequestTimeout(options?.timeout)
       if (this._state?.listResourcesShouldFail) {
         throw new Error("listResources failed")
       }
       return { resources: this._state?.resources ?? [] }
+    }
+
+    async getPrompt(_params: unknown, options?: MockRequestOptions) {
+      this._state?.requestTimeouts.push({ method: "prompts/get", timeout: options?.timeout })
+      if (this._state?.getPromptHangs) await waitForRequestTimeout(options?.timeout)
+      return { messages: [] }
+    }
+
+    async readResource(_params: unknown, options?: MockRequestOptions) {
+      this._state?.requestTimeouts.push({ method: "resources/read", timeout: options?.timeout })
+      if (this._state?.readResourceHangs) await waitForRequestTimeout(options?.timeout)
+      return { contents: [] }
     }
 
     async close() {
@@ -248,6 +284,7 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
 }))
 
 beforeEach(() => {
+  HostMcp.set({})
   clientStates.clear()
   lastCreatedClientName = undefined
   connectShouldFail = false
@@ -260,6 +297,7 @@ beforeEach(() => {
 
 // Import after mocks
 const { MCP } = await import("../../src/mcp/index")
+const { HostMcp } = await import("../../src/mcp/host")
 const { Instance } = await import("../../src/project/instance")
 const { tmpdir } = await import("../fixture/fixture")
 
@@ -268,6 +306,7 @@ const { tmpdir } = await import("../fixture/fixture")
 function withInstance(
   config: Record<string, unknown>,
   fn: (mcp: MCPNS.Interface) => Effect.Effect<void, unknown, never>,
+  experimental?: Record<string, unknown>,
 ) {
   return async () => {
     await using tmp = await tmpdir({
@@ -277,6 +316,7 @@ function withInstance(
           JSON.stringify({
             $schema: "https://opencode.ai/config.json",
             mcp: config,
+            experimental,
           }),
         )
       },
@@ -1074,6 +1114,187 @@ test(
         expect(key).toContain("resource-server")
         expect(key).toContain("my-resource")
       }),
+  ),
+)
+
+test(
+  "prompts() returns when a connected server leaves listPrompts pending",
+  withInstance(
+    {
+      "prompt-timeout-server": {
+        type: "local",
+        command: ["echo", "test"],
+        timeout: 100,
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "prompt-timeout-server"
+        getOrCreateClientState("prompt-timeout-server").listPromptsHangs = true
+
+        yield* mcp.add("prompt-timeout-server", {
+          type: "local",
+          command: ["echo", "test"],
+          timeout: 100,
+        })
+
+        const result = yield* mcp.prompts().pipe(Effect.timeout("2 seconds"))
+        expect(result).toEqual({})
+        expect(getOrCreateClientState("prompt-timeout-server").requestTimeouts.at(-1)).toEqual({
+          method: "prompts/list",
+          timeout: 100,
+        })
+      }),
+    { mcp_timeout: 500 },
+  ),
+)
+
+test(
+  "resources() returns when a connected server leaves listResources pending",
+  withInstance(
+    {
+      "resource-timeout-server": {
+        type: "local",
+        command: ["echo", "test"],
+        timeout: 100,
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "resource-timeout-server"
+        getOrCreateClientState("resource-timeout-server").listResourcesHangs = true
+
+        yield* mcp.add("resource-timeout-server", {
+          type: "local",
+          command: ["echo", "test"],
+          timeout: 100,
+        })
+
+        const result = yield* mcp.resources().pipe(Effect.timeout("2 seconds"))
+        expect(result).toEqual({})
+        expect(getOrCreateClientState("resource-timeout-server").requestTimeouts.at(-1)).toEqual({
+          method: "resources/list",
+          timeout: 100,
+        })
+      }),
+    { mcp_timeout: 500 },
+  ),
+)
+
+test(
+  "experimental MCP timeout bounds prompt and resource listing without per-server overrides",
+  withInstance(
+    {
+      "global-timeout-server": {
+        type: "local",
+        command: ["echo", "test"],
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "global-timeout-server"
+        const serverState = getOrCreateClientState("global-timeout-server")
+        serverState.listPromptsHangs = true
+        serverState.listResourcesHangs = true
+
+        yield* mcp.add("global-timeout-server", {
+          type: "local",
+          command: ["echo", "test"],
+        })
+
+        expect(yield* mcp.prompts().pipe(Effect.timeout("2 seconds"))).toEqual({})
+        expect(yield* mcp.resources().pipe(Effect.timeout("2 seconds"))).toEqual({})
+        expect(serverState.requestTimeouts.filter((request) => request.method !== "tools/list")).toEqual([
+          { method: "prompts/list", timeout: 100 },
+          { method: "resources/list", timeout: 100 },
+        ])
+      }),
+    { mcp_timeout: 100 },
+  ),
+)
+
+test(
+  "request timeout defaults to the documented five seconds",
+  withInstance(
+    {
+      "default-timeout-server": {
+        type: "local",
+        command: ["echo", "test"],
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "default-timeout-server"
+        const serverState = getOrCreateClientState("default-timeout-server")
+        yield* mcp.add("default-timeout-server", {
+          type: "local",
+          command: ["echo", "test"],
+        })
+
+        yield* mcp.prompts()
+        expect(serverState.requestTimeouts.at(-1)).toEqual({ method: "prompts/list", timeout: 5000 })
+      }),
+  ),
+)
+
+test(
+  "getPrompt and readResource use the configured MCP request timeout",
+  withInstance(
+    {
+      "content-timeout-server": {
+        type: "local",
+        command: ["echo", "test"],
+        timeout: 100,
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "content-timeout-server"
+        const serverState = getOrCreateClientState("content-timeout-server")
+        serverState.getPromptHangs = true
+        serverState.readResourceHangs = true
+        yield* mcp.add("content-timeout-server", {
+          type: "local",
+          command: ["echo", "test"],
+          timeout: 100,
+        })
+
+        expect(yield* mcp.getPrompt("content-timeout-server", "test").pipe(Effect.timeout("2 seconds"))).toBe(
+          undefined,
+        )
+        expect(yield* mcp.readResource("content-timeout-server", "test://resource").pipe(Effect.timeout("2 seconds")))
+          .toBe(undefined)
+        expect(serverState.requestTimeouts.slice(-2)).toEqual([
+          { method: "prompts/get", timeout: 100 },
+          { method: "resources/read", timeout: 100 },
+        ])
+      }),
+  ),
+)
+
+test(
+  "host MCP tool refresh keeps the global request timeout",
+  withInstance(
+    {},
+    (mcp) =>
+      Effect.gen(function* () {
+        yield* mcp.status()
+        lastCreatedClientName = "host-timeout-server"
+        const serverState = getOrCreateClientState("host-timeout-server")
+        HostMcp.set({
+          "host-timeout-server": {
+            type: "local",
+            command: ["echo", "test"],
+          },
+        })
+
+        yield* mcp.prompts()
+        const handler = Array.from(serverState.notificationHandlers.values())[0]
+        yield* Effect.promise(() => handler?.())
+
+        expect(serverState.requestTimeouts.at(-1)).toEqual({ method: "tools/list", timeout: 100 })
+      }).pipe(Effect.ensuring(Effect.sync(() => HostMcp.set({})))),
+    { mcp_timeout: 100 },
   ),
 )
 
