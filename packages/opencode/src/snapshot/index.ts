@@ -207,6 +207,47 @@ export const layer: Layer.Layer<
           yield* fs.writeFileString(target, text ? `${text}\n` : "").pipe(Effect.orDie)
         })
 
+        const seed = Effect.fnUntraced(function* () {
+          if (state.vcs !== "git") return
+          const commonDir = yield* git(["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+            cwd: state.worktree,
+          })
+          if (commonDir.code !== 0) return
+          const source = commonDir.text.trim()
+          if (!source || !(yield* exists(source))) return
+
+          const sourceObjects = path.join(source, "objects")
+          const chained = (yield* read(path.join(sourceObjects, "info", "alternates")))
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((item) => path.resolve(sourceObjects, item))
+          const alternates = (yield* Effect.all(
+            Array.from(new Set([sourceObjects, ...chained])).map((item) =>
+              exists(item).pipe(Effect.map((found) => (found ? item : undefined))),
+            ),
+            { concurrency: "unbounded" },
+          )).filter((item): item is string => Boolean(item))
+          if (!alternates.length) return
+
+          yield* fs.ensureDir(path.join(state.gitdir, "objects", "info")).pipe(Effect.orDie)
+          yield* fs
+            .writeFileString(path.join(state.gitdir, "objects", "info", "alternates"), `${alternates.join("\n")}\n`)
+            .pipe(Effect.orDie)
+
+          const sourceIndex = yield* git(["rev-parse", "--path-format=absolute", "--git-path", "index"], {
+            cwd: state.worktree,
+          })
+          if (sourceIndex.code !== 0) return
+          const indexPath = sourceIndex.text.trim()
+          if (!indexPath || !(yield* exists(indexPath))) return
+
+          const targetIndex = path.join(state.gitdir, "index")
+          yield* fs.copyFile(indexPath, targetIndex).pipe(Effect.catch(() => Effect.void))
+          const check = yield* git(args(["ls-files", "--unmerged", "-z"]), { cwd: state.worktree })
+          if (check.code !== 0 || check.text) yield* remove(targetIndex)
+        })
+
         const add = Effect.fnUntraced(function* () {
           yield* sync()
           const [diff, other] = yield* Effect.all(
@@ -304,6 +345,11 @@ export const layer: Layer.Layer<
                 yield* git(["--git-dir", state.gitdir, "config", "core.longpaths", "true"])
                 yield* git(["--git-dir", state.gitdir, "config", "core.symlinks", "true"])
                 yield* git(["--git-dir", state.gitdir, "config", "core.fsmonitor", "false"])
+                yield* git(["--git-dir", state.gitdir, "config", "feature.manyFiles", "true"])
+                yield* git(["--git-dir", state.gitdir, "config", "index.version", "4"])
+                yield* git(["--git-dir", state.gitdir, "config", "index.threads", "true"])
+                yield* git(["--git-dir", state.gitdir, "config", "core.untrackedCache", "true"])
+                yield* seed()
                 log.info("initialized")
               }
               yield* add()

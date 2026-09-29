@@ -5,8 +5,10 @@ import path from "path"
 import { Effect } from "effect"
 import { Snapshot } from "../../src/snapshot"
 import { Instance } from "../../src/project/instance"
+import { Global } from "../../src/global"
 import { Filesystem } from "../../src/util"
 import { provideInstance, tmpdir } from "../fixture/fixture"
+import { Hash } from "@mimo-ai/shared/util/hash"
 
 // Git always outputs /-separated paths internally. Snapshot.patch() joins them
 // with path.join (which produces \ on Windows) then normalizes back to /.
@@ -44,6 +46,26 @@ function run<A>(dir: string, body: (snapshot: Snapshot.Interface) => Effect.Effe
     }).pipe(provideInstance(dir), Effect.provide(Snapshot.defaultLayer)),
   )
 }
+
+test("seeds first snapshots from the source repository index and objects", async () => {
+  await using tmp = await bootstrap()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const before = await run(tmp.path, (snapshot) => snapshot.track())
+      expect(before).toBeTruthy()
+
+      const commonDir = (await $`git rev-parse --path-format=absolute --git-common-dir`.cwd(tmp.path).text()).trim()
+      const gitdir = path.join(Global.Path.data, "snapshot", Instance.project.id, Hash.fast(tmp.path))
+      const alternates = await fs.readFile(path.join(gitdir, "objects", "info", "alternates"), "utf8")
+      expect(alternates.split(/\r?\n/)).toContain(path.join(commonDir, "objects"))
+
+      await Filesystem.write(`${tmp.path}/a.txt`, "UPDATED")
+      const patch = await run(tmp.path, (snapshot) => snapshot.patch(before!))
+      expect(patch.files).toContain(fwd(tmp.path, "a.txt"))
+    },
+  })
+})
 
 test("tracks deleted files correctly", async () => {
   await using tmp = await bootstrap()
