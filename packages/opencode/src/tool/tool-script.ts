@@ -10,6 +10,7 @@ import { Log, Filesystem, ToolCompat } from "@/util"
 import { Agent } from "@/agent/agent"
 import type { ModelID, ProviderID } from "../provider/schema"
 import { MessageV2 } from "../session/message-v2"
+import { STRUCTURED_CONTENT } from "../mcp/tool-metadata"
 import { evalScript, type HostFn } from "../workflow/sandbox"
 import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, TOOL_SCRIPT_EXCLUDED } from "./tool-script-ref"
 import type { HarnessMode } from "./gpt"
@@ -860,8 +861,9 @@ export const ToolScriptTool = Tool.define(
                     output?: unknown
                     metadata?: { mcp?: { structuredContent?: unknown } }
                     attachments?: unknown[]
+                    [STRUCTURED_CONTENT]?: unknown
                   }
-                  const structured = r?.metadata?.mcp?.structuredContent
+                  const structured = r?.[STRUCTURED_CONTENT] ?? r?.metadata?.mcp?.structuredContent
                   const dropped = Array.isArray(r?.attachments) && r.attachments.length
                     ? `\n[note: ${r.attachments.length} non-text attachment(s) dropped — binary content cannot cross the exec sandbox]`
                     : ""
