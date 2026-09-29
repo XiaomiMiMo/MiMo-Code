@@ -743,7 +743,7 @@ export const layer = Layer.effect(
 
       const cfg = yield* cfgSvc.get()
       const timeout = resolveMcpTimeout(mcp.timeout, cfg.experimental?.mcp_timeout)
-      const connectTimeout = resolveMcpTimeout(mcp.timeout, cfg.experimental?.mcp_timeout, DEFAULT_CONNECT_TIMEOUT)
+      const connectTimeout = mcp.timeout ?? DEFAULT_CONNECT_TIMEOUT
 
       const { client: mcpClient, status } =
         mcp.type === "remote"
