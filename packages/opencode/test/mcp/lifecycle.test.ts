@@ -284,6 +284,7 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
 }))
 
 beforeEach(() => {
+  HostMcp.set({})
   clientStates.clear()
   lastCreatedClientName = undefined
   connectShouldFail = false
@@ -296,6 +297,7 @@ beforeEach(() => {
 
 // Import after mocks
 const { MCP } = await import("../../src/mcp/index")
+const { HostMcp } = await import("../../src/mcp/host")
 const { Instance } = await import("../../src/project/instance")
 const { tmpdir } = await import("../fixture/fixture")
 
@@ -1267,6 +1269,32 @@ test(
           { method: "resources/read", timeout: 100 },
         ])
       }),
+  ),
+)
+
+test(
+  "host MCP tool refresh keeps the global request timeout",
+  withInstance(
+    {},
+    (mcp) =>
+      Effect.gen(function* () {
+        yield* mcp.status()
+        lastCreatedClientName = "host-timeout-server"
+        const serverState = getOrCreateClientState("host-timeout-server")
+        HostMcp.set({
+          "host-timeout-server": {
+            type: "local",
+            command: ["echo", "test"],
+          },
+        })
+
+        yield* mcp.prompts()
+        const handler = Array.from(serverState.notificationHandlers.values())[0]
+        yield* Effect.promise(() => handler?.())
+
+        expect(serverState.requestTimeouts.at(-1)).toEqual({ method: "tools/list", timeout: 100 })
+      }).pipe(Effect.ensuring(Effect.sync(() => HostMcp.set({})))),
+    { mcp_timeout: 100 },
   ),
 )
 

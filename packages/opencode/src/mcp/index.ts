@@ -39,7 +39,12 @@ import { McpElicitation } from "./elicitation"
 import { SessionID } from "@/session/schema"
 
 const log = Log.create({ service: "mcp" })
-const DEFAULT_TIMEOUT = 30_000
+const DEFAULT_TIMEOUT = 5_000
+const DEFAULT_CONNECT_TIMEOUT = 30_000
+
+function resolveMcpTimeout(serverTimeout?: number, globalTimeout?: number, fallback = DEFAULT_TIMEOUT) {
+  return serverTimeout ?? globalTimeout ?? fallback
+}
 
 /**
  * Host entries fully replace the user record for that name. When the host omits
@@ -410,7 +415,7 @@ export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?:
 
 function defs(key: string, client: MCPClient, timeout?: number) {
   return Effect.tryPromise({
-    try: () => withTimeout(client.listTools(), timeout ?? DEFAULT_TIMEOUT),
+    try: () => client.listTools({}, { timeout: timeout ?? DEFAULT_TIMEOUT }),
     catch: (err) => (err instanceof Error ? err : new Error(String(err))),
   }).pipe(
     Effect.map((result) => result.tools),
@@ -424,15 +429,16 @@ function defs(key: string, client: MCPClient, timeout?: number) {
 function fetchFromClient<T extends { name: string }>(
   clientName: string,
   client: Client,
-  listFn: (c: Client) => Promise<T[]>,
+  listFn: (c: Client, timeout: number) => Promise<T[]>,
   label: string,
   timeout?: number,
 ) {
   return Effect.tryPromise({
-    try: () => withTimeout(listFn(client), timeout ?? DEFAULT_TIMEOUT),
-    catch: (e: any) => {
-      log.error(`failed to get ${label}`, { clientName, error: e.message })
-      return e
+    try: () => listFn(client, timeout ?? DEFAULT_TIMEOUT),
+    catch: (error) => {
+      const normalized = error instanceof Error ? error : new Error(String(error))
+      log.error(`failed to get ${label}`, { clientName, error: normalized.message })
+      return normalized
     },
   }).pipe(
     Effect.map((items) => {
@@ -451,6 +457,7 @@ interface CreateResult {
   mcpClient?: MCPClient
   status: Status
   defs?: MCPToolDef[]
+  timeout?: number
 }
 
 type AuthResult =
@@ -538,6 +545,7 @@ export const layer = Layer.effect(
     const connectRemote = Effect.fn("MCP.connectRemote")(function* (
       key: string,
       mcp: ConfigMCP.Info & { type: "remote" },
+      connectTimeout: number,
       identity?: { hostRevision?: string; fromHost: boolean },
     ) {
       // Prefer the caller's creation snapshot; only fall back to current HostMcp
@@ -585,7 +593,6 @@ export const layer = Layer.effect(
         },
       ]
 
-      const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       let lastStatus: Status | undefined
 
       for (const { name, transport } of transports) {
@@ -659,6 +666,7 @@ export const layer = Layer.effect(
     const connectLocal = Effect.fn("MCP.connectLocal")(function* (
       key: string,
       mcp: ConfigMCP.Info & { type: "local" },
+      connectTimeout: number,
     ) {
       const [cmd, ...args] = mcp.command
       const cwd = yield* InstanceState.directory
@@ -686,7 +694,6 @@ export const layer = Layer.effect(
         log.info(`mcp stderr: ${text}`, { key })
       }
 
-      const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       return yield* connectTransport(transport, connectTimeout).pipe(
         Effect.map((client): { client: MCPClient | undefined; status: Status } => ({
           client,
@@ -734,10 +741,14 @@ export const layer = Layer.effect(
 
       log.info("found", { key, type: mcp.type })
 
+      const cfg = yield* cfgSvc.get()
+      const timeout = resolveMcpTimeout(mcp.timeout, cfg.experimental?.mcp_timeout)
+      const connectTimeout = resolveMcpTimeout(mcp.timeout, cfg.experimental?.mcp_timeout, DEFAULT_CONNECT_TIMEOUT)
+
       const { client: mcpClient, status } =
         mcp.type === "remote"
-          ? yield* connectRemote(key, mcp as ConfigMCP.Info & { type: "remote" }, identity)
-          : yield* connectLocal(key, mcp as ConfigMCP.Info & { type: "local" })
+          ? yield* connectRemote(key, mcp as ConfigMCP.Info & { type: "remote" }, connectTimeout, identity)
+          : yield* connectLocal(key, mcp as ConfigMCP.Info & { type: "local" }, connectTimeout)
 
       if (!mcpClient) {
         return { status } satisfies CreateResult
@@ -747,7 +758,7 @@ export const layer = Layer.effect(
       // interruption during tools/list must close the unpublished client.
       const listed = yield* Effect.acquireUseRelease(
         Effect.succeed(mcpClient),
-        (client) => defs(key, client, mcp.timeout),
+        (client) => defs(key, client, timeout),
         (client, exit) =>
           Exit.isFailure(exit) ? Effect.tryPromise(() => client.close()).pipe(Effect.ignore) : Effect.void,
       )
@@ -757,7 +768,7 @@ export const layer = Layer.effect(
       }
 
       log.info("create() successfully created client", { key, toolCount: listed.length })
-      return { mcpClient, status, defs: listed } satisfies CreateResult
+      return { mcpClient, status, defs: listed, timeout } satisfies CreateResult
     })
     const cfgSvc = yield* Config.Service
 
@@ -857,7 +868,7 @@ export const layer = Layer.effect(
                   key,
                   result.mcpClient,
                   result.defs!,
-                  mcp.timeout,
+                  result.timeout,
                   hostEffectiveSampling(mcp, fromHost),
                   { fromHost, hostRevision },
                 )
@@ -967,7 +978,7 @@ export const layer = Layer.effect(
             if (result.mcpClient) {
               s.clients[name] = result.mcpClient
               s.defs[name] = result.defs!
-              watch(s, name, result.mcpClient, bridge, mcp?.timeout, hostEffectiveSampling(mcp, name in host))
+              watch(s, name, result.mcpClient, bridge, result.timeout, hostEffectiveSampling(mcp, name in host))
             }
           }
         }),
@@ -1097,10 +1108,15 @@ export const layer = Layer.effect(
       }
 
       // `sampling` must be computed with the same config snapshot as `mcp`.
-      return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout, sampling ?? mcp.sampling, {
-        ...opts,
-        hostRevision,
-      })
+      return yield* storeClient(
+        s,
+        name,
+        result.mcpClient,
+        result.defs!,
+        result.timeout,
+        sampling ?? mcp.sampling,
+        { ...opts, hostRevision },
+      )
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCP.Info) {
@@ -1154,7 +1170,6 @@ export const layer = Layer.effect(
 
       const cfg = yield* cfgSvc.get()
       const config = { ...cfg.mcp, ...HostMcp.get() }
-      const defaultTimeout = cfg.experimental?.mcp_timeout
 
       const connectedClients = Object.entries(s.clients).filter(
         ([clientName]) => s.status[clientName]?.status === "connected",
@@ -1176,7 +1191,7 @@ export const layer = Layer.effect(
           if (!retained.has(client)) retained.set(client, { name: clientName, release: client.retain() })
           turnClients.set(context, retained)
         }
-        const timeout = entry?.timeout ?? defaultTimeout
+        const timeout = resolveMcpTimeout(entry?.timeout, cfg.experimental?.mcp_timeout)
         for (const mcpTool of listed) {
           result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(
             mcpTool,
@@ -1191,7 +1206,7 @@ export const layer = Layer.effect(
 
     function collectFromConnected<T extends { name: string }>(
       s: State,
-      listFn: (c: Client) => Promise<T[]>,
+      listFn: (c: Client, timeout: number) => Promise<T[]>,
       label: string,
       serverTimeouts?: Record<string, number | undefined>,
     ) {
@@ -1213,31 +1228,40 @@ export const layer = Layer.effect(
     }
 
     function serverTimeoutsFromConfig(cfg: Config.Info): Record<string, number | undefined> {
-      const config = { ...cfg.mcp, ...HostMcp.get() }
-      const timeouts: Record<string, number | undefined> = {}
-      for (const [key, mcp] of Object.entries(config)) {
-        if (isMcpConfigured(mcp)) timeouts[key] = mcp.timeout
-      }
-      return timeouts
+      return Object.fromEntries(
+        Object.entries({ ...cfg.mcp, ...HostMcp.get() })
+          .filter((entry): entry is [string, ConfigMCP.Info] => isMcpConfigured(entry[1]))
+          .map(([key, mcp]) => [key, resolveMcpTimeout(mcp.timeout, cfg.experimental?.mcp_timeout)]),
+      )
     }
 
     const prompts = Effect.fn("MCP.prompts")(function* () {
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
       const cfg = yield* cfgSvc.get()
-      return yield* collectFromConnected(s, (c) => c.listPrompts().then((r) => r.prompts), "prompts", serverTimeoutsFromConfig(cfg))
+      return yield* collectFromConnected(
+        s,
+        (c, timeout) => c.listPrompts({}, { timeout }).then((r) => r.prompts),
+        "prompts",
+        serverTimeoutsFromConfig(cfg),
+      )
     })
 
     const resources = Effect.fn("MCP.resources")(function* () {
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
       const cfg = yield* cfgSvc.get()
-      return yield* collectFromConnected(s, (c) => c.listResources().then((r) => r.resources), "resources", serverTimeoutsFromConfig(cfg))
+      return yield* collectFromConnected(
+        s,
+        (c, timeout) => c.listResources({}, { timeout }).then((r) => r.resources),
+        "resources",
+        serverTimeoutsFromConfig(cfg),
+      )
     })
 
     const withClient = Effect.fnUntraced(function* <A>(
       clientName: string,
-      fn: (client: MCPClient) => Promise<A>,
+      fn: (client: MCPClient, timeout: number) => Promise<A>,
       label: string,
       meta?: Record<string, unknown>,
     ) {
@@ -1248,9 +1272,12 @@ export const layer = Layer.effect(
         log.warn(`client not found for ${label}`, { clientName })
         return undefined
       }
+      const cfg = yield* cfgSvc.get()
+      const entry = HostMcp.get()[clientName] ?? cfg.mcp?.[clientName]
+      const timeout = resolveMcpTimeout(isMcpConfigured(entry) ? entry.timeout : undefined, cfg.experimental?.mcp_timeout)
       const release = client.retain()
       return yield* Effect.tryPromise({
-        try: () => fn(client),
+        try: () => fn(client, timeout),
         catch: (e: any) => {
           log.error(`failed to ${label}`, { clientName, ...meta, error: e?.message })
           return e
@@ -1266,15 +1293,21 @@ export const layer = Layer.effect(
       name: string,
       args?: Record<string, string>,
     ) {
-      return yield* withClient(clientName, (client) => client.getPrompt({ name, arguments: args }), "getPrompt", {
-        promptName: name,
-      })
+      return yield* withClient(
+        clientName,
+        (client, timeout) => client.getPrompt({ name, arguments: args }, { timeout }),
+        "getPrompt",
+        { promptName: name },
+      )
     })
 
     const readResource = Effect.fn("MCP.readResource")(function* (clientName: string, resourceUri: string) {
-      return yield* withClient(clientName, (client) => client.readResource({ uri: resourceUri }), "readResource", {
-        resourceUri,
-      })
+      return yield* withClient(
+        clientName,
+        (client, timeout) => client.readResource({ uri: resourceUri }, { timeout }),
+        "readResource",
+        { resourceUri },
+      )
     })
 
     const getMcpConfig = Effect.fnUntraced(function* (mcpName: string) {
@@ -1382,8 +1415,10 @@ export const layer = Layer.effect(
       const result = yield* startAuthInternal(mcpName)
       if (result.kind === "connected") {
         const { client, resolved } = result
+        const cfg = yield* cfgSvc.get()
+        const timeout = resolveMcpTimeout(resolved.mcp.timeout, cfg.experimental?.mcp_timeout)
 
-        const listed = yield* defs(mcpName, client, resolved.mcp.timeout)
+        const listed = yield* defs(mcpName, client, timeout)
         if (!listed) {
           yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
           return { status: "failed", error: "Failed to get tools" } as Status
@@ -1396,7 +1431,7 @@ export const layer = Layer.effect(
           mcpName,
           client,
           listed,
-          resolved.mcp.timeout,
+          timeout,
           hostEffectiveSampling(resolved.mcp, resolved.hostOwned),
           { fromHost: resolved.hostOwned, hostRevision: result.hostRevision },
         )

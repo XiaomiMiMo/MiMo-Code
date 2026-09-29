@@ -3,6 +3,8 @@ import { isRecord } from "@/util/record"
 import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
 
+const PositiveTimeout = Schema.Number.check(Schema.isGreaterThan(0))
+
 export const Sampling = Schema.Literals(["deny", "ask", "allow"])
   .annotate({ identifier: "McpSamplingPolicy" })
   .pipe(withStatics((s) => ({ zod: zod(s) })))
@@ -24,7 +26,7 @@ export class Local extends Schema.Class<Local>("McpLocalConfig")({
   enabled: Schema.optional(Schema.Boolean).annotate({
     description: "Enable or disable the MCP server on startup",
   }),
-  timeout: Schema.optional(Schema.Number).annotate({
+  timeout: Schema.optional(PositiveTimeout).annotate({
     description: "Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified.",
   }),
   sampling: samplingField,
@@ -59,7 +61,7 @@ export class Remote extends Schema.Class<Remote>("McpRemoteConfig")({
   oauth: Schema.optional(Schema.Union([OAuth, Schema.Literal(false)])).annotate({
     description: "OAuth authentication configuration for the MCP server. Set to false to disable OAuth auto-detection.",
   }),
-  timeout: Schema.optional(Schema.Number).annotate({
+  timeout: Schema.optional(PositiveTimeout).annotate({
     description: "Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified.",
   }),
   sampling: samplingField,

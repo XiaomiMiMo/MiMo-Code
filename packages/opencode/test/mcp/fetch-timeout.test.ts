@@ -25,14 +25,14 @@ describe("withTimeout", () => {
   })
 
   test("clears its timer when the original promise rejects", async () => {
-    const setTimeoutSpy = spyOn(globalThis, "setTimeout")
+    const timeout = setTimeout(() => {}, 60_000)
+    clearTimeout(timeout)
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeout)
     const clearTimeoutSpy = spyOn(globalThis, "clearTimeout")
     try {
       await expect(withTimeout(Promise.reject(new Error("fetch failed")), 60_000)).rejects.toThrow("fetch failed")
-      expect(clearTimeoutSpy).toHaveBeenCalledWith(setTimeoutSpy.mock.results[0]?.value)
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(timeout)
     } finally {
-      const timeout = setTimeoutSpy.mock.results[0]?.value
-      if (timeout) clearTimeout(timeout)
       clearTimeoutSpy.mockRestore()
       setTimeoutSpy.mockRestore()
     }
