@@ -12,6 +12,8 @@ interface MockClientState {
   listToolsError: string
   listPromptsShouldFail: boolean
   listResourcesShouldFail: boolean
+  listPromptsHangs: boolean
+  listResourcesHangs: boolean
   prompts: Array<{ name: string; description?: string }>
   resources: Array<{ name: string; uri: string; description?: string }>
   closed: boolean
@@ -53,6 +55,8 @@ function getOrCreateClientState(name?: string): MockClientState {
       listToolsError: "listTools failed",
       listPromptsShouldFail: false,
       listResourcesShouldFail: false,
+      listPromptsHangs: false,
+      listResourcesHangs: false,
       prompts: [],
       resources: [],
       closed: false,
@@ -228,6 +232,7 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
     }
 
     async listPrompts() {
+      if (this._state?.listPromptsHangs) await new Promise<void>(() => {})
       if (this._state?.listPromptsShouldFail) {
         throw new Error("listPrompts failed")
       }
@@ -235,6 +240,7 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
     }
 
     async listResources() {
+      if (this._state?.listResourcesHangs) await new Promise<void>(() => {})
       if (this._state?.listResourcesShouldFail) {
         throw new Error("listResources failed")
       }
@@ -1073,6 +1079,60 @@ test(
         const key = Object.keys(resources)[0]
         expect(key).toContain("resource-server")
         expect(key).toContain("my-resource")
+      }),
+  ),
+)
+
+test(
+  "prompts() returns when a connected server leaves listPrompts pending",
+  withInstance(
+    {
+      "prompt-timeout-server": {
+        type: "local",
+        command: ["echo", "test"],
+        timeout: 100,
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "prompt-timeout-server"
+        getOrCreateClientState("prompt-timeout-server").listPromptsHangs = true
+
+        yield* mcp.add("prompt-timeout-server", {
+          type: "local",
+          command: ["echo", "test"],
+          timeout: 100,
+        })
+
+        const result = yield* mcp.prompts().pipe(Effect.timeout("2 seconds"))
+        expect(result).toEqual({})
+      }),
+  ),
+)
+
+test(
+  "resources() returns when a connected server leaves listResources pending",
+  withInstance(
+    {
+      "resource-timeout-server": {
+        type: "local",
+        command: ["echo", "test"],
+        timeout: 100,
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "resource-timeout-server"
+        getOrCreateClientState("resource-timeout-server").listResourcesHangs = true
+
+        yield* mcp.add("resource-timeout-server", {
+          type: "local",
+          command: ["echo", "test"],
+          timeout: 100,
+        })
+
+        const result = yield* mcp.resources().pipe(Effect.timeout("2 seconds"))
+        expect(result).toEqual({})
       }),
   ),
 )

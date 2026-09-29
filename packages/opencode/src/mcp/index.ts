@@ -426,9 +426,10 @@ function fetchFromClient<T extends { name: string }>(
   client: Client,
   listFn: (c: Client) => Promise<T[]>,
   label: string,
+  timeout?: number,
 ) {
   return Effect.tryPromise({
-    try: () => listFn(client),
+    try: () => withTimeout(listFn(client), timeout ?? DEFAULT_TIMEOUT),
     catch: (e: any) => {
       log.error(`failed to get ${label}`, { clientName, error: e.message })
       return e
@@ -1192,13 +1193,14 @@ export const layer = Layer.effect(
       s: State,
       listFn: (c: Client) => Promise<T[]>,
       label: string,
+      serverTimeouts?: Record<string, number | undefined>,
     ) {
       const connected = Object.entries(s.clients).filter(([name]) => s.status[name]?.status === "connected")
       const releases = connected.map(([, client]) => client.retain())
       return Effect.forEach(
         connected,
         ([clientName, client]) =>
-          fetchFromClient(clientName, client, listFn, label).pipe(Effect.map((items) => Object.entries(items ?? {}))),
+          fetchFromClient(clientName, client, listFn, label, serverTimeouts?.[clientName]).pipe(Effect.map((items) => Object.entries(items ?? {}))),
         { concurrency: "unbounded" },
       ).pipe(
         Effect.map((results) => Object.fromEntries<T & { client: string }>(results.flat())),
@@ -1210,16 +1212,27 @@ export const layer = Layer.effect(
       )
     }
 
+    function serverTimeoutsFromConfig(cfg: Config.Info): Record<string, number | undefined> {
+      const config = { ...cfg.mcp, ...HostMcp.get() }
+      const timeouts: Record<string, number | undefined> = {}
+      for (const [key, mcp] of Object.entries(config)) {
+        if (isMcpConfigured(mcp)) timeouts[key] = mcp.timeout
+      }
+      return timeouts
+    }
+
     const prompts = Effect.fn("MCP.prompts")(function* () {
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
-      return yield* collectFromConnected(s, (c) => c.listPrompts().then((r) => r.prompts), "prompts")
+      const cfg = yield* cfgSvc.get()
+      return yield* collectFromConnected(s, (c) => c.listPrompts().then((r) => r.prompts), "prompts", serverTimeoutsFromConfig(cfg))
     })
 
     const resources = Effect.fn("MCP.resources")(function* () {
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
-      return yield* collectFromConnected(s, (c) => c.listResources().then((r) => r.resources), "resources")
+      const cfg = yield* cfgSvc.get()
+      return yield* collectFromConnected(s, (c) => c.listResources().then((r) => r.resources), "resources", serverTimeoutsFromConfig(cfg))
     })
 
     const withClient = Effect.fnUntraced(function* <A>(
