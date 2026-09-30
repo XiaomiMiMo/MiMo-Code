@@ -211,8 +211,12 @@ function bash(info: ToolProps<typeof BashTool>) {
   )
 }
 
-function normalizePath(input?: string) {
-  if (!input) return ""
+export function normalizePath(input?: string) {
+  // `info.input` is the raw tool-call payload off the model; the tool's zod schema
+  // only runs in execute(), never on this render path. A non-string would reach
+  // path.isAbsolute() and abort the whole headless run, and there is no
+  // ErrorBoundary here to soften it. See routes/session/index.tsx for the TUI twin.
+  if (!input || typeof input !== "string") return ""
   if (path.isAbsolute(input)) return path.relative(process.cwd(), input) || "."
   return input
 }

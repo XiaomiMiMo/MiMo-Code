@@ -2249,7 +2249,13 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
       return props.part.state.status === "pending" ? {} : (props.part.state.metadata ?? {})
     },
     get input() {
-      return props.part.state.input ?? {}
+      // state.input is the raw model tool-call payload. Every renderer below
+      // assumes a plain object, so normalise anything else away rather than
+      // letting a malformed payload reach path.* helpers. Mirrors the
+      // normalisation ExecSubtoolRow already does for subagent subtools.
+      const value = props.part.state.input
+      if (!value) return {}
+      return typeof value === "object" && !Array.isArray(value) ? value : {}
     },
     get output() {
       return props.part.state.status === "completed" ? props.part.state.output : undefined
@@ -3191,7 +3197,7 @@ function Bash(props: ToolProps<typeof BashTool>) {
 
   const workdirDisplay = createMemo(() => {
     const workdir = props.input.workdir
-    if (!workdir || workdir === ".") return undefined
+    if (typeof workdir !== "string" || workdir === ".") return undefined
 
     const base = sync.path.directory
     if (!base) return undefined
@@ -3766,8 +3772,13 @@ function Diagnostics(props: { diagnostics?: Record<string, Record<string, any>[]
   )
 }
 
-function normalizePath(input?: string) {
-  if (!input) return ""
+export function normalizePath(input?: string) {
+  // `input` is the raw tool-call payload off the model, not a validated string:
+  // the tool's zod schema only runs in execute(), never on the render path. A
+  // non-string `path`/`file_path` would otherwise reach path.isAbsolute() and
+  // throw, which the top-level ErrorBoundary turns into a fatal screen that
+  // replaces the whole session view. Degrade to an empty label instead.
+  if (!input || typeof input !== "string") return ""
 
   const cwd = process.cwd()
   const absolute = path.isAbsolute(input) ? input : path.resolve(cwd, input)
@@ -3789,8 +3800,10 @@ function input(input: Record<string, any>, omit?: string[]): string {
   return `[${primitives.map(([key, value]) => `${key}=${value}`).join(", ")}]`
 }
 
-function filetype(input?: string) {
-  if (!input) return "none"
+export function filetype(input?: string) {
+  // Raw tool-call payload - see normalizePath above. path.extname() throws on
+  // non-strings just like path.isAbsolute() does.
+  if (!input || typeof input !== "string") return "none"
   const ext = path.extname(input)
   const language = LANGUAGE_EXTENSIONS[ext]
   if (["typescriptreact", "javascriptreact", "javascript"].includes(language)) return "typescript"

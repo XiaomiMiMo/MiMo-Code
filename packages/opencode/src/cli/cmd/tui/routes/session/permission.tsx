@@ -20,8 +20,10 @@ import { useTuiConfig } from "../../context/tui-config"
 
 type PermissionStage = "permission" | "always" | "reject"
 
-function normalizePath(input?: string) {
-  if (!input) return ""
+export function normalizePath(input?: string) {
+  // See the note in routes/session/index.tsx: this receives the raw tool-call
+  // payload, so a non-string must degrade rather than throw inside path.isAbsolute().
+  if (!input || typeof input !== "string") return ""
 
   const cwd = process.cwd()
   const home = Global.Path.home
@@ -38,8 +40,9 @@ function normalizePath(input?: string) {
   return absolute
 }
 
-function filetype(input?: string) {
-  if (!input) return "none"
+export function filetype(input?: string) {
+  // Raw tool-call payload - see normalizePath above.
+  if (!input || typeof input !== "string") return "none"
   const ext = path.extname(input)
   const language = LANGUAGE_EXTENSIONS[ext]
   if (["typescriptreact", "javascriptreact", "javascript"].includes(language)) return "typescript"
