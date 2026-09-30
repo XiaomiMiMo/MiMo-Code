@@ -30,6 +30,11 @@ export const dict = {
   "tui.home.placeholder.example.todo": "Исправь TODO в кодовой базе",
   "tui.home.placeholder.example.stack": "Какой технологический стек у этого проекта?",
   "tui.home.placeholder.example.tests": "Почини сломанные тесты",
+  "tui.home.agreement.prefix": "Используя MiMoCode, вы соглашаетесь с нашими ",
+  "tui.home.agreement.terms": "Условиями использования",
+  "tui.home.agreement.separator": " и ",
+  "tui.home.agreement.privacy": "Политикой конфиденциальности",
+  "tui.home.agreement.suffix": "",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "прикрепить файл",
@@ -390,6 +395,9 @@ export const dict = {
   "tui.dialog.ok": "OK",
   "tui.dialog.confirm.cancel": "Отмена",
   "tui.dialog.confirm.confirm": "Подтвердить",
+  "tui.dialog.agreement.title": "Условия и конфиденциальность",
+  "tui.dialog.agreement.message": "Ознакомьтесь и примите их, чтобы продолжить.",
+  "tui.dialog.agreement.confirm": "Принять и продолжить",
   "tui.dialog.select.placeholder": "Поиск",
   "tui.dialog.model.login_hint": "Подсказка: выполните /login для входа перед сменой модели",
   "tui.dialog.select.no_results": "Ничего не найдено",

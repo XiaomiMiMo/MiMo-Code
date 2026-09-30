@@ -30,6 +30,11 @@ export const dict = {
   "tui.home.placeholder.example.todo": "修复代码库中的 TODO",
   "tui.home.placeholder.example.stack": "这个项目用了什么技术栈？",
   "tui.home.placeholder.example.tests": "修复失败的测试",
+  "tui.home.agreement.prefix": "使用 MiMoCode 即表示你同意我们的",
+  "tui.home.agreement.terms": "服务协议",
+  "tui.home.agreement.separator": "和",
+  "tui.home.agreement.privacy": "隐私政策",
+  "tui.home.agreement.suffix": "",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "添加文件",
@@ -362,6 +367,9 @@ export const dict = {
   "tui.dialog.ok": "确定",
   "tui.dialog.confirm.cancel": "取消",
   "tui.dialog.confirm.confirm": "确认",
+  "tui.dialog.agreement.title": "服务协议与隐私政策",
+  "tui.dialog.agreement.message": "请阅读并同意后继续使用。",
+  "tui.dialog.agreement.confirm": "同意并继续",
   "tui.dialog.select.placeholder": "搜索",
   "tui.dialog.model.login_hint": "提示：先 /login 登录再切换模型",
   "tui.dialog.select.no_results": "未找到结果",

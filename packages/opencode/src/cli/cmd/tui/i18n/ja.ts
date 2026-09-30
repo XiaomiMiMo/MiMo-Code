@@ -30,6 +30,11 @@ export const dict = {
   "tui.home.placeholder.example.todo": "コードベース内の TODO を修正",
   "tui.home.placeholder.example.stack": "このプロジェクトの技術スタックは？",
   "tui.home.placeholder.example.tests": "壊れたテストを修正",
+  "tui.home.agreement.prefix": "MiMoCode をご利用いただくことで、",
+  "tui.home.agreement.terms": "利用規約",
+  "tui.home.agreement.separator": "および",
+  "tui.home.agreement.privacy": "プライバシーポリシー",
+  "tui.home.agreement.suffix": "に同意したものとみなされます",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "ファイル添付",
@@ -318,6 +323,9 @@ export const dict = {
   "tui.dialog.ok": "OK",
   "tui.dialog.confirm.cancel": "キャンセル",
   "tui.dialog.confirm.confirm": "確認",
+  "tui.dialog.agreement.title": "利用規約とプライバシー",
+  "tui.dialog.agreement.message": "内容を確認し、同意のうえで続行してください。",
+  "tui.dialog.agreement.confirm": "同意して続行",
   "tui.dialog.select.placeholder": "検索",
   "tui.dialog.model.login_hint": "ヒント：モデルを切り替える前に /login でログインしてください",
   "tui.dialog.select.no_results": "結果が見つかりません",

@@ -30,6 +30,11 @@ export const dict = {
   "tui.home.placeholder.example.todo": "Corriger un TODO dans le code",
   "tui.home.placeholder.example.stack": "Quelle est la stack technique de ce projet ?",
   "tui.home.placeholder.example.tests": "Réparer les tests cassés",
+  "tui.home.agreement.prefix": "En utilisant MiMoCode, vous acceptez nos ",
+  "tui.home.agreement.terms": "Conditions d'utilisation",
+  "tui.home.agreement.separator": " et notre ",
+  "tui.home.agreement.privacy": "Politique de confidentialité",
+  "tui.home.agreement.suffix": "",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "joindre un fichier",
@@ -375,6 +380,9 @@ export const dict = {
   "tui.dialog.ok": "OK",
   "tui.dialog.confirm.cancel": "Annuler",
   "tui.dialog.confirm.confirm": "Confirmer",
+  "tui.dialog.agreement.title": "Conditions et confidentialité",
+  "tui.dialog.agreement.message": "Veuillez les lire et les accepter pour continuer.",
+  "tui.dialog.agreement.confirm": "Accepter et continuer",
   "tui.dialog.select.placeholder": "Rechercher",
   "tui.dialog.model.login_hint": "Astuce : exécutez /login pour vous connecter avant de changer de modèle",
   "tui.dialog.select.no_results": "Aucun résultat trouvé",

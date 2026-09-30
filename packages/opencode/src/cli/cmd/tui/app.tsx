@@ -83,6 +83,7 @@ import { DialogVariant } from "./component/dialog-variant"
 import { DialogModalities } from "./component/dialog-modalities"
 import { DialogContextLimit } from "./component/dialog-context-limit"
 import { DialogPermissionTimeout } from "./component/dialog-permission-timeout"
+import { DialogAgreement, AGREEMENT_KEY } from "./component/dialog-agreement"
 
 function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
   const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
@@ -381,6 +382,22 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
           sessionID: args.sessionID,
         })
       }
+    })
+  })
+
+  // Entering the TUI: one-time ToS/privacy acknowledgment. Shown before any
+  // prompt work so it never interrupts a send. Agree writes the KV flag; a
+  // dismiss without accepting leaves the flag unset so the next launch asks
+  // again. Key is product-level (not free-channel).
+  let agreementShown = false
+  createEffect(() => {
+    if (agreementShown || !kv.ready) return
+    if (kv.get(AGREEMENT_KEY)) return
+    agreementShown = true
+    DialogAgreement.show(dialog, {
+      onConfirm: () => {
+        kv.set(AGREEMENT_KEY, true)
+      },
     })
   })
 
