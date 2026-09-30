@@ -1,14 +1,59 @@
 ---
 feature: opencode-env-and-sdk-flat
-status: designed
+status: delivered
 updated: 2026-09-30
 branch: chore/opencode-leftovers-sdk-flat
-commits: # leave empty while in progress; fill at delivery
+commits: f40c76ac..9e025124
 ---
 
 # OPENCODE leftover env rename + flatten packages/sdk/js
 
 ## Report
+
+**What was built** — Leftover `OPENCODE_*` identifiers that are not genuine
+opencode product surfaces are renamed to `MIMOCODE_*`: SDK server helpers now
+write `MIMOCODE_CONFIG_CONTENT` (the name the CLI actually reads), esbuild
+defines `OPENCODE_MIGRATIONS` / `OPENCODE_WORKER_PATH` / `OPENCODE_LIBC`
+become `MIMOCODE_*` on both the define and `declare const` sides, and the ACP
+README documents `MIMOCODE_ENABLE_QUESTION_TOOL`. Kept as-is: 
+`MIMOCODE_ENABLE_OPENCODE_SKILLS`, models.dev `OPENCODE_API_KEY` fixtures, and
+the deferred `OPENCODE_CALLER` reader.
+
+`packages/sdk/js` is flattened into `packages/sdk`. The unused committed
+`packages/sdk/openapi.json` snapshot is deleted (sole writer was
+`script/generate.ts`; JS codegen used a private temp schema). Workspace,
+tsconfig, script, and comment path tokens follow. Relative paths inside the
+moved package were rewritten for the new depth, including the cwd-relative
+`README_npm.md` / `LICENSE` reads in `script/publish.ts` and the stale
+`build.ts` generate cwd (`../../opencode` → `../cli`). Local prefs (oxlint
+local `$schema`, drop `CLAUDE.md` symlink) landed on this branch as requested.
+
+**Verification** — From the worktree:
+- `bun ci` — PASS (frozen lockfile, no changes)
+- `bun typecheck` (root: all workspaces + `tsconfig.scripts.json`) — PASS
+- `bun test test/ide/ide.test.ts test/config/config.test.ts` (packages/cli) — PASS (96)
+- residual `OPENCODE_CONFIG_CONTENT|MIGRATIONS|WORKER_PATH|LIBC|ENABLE_QUESTION_TOOL` outside this doc — empty
+- residual `packages/sdk/js` outside historical specs — empty
+- remaining `OPENCODE_` hits are only keep/defer sets + models.dev fixtures
+- `packages/sdk` publish paths resolve to repo-root `README_npm.md` / `LICENSE`
+
+Independent review: C1 (publish.ts README/LICENSE one level too high) fixed to
+`../../…` matching `packages/plugin/script/publish.ts`; spec S2.3.4 path math
+corrected. T6 Report now names the deferred caller cleanup.
+
+**Journey log** —
+- `packages/sdk/js/script/build.ts` still pointed generate at `../../opencode`
+  after the `packages/opencode` → `packages/cli` rename; the flatten's `../cli`
+  silently fixes it. Full path-segment sweep found no other package-directory
+  leftovers — remaining `opencode` strings are semantic (provider id, Effect
+  tags, external-import source, bin name, managed config paths).
+- After a one-level package flatten, cwd-relative `Bun.file("../…")` needs one
+  fewer `../` than file-relative imports; `packages/plugin/script/publish.ts`
+  is the depth reference.
+- **Follow-up (not in this change):** delete `OPENCODE_CALLER` /
+  `alreadyInstalled()` in `packages/cli/src/ide/index.ts` and the related tests
+  (and the `sst-dev.opencode` install path if still shipped). No in-repo IDE
+  extension sets it any more.
 
 ## [S1] Problem
 
@@ -80,13 +125,16 @@ sole writer is `script/generate.ts`; codegen uses a temp file).
    `.gitignore` (`/packages/sdk/js/openapi.json` → `/packages/sdk/openapi.json`
    for the build-temp file), and any other path-string hits outside historical
    narrative if the bulk replace is scoped to live paths.
-4. Fix relative paths inside the moved package:
-   - `script/publish.ts` `../../../../script/meta.ts` → `../../../script/meta.ts`
-   - `script/tsconfig.json` extends `../../../tsconfig.scripts.json` → `../../tsconfig.scripts.json`
+4. Fix relative paths inside the moved package (file-relative imports need one
+   more `../` than cwd-relative `Bun.file` reads after `process.chdir(pkgRoot)`):
+   - `script/publish.ts` import `../../../../script/meta.ts` → `../../../script/meta.ts` (file-relative)
+   - `script/publish.ts` `Bun.file("../../../README_npm.md")` / `LICENSE` → `../../…` (cwd = `packages/sdk`, match `packages/plugin/script/publish.ts`)
+   - `script/tsconfig.json` extends `../../../../tsconfig.scripts.json` → `../../../tsconfig.scripts.json` (was 4 levels from `packages/sdk/js/script`; 3 levels from `packages/sdk/script`)
    - `package.json` `repository.directory` → `packages/sdk`
-5. `script/generate.ts` must stop writing `../sdk/openapi.json` (that path becomes
+5. Fix the stale `build.ts` generate cwd left by the earlier rename: `path.resolve(dir, "../../opencode")` → `path.resolve(dir, "../cli")`.
+6. `script/generate.ts` must stop writing `../sdk/openapi.json` (that path becomes
    the package root). Keep only the SDK codegen invocation.
-6. npm name `@mimo-ai/sdk`, exports map, and public API stay identical.
+7. npm name `@mimo-ai/sdk`, exports map, and public API stay identical.
 
 ### S2.4 Verification boundary
 
@@ -110,9 +158,9 @@ sole writer is `script/generate.ts`; codegen uses a temp file).
 
 ## Tasks
 
-- [ ] T1: Land local prefs on the branch (oxlint local `$schema`, drop `CLAUDE.md` symlink) — acceptance: those two diffs are committed on `chore/opencode-leftovers-sdk-flat` (covers: S2.1)
-- [ ] T2: Rename SDK-written `OPENCODE_CONFIG_CONTENT` → `MIMOCODE_CONFIG_CONTENT` in `packages/sdk/js/src/server.ts` and `src/v2/server.ts` — acceptance: no `OPENCODE_CONFIG_CONTENT` remains; CLI `MIMOCODE_CONFIG_CONTENT` path unchanged (covers: S2.2)
-- [ ] T3: Rename build-time defines `OPENCODE_MIGRATIONS` / `OPENCODE_WORKER_PATH` / `OPENCODE_LIBC` → `MIMOCODE_*` across `packages/cli/script/*.ts` and the matching `declare const` sites — acceptance: define names match declare names; no stale `OPENCODE_MIGRATIONS|WORKER_PATH|LIBC` (covers: S2.2)
-- [ ] T4: Fix ACP README `OPENCODE_ENABLE_QUESTION_TOOL` → `MIMOCODE_ENABLE_QUESTION_TOOL` — acceptance: docs match `Flag.MIMOCODE_ENABLE_QUESTION_TOOL` (covers: S2.2)
-- [ ] T5: Delete `packages/sdk/openapi.json`, flatten `packages/sdk/js/*` to `packages/sdk/*`, rewrite path tokens and in-package relatives, stop `generate.ts` writing openapi.json — acceptance: workspace installs frozen, root typecheck passes, `packages/sdk/js` gone, `@mimo-ai/sdk` resolves from `packages/sdk` (covers: S2.3; depends: T2, T3)
-- [ ] T6: Residual scans + record `OPENCODE_CALLER` deletion follow-up in Report — acceptance: scans match S2.4; Report/Journey names the deferred caller cleanup (covers: S2.2, S2.4; depends: T1–T5)
+- [x] T1: Land local prefs on the branch (oxlint local `$schema`, drop `CLAUDE.md` symlink) — acceptance: those two diffs are committed on `chore/opencode-leftovers-sdk-flat` (covers: S2.1)
+- [x] T2: Rename SDK-written `OPENCODE_CONFIG_CONTENT` → `MIMOCODE_CONFIG_CONTENT` in `packages/sdk/js/src/server.ts` and `src/v2/server.ts` — acceptance: no `OPENCODE_CONFIG_CONTENT` remains; CLI `MIMOCODE_CONFIG_CONTENT` path unchanged (covers: S2.2)
+- [x] T3: Rename build-time defines `OPENCODE_MIGRATIONS` / `OPENCODE_WORKER_PATH` / `OPENCODE_LIBC` → `MIMOCODE_*` across `packages/cli/script/*.ts` and the matching `declare const` sites — acceptance: define names match declare names; no stale `OPENCODE_MIGRATIONS|WORKER_PATH|LIBC` (covers: S2.2)
+- [x] T4: Fix ACP README `OPENCODE_ENABLE_QUESTION_TOOL` → `MIMOCODE_ENABLE_QUESTION_TOOL` — acceptance: docs match `Flag.MIMOCODE_ENABLE_QUESTION_TOOL` (covers: S2.2)
+- [x] T5: Delete `packages/sdk/openapi.json`, flatten `packages/sdk/js/*` to `packages/sdk/*`, rewrite path tokens and in-package relatives, stop `generate.ts` writing openapi.json — acceptance: workspace installs frozen, root typecheck passes, `packages/sdk/js` gone, `@mimo-ai/sdk` resolves from `packages/sdk` (covers: S2.3; depends: T2, T3)
+- [x] T6: Residual scans + record `OPENCODE_CALLER` deletion follow-up in Report — acceptance: scans match S2.4; Report/Journey names the deferred caller cleanup (covers: S2.2, S2.4; depends: T1–T5)
