@@ -30,6 +30,78 @@ Independent review: all 6 acceptance criteria met; no critical findings. Non-cri
 - Workspace globs `packages/*` meant no `package.json` workspaces edit was needed — only lockfile path tokens.
 - Prompt templates embed AGENTS-style verify rules and will drift when AGENTS.md is edited independently.
 
+## [S1] Problem
+
+The core package already publishes as `@mimo-ai/cli`, but its directory was still
+`packages/opencode` (a historical leftover). That mismatch showed up in every
+developer path: AGENTS/CONTRIBUTING examples, CI `working-directory`, root
+scripts (`dev` / `build:local` / `postinstall` / release), typecheck project
+refs, install helpers, and ~38 archived feature docs. New contributors and
+agents kept tripping over the name. We want the on-disk path to match the package
+name, with every path reference updated so nothing still points at the old
+directory.
+
+## [S2] Design
+
+**Rename.** `git mv packages/opencode packages/cli`. Workspace globs
+(`packages/*`, `packages/sdk/js`) pick up the new directory without
+`package.json` workspaces edits. The published npm name stays `@mimo-ai/cli`.
+The root monorepo `name` stays `opencode`.
+
+**Path-string contract.** Replace the literal path token `packages/opencode`
+with `packages/cli` everywhere it refers to this package directory. Scope
+covers root scripts/config (`package.json`, `tsconfig*.json`, `local-install.sh`),
+build/release scripts (`script/release.ts`, `publish.ts`, `generate.ts`,
+`meta.ts`, `fds-upload.ts`), CI (`.github/workflows/test.yml`), `bun.lock`
+workspace tokens, in-package path comments and prompt templates, test fixtures
+and snapshots, `packages/sdk/js/src/process.ts`, `patches/install-korean-ime-fix.sh`,
+`.agents/skills/drive-mimo/SKILL.md`, living docs (`AGENTS.md`, `CONTRIBUTING.md`),
+and every historical `docs/compose/spec/*.md` (user decision: rewrite to
+`packages/cli`).
+
+**AGENTS.md content cleanup** (user decision, same change):
+
+- Drop `## Core Focus` — after recent PRs the tree is CLI-only, so the section is noise.
+- Drop `## Type Checking` entirely and the "how to run tests" bullet under `## Testing` — root `typecheck` / package `test` scripts are self-explanatory.
+- Keep only how-to-write-tests guidance under `## Testing` (no mocks; test real implementation).
+- Leave `CONTRIBUTING.md` "Checks before you push" run commands in place (human onboarding).
+- Prompt templates must not cite deleted AGENTS how-to-run rules.
+
+**Do not change** (semantic product / protocol identifiers, not directory paths):
+
+- npm / workspace package name `@mimo-ai/cli`, `@mimo-ai/plugin`, `@mimo-ai/shared`, `@mimo-ai/sdk`
+- root package `"name": "opencode"`
+- provider ids, external-import sources, MCP origin strings, observability
+  `serviceName`, CLI `$0`, brew/scoop/choco formula names, GitHub URLs
+  (`sst/opencode`, `anomalyco/opencode`, …)
+- `packages/shared` bin key `opencode`
+- migration journal *contents* under `packages/cli/migration/` (only the
+  directory moves; do not edit shipped `migration.sql`)
+
+**Lockfile.** Bun records workspace package paths in `bun.lock`
+(`"packages/opencode"` and `"@mimo-ai/cli": ["@mimo-ai/cli@workspace:packages/opencode"]`).
+After `git mv`, update those path tokens, then run `bun ci` to confirm the
+lockfile still installs frozen.
+
+**No compatibility shim.** Old paths break on purpose. CI and scripts must be
+updated in the same change; we do not leave `packages/opencode` symlinks or
+dual-path fallbacks.
+
+**Verification boundary.** From the worktree: `bun typecheck` at root (covers
+all workspaces + `tsconfig.scripts.json`), focused tests in `packages/cli` for
+touched path-string surfaces, and residual `packages/opencode` path refs gone
+outside intentional non-directory identifiers. Full suite is not required for
+this rename.
+
+## [S3] Out of Scope
+
+- Renaming npm packages or the root package name
+- Renaming binaries (`mimo` / `opencode` bin entries)
+- Reworking historical narrative in specs beyond path-token replacement
+- Provider / external-import / MCP origin identifier changes
+- Touching shipped `migration/*/migration.sql` content
+- Web/Desktop surfaces (already unmaintained)
+
 ## Tasks
 
 - [x] T1: `git mv packages/opencode packages/cli` and fix `bun.lock` workspace paths — acceptance: directory is `packages/cli`; `bun ci` installs with frozen lockfile; `@mimo-ai/cli` still resolves as workspace (covers: S2)
