@@ -1,14 +1,26 @@
 import { Effect, Layer, Context, Stream, Scope } from "effect"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { formatPatch, structuredPatch } from "diff"
 import path from "path"
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
 import { InstanceState } from "@/effect"
+import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { FileWatcher } from "@/file/watcher"
 import { Git } from "@/git"
 import { Log } from "@/util"
 import z from "zod"
+import {
+  envGitHubToken,
+  mapPullsResponse,
+  noBranch,
+  notGitHub,
+  parseGitHubRepo,
+  requestError,
+  type PullRequest as PullRequestInfo,
+} from "./github-repo"
 
 const log = Log.create({ service: "vcs" })
 
@@ -123,6 +135,28 @@ export const Info = z
   })
 export type Info = z.infer<typeof Info>
 
+export const PullRequest = z
+  .object({
+    status: z.enum(["ok", "none", "unauthorized", "not_github", "rate_limited", "no_branch", "error"]),
+    authenticated: z.boolean(),
+    owner: z.string().optional(),
+    repo: z.string().optional(),
+    branch: z.string().optional(),
+    pull: z
+      .object({
+        number: z.number(),
+        state: z.string(),
+        title: z.string().optional(),
+        url: z.string().optional(),
+      })
+      .optional(),
+    message: z.string().optional(),
+  })
+  .meta({
+    ref: "VcsPullRequest",
+  })
+export type PullRequest = z.infer<typeof PullRequest>
+
 export const FileDiff = z
   .object({
     file: z.string(),
@@ -141,6 +175,7 @@ export interface Interface {
   readonly branch: () => Effect.Effect<string | undefined>
   readonly defaultBranch: () => Effect.Effect<string | undefined>
   readonly diff: (mode: Mode) => Effect.Effect<FileDiff[]>
+  readonly pullRequest: () => Effect.Effect<PullRequest>
 }
 
 interface State {
@@ -150,13 +185,46 @@ interface State {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Vcs") {}
 
-export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Git.Service | Bus.Service> = Layer.effect(
+export const layer: Layer.Layer<
+  Service,
+  never,
+  | AppFileSystem.Service
+  | Git.Service
+  | Bus.Service
+  | HttpClient.HttpClient
+  | ChildProcessSpawner.ChildProcessSpawner
+> = Layer.effect(
   Service,
   Effect.gen(function* () {
     const fs = yield* AppFileSystem.Service
     const git = yield* Git.Service
     const bus = yield* Bus.Service
     const scope = yield* Scope.Scope
+    const http = yield* HttpClient.HttpClient
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+
+    const resolveGitHubToken = Effect.fn("Vcs.resolveGitHubToken")(
+      function* () {
+        const fromEnv = envGitHubToken(process.env)
+        if (fromEnv) return fromEnv
+
+        const proc = ChildProcess.make("gh", ["auth", "token"], {
+          extendEnv: true,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const handle = yield* spawner.spawn(proc)
+        const [stdout, exitCode] = yield* Effect.all([Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode], {
+          concurrency: 2,
+        })
+        if (exitCode !== 0) return
+        const token = stdout.trim()
+        return token || undefined
+      },
+      Effect.scoped,
+      Effect.catch(() => Effect.succeed(undefined)),
+    )
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Vcs.state")(function* (ctx) {
@@ -216,6 +284,59 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Git.Serv
         if (!ref) return []
         return yield* compare(fs, git, ctx.directory, ref)
       }),
+      pullRequest: Effect.fn("Vcs.pullRequest")(function* () {
+        const ctx = yield* InstanceState.context
+        if (ctx.project.vcs !== "git") return notGitHub(undefined)
+
+        const [branch, remote] = yield* Effect.all(
+          [git.branch(ctx.directory), git.remoteUrl(ctx.directory)],
+          { concurrency: 2 },
+        )
+        if (!branch) return noBranch()
+
+        const repo = parseGitHubRepo(remote)
+        if (!repo) return notGitHub(branch)
+
+        const token = yield* resolveGitHubToken()
+        const url = new URL(`https://api.github.com/repos/${repo.owner}/${repo.repo}/pulls`)
+        url.searchParams.set("state", "all")
+        url.searchParams.set("head", `${repo.owner}:${branch}`)
+        url.searchParams.set("per_page", "10")
+
+        const headers: Record<string, string> = {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "mimocode",
+        }
+        if (token) headers.Authorization = `Bearer ${token}`
+
+        const response = yield* HttpClientRequest.get(url.href).pipe(
+          HttpClientRequest.setHeaders(headers),
+          http.execute,
+          Effect.timeout("8 seconds"),
+          Effect.catch(() => Effect.succeed(undefined)),
+        )
+        if (!response) return requestError(Boolean(token))
+
+        const bodyText = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")))
+        const body = yield* Effect.sync((): unknown => {
+          if (!bodyText) return undefined
+          try {
+            return JSON.parse(bodyText)
+          } catch {
+            return undefined
+          }
+        })
+
+        return mapPullsResponse({
+          status: response.status,
+          body,
+          authenticated: Boolean(token),
+          owner: repo.owner,
+          repo: repo.repo,
+          branch,
+        })
+      }),
     })
   }),
 )
@@ -224,4 +345,6 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Git.defaultLayer),
   Layer.provide(AppFileSystem.defaultLayer),
   Layer.provide(Bus.layer),
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(CrossSpawnSpawner.defaultLayer),
 )
