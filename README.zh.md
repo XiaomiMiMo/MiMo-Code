@@ -462,6 +462,24 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
 Max Mode（并行 best-of-N 推理 + 裁判选优）可通过配置中的 `experimental.maxMode` 开启。
 
 <details>
+<summary><strong>网页搜索及抓取会拦截自动请求的页面（<code>FIRECRAWL_API_KEY</code>）</strong></summary>
+
+有些站点会对直接请求返回 `403`、`429` 或 `5xx`——可能是机器人防护、仅在 JS 渲染后才有内容，
+或是严格的限流。设置 `FIRECRAWL_API_KEY` 后，`webfetch` 会把这类 URL 交给
+[Firecrawl](https://docs.firecrawl.dev) 重试：它会渲染页面并返回干净的 Markdown
+（若请求的是 HTML 格式，则返回 HTML）。该变量同时会为所有提供商启用 `websearch`，由 Firecrawl
+搜索提供结果（`xiaomi` 提供商仍使用内置搜索）：
+
+```bash
+FIRECRAWL_API_KEY=fc-... mimo
+```
+
+未设置该变量时行为不变——被站点拒绝的请求仍按原样报错。如需连接自建的 Firecrawl 实例
+而非托管 API，可设置 `FIRECRAWL_API_URL`；自建实例无需鉴权，因此只设置该地址即可启用回退。
+
+</details>
+
+<details>
 <summary><strong>允许访问系统临时目录（<code>/tmp</code>）</strong></summary>
 
 默认情况下，读写项目工作目录之外的文件会触发 `external_directory` 权限询问——系统临时目录也不例外。

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import path from "path"
 import { Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -12,6 +12,16 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { ProviderTest } from "../fake/provider"
 
 const projectRoot = path.join(import.meta.dir, "../..")
+
+const firecrawlKey = process.env.FIRECRAWL_API_KEY
+const firecrawlUrl = process.env.FIRECRAWL_API_URL
+
+afterEach(() => {
+  if (firecrawlKey === undefined) delete process.env.FIRECRAWL_API_KEY
+  else process.env.FIRECRAWL_API_KEY = firecrawlKey
+  if (firecrawlUrl === undefined) delete process.env.FIRECRAWL_API_URL
+  else process.env.FIRECRAWL_API_URL = firecrawlUrl
+})
 
 const sse = (model: string) => {
   const frame = {
@@ -86,14 +96,83 @@ describe("tool.websearch", () => {
               },
             ),
           ),
-          Effect.provide(
-            Layer.mergeAll(FetchHttpClient.layer, Truncate.defaultLayer, Agent.defaultLayer, fakeAuth),
-          ),
+          Effect.provide(Layer.mergeAll(FetchHttpClient.layer, Truncate.defaultLayer, Agent.defaultLayer, fakeAuth)),
           Effect.runPromise,
         )
 
         expect(requested).toBe("mimo-v2.5-pro")
         expect(result.output).toContain("https://example.com/result")
+      },
+    })
+  })
+
+  test("searches through firecrawl when it is configured", async () => {
+    let body: { query?: string; limit?: number } | undefined
+    let authorization: string | null = null
+    using server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        if (new URL(req.url).pathname !== "/v2/search") return new Response("not found", { status: 404 })
+        authorization = req.headers.get("authorization")
+        body = (await req.json()) as typeof body
+        return Response.json({
+          success: true,
+          data: {
+            web: [
+              { url: "https://example.com/one", title: "First", description: "The first hit" },
+              { url: "https://example.com/two" },
+            ],
+          },
+        })
+      },
+    })
+    process.env.FIRECRAWL_API_KEY = "fc-test"
+    process.env.FIRECRAWL_API_URL = server.url.origin
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const result = await WebSearchTool.pipe(
+          Effect.flatMap((info) => info.init()),
+          Effect.flatMap((tool) =>
+            tool.execute(
+              { query: "firecrawl search", numResults: 2 },
+              {
+                sessionID: SessionID.make("ses_test"),
+                messageID: MessageID.make("message"),
+                callID: "",
+                agent: "build",
+                abort: AbortSignal.any([]),
+                messages: [],
+                extra: {},
+                metadata: () => Effect.void,
+                ask: () => Effect.void,
+              },
+            ),
+          ),
+          Effect.provide(
+            Layer.mergeAll(
+              FetchHttpClient.layer,
+              Truncate.defaultLayer,
+              Agent.defaultLayer,
+              Layer.mock(Auth.Service)({ get: () => Effect.succeed(undefined) }),
+            ),
+          ),
+          Effect.runPromise,
+        )
+
+        expect(authorization).toBe("Bearer fc-test")
+        expect(body?.query).toBe("firecrawl search")
+        expect(body?.limit).toBe(2)
+        expect(result.output).toBe(
+          [
+            "- First",
+            "  https://example.com/one",
+            "  The first hit",
+            "- https://example.com/two",
+            "  https://example.com/two",
+          ].join("\n"),
+        )
       },
     })
   })
