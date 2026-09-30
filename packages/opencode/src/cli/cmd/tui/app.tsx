@@ -83,7 +83,7 @@ import { DialogVariant } from "./component/dialog-variant"
 import { DialogModalities } from "./component/dialog-modalities"
 import { DialogContextLimit } from "./component/dialog-context-limit"
 import { DialogPermissionTimeout } from "./component/dialog-permission-timeout"
-import { DialogAgreement, AGREEMENT_KEY } from "./component/dialog-agreement"
+import { DialogAgreement, AGREEMENT_KEY, shouldShowAgreement } from "./component/dialog-agreement"
 
 function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
   const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
@@ -392,7 +392,7 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
   let agreementShown = false
   createEffect(() => {
     if (agreementShown || !kv.ready) return
-    if (kv.get(AGREEMENT_KEY)) return
+    if (!shouldShowAgreement(kv.get(AGREEMENT_KEY))) return
     agreementShown = true
     DialogAgreement.show(dialog, {
       onConfirm: () => {

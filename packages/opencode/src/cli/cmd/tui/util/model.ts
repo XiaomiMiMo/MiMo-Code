@@ -52,6 +52,25 @@ export function initial(
   ].find((item) => get(list, item.providerID, item.modelID))
 }
 
+const PREFERRED_DEFAULT: Selection = { providerID: "xiaomi", modelID: "mimo-v2.6-pro" }
+
+/**
+ * When argument/recent/configured all miss: prefer the signed-in xiaomi pro
+ * model (login required), else the first provider's default/first model.
+ */
+export function fallback(
+  list: Provider[] | undefined,
+  providerDefault: Record<string, string> = {},
+): Selection | undefined {
+  const preferred = get(list, PREFERRED_DEFAULT.providerID, PREFERRED_DEFAULT.modelID)
+  if (preferred) return PREFERRED_DEFAULT
+  const provider = list?.[0]
+  if (!provider) return undefined
+  const model = providerDefault[provider.id] ?? Object.keys(provider.models)[0]
+  if (!model) return undefined
+  return { providerID: provider.id, modelID: model }
+}
+
 /**
  * Provider cap, configured budget and compaction trigger for a model. Shares the
  * server's arithmetic so what the UI shows is the value that actually fires

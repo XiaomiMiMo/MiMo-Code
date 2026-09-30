@@ -210,25 +210,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           configured: sync.data.config.model,
         })
         if (initial || !modelStore.ready) return initial
-
-        // No args/recent/config match: prefer the authenticated xiaomi pro
-        // model so a clean install lands on a usable paid default (login
-        // required) rather than whatever provider happens to sit first.
-        const xiaomi = sync.data.provider.find((p) => p.id === "xiaomi")
-        if (xiaomi && "mimo-v2.6-pro" in xiaomi.models) {
-          return { providerID: "xiaomi", modelID: "mimo-v2.6-pro" }
-        }
-
-        const provider = sync.data.provider[0]
-        if (!provider) return undefined
-        const defaultModel = sync.data.provider_default[provider.id]
-        const firstModel = Object.values(provider.models)[0]
-        const model = defaultModel ?? firstModel?.id
-        if (!model) return undefined
-        return {
-          providerID: provider.id,
-          modelID: model,
-        }
+        return Model.fallback(sync.data.provider, sync.data.provider_default)
       })
 
       const currentModel = createMemo(() => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Provider } from "@mimo-ai/sdk/v2"
-import { initial } from "../../../src/cli/cmd/tui/util/model"
+import { fallback, initial } from "../../../src/cli/cmd/tui/util/model"
 
 const providers = [
   {
@@ -13,6 +13,20 @@ const providers = [
     id: "ppio",
     models: {
       "deepseek-v3": {},
+    },
+  },
+] as unknown as Provider[]
+
+const withXiaomiPro = [
+  {
+    id: "openai",
+    models: { "gpt-5.6-sol": {} },
+  },
+  {
+    id: "xiaomi",
+    models: {
+      "mimo-v2.6-pro": {},
+      "mimo-v2.6": {},
     },
   },
 ] as unknown as Provider[]
@@ -57,5 +71,33 @@ describe("initial model", () => {
         configured: "ppio/deepseek-v3",
       }),
     ).toBeUndefined()
+  })
+})
+
+describe("fallback model", () => {
+  test("prefers xiaomi/mimo-v2.6-pro when no recent/configured match", () => {
+    expect(fallback(withXiaomiPro, { openai: "gpt-5.6-sol" })).toEqual({
+      providerID: "xiaomi",
+      modelID: "mimo-v2.6-pro",
+    })
+  })
+
+  test("falls back to the first provider default when xiaomi pro is absent", () => {
+    expect(fallback(providers, { openai: "gpt-5.6-sol" })).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.6-sol",
+    })
+  })
+
+  test("falls back to the first model when no provider default is set", () => {
+    expect(fallback(providers, {})).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.6-sol",
+    })
+  })
+
+  test("returns undefined with no providers", () => {
+    expect(fallback(undefined)).toBeUndefined()
+    expect(fallback([])).toBeUndefined()
   })
 })

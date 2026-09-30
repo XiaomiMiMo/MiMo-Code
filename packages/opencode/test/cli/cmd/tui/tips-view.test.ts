@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildTipKeys, tipWeight } from "../../../../src/cli/cmd/tui/feature-plugins/home/tips-view"
+import { buildTipKeys, pickDisplayKey, tipWeight } from "../../../../src/cli/cmd/tui/feature-plugins/home/tips-view"
 import { dict as en } from "../../../../src/cli/cmd/tui/i18n/en"
 import { dict as es } from "../../../../src/cli/cmd/tui/i18n/es"
 import { dict as fr } from "../../../../src/cli/cmd/tui/i18n/fr"
@@ -38,5 +38,25 @@ describe("buildTipKeys", () => {
   test("keeps the login tip available for credential-less installs", () => {
     expect(buildTipKeys("linux")).toContain("tui.tips.login")
     Array.of(en, es, fr, ja, ru, zh, zht).forEach((dict) => expect(dict["tui.tips.login"]).toBeTruthy())
+  })
+})
+
+describe("pickDisplayKey", () => {
+  test("forces the login tip when no provider is authenticated", () => {
+    expect(
+      pickDisplayKey({ agentName: "build", authenticatedCount: 0, rotationKey: "tui.tips.theme" }),
+    ).toBe("tui.tips.login")
+  })
+
+  test("keeps the rotation tip once any provider is authenticated", () => {
+    expect(
+      pickDisplayKey({ agentName: "build", authenticatedCount: 1, rotationKey: "tui.tips.theme" }),
+    ).toBe("tui.tips.theme")
+  })
+
+  test("compose deprecation outranks the login tip", () => {
+    expect(
+      pickDisplayKey({ agentName: "compose", authenticatedCount: 0, rotationKey: "tui.tips.theme" }),
+    ).toBe("tui.tips.compose_next")
   })
 })

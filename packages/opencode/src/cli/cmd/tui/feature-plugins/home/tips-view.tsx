@@ -134,6 +134,20 @@ export function tipWeight(key: string) {
   return PRIORITY_WEIGHTS[key] ?? 1
 }
 
+/**
+ * Display override for the rotating tip. Compose deprecation wins over the
+ * rotation; a credential-less install shows /login (default model needs auth).
+ */
+export function pickDisplayKey(input: {
+  agentName?: string
+  authenticatedCount: number
+  rotationKey: string
+}): string {
+  if (input.agentName === "compose") return COMPOSE_LOCK_TIP
+  if (!input.authenticatedCount) return LOGIN_TIP
+  return input.rotationKey
+}
+
 // Build the tip key pool. The platform-specific suspend tip is always appended last.
 export function buildTipKeys(platform: NodeJS.Platform): readonly string[] {
   const suspendKey = platform === "win32" ? "tui.tips.suspend.win" : "tui.tips.suspend.unix"
@@ -196,11 +210,13 @@ export function Tips() {
   // rotation key with no artificial swap. With no authenticated provider,
   // surface the /login tip instead so a credential-less install knows how to
   // proceed (the default model requires login).
-  const displayKey = createMemo(() => {
-    if (local.agent.current()?.name === "compose") return COMPOSE_LOCK_TIP
-    if (!sync.data.provider_next.authenticated.length) return LOGIN_TIP
-    return key()
-  })
+  const displayKey = createMemo(() =>
+    pickDisplayKey({
+      agentName: local.agent.current()?.name,
+      authenticatedCount: sync.data.provider_next.authenticated.length,
+      rotationKey: key(),
+    }),
+  )
   const parts = createMemo(() => parse(lang.t(displayKey(), { count: themeCount })))
   const labelColor = createMemo(() => {
     const agent = local.agent.current()

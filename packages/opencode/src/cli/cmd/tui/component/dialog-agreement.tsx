@@ -10,6 +10,11 @@ import { useDialog, type DialogContext } from "@tui/ui/dialog"
 /** One-time product ToS/privacy acknowledgment, shown on first launch. */
 export const AGREEMENT_KEY = "agreement_accepted"
 
+/** True when the TUI should present the one-time ToS/privacy dialog. */
+export function shouldShowAgreement(accepted: unknown): boolean {
+  return !accepted
+}
+
 const TERMS_URL = "https://platform.xiaomimimo.com/docs/terms/user-agreement"
 const PRIVACY_URL = "https://privacy.mi.com/XiaomiMiMoPlatform"
 
