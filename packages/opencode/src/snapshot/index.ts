@@ -31,8 +31,14 @@ export const FileDiff = z
 export type FileDiff = z.infer<typeof FileDiff>
 
 const log = Log.create({ service: "snapshot" })
-const prune = "7.days"
-const limit = 2 * 1024 * 1024
+  const prune = "7.days"
+  const limit = 2 * 1024 * 1024
+  // Upper bound on a single emitted patch, and on a whole diff across all files.
+  // The patch body is display-only; additions/deletions/status are what the
+  // session summary actually needs, so truncating is lossless for that purpose.
+const PATCH_CONTEXT = 3
+const PATCH_MAX_CHARS = 256 * 1024
+const DIFF_MAX_CHARS = 4 * 1024 * 1024
 const core = ["-c", "core.longpaths=true", "-c", "core.symlinks=true"]
 const cfg = ["-c", "core.autocrlf=false", ...core]
 const quote = [...cfg, "-c", "core.quotepath=false"]
@@ -700,8 +706,21 @@ export const layer: Layer.Layer<
               }
 
               const step = 100
-              const patch = (file: string, before: string, after: string) =>
-                formatPatch(structuredPatch(file, file, before, after, "", "", { context: Number.MAX_SAFE_INTEGER }))
+              // Bound the emitted patch. With context: Number.MAX_SAFE_INTEGER every
+              // unchanged line becomes context, so a one-line edit to a large file
+              // emits the entire file. Git's own default is 3.
+              const patch = (file: string, before: string, after: string) => {
+                const full = formatPatch(structuredPatch(file, file, before, after, "", "", { context: PATCH_CONTEXT }))
+                if (full.length <= PATCH_MAX_CHARS) return full
+                return (
+                  full.slice(0, PATCH_MAX_CHARS) +
+                  "\n... [patch truncated at " +
+                  PATCH_MAX_CHARS +
+                  " chars; " +
+                  (full.length - PATCH_MAX_CHARS) +
+                  " more]\n"
+                )
+              }
 
               for (let i = 0; i < rows.length; i += step) {
                 const run = rows.slice(i, i + step)
@@ -719,6 +738,32 @@ export const layer: Layer.Layer<
                   })
                 }
               }
+
+              // Whole-diff budget. Once the remaining budget is gone, stop carrying
+              // patch bodies but keep the per-file counts so the summary stays accurate.
+              let budget = DIFF_MAX_CHARS
+              let dropped = 0
+              for (const item of result) {
+                if (budget <= 0) {
+                  if (item.patch) {
+                    item.patch = ""
+                    dropped++
+                  }
+                  continue
+                }
+                if (item.patch.length > budget) {
+                  item.patch = item.patch.slice(0, budget) + "\n... [diff budget exhausted]\n"
+                  dropped++
+                }
+                budget -= item.patch.length
+              }
+              if (dropped > 0) {
+                log.warn("snapshot diff truncated", { files: result.length, dropped })
+              }
+              log.info("diffFull done", {
+                files: result.length,
+                patchChars: result.reduce((n, item) => n + item.patch.length, 0),
+              })
 
               return result
             }),
