@@ -11,9 +11,8 @@
     "release": "bun run script/release.ts",
     "lint": "oxlint",
     "typecheck": "bun run --workspaces --if-present --parallel typecheck && tsgo --noEmit -p tsconfig.scripts.json",
-    "postinstall": "bun run --cwd packages/cli fix-node-pty",
     "prepare": "husky",
-    "test": "echo 'do not run tests from root' && exit 1"
+    "test": "bun run --cwd packages/cli test"
   },
   "workspaces": {
     "packages": [
@@ -105,7 +104,6 @@
   },
   "trustedDependencies": [
     "esbuild",
-    "node-pty",
     "protobufjs",
     "tree-sitter",
     "tree-sitter-bash",
