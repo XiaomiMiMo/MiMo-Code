@@ -17,7 +17,7 @@ import { iife } from "@/util/iife"
 import { init } from "#db"
 import { startIndexMigration, stopIndexMigration } from "../history/migration"
 
-declare const OPENCODE_MIGRATIONS: { sql: string; timestamp: number; name: string }[] | undefined
+declare const MIMOCODE_MIGRATIONS: { sql: string; timestamp: number; name: string }[] | undefined
 
 export const NotFoundError = NamedError.create(
   "NotFoundError",
@@ -98,13 +98,13 @@ export const Client = lazy(() => {
 
   // Apply schema migrations
   const entries =
-    typeof OPENCODE_MIGRATIONS !== "undefined"
-      ? OPENCODE_MIGRATIONS
+    typeof MIMOCODE_MIGRATIONS !== "undefined"
+      ? MIMOCODE_MIGRATIONS
       : migrations(path.join(import.meta.dirname, "../../migration"))
   if (entries.length > 0) {
     log.info("applying migrations", {
       count: entries.length,
-      mode: typeof OPENCODE_MIGRATIONS !== "undefined" ? "bundled" : "dev",
+      mode: typeof MIMOCODE_MIGRATIONS !== "undefined" ? "bundled" : "dev",
     })
     if (Flag.MIMOCODE_SKIP_MIGRATIONS) {
       for (const item of entries) {
