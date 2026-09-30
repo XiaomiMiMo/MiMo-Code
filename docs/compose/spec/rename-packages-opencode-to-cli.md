@@ -54,7 +54,7 @@ covers root scripts/config (`package.json`, `tsconfig*.json`, `local-install.sh`
 build/release scripts (`script/release.ts`, `publish.ts`, `generate.ts`,
 `meta.ts`, `fds-upload.ts`), CI (`.github/workflows/test.yml`), `bun.lock`
 workspace tokens, in-package path comments and prompt templates, test fixtures
-and snapshots, `packages/sdk/js/src/process.ts`, `patches/install-korean-ime-fix.sh`,
+and snapshots, `packages/sdk/js/src/process.ts`,
 `.agents/skills/drive-mimo/SKILL.md`, living docs (`AGENTS.md`, `CONTRIBUTING.md`),
 and every historical `docs/compose/spec/*.md` (user decision: rewrite to
 `packages/cli`).
@@ -105,7 +105,7 @@ this rename.
 ## Tasks
 
 - [x] T1: `git mv packages/opencode packages/cli` and fix `bun.lock` workspace paths — acceptance: directory is `packages/cli`; `bun ci` installs with frozen lockfile; `@mimo-ai/cli` still resolves as workspace (covers: S2)
-- [x] T2: Update root scripts/config/CI/build helper paths — acceptance: `package.json`, `tsconfig*.json`, `local-install.sh`, `script/*`, `.github/workflows/test.yml`, `patches/install-korean-ime-fix.sh` all reference `packages/cli` and none reference `packages/opencode` (covers: S2; depends: T1)
+- [x] T2: Update root scripts/config/CI/build helper paths — acceptance: `package.json`, `tsconfig*.json`, `local-install.sh`, `script/*`, `.github/workflows/test.yml` all reference `packages/cli` and none reference `packages/opencode` (covers: S2; depends: T1)
 - [x] T3: Update in-package path comments, prompt templates, tests, snapshot, SDK comment — acceptance: `rg packages/opencode packages/` is empty except semantic product identifiers; touched path tests still pass (covers: S2; depends: T1)
 - [x] T4: Update living docs and historical compose specs — acceptance: `rg packages/opencode` across repo is empty outside intentional non-directory identifiers; AGENTS/CONTRIBUTING examples use `packages/cli`; AGENTS.md drops Core Focus / how-to-run test-typecheck notes (covers: S2; depends: T1)
 - [x] T5: Verify typecheck + focused tests + residual reference check — acceptance: root `bun typecheck` PASS; focused tests in `packages/cli` PASS; residual `packages/opencode` path refs gone (covers: S2; depends: T2, T3, T4)
