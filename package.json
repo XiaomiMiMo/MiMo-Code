@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "bun run --cwd packages/opencode script/dev.ts",
     "build:local": "bun run --cwd packages/opencode build:local",
+    "release": "bun run script/release.ts",
     "lint": "oxlint",
     "typecheck": "bun run --workspaces --if-present --parallel typecheck && tsgo --noEmit -p tsconfig.scripts.json",
     "postinstall": "bun run --cwd packages/opencode fix-node-pty",
