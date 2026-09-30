@@ -16,7 +16,7 @@ import type {
   TextPart,
   Config as SdkConfig,
 } from "@mimo-ai/sdk/v2"
-import type { CliRenderer, ParsedKey, RGBA, SlotMode } from "@opentui/core"
+import type { CliRenderer, KeyEvent, ParsedKey, Renderable, RGBA, SlotMode } from "@opentui/core"
 import type { JSX, SolidPlugin } from "@opentui/solid"
 import type { Config as PluginConfig, PluginOptions } from "./index.js"
 
@@ -76,6 +76,134 @@ export type TuiKeybindSet = {
   match: (name: string, evt: ParsedKey) => boolean
   print: (name: string) => string
 }
+
+// ---- api.keymap types ------------------------------------------------------
+// Narrow, type-compatible subset of upstream `@opentui/keymap` (mirrored so
+// OpenCode plugins using `api.keymap.registerLayer` compile against it). The
+// runtime value bridges to the fork's command dialog + keybind system — see
+// `packages/opencode/src/cli/cmd/tui/plugin/keymap.ts`.
+
+export type KeyStrokeInput = {
+  name: string
+  ctrl?: boolean
+  shift?: boolean
+  meta?: boolean
+  super?: boolean
+  hyper?: boolean
+}
+
+export type KeyLike = string | KeyStrokeInput
+
+export type KeySequencePart = {
+  stroke: KeyStrokeInput & { ctrl: boolean; shift: boolean; meta: boolean; super: boolean }
+  display: string
+  match: string
+  tokenName?: string
+  patternName?: string
+  payloadKey?: string
+}
+
+export type CommandContext<TTarget extends object = object, TEvent = KeyEvent, TPayload = unknown> = {
+  keymap: Keymap<TTarget, TEvent>
+  event: TEvent | undefined
+  focused: TTarget | null
+  target: TTarget | null
+  data: Readonly<Record<string, unknown>>
+  command?: Command<TTarget, TEvent, TPayload>
+  input: string
+  payload: TPayload
+}
+
+export type Command<TTarget extends object = object, TEvent = KeyEvent, TPayload = unknown> = {
+  name: string
+  run: (ctx: CommandContext<TTarget, TEvent, TPayload>) => unknown
+  [key: string]: unknown
+}
+
+export type RunCommandResult<TTarget extends object = object, TEvent = KeyEvent> =
+  | { ok: true; command?: Command<TTarget, TEvent> }
+  | { ok: false; reason: "not-found" }
+  | {
+      ok: false
+      reason: "inactive" | "disabled" | "invalid-args" | "rejected" | "error"
+      command?: Command<TTarget, TEvent>
+    }
+
+export type RunCommandOptions<TTarget extends object = object, TEvent = KeyEvent> = {
+  event?: TEvent
+  focused?: TTarget | null
+  target?: TTarget | null
+  includeCommand?: boolean
+  payload?: unknown
+}
+
+export type Binding<TTarget extends object = object, TEvent = KeyEvent> = {
+  key: KeyLike
+  cmd?: string | ((ctx: CommandContext<TTarget, TEvent>) => unknown)
+  event?: "press" | "release"
+  preventDefault?: boolean
+  fallthrough?: boolean
+  [key: string]: unknown
+}
+
+export type Layer<TTarget extends object = object, TEvent = KeyEvent> = {
+  target?: TTarget
+  priority?: number
+  bindings?: readonly Binding<TTarget, TEvent>[]
+  commands?: readonly Command<TTarget, TEvent, unknown>[]
+  targetMode?: "focus" | "focus-within"
+  [key: string]: unknown
+}
+
+export type CommandQuery<TTarget extends object = object, TEvent = KeyEvent> = {
+  visibility?: "reachable" | "active" | "registered"
+  focused?: TTarget | null
+  namespace?: string | readonly string[]
+  search?: string
+  searchIn?: readonly string[]
+  filter?: Readonly<Record<string, unknown>> | ((command: Command<TTarget, TEvent>) => boolean)
+  limit?: number
+}
+
+export type ActiveBinding<TTarget extends object = object, TEvent = KeyEvent> = {
+  sequence: readonly KeySequencePart[]
+  command?: string | ((ctx: CommandContext<TTarget, TEvent>) => unknown)
+  commandAttrs?: Readonly<Record<string, unknown>>
+  attrs?: Readonly<Record<string, unknown>>
+  event: "press" | "release"
+  preventDefault: boolean
+  fallthrough: boolean
+}
+
+export type CommandEntry<TTarget extends object = object, TEvent = KeyEvent> = {
+  command: Command<TTarget, TEvent>
+  bindings: readonly ActiveBinding<TTarget, TEvent>[]
+}
+
+/**
+ * The `api.keymap` surface. Only the methods the fork implements are declared;
+ * OpenCode plugins call `registerLayer`/`dispatchCommand` and the query/data
+ * accessors, which are all present. `on`/`intercept` are no-op stubs.
+ */
+export interface Keymap<TTarget extends object = object, TEvent = KeyEvent> {
+  registerLayer(layer: Layer<TTarget, TEvent>): () => void
+  dispatchCommand(name: string, options?: RunCommandOptions<TTarget, TEvent>): RunCommandResult<TTarget, TEvent>
+  runCommand(name: string, options?: RunCommandOptions<TTarget, TEvent>): RunCommandResult<TTarget, TEvent>
+  getCommands(query?: CommandQuery<TTarget, TEvent>): readonly Command<TTarget, TEvent>[]
+  getCommandEntries(query?: CommandQuery<TTarget, TEvent>): readonly CommandEntry<TTarget, TEvent>[]
+  getCommandBindings(
+    query?: CommandQuery<TTarget, TEvent>,
+  ): ReadonlyMap<string, readonly ActiveBinding<TTarget, TEvent>[]>
+  setData(name: string, value: unknown): void
+  getData(name: string): unknown
+  on(name: string, listener: (...args: unknown[]) => void): () => void
+  intercept(name: string, fn: (...args: unknown[]) => void): () => void
+  createKeyMatcher(key: KeyLike): (input: KeyLike | null | undefined) => boolean
+  parseKeySequence(key: KeyLike): readonly KeySequencePart[]
+  formatKey(key: KeyLike): string
+}
+
+export type TuiKeymap = Keymap<Renderable, KeyEvent>
 
 export type TuiDialogProps = {
   size?: "medium" | "large" | "xlarge"
@@ -478,6 +606,7 @@ export type TuiPluginApi = {
     trigger: (value: string) => void
     show: () => void
   }
+  keymap: TuiKeymap
   route: {
     register: (routes: TuiRouteDefinition[]) => () => void
     navigate: (name: string, params?: Record<string, unknown>) => void

@@ -10,6 +10,7 @@ import type { useTheme } from "@tui/context/theme"
 import { Dialog as DialogUI, type useDialog } from "@tui/ui/dialog"
 import type { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { createPluginKeybind } from "../context/plugin-keybinds"
+import { createPluginKeymap } from "./keymap"
 import type { useKV } from "../context/kv"
 import { DialogAlert } from "../ui/dialog-alert"
 import { DialogConfirm } from "../ui/dialog-confirm"
@@ -29,6 +30,7 @@ export type RouteMap = Map<string, RouteEntry[]>
 
 type Input = {
   command: ReturnType<typeof useCommandDialog>
+  keymap: ReturnType<typeof createPluginKeymap>
   tuiConfig: TuiConfig.Info
   dialog: ReturnType<typeof useDialog>
   keybind: ReturnType<typeof useKeybind>
@@ -227,6 +229,7 @@ export function createTuiApi(input: Input): TuiPluginApi {
         input.command.show()
       },
     },
+    keymap: input.keymap,
     route: {
       register(list) {
         return routeRegister(input.routes, list, input.bump)
