@@ -1,4 +1,9 @@
 #!/usr/bin/env bun
+// Channel 3/3 (npm): stamp Script.version across package.json files, then
+// publish @mimo-ai/cli + platform binaries, @mimo-ai/sdk, and @mimo-ai/plugin.
+// Called by script/release.ts after the build step.
+//
+// Env: npm auth (npm login / NPM_TOKEN), version via script/meta.ts.
 
 import { Script } from "./meta.ts"
 import { $ } from "bun"

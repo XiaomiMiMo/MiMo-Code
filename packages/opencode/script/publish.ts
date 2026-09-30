@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Publish the @mimo-ai/cli npm package and its per-platform binary packages.
+// Called by script/publish.ts (channel 3/3, npm). Expects dist/ from build.ts
+// and a matching Script.version (script/meta.ts).
+
 import { $ } from "bun"
 import pkg from "../package.json"
 import { Script } from "../../../script/meta.ts"

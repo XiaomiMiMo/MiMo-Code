@@ -1,11 +1,14 @@
 #!/usr/bin/env bun
-// Xiaomi FDS upload for release artifacts. Galaxy-V2 signing reimplemented with
-// Node's built-in crypto (no Python/SDK), matching galaxy-fds-sdk's
-// fds/auth/signature/signer.py. Pure signing logic is unit-testable; HTTP PUT is
-// the IO shell.
+// Channel 2/3 (Xiaomi FDS): upload release artifacts. Galaxy-V2 signing
+// reimplemented with Node's built-in crypto (no Python/SDK), matching
+// galaxy-fds-sdk's fds/auth/signature/signer.py. Pure signing logic is
+// unit-testable; HTTP PUT is the IO shell.
+//
+// Invoked by packages/opencode/script/build.ts during a release build, or
+// standalone (see CLI below). The install script reads from the CDN host.
 //
 // Upload host (path-style, with /bucket) differs from the public download host
-// (CDN, bucket already in the subdomain). install reads from the CDN host.
+// (CDN, bucket already in the subdomain).
 //
 // Env:
 //   MIMO_FDS_AK / MIMO_FDS_SK            credentials (required to upload)

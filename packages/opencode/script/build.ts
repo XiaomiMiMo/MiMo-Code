@@ -1,4 +1,10 @@
 #!/usr/bin/env bun
+// Build packages/opencode TUI binaries (and, when MIMOCODE_RELEASE is set,
+// upload them — GitHub Release via gh, Xiaomi FDS via ../../script/fds-upload.ts).
+// Called by script/release.ts and bun run build:local.
+//
+// Channels touched here: GitHub Release + FDS. npm is script/publish.ts.
+// Release env: see script/release.ts (GH_REPO, MIMO_FDS_AK/SK, MIMOCODE_*).
 
 import { $ } from "bun"
 import fs from "fs"

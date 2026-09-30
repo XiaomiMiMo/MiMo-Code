@@ -1,7 +1,15 @@
 #!/usr/bin/env bun
-// Release from this repo alone. Bun auto-loads `.env`; this entry only maps
-// those values onto the names the build/upload scripts read, then runs the
-// standard version → build → publish → finalize path.
+// Release from this repo alone (no sibling checkouts). Bun auto-loads `.env`;
+// this entry maps those values onto the names downstream scripts read, then
+// runs version → build → publish → finalize.
+//
+// Three publish channels (all driven by this entry):
+//   1. GitHub Release  — draft in version.ts, binaries uploaded by
+//      packages/opencode/script/build.ts, undrafted at the end of this script.
+//   2. Xiaomi FDS      — same build step uploads archives + releases/latest
+//      via script/fds-upload.ts when MIMO_FDS_AK/SK are present.
+//   3. npm             — script/publish.ts ships @mimo-ai/cli + platform
+//      binaries + @mimo-ai/sdk + @mimo-ai/plugin.
 //
 // `.env` / CI secrets:
 //   GH_TOKEN or GITHUB_TOKEN     GitHub auth (gh CLI; GITHUB_TOKEN is the CI standard)
@@ -10,7 +18,10 @@
 //   MIMOCODE_VERSION             optional; must match packages/opencode/package.json
 //   MIMOCODE_SKIP_VERSION_CHECK  set to 1 to force a mismatched version
 //
-// Usage: bun run script/release.ts [version]
+// Usage: bun run release [version]
+//   1. Land the version bump in packages/opencode/package.json first.
+//   2. Put secrets in .env (or export / CI secrets).
+//   3. bun run release 0.2.0
 
 import { $ } from "bun"
 import path from "path"

@@ -1,4 +1,9 @@
 #!/usr/bin/env bun
+// Channel 1/3 (GitHub Release): create the draft release for Script.version.
+// Notes come from UPCOMING_CHANGELOG.md when present. Called by script/release.ts;
+// also usable from CI (writes GITHUB_OUTPUT).
+//
+// Env: GH_REPO, GH_TOKEN/GITHUB_TOKEN (see script/release.ts).
 
 import { Script } from "./meta.ts"
 import { $ } from "bun"
