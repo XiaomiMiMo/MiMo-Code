@@ -1,6 +1,24 @@
 import { describe, expect, test } from "bun:test"
 import * as Collapse from "../../../src/cli/cmd/tui/util/collapse"
 
+describe("collapse.lines", () => {
+  test("returns [] for non-string truthy values", () => {
+    expect(Collapse.lines(42 as any)).toEqual([])
+    expect(Collapse.lines({} as any)).toEqual([])
+  })
+
+  test("returns [] for undefined / null / empty string", () => {
+    expect(Collapse.lines(undefined as any)).toEqual([])
+    expect(Collapse.lines(null as any)).toEqual([])
+    expect(Collapse.lines("")).toEqual([])
+  })
+
+  test("still splits strings", () => {
+    expect(Collapse.lines("a\nb\n")).toEqual(["a", "b"])
+    expect(Collapse.lines("x")).toEqual(["x"])
+  })
+})
+
 describe("collapse.rows", () => {
   test("counts wrapped height, not source lines", () => {
     expect(Collapse.rows("a".repeat(250), 100)).toBe(3)
