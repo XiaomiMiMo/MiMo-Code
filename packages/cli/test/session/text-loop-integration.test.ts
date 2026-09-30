@@ -2,7 +2,7 @@
  * Integration test for text loop detection using MockLLM (no HTTP server).
  *
  * Run:
- *   cd packages/opencode && bun test test/session/text-loop-integration.test.ts
+ *   cd packages/cli && bun test test/session/text-loop-integration.test.ts
  */
 import { Worktree } from "../../src/worktree"
 import { NodeFileSystem } from "@effect/platform-node"

@@ -5159,7 +5159,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   // tool dispatch needs execute closures, which `forkCtx.tools` does not carry.
                   // Schema parity with parent is currently a consequence of checkpoint-writer
                   // having no toolAllowlist (Task 2.6 + agent.test.ts guard). See ForkContext.tools
-                  // JSDoc in packages/opencode/src/actor/spawn.ts for the full contract.
+                  // JSDoc in packages/cli/src/actor/spawn.ts for the full contract.
                   const queryParts =
                     msgs.findLast((m) => m.info.role === "user" && m.info.id === lastUser.id)?.parts ?? []
                   const query = userQueryText(queryParts)

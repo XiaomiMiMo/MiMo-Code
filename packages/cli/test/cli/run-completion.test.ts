@@ -1,4 +1,4 @@
-// packages/opencode/test/cli/run-completion.test.ts
+// packages/cli/test/cli/run-completion.test.ts
 import { test, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { createCompletionTracker } from "../../src/cli/cmd/run-completion"

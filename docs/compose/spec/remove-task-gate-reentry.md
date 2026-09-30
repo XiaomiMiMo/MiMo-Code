@@ -26,7 +26,7 @@ SubagentProgressChecker / written-at / preStop / `task_id` auto-start are
 untouched.
 
 **Verification** —
-- `bun typecheck` in `packages/opencode` — PASS
+- `bun typecheck` in `packages/cli` — PASS
 - `bun test test/task/ test/actor/spawn-task-autostart.test.ts test/actor/execution-integration.test.ts` — PASS (44)
 - `bun test test/agent/agent.test.ts test/actor/return-header.test.ts test/inbox/` — PASS (116)
 - Independent review (general-2): spec compliance PASS, correctness PASS,
@@ -105,4 +105,4 @@ the source of truth for unfinished work; the parent can list tasks if needed.
 - [x] T3: Update tests — acceptance: no re-entry / downgrade / suffix
   assertions remain; leftover-task cases assert delivery is untouched. (covers: S2; depends: T1, T2)
 - [x] T4: Typecheck + run affected suites — acceptance: `bun typecheck` in
-  `packages/opencode` passes; actor/task tests pass. (covers: S2; depends: T3)
+  `packages/cli` passes; actor/task tests pass. (covers: S2; depends: T3)

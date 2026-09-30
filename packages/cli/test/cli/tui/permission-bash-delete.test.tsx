@@ -224,7 +224,7 @@ const theme = {
 } as never
 
 const command = [
-  "cd packages/opencode",
+  "cd packages/cli",
   "bun install --frozen-lockfile",
   "bun run build:local --target darwin-arm64",
   "rm -rf dist/tmp",
@@ -273,7 +273,7 @@ function expectFooterIntact(frame: string) {
 }
 
 test("squeezed prompt keeps deletion lines intact and off the footer", async () => {
-  const deletes = Array.from({ length: 6 }, (_, i) => `rm -rf packages/opencode/artifact-dir-${i}`)
+  const deletes = Array.from({ length: 6 }, (_, i) => `rm -rf packages/cli/artifact-dir-${i}`)
   const app = await testRender(() => <Shell maxHeight={15} deletes={deletes} />, { width: 100, height: 20 })
   await app.renderOnce()
   await app.renderOnce()
@@ -284,14 +284,14 @@ test("squeezed prompt keeps deletion lines intact and off the footer", async () 
   // row complete (the old body silently dropped interleaved rows instead)
   expect(rows.length).toBeGreaterThanOrEqual(4)
   rows.forEach((row, i) => {
-    expect(row).toContain(`- rm -rf packages/opencode/artifact-dir-${i} `)
+    expect(row).toContain(`- rm -rf packages/cli/artifact-dir-${i} `)
   })
   expect(frame).toContain("Detected deletions")
   expectFooterIntact(frame)
 })
 
 test("many deletions never overpaint the footer", async () => {
-  const deletes = Array.from({ length: 14 }, (_, i) => `rm -rf packages/opencode/artifact-dir-${i}`)
+  const deletes = Array.from({ length: 14 }, (_, i) => `rm -rf packages/cli/artifact-dir-${i}`)
   const app = await testRender(() => <Shell maxHeight={15} deletes={deletes} />, { width: 100, height: 20 })
   await app.renderOnce()
   await app.renderOnce()
@@ -334,7 +334,7 @@ test("narrow terminals with a tall footer keep the footer intact", async () => {
 })
 
 test("deletion lines paint every cell with the warning background", async () => {
-  const deletes = Array.from({ length: 6 }, (_, i) => `rm -rf packages/opencode/artifact-dir-${i}`)
+  const deletes = Array.from({ length: 6 }, (_, i) => `rm -rf packages/cli/artifact-dir-${i}`)
   const app = await testRender(() => <Shell maxHeight={15} deletes={deletes} />, { width: 100, height: 20 })
   await app.renderOnce()
   await app.renderOnce()

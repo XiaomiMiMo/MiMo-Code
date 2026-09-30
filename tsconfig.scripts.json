@@ -9,12 +9,12 @@
   },
   "include": [
     "script/**/*.ts",
-    "packages/opencode/script/**/*.ts",
+    "packages/cli/script/**/*.ts",
     "packages/plugin/script/**/*.ts",
     "packages/sdk/js/script/**/*.ts"
   ],
   "exclude": [
-    "packages/opencode/script/generate.ts",
-    "packages/opencode/script/schema.ts"
+    "packages/cli/script/generate.ts",
+    "packages/cli/script/schema.ts"
   ]
 }

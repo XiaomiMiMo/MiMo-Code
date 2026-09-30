@@ -56,7 +56,7 @@ already fires 20 times in that file.
 
 ## [S1] Problem
 
-Three suites in `packages/opencode` fail off-CI for reasons unrelated to the behavior they claim to
+Three suites in `packages/cli` fail off-CI for reasons unrelated to the behavior they claim to
 cover. Each failure is an environment or harness artifact, not a product defect, so each one trains
 readers to ignore red output.
 

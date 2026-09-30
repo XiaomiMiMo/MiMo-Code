@@ -15,7 +15,7 @@ commits: 6fbb1732..4b4d5b90
 Tool description is aligned in a second pass: static `read.txt` stays model-independent — image and PDF are attachments when the model includes those modalities — and names the finite list (`jpeg/png/webp/gif`, `wav/mp3`, `mp4`). Dynamic `describeMedia(model)` advertises only the modalities the model has, with those same finite format names.
 
 **Verification** —
-- `bun typecheck` in `packages/opencode` — PASS
+- `bun typecheck` in `packages/cli` — PASS
 - `bun test test/util/media.test.ts test/tool/read.test.ts` — 61 pass, 0 fail
 - Reviewer pass 1 (allowlist): all 5 acceptance criteria met; no critical findings
 - Reviewer pass 2 (description alignment): APPROVE; no critical findings

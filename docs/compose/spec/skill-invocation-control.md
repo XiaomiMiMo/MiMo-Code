@@ -34,9 +34,9 @@ reference document the field for skill authors; `mimocode-docs` records that
 `/compose-next` is user-only, which is the channel through which a model learns
 the skill exists at all.
 
-**Verification** — all from `packages/opencode` unless noted:
+**Verification** — all from `packages/cli` unless noted:
 
-- `bun typecheck` (packages/opencode) — PASS. `bun typecheck` (packages/sdk/js) — PASS.
+- `bun typecheck` (packages/cli) — PASS. `bun typecheck` (packages/sdk/js) — PASS.
 - `bun test test/tool test/skill test/permission test/session/prompt-skill-command-multi.test.ts`
   — 1123 pass, 11 skip, 0 fail (after the review follow-ups).
 - `bun test test/skill test/tool test/permission test/command` — 1123 pass, 11 skip, 0 fail.

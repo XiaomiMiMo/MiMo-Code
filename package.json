@@ -6,12 +6,12 @@
   "type": "module",
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "dev": "bun run --cwd packages/opencode script/dev.ts",
-    "build:local": "bun run --cwd packages/opencode build:local",
+    "dev": "bun run --cwd packages/cli script/dev.ts",
+    "build:local": "bun run --cwd packages/cli build:local",
     "release": "bun run script/release.ts",
     "lint": "oxlint",
     "typecheck": "bun run --workspaces --if-present --parallel typecheck && tsgo --noEmit -p tsconfig.scripts.json",
-    "postinstall": "bun run --cwd packages/opencode fix-node-pty",
+    "postinstall": "bun run --cwd packages/cli fix-node-pty",
     "prepare": "husky",
     "test": "echo 'do not run tests from root' && exit 1"
   },

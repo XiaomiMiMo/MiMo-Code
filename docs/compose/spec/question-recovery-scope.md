@@ -14,7 +14,7 @@ commits: 4101b3d4..0271ca02
 
 Persisted questions remain historical until existing selected-session execution cleanup handles them. Fresh prompts repair idle main-slice question parts; pending requests are not reconstructed from storage. The regression suite verifies unchanged unrelated-session and active-subagent question parts, busy/retry protection, read-only recovery discovery, and startup actor settlement. Merely browsing an old transcript does not promise to repair every historical status.
 
-**Verification** — Commands below ran from `packages/opencode` unless noted.
+**Verification** — Commands below ran from `packages/cli` unless noted.
 
 - `bun test test/actor/abandon-question-bootstrap.test.ts --timeout 30000` before the fix: expected failure, exposing the actual historical part SELECT queries.
 - `bun test test/actor/registry.test.ts test/actor/abandon-question-bootstrap.test.ts test/session/prompt-orphan-tool-parts.test.ts test/server/session-recovery.test.ts --timeout 30000`: PASS, 64 tests, 190 assertions.

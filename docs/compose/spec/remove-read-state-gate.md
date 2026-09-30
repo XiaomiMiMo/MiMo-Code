@@ -12,12 +12,12 @@ commits: e485a2a5e096a077e381e6df56c332d8150629ae..HEAD
 
 **What was built** — Removed the session-wide `assertFileRead` hard gate from `edit` and `notebook-edit`. `read-state.ts` is deleted; tool descriptions no longer claim a recoverable failure when a path was not opened via the `read` tool. `edit`, `write`, and `notebook-edit` descriptions now advise reading first so content matches disk, which the tools still load at apply time. Permission and path guards (`assertWriteAllowed`, `askEditUnlessMemory`, memory path guard) are unchanged. Compaction guidance to re-read after context loss remains.
 
-**Verification** — From `packages/opencode` in the worktree:
+**Verification** — From `packages/cli` in the worktree:
 - `bun typecheck` — PASS (`tsgo --noEmit` clean)
 - `bun test test/tool/edit.test.ts` — PASS, including no-prior-read, write-then-edit, and edit-create-then-edit cases
 - `bun test test/tool/notebook-edit.test.ts` — PASS, notebook_edit replace without prior read
 - `bun test test/tool/write.test.ts` / `memory-edit-ask-skip.test.ts` — PASS
-- Production grep for `assertFileRead` / `tool/read-state` under `packages/opencode/src` — clean
+- Production grep for `assertFileRead` / `tool/read-state` under `packages/cli/src` — clean
 - Fresh reviewer subagent (impl): PASS, no CRITICAL
 - Second reviewer (self-write / notebook coverage): PASS; four post-gate behaviors locked by real tool tests; gate-return would re-fail them
 
@@ -44,7 +44,7 @@ The gate does not protect file integrity: `edit` still loads current disk conten
 
 Remove the hard gate entirely.
 
-- Delete `packages/opencode/src/tool/read-state.ts`.
+- Delete `packages/cli/src/tool/read-state.ts`.
 - Drop `assertFileRead` from `edit` (including the create-file exemption comment) and `notebook-edit`.
 - Soften tool descriptions (`edit`, `write`, `notebook-edit`) to advisory language: prefer reading the file first so edits match current contents; no claim of hard failure. Softening `write.txt` is required because that text promised enforcement the tool never had.
 - Leave compaction guidance ("re-read any file you need before editing") — that is about context loss, not tool enforcement.
@@ -62,4 +62,4 @@ Permission / path guards (`assertWriteAllowed`, `askEditUnlessMemory`, memory pa
 ## Tasks
 - [x] T1: Remove assertFileRead call sites from edit and notebook-edit — acceptance: both tools edit existing files without a prior `read` tool call in the session (covers: S2)
 - [x] T2: Delete read-state module and fix leftover references — acceptance: no production import of `assertFileRead` / `read-state` remains; tool .txt files no longer promise a hard failure (covers: S2)
-- [x] T3: Verify with typecheck + focused tool tests — acceptance: `bun typecheck` passes from `packages/opencode`; edit tests still pass (covers: S2; depends: T1, T2)
+- [x] T3: Verify with typecheck + focused tool tests — acceptance: `bun typecheck` passes from `packages/cli`; edit tests still pass (covers: S2; depends: T1, T2)

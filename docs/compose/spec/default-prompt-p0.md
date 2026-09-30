@@ -48,7 +48,7 @@ compress); Doing tasks + Executing (blast radius); Using tools (case-sensitive
 snake_case, parallel 1–3 / ≤8, `task`/`actor`/`workflow` routing); Skills
 rules + two real roots; Tone (progress rhythm, end-of-turn summary).
 
-**Verification** — From `packages/opencode`:
+**Verification** — From `packages/cli`:
 - `bun typecheck` — PASS
 - `bun test test/agent/agent.test.ts` — PASS (52)
 - `bun test test/session/llm-system-prompt.test.ts` — PASS

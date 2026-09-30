@@ -12,7 +12,7 @@ commits: bceb411c..655fa209
 
 **What was built** — Model-facing `actor spawn`/`run` no longer accept any `context` argument. The JSON schema is a strict object without that field; the shell parser rejects `--context` after the three positionals with a teachable system-only error; execute always calls `Actor.spawn` with `context: "none"`. Tool descriptions no longer advertise conversation/fork inheritance. System/runtime callers that already pass `forkContext` (checkpoint-writer, session peer) are unchanged.
 
-**Verification** — `bun typecheck` (packages/opencode) PASS; `bun test` actor.shell + checkpoint-tool-description + actor + actor-recover PASS (76); `bun test` actor/spawn + actor-subagent-gating + actor-spawn-preference PASS (37 pass, 1 skip live-router). Independent review: T1/T2 met, no critical findings; few-shot examples restored after review note.
+**Verification** — `bun typecheck` (packages/cli) PASS; `bun test` actor.shell + checkpoint-tool-description + actor + actor-recover PASS (76); `bun test` actor/spawn + actor-subagent-gating + actor-spawn-preference PASS (37 pass, 1 skip live-router). Independent review: T1/T2 met, no critical findings; few-shot examples restored after review note.
 
 **Journey log** — ① Root of desktop “spawn 秒退” was `context:"full"` registering a fork agent without `ForkContext`; ② Models must not create forks — only system callers keep that path; ③ Shell reject-after-positionals mirrors `--actor` so quoted positionals are not misread; ④ `recoverActorArgs` drops top-level `context` (safe none) while envelope `context` is schema-rejected; ⑤ Do not delete unrelated few-shot examples when rewriting tool copy.
 

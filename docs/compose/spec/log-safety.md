@@ -61,6 +61,6 @@ This change does not introduce per-record truncation, modify MCP/ACP/voice loggi
 
 - [x] T1: Implement unique active-file ownership and a serialized lifecycle queue — acceptance: concurrent initialization cannot target, leak, or clean another live active file, and file/count/total limits hold (covers: S2)
 - [x] T2: Add failure-safe flush, shutdown, and command exit lifecycle — acceptance: write/finalization failures do not reject globally or resume unsafe file writes, and CLI/TUI/worker exit paths close pending logs before termination (covers: S3; depends: T1)
-- [x] T3: Add and run focused tests and package typecheck — acceptance: all S5 cases pass from packages/opencode and typecheck succeeds (covers: S5; depends: T1, T2)
+- [x] T3: Add and run focused tests and package typecheck — acceptance: all S5 cases pass from packages/cli and typecheck succeeds (covers: S5; depends: T1, T2)
 - [x] T4: Confine log records to the file sink unless print mode is active — acceptance: a record emitted after `shutdown()` or before `init()` produces no stderr output, while `--print-logs` still prints (covers: S4)
 - [x] T5: Keep the worker's file sink open across teardown — acceptance: a TUI quit writes the worker teardown records (instance disposal, bus unsubscribe) to the log file and nothing to stderr (covers: S4; depends: T4)

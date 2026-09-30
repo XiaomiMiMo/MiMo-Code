@@ -21,7 +21,7 @@ or orchestration bypass list. Queued cancellation removes the waiter; admitted
 calls release after execution and cleanup. This gate does not change the
 cancellation behavior of existing tool implementations.
 
-**Verification** — 225 retained relevant tests passed from `packages/opencode`:
+**Verification** — 225 retained relevant tests passed from `packages/cli`:
 33 gate/session cases, 160 tool/agent/question/GPT cases, and 32 filtered
 MCP/exec/Codex/GPT session cases. After restoring the original question/plan
 implementation, the 21 affected cancellation and question/plan tests were rerun

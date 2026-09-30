@@ -66,7 +66,7 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
       const limit = input.limit ?? 10
       // Build a token-level FTS5 query: punctuation becomes separators,
       // each alphanumeric run becomes a phrase-quoted literal, OR-joined.
-      // See packages/opencode/src/memory/fts-query.ts for the rationale.
+      // See packages/cli/src/memory/fts-query.ts for the rationale.
       const ftsQuery = buildFtsQuery(input.query)
       if (!ftsQuery) return []
 

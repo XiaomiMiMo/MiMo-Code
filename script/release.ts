@@ -5,7 +5,7 @@
 //
 // Three publish channels (all driven by this entry):
 //   1. GitHub Release  — draft in version.ts, binaries uploaded by
-//      packages/opencode/script/build.ts, undrafted at the end of this script.
+//      packages/cli/script/build.ts, undrafted at the end of this script.
 //   2. Xiaomi FDS      — same build step uploads archives + releases/latest
 //      via script/fds-upload.ts when MIMO_FDS_AK/SK are present.
 //   3. npm             — script/publish.ts ships @mimo-ai/cli + platform
@@ -15,11 +15,11 @@
 //   GH_TOKEN or GITHUB_TOKEN     GitHub auth (gh CLI; GITHUB_TOKEN is the CI standard)
 //   GH_REPO                      default XiaomiMiMo/MiMo-Code
 //   MIMO_FDS_AK / MIMO_FDS_SK    FDS upload credentials (same names build/fds-upload read)
-//   MIMOCODE_VERSION             optional; must match packages/opencode/package.json
+//   MIMOCODE_VERSION             optional; must match packages/cli/package.json
 //   MIMOCODE_SKIP_VERSION_CHECK  set to 1 to force a mismatched version
 //
 // Usage: bun run release [version]
-//   1. Land the version bump in packages/opencode/package.json first.
+//   1. Land the version bump in packages/cli/package.json first.
 //   2. Put secrets in .env (or export / CI secrets).
 //   3. bun run release 0.2.0
 
@@ -39,13 +39,13 @@ if (targetVersion) process.env.MIMOCODE_VERSION = targetVersion
 
 if (!process.env.GH_TOKEN) throw new Error("Missing required env: GH_TOKEN or GITHUB_TOKEN")
 
-const pkgVersion = await Bun.file(path.join(rootPkgDir, "packages/opencode/package.json"))
+const pkgVersion = await Bun.file(path.join(rootPkgDir, "packages/cli/package.json"))
   .json()
   .then((data: { version: string }) => data.version)
 if (targetVersion && targetVersion !== pkgVersion) {
   if (process.env.MIMOCODE_SKIP_VERSION_CHECK !== "1") {
     throw new Error(
-      `version mismatch — releasing v${targetVersion} but packages/opencode/package.json is v${pkgVersion}.\n` +
+      `version mismatch — releasing v${targetVersion} but packages/cli/package.json is v${pkgVersion}.\n` +
         `Land the version bump first, or set MIMOCODE_SKIP_VERSION_CHECK=1 to force.`,
     )
   }
@@ -61,7 +61,7 @@ const { Script } = await import("./meta.ts")
 console.log(`\nReleasing v${Script.version} (channel: ${Script.channel})\n`)
 
 console.log("=== build ===\n")
-await $`./packages/opencode/script/build.ts`
+await $`./packages/cli/script/build.ts`
 
 console.log("\n=== publish npm ===\n")
 await $`./script/publish.ts`

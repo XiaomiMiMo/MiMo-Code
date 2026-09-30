@@ -30,7 +30,7 @@ later in the same `bun test` process. They now share a `withEnv` helper
 (`test/lib/env.ts`) that applies flags in `beforeAll` and restores them in
 `afterAll`.
 
-**Verification** — all from `packages/opencode`:
+**Verification** — all from `packages/cli`:
 
 - `bun typecheck` — PASS (clean).
 - `bun test test/session/prompt-skill-command-multi.test.ts` — 2 pass. Confirmed
@@ -85,16 +85,16 @@ reminder.
 
 Root cause is two independent injection points:
 
-1. **Command path.** `packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx:1169-1177`
+1. **Command path.** `packages/cli/src/cli/cmd/tui/component/prompt/index.tsx:1169-1177`
    routes any input starting with `/` by resolving only the first token of the
    first line as a command name. Skills are registered as commands
-   (`packages/opencode/src/command/index.ts:264-276`, `source: "skill"`), so
+   (`packages/cli/src/command/index.ts:264-276`, `source: "skill"`), so
    `/compose-next` matches and everything after it — including
    `/mimocode-docs` — becomes `arguments`. Server-side,
-   `packages/opencode/src/session/prompt.ts:4259-4269` emits a visible text part
+   `packages/cli/src/session/prompt.ts:4259-4269` emits a visible text part
    plus one `<skill_content>` part for `input.command` only.
 
-2. **Free-text scan.** `packages/opencode/src/session/prompt.ts:727-796` scans
+2. **Free-text scan.** `packages/cli/src/session/prompt.ts:727-796` scans
    the message body for all skill mentions and handles multiple skills
    correctly (global regex at `prompt.ts:739`, dedupe, `MAX_AUTOLOAD` cap,
    orchestration reminder at `prompt.ts:766`).
@@ -201,19 +201,19 @@ scan-resolvable.
 - [x] T1: Add a failing end-to-end regression test that invokes a skill via
       `SessionPrompt.command` with a second skill mentioned in the arguments,
       following the real-layer harness in
-      `packages/opencode/test/session/plan-reminder-dedup.test.ts` (live
+      `packages/cli/test/session/plan-reminder-dedup.test.ts` (live
       `SessionPrompt` + `Session` layers, tmpdir fixture, stubbed SSE stream) —
       acceptance: the test runs and fails against the base commit because the
       user message carries only `<skill_content name="skill-a">`, with no
       `skill-b` block and no orchestration reminder (covers: S2)
 - [x] T2: Drop the `skillPart` from the non-subtask `cmd.source === "skill"`
-      branch in `packages/opencode/src/session/prompt.ts:4259-4269`, keeping the
+      branch in `packages/cli/src/session/prompt.ts:4259-4269`, keeping the
       visible text and attachments — acceptance: T1 passes; a lone `/skill-a`
       still yields exactly one `<skill_content name="skill-a">` part; `/skill-a
       args` still carries the argument text and any resolved attachment
       (covers: S2; depends: T1)
 - [x] T3: Fix the stale source reference in
-      `packages/opencode/test/session/prompt-skill-mention.test.ts:3`, which
+      `packages/cli/test/session/prompt-skill-mention.test.ts:3`, which
       cites `src/session/prompt.ts:684` for a regex that has since moved —
       acceptance: the comment points at the `mentionRe` symbol rather than a
       line number, so it cannot rot again, and the existing regex tests still

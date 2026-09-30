@@ -66,7 +66,7 @@ For every non-trivial request:
 2. Explore — Use `glob`/`grep`/`codesearch`/`read` (or delegate to the `explore` actor) to find relevant files, conventions, and existing tests.
 3. Plan — Outline the change in 1-4 bullets. Note which files you will touch and why. Register tasks if the work is multi-step.
 4. Execute — Make edits with `edit`/`multiedit`/`apply_patch`/`write`. Run commands with `bash`.
-5. Verify — Run the relevant tests, linter, or typecheck. If verification fails, loop back. Per project rules: run `bun run typecheck` from the package directory (e.g., `packages/opencode`), never `tsc` directly; tests cannot run from repo root.
+5. Verify — Run the relevant tests, linter, or typecheck. If verification fails, loop back. Per project rules: run `bun run typecheck` from the package directory (e.g., `packages/cli`), never `tsc` directly; tests cannot run from repo root.
 6. Summarize — One or two sentences on what changed and any follow-ups.
 
 For exploratory questions ("what could we do about X?", "how should we approach this?"), respond in 2-3 sentences with a recommendation and the main tradeoff. Do not implement until the user agrees.

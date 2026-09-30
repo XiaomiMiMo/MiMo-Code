@@ -12,7 +12,7 @@ commits: ecbe6e59c7c9383f99767ca3f755ad032c4dc3cc..98ef287528e9c54fefe0055a90462
 
 **What was built** — `Server.listen({ port: 0 })` now binds an OS-assigned ephemeral port on both node and bun adapters; the conventional 4096 preference is removed so embedders (MiMo Desktop) and other local tools no longer collide by default. Fixed ports require an explicit `port` / `--port` / `config.server.port`. Runtime hardcodes of `localhost:4096` were removed from the plugin client placeholder and CLI help; documentation examples may still show `--port 4096` when a known URL is required.
 
-**Verification** — `packages/opencode`: `bun test test/cli/cmd/server-port-ephemeral.test.ts test/cli/cmd/serve-advertise.test.ts` PASS 8/8; `bun test test/skill/mimocode-docs.test.ts test/plugin/mimo.test.ts test/plugin/codex.test.ts` PASS 44/44; `bun typecheck` PASS. Independent review: no critical findings.
+**Verification** — `packages/cli`: `bun test test/cli/cmd/server-port-ephemeral.test.ts test/cli/cmd/serve-advertise.test.ts` PASS 8/8; `bun test test/skill/mimocode-docs.test.ts test/plugin/mimo.test.ts test/plugin/codex.test.ts` PASS 44/44; `bun typecheck` PASS. Independent review: no critical findings.
 
 **Journey log** — Prefer `start(opts.port)` over a special-case `port===0 → 4096` branch; yargs default `0` therefore means ephemeral unless config supplies a port. Downstream Desktop must keep consuming listen-returned `Server.url` / `Listener.port` (already dynamic). Generated SDK default `baseUrl` and unmanaged `packages/app` UI placeholders still mention 4096 (out of runtime listen path). Node adapter is code-symmetric with bun; unit suite exercises the bun path under Bun.
 

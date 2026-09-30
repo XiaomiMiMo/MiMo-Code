@@ -55,7 +55,7 @@ which tmux || echo "tmux not found — install it for TUI mode"
 
 When the goal is to debug **mimocode's own code**, launch from source with
 `bun dev` instead of the installed `mimo` binary. It runs
-`packages/opencode/src/index.ts` directly — no build step — so local edits take
+`packages/cli/src/index.ts` directly — no build step — so local edits take
 effect on the next launch.
 
 **Key facts:**

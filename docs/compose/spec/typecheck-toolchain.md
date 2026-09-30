@@ -109,7 +109,7 @@ whose `name` is still `typescript`. Depending on Bun store layout, `require("typ
 (`ERR_PACKAGE_PATH_NOT_EXPORTED`) — TS7 has no `lib/tsserverlibrary`. Do **not** pin `typescript` globally
 (affects every package). Scope to the Effect tooling only: `patchedDependencies` on
 `@effect/language-service@0.84.2` adds `dependencies.typescript: "6.0.2"` so its own `require("typescript")`
-hits the JS API; `@typescript/native` still provides the TS7 `tsc` bin. Regression: from `packages/opencode`,
+hits the JS API; `@typescript/native` still provides the TS7 `tsc` bin. Regression: from `packages/cli`,
 `bun run effect-language-service diagnostics --file src/effect/logger.ts` must exit 0.
 
 **Bun workspace `tsc` bin shadowing (review CRITICAL):** a package that depends on `typescript` gets
@@ -130,9 +130,9 @@ the `typescript` dep entirely (they only need the compiler CLI). Verified: all f
 | `script/version.ts` | `version`, `preview`, `channel` |
 | `script/publish.ts` | `version` |
 | `script/sync-registry.ts` | `version`, `channel` |
-| `packages/opencode/script/build.ts` | `version`, `channel`, `release` |
-| `packages/opencode/script/build-node.ts` | `version`, `channel` |
-| `packages/opencode/script/publish.ts` | `channel` |
+| `packages/cli/script/build.ts` | `version`, `channel`, `release` |
+| `packages/cli/script/build-node.ts` | `version`, `channel` |
+| `packages/cli/script/publish.ts` | `channel` |
 | `packages/plugin/script/publish.ts` | `channel` |
 | `packages/sdk/js/script/publish.ts` | `channel` |
 
@@ -142,12 +142,12 @@ Not imported from runtime `src/` / `test/`. Build/release only.
 - Drop the module-load `console.log` (debug leftover; every importer currently prints on import).
 - Path fixes after the move (`import.meta.dir` is now `script/`):
   - root package.json → `../package.json`
-  - opencode package.json → `../packages/opencode/package.json`
+  - opencode package.json → `../packages/cli/package.json`
 - Replace `import { Script } from "@mimo-ai/script"` with relative imports:
   - `script/*.ts` → `./meta.ts`
   - `packages/*/script/*.ts` and `packages/sdk/js/script/*.ts` → `../../../script/meta.ts` / `../../../../script/meta.ts`
 - Delete `packages/script/` workspace package.
-- Remove `@mimo-ai/script` from root `dependencies` and `packages/opencode` `dependencies`/`devDependencies`.
+- Remove `@mimo-ai/script` from root `dependencies` and `packages/cli` `dependencies`/`devDependencies`.
 - `semver` stays available from root `devDependencies`.
 
 ### D4. One scripts typecheck project + editor configs
@@ -159,14 +159,14 @@ Not imported from runtime `src/` / `test/`. Build/release only.
 - `compilerOptions.noUncheckedIndexedAccess`: `false` (match opencode/shared)
 - `include`:
   - `script/**/*.ts`
-  - `packages/opencode/script/**/*.ts`
+  - `packages/cli/script/**/*.ts`
   - `packages/plugin/script/**/*.ts`
   - `packages/sdk/js/script/**/*.ts`
 - `exclude`:
-  - `packages/opencode/script/generate.ts`
-  - `packages/opencode/script/schema.ts`
+  - `packages/cli/script/generate.ts`
+  - `packages/cli/script/schema.ts`
 
-Those two import `../src/**` with `@/` paths. Pulling app sources into the scripts project reintroduces ~600 unrelated app diagnostics under a second config. They **stay in `packages/opencode` typecheck** (already in that project's program and currently clean). Editor continues to use `packages/opencode/tsconfig.json` for them.
+Those two import `../src/**` with `@/` paths. Pulling app sources into the scripts project reintroduces ~600 unrelated app diagnostics under a second config. They **stay in `packages/cli` typecheck** (already in that project's program and currently clean). Editor continues to use `packages/cli/tsconfig.json` for them.
 
 **Editor (nearest `tsconfig.json`):** TypeScript only auto-picks files named `tsconfig.json`. Thin wrappers so IDEs resolve the shared project:
 
@@ -176,12 +176,12 @@ Those two import `../src/**` with `@/` paths. Pulling app sources into the scrip
 | `packages/plugin/script/tsconfig.json` | `{ "extends": "../../tsconfig.scripts.json", "include": ["./**/*.ts"] }` |
 | `packages/sdk/js/script/tsconfig.json` | `{ "extends": "../../../tsconfig.scripts.json", "include": ["./**/*.ts"] }` |
 
-No wrapper under `packages/opencode/script/` — nearest config must remain `packages/opencode/tsconfig.json` so `generate.ts` / `schema.ts` keep `@/` paths.
+No wrapper under `packages/cli/script/` — nearest config must remain `packages/cli/tsconfig.json` so `generate.ts` / `schema.ts` keep `@/` paths.
 
-**opencode editor fix:** change `"types": []` → `"types": ["bun"]` in `packages/opencode/tsconfig.json` (verified: full `tsgo --noEmit` still passes). That clears red `Bun`/`process` for `packages/opencode/script/*` and any Bun usage under the app project.
+**opencode editor fix:** change `"types": []` → `"types": ["bun"]` in `packages/cli/tsconfig.json` (verified: full `tsgo --noEmit` still passes). That clears red `Bun`/`process` for `packages/cli/script/*` and any Bun usage under the app project.
 
 **Script type errors to fix** (found when scripts are actually checked; currently hidden):
-- `packages/opencode/script/publish.ts:31` — `Object is possibly 'undefined'`
+- `packages/cli/script/publish.ts:31` — `Object is possibly 'undefined'`
 - `packages/sdk/js/script/publish.ts` — implicit `any` return on `transformExports`, `Record` mismatch
 
 ### D5. Docs / hooks
@@ -198,7 +198,7 @@ No wrapper under `packages/opencode/script/` — nearest config must remain `pac
 - No upgrade of `@tsconfig/bun` / `@tsconfig/node22`.
 - No rewrite of release/publish scripts' behavior (only import paths and the Script module location).
 - No project-references / composite restructure of opencode.
-- `packages/opencode/script/generate.ts` / `schema.ts` remain app-adjacent; not moved.
+- `packages/cli/script/generate.ts` / `schema.ts` remain app-adjacent; not moved.
 
 ## Tasks
 

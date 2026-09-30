@@ -41,7 +41,7 @@ jobs:
       # Path-hash sharding keeps existing files in the same shard when files change.
       - name: Run unit tests (shard ${{ matrix.shard }})
         timeout-minutes: 8
-        working-directory: packages/opencode
+        working-directory: packages/cli
         run: |
           shard=${{ matrix.shard }}
           idx=${shard%/*}
@@ -75,12 +75,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: junit-shard-${{ strategy.job-index }}
-          path: packages/opencode/.artifacts/unit/junit.xml
+          path: packages/cli/.artifacts/unit/junit.xml
 
       - name: Run MCP mock suites (isolated)
         if: matrix.shard == '4/4'
         timeout-minutes: 3
-        working-directory: packages/opencode
+        working-directory: packages/cli
         run: |
           for file in \
             test/mcp/lifecycle.test.ts \
@@ -94,7 +94,7 @@ jobs:
       - name: Run deadline worktree test (isolated)
         if: matrix.shard == '4/4'
         timeout-minutes: 3
-        working-directory: packages/opencode
+        working-directory: packages/cli
         run: bun test test/workflow/runtime-worktree.test.ts -t 'deadline-fired' --timeout 120000
 
       # Run stdio-exit-observe in isolation (shard 4/4 only): needs the real
@@ -102,5 +102,5 @@ jobs:
       - name: Run stdio-exit-observe test (isolated)
         if: matrix.shard == '4/4'
         timeout-minutes: 2
-        working-directory: packages/opencode
+        working-directory: packages/cli
         run: bun test test/mcp/stdio-exit-observe.test.ts --timeout 120000

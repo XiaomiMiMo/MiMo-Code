@@ -12,7 +12,7 @@ commits: d17e176b..HEAD
 
 **What was built** — TUI voice control now speaks the desktop `voice_input` tool-call protocol: unique function tool, three-part `{before_cursor, selection, after_cursor}` snapshot (unfocused falls back to full string), insert/set/set_with_cursor + send, protocol retry ≤2, no agent/model arms. System prompt lives in `util/voice-input.txt` (English instructions, Chinese utterance examples). ASR inserts at caret/selection with end-of-buffer space rule; control VAD uses `minSilenceS=1.2`. Insert on an unchanged buffer uses a surgical splice (keeps paste/file extmarks); set/set_with_cursor full rewrite clears parts. Models stay `xiaomi/mimo-v2.5` / `xiaomi/mimo-v2.5-asr`.
 
-**Verification** — `bun typecheck` (packages/opencode) PASS; `bun test test/cli/tui/voice.test.ts` 42 pass, 0 fail. `bun run build:local` + smoke PASS. Independent review (3 rounds): protocol/snapshot/natural-selection solid; post-review fixes: surgical insert when buffer unchanged (keeps paste/file parts), ASR mid-flight end fallback, live mode switch, stale/protocol toasts, tool-role retry, object arguments.
+**Verification** — `bun typecheck` (packages/cli) PASS; `bun test test/cli/tui/voice.test.ts` 42 pass, 0 fail. `bun run build:local` + smoke PASS. Independent review (3 rounds): protocol/snapshot/natural-selection solid; post-review fixes: surgical insert when buffer unchanged (keeps paste/file parts), ASR mid-flight end fallback, live mode switch, stale/protocol toasts, tool-role retry, object arguments.
 
 **Journey log**
 1. Desktop control is tool-call + three-part snapshot; old TUI JSON `edit/send/agent` is the drift to remove.
@@ -116,5 +116,5 @@ Unchanged keys: `voice_enabled`, `voice_send_command`, `voice_control_enabled`, 
 - [x] T2: Editor snapshot helpers — UTF-16 caret/selection read from TextareaRenderable, three-part placement, insert/set/set_with_cursor application, stale drop. Acceptance: unit tests for width↔string index, three-part slice, insert exact splice. (covers: S2; depends: —)
 - [x] T3: Wire control path in `prompt/index.tsx` — request context, tool protocol, retry ≤2, drop agent switch callbacks, VAD `minSilenceS` 1.2 for control. Acceptance: typecheck; control flow no longer references `edit`/`agent` actions or Chinese JSON prompt. (covers: S2; depends: T1, T2)
 - [x] T4: Upgrade ASR path to caret/selection placement. Acceptance: unit tests for append vs mid-insert vs selection-replace. (covers: S2; depends: T2)
-- [x] T5: Update existing `voice.test.ts` and add protocol/placement coverage. Acceptance: `bun test` from `packages/opencode` passes. (covers: S2; depends: T1–T4)
+- [x] T5: Update existing `voice.test.ts` and add protocol/placement coverage. Acceptance: `bun test` from `packages/cli` passes. (covers: S2; depends: T1–T4)
 - [x] T6: Typecheck + focused test run + review. Acceptance: `bun typecheck` and voice tests pass in package. (covers: S2; depends: T5)

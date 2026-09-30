@@ -18,7 +18,7 @@ subagent return format, and search-first rules stay on so embedders that close
 checkpoint (e.g. Desktop) still teach the model where memory lives.
 
 **Verification** —
-- `bun run typecheck` from `packages/opencode` — PASS
+- `bun run typecheck` from `packages/cli` — PASS
 - `bun test test/session/llm-system-prompt.test.ts test/tool/checkpoint-tool-description.test.ts test/flag/disable-checkpoint-flag.test.ts test/session/prune.test.ts` — PASS (30 pass / 0 fail; llm-system-prompt 6/6)
 
 **Journey log**
@@ -32,7 +32,7 @@ checkpoint (e.g. Desktop) still teach the model where memory lives.
 
 `# Memory system` is injected by `buildSystemArray` only when
 `servesCheckpoint && !Flag.MIMOCODE_DISABLE_CHECKPOINT`
-(`packages/opencode/src/session/llm.ts`). Desktop embeds the engine with
+(`packages/cli/src/session/llm.ts`). Desktop embeds the engine with
 `MIMOCODE_DISABLE_CHECKPOINT=1` because checkpoint had production bugs, so the
 entire memory write/read contract disappears from the model: no MEMORY.md /
 notes.md / global paths, no when-to-write rules, no search-first reflex.
@@ -98,4 +98,4 @@ still receive no memory block.
 - [x] T1: `llm.ts` always inject `# Memory system` when `servesCheckpoint`; flag only filters ckpt extras — acceptance: with `MIMOCODE_DISABLE_CHECKPOINT=true`, main-agent system contains `# Memory system` + project MEMORY.md + notes.md and omits checkpoint-writer ownership / Active recall (covers: S2)
 - [x] T2: Update `buildMemoryInstructions` comments to match always-on contract — acceptance: comments no longer claim the whole block is skipped when checkpoint is off (covers: S2; depends: T1)
 - [x] T3: Invert/extend `llm-system-prompt.test.ts` for flag-on vs flag-off content split — acceptance: tests cover always-on core + ckpt-gated extras + system-spawned exclusion; suite green (covers: S2; depends: T1)
-- [x] T4: `bun typecheck` + `bun test packages/opencode/test/session/llm-system-prompt.test.ts` from worktree — acceptance: typecheck clean; target tests pass (covers: S2; depends: T3)
+- [x] T4: `bun typecheck` + `bun test packages/cli/test/session/llm-system-prompt.test.ts` from worktree — acceptance: typecheck clean; target tests pass (covers: S2; depends: T3)

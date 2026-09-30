@@ -42,7 +42,7 @@ Multi-step runLoop reloads `msgs` from DB; marker hit skips re-push → last-use
 
 ## [S1] Problem
 
-`packages/opencode/src/session/prompt.ts` `runLoop` reloads history every step:
+`packages/cli/src/session/prompt.ts` `runLoop` reloads history every step:
 
 ```ts
 while (true) {
@@ -117,13 +117,13 @@ Mid-turn `p.text` wrap (`step > 1`) remains request-only: intentional steering t
 
 | Symbol | File |
 |--------|------|
-| Markers + helpers | `packages/opencode/src/session/prompt.ts` (`RECALL_…`, `LOOP_STREAK_…`, re-export `COMPOSE_…`) |
-| `COMPOSE_REMINDER_MARKER` + `promoteComposeProtocolFirst` | `packages/opencode/src/session/message-v2.ts` |
-| `ensurePersistedUserSynthetic` | `packages/opencode/src/session/prompt.ts` (same file, ~1213) |
+| Markers + helpers | `packages/cli/src/session/prompt.ts` (`RECALL_…`, `LOOP_STREAK_…`, re-export `COMPOSE_…`) |
+| `COMPOSE_REMINDER_MARKER` + `promoteComposeProtocolFirst` | `packages/cli/src/session/message-v2.ts` |
+| `ensurePersistedUserSynthetic` | `packages/cli/src/session/prompt.ts` (same file, ~1213) |
 | Compose / recall / loop-streak inject | `prompt.ts` `insertReminders` + runLoop |
 | Mid-turn wrap (unchanged, S3) | `prompt.ts` `step > 1` wrap |
 | Tests | `test/session/recall-reminder.test.ts`, `test/session/recall-reminder-persist.test.ts` |
-| History non-promote boundary | `packages/opencode/src/history/service.ts` comment near part assembly |
+| History non-promote boundary | `packages/cli/src/history/service.ts` comment near part assembly |
 
 ## Journey log
 

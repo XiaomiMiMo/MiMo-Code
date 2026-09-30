@@ -21,7 +21,7 @@ enter the catalog. `MIMOCODE_DISABLE_EXTERNAL_SKILLS` and brand
 are layered last-wins (home brands → project brands → mimocode → paths/urls),
 with `.agents` last among brands in each home/project brand pass.
 
-**Verification** — `bun typecheck` (packages/opencode) PASS;
+**Verification** — `bun typecheck` (packages/cli) PASS;
 `bun test test/skill` 91 pass / 0 fail (and 23 pass after the agents-order
 change on the two focused files); related tool/prompt skill suites 21 pass /
 3 skip (pre-existing); `test/agent/agent.test.ts` 52 pass. Independent review
@@ -73,7 +73,7 @@ Claude Code has the same class of reserved locations under `.claude/skills/`
 
 Keep `EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"` (nested skills stay
 discoverable). Drop `dot: true` from the two external `scan` call sites in
-`packages/opencode/src/skill/index.ts` (global home roots and project `up()`
+`packages/cli/src/skill/index.ts` (global home roots and project `up()`
 roots). Native patterns (`MIMOCODE_SKILL_PATTERN`, `SKILL_PATTERN`,
 `BUILTIN_SKILL_PATTERN`) already omit `dot` and stay unchanged.
 

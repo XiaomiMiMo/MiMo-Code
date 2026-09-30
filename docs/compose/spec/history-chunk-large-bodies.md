@@ -12,7 +12,7 @@ commits: b4cc11cd652195af9a80297ed543218f3172e6c4..HEAD
 
 **What was built** — History FTS is truncated **before write** on the **same path as tool call results**: pure `previewToolOutput` in `tool/truncate.ts` is shared by `Truncate.output` and history `extract` / writer / import. Tool parts prefer the stored tool-result string (including `Full output saved to: <path>` when tools truncated); other kinds compose then preview with the same 50KiB / 2000-line budget. Full text stays in `PartTable` / tool-output files for `history get`. Migration v6 removes legacy chunk rows and rebuilds one truncated index row per original part.
 
-**Verification** — `packages/opencode`: `bun test test/history/` green after budget tests; `tsgo --noEmit` filtered to `src/history`/`test/history` clean.
+**Verification** — `packages/cli`: `bun test test/history/` green after budget tests; `tsgo --noEmit` filtered to `src/history`/`test/history` clean.
 
 **Journey log**
 - Root cause is **missing pre-write truncation**, not chunking: tool results are capped; history indexed full part payloads (`patch` ~38MB, `reasoning` ~600KB).

@@ -10,11 +10,7 @@
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 - Install deps with `bun ci` (= `bun install --frozen-lockfile`) — install per `bun.lock`, don't mutate the lockfile. ⛔ Do NOT use `bun install`/`npm install`.
 - Comments, docs, shipped skill content and test assertions use synthetic values, never machine-specific ones — `/tmp/example` for paths, `test/model` for model refs, `feat/example` for branches.
-- Do not edit `packages/opencode/migration/*/migration.sql` that already shipped — engines have applied those journals; new schema changes get a **new** migration directory under `packages/opencode/migration/`.
-
-## Core Focus
-
-Development focuses on the **TUI** (`packages/opencode/src/cli/cmd/tui/`) and the **engine core** it runs on. The Web, App and Desktop surfaces are not currently maintained. In practice this means an operation should default to checking the TUI path first.
+- Do not edit `packages/cli/migration/*/migration.sql` that already shipped — engines have applied those journals; new schema changes get a **new** migration directory under `packages/cli/migration/`.
 
 ## Style Guide
 
@@ -133,8 +129,3 @@ guard typechecks, reads correctly in review, and does nothing.
 
 - Avoid mocks as much as possible
 - Test actual implementation, do not duplicate logic into tests
-- Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
-
-## Type Checking
-
-- Always run `bun run typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.

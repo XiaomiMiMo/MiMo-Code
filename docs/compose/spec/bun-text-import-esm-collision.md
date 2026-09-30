@@ -14,7 +14,7 @@ commits: 09d03d67..e8f1a8d1
 reads the directory at build time and their sources are inlined into the bundle, so the files
 never enter the module graph and nothing can attempt to parse them.
 
-**Verification** — From `packages/opencode`.
+**Verification** — From `packages/cli`.
 
 | Check                                                                     | Before                        | After                     |
 | ------------------------------------------------------------------------- | ----------------------------- | ------------------------- |

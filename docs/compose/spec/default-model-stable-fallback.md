@@ -78,4 +78,4 @@ Not changing in this feature:
 ## Tasks
 
 - [x] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent, drop menu-priority sort; last-resort requires usable chat model) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, cfg-beats-recent, non-chat skip, first-provider stable pick, and no priority substring preference (covers: S2)
-- [x] T2: Adjust/extend provider tests — acceptance: `bun test packages/opencode/test/provider` passes; new cases assert the chain order and that `gpt-5`-like ids are not auto-preferred when earlier steps miss (covers: S2; depends: T1)
+- [x] T2: Adjust/extend provider tests — acceptance: `bun test packages/cli/test/provider` passes; new cases assert the chain order and that `gpt-5`-like ids are not auto-preferred when earlier steps miss (covers: S2; depends: T1)

@@ -28,7 +28,7 @@ the scrollbar-drag mis-fire that prompted the work. The gate is a narrow opt-in,
 migration target: plain `onMouseUp` remains correct for the other ~127 call sites, and its
 entry criterion is a control where an accidental activation is itself the defect.
 
-**Verification** — `bun typecheck` in `packages/opencode` passes. `bun test
+**Verification** — `bun typecheck` in `packages/cli` passes. `bun test
 test/cli/tui/press-gate.test.tsx test/cli/tui/sidebar-state.test.ts` — 16 pass. `bun test
 test/cli/tui test/cli/cmd/tui` — 261 pass, 1 fail, 1 error; the same command on base `main`
 gives 245 pass, 1 fail, 1 error, so that failure is `PRE-EXISTING` (`thread.test.ts`,

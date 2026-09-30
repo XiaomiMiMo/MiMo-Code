@@ -109,7 +109,7 @@ export async function SubagentProgressCheckerPlugin(pluginInput: PluginInput): P
       // exists to validate. checkpoint-writer / title / summary / dream /
       // distill / compaction never have task_id semantics, so excluding them
       // is harmless even though task_id check below would already short-circuit.
-      // See packages/opencode/src/plugin/matcher.ts.
+      // See packages/cli/src/plugin/matcher.ts.
       matcher: {
         agentType: {
           excludeOnly: [

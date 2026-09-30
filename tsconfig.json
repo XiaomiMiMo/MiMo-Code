@@ -3,7 +3,7 @@
   "files": [],
   "references": [
     { "path": "./script" },
-    { "path": "./packages/opencode" },
+    { "path": "./packages/cli" },
     { "path": "./packages/shared" },
     { "path": "./packages/plugin" },
     { "path": "./packages/sdk/js" }

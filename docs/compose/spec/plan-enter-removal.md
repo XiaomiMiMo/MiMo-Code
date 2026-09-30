@@ -20,7 +20,7 @@ and gained no replacement instruction; the user-facing answer to "how do I enter
 plan mode" moved to `mimocode-docs`, which loads only when someone asks how
 MiMoCode works.
 
-**Verification** — from `packages/opencode`: `bun typecheck` PASS.
+**Verification** — from `packages/cli`: `bun typecheck` PASS.
 `bun test test/tool test/cli/tui test/agent test/permission` — 1274 pass / 1 fail
 / 11 skip, where the single failure is `test/tool/registry.test.ts > loads tools
 from .mimocode/tool (singular)` timing out at 5000ms under parallel load;
@@ -63,7 +63,7 @@ model keeps putting itself into plan mode unasked.
 Plan mode's workflow was designed for weaker models: a five-phase curriculum
 (parallel `explore` subagents → a `general` design subagent → review → write the
 plan file → `plan_exit`) injected as a ~90-line system-reminder on every entry
-(`packages/opencode/src/session/prompt.ts:991-1073`). Frontier models do not fit
+(`packages/cli/src/session/prompt.ts:991-1073`). Frontier models do not fit
 that shape — they research and weigh alternatives before acting anyway, so the
 phase scaffolding mostly buys tokens and extra turns. A large share of users have
 responded by staying in Build for everything.
@@ -76,7 +76,7 @@ interruption is the point of this change.
 Both complaints share one cause: `plan_enter` exists as a model-callable tool.
 
 Nothing in a system prompt is needed to trigger it. The tool's own description
-is a standing invitation (`packages/opencode/src/tool/plan-enter.txt:5`):
+is a standing invitation (`packages/cli/src/tool/plan-enter.txt:5`):
 
 > If the user explicitly mentions wanting to create a plan, ALWAYS call this
 > tool first.
@@ -219,19 +219,19 @@ dialog copy, not the routing input, so they are untouched.
 
 Delete:
 
-- `packages/opencode/src/tool/plan-enter.txt`
-- `PlanEnterTool` in `packages/opencode/src/tool/plan.ts` (keep `getLastModel`
+- `packages/cli/src/tool/plan-enter.txt`
+- `PlanEnterTool` in `packages/cli/src/tool/plan.ts` (keep `getLastModel`
   and `PlanExitTool`)
-- `packages/opencode/src/tool/registry.ts` — the `plan_enter` import, its
+- `packages/cli/src/tool/registry.ts` — the `plan_enter` import, its
   `Tool.init` entry, and `tool.planenter` in `builtin`
-- `packages/opencode/src/tool/tool-script-ref.ts:29` — `"plan_enter"` exclusion
-- `packages/opencode/src/agent/agent.ts` — the `plan_enter` rules at `:113`
+- `packages/cli/src/tool/tool-script-ref.ts:29` — `"plan_enter"` exclusion
+- `packages/cli/src/agent/agent.ts` — the `plan_enter` rules at `:113`
   (defaults deny), `:141` (build allow), `:181` (plan allow)
-- `packages/opencode/src/cli/cmd/run.ts:356-360` — the `plan_enter` deny rule
-- `packages/opencode/src/cli/cmd/tui/routes/session/plan-switch.ts:7` — the
+- `packages/cli/src/cli/cmd/run.ts:356-360` — the `plan_enter` deny rule
+- `packages/cli/src/cli/cmd/tui/routes/session/plan-switch.ts:7` — the
   `plan_enter → "plan"` mapping
 - the `tui.question.plan_enter.*` block (6 keys plus its comment header) from all
-  seven locale files under `packages/opencode/src/cli/cmd/tui/i18n/`. There is no
+  seven locale files under `packages/cli/src/cli/cmd/tui/i18n/`. There is no
   locale key-parity test in this package, so removal is verified by grep for
   residual keys rather than by a suite. Deleting them cannot break historical
   replay either way: `routes/session/question.tsx:24` falls back to the
@@ -239,8 +239,8 @@ Delete:
 
 Modify:
 
-- `packages/opencode/src/session/prompt/default.txt` — lines 87 and 134 per S2.
-- `packages/opencode/src/skill/builtin/.bundle/mimocode-docs/SKILL.md` and
+- `packages/cli/src/session/prompt/default.txt` — lines 87 and 134 per S2.
+- `packages/cli/src/skill/builtin/.bundle/mimocode-docs/SKILL.md` and
   `reference/commands.md` — per S2 Documentation surfaces.
 
 Tests:
@@ -261,7 +261,7 @@ Tests:
   `plan_enter`, and does contain `plan_exit`. This is the regression guard
   against a re-add.
 
-Verification, from `packages/opencode`: `bun test test/tool test/cli/tui test/skill
+Verification, from `packages/cli`: `bun test test/tool test/cli/tui test/skill
 test/agent test/permission`, `bun typecheck`, `git diff --check`, and
 `bunx prettier --check` on the touched files. Two baseline caveats: root
 `bun run lint` reports ~4040 pre-existing warnings (0 errors), and
@@ -347,4 +347,4 @@ belongs in the PR that lands the permission mechanism.
 - [x] T4: correct `prompt/default.txt` — acceptance: no `plan-enter` in the tool list; item 5 of "Plan mode in detail" states the user switches modes, forbids unprompted suggestions to switch, and keeps `plan_exit` as the model's request path; the "Enter plan mode for non-trivial implementation work" paragraph is gone with no behavioural replacement (covers: S2)
 - [x] T5: make `mimocode-docs` answer "how do I enter/leave plan mode" — acceptance: the frontmatter description carries mode/keybinding vocabulary so the question routes to the skill; `SKILL.md` and `reference/commands.md` both state that entering is a user gesture (`Tab` / agent dialog), that no tool enters plan, that `plan_exit` is the agent's only move, and that the agent will not raise plan mode unasked (covers: S2, S3)
 - [x] T6: update the five affected test files and add `test/tool/plan-enter-absent.test.ts` — acceptance: no test asserts a deleted tool is available; the historical-part guard in `plan-switch.test.ts` proves a replayed `plan_enter` part no longer switches modes; the new test fails if `plan_enter` is re-registered (covers: S3; depends: T1, T2, T3)
-- [x] T7: verification band — acceptance: the S3 test bands, `bun typecheck`, and `git diff --check` all pass from `packages/opencode` (covers: S3; depends: T1-T6)
+- [x] T7: verification band — acceptance: the S3 test bands, `bun typecheck`, and `git diff --check` all pass from `packages/cli` (covers: S3; depends: T1-T6)

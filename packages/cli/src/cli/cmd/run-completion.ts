@@ -1,4 +1,4 @@
-// packages/opencode/src/cli/cmd/run-completion.ts
+// packages/cli/src/cli/cmd/run-completion.ts
 
 export type StatusInfo = { type: "idle" | "busy" | "retry" | "notice"; [k: string]: unknown }
 

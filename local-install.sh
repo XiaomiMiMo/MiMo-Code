@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-package_dir="$repo_dir/packages/opencode"
+package_dir="$repo_dir/packages/cli"
 install_dir="${MIMOCODE_INSTALL_DIR:-$HOME/.mimocode/bin}"
 
 if ! command -v bun >/dev/null 2>&1; then

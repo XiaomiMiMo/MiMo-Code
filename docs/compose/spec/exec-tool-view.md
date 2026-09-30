@@ -12,18 +12,18 @@ commits: 47c8425f..6479a56b
 
 **What was built** — `exec` (the parallel tool-call script tool) now renders like `bash`. Once `input.code` has streamed in, the part lives in a `BlockTool` for the rest of its life; collapsing caps the script and its output at a 10-row budget with a `…` marker instead of compressing everything into a one-line summary. Expanding shows both in full. The click handler and the expand/collapse hint appear only when something actually overflows, so a short script with short output is a static block — the same rule `bash` uses.
 
-The budget counts *rendered* rows, not source lines. The first cut of this change counted source lines and bounded nothing: `exec` returns JSON, one line of it wraps to dozens of terminal rows, and the collapsed block still filled the screen. Estimation and clipping now live in `packages/opencode/src/cli/cmd/tui/util/collapse.ts` and are shared with `Bash`, which had the same latent defect for long single-line output. Height is measured in display cells (`Bun.stringWidth`, plus one cell per tab), so CJK and emoji count double; a line straddling the budget is sliced on the cell budget without splitting a wide character, so a single 4000-char line still shows its head.
+The budget counts *rendered* rows, not source lines. The first cut of this change counted source lines and bounded nothing: `exec` returns JSON, one line of it wraps to dozens of terminal rows, and the collapsed block still filled the screen. Estimation and clipping now live in `packages/cli/src/cli/cmd/tui/util/collapse.ts` and are shared with `Bash`, which had the same latent defect for long single-line output. Height is measured in display cells (`Bun.stringWidth`, plus one cell per tab), so CJK and emoji count double; a line straddling the budget is sliced on the cell budget without splitting a wide character, so a single 4000-char line still shows its head.
 
 The pre-execution state keeps the single `InlineTool` pending line (`~ Writing script...`). Because that branch is only reachable while `code` is still empty, its failure color, spinner and summary children were unreachable and were removed; `InlineTool`'s `iconColor` prop lost its last user and was deleted. `exec` output now passes through `stripAnsi` like bash's, since nested `bash` calls put raw escape sequences into `<return_value>` / `<logs>`.
 
-On the backend, `exec` re-publishes the per-tool `counts` map in its terminal metadata. `SessionProcessor.completeToolCall` (`packages/opencode/src/session/processor.ts:359`) *replaces* part metadata rather than merging it, so the live breakdown streamed through `ctx.metadata` used to vanish the moment a run finished and the summary degraded to `12 calls`.
+On the backend, `exec` re-publishes the per-tool `counts` map in its terminal metadata. `SessionProcessor.completeToolCall` (`packages/cli/src/session/processor.ts:359`) *replaces* part metadata rather than merging it, so the live breakdown streamed through `ctx.metadata` used to vanish the moment a run finished and the summary degraded to `12 calls`.
 
 **Verification**
 
-- `cd packages/opencode && bun typecheck` — PASS (clean), re-run after the display-cell rework.
-- `cd packages/opencode && bun test test/cli/tui/collapse.test.ts` — PASS, 16 pass / 0 fail (row estimation, clipping, CJK/emoji/tab widths, a budget invariant across grapheme classes, and the over-wide-cluster guard — verified to go red when the guard is removed).
-- `cd packages/opencode && bun test test/tool/tool-script.test.ts` — PASS, 42 pass / 0 fail.
-- `cd packages/opencode && bun test test/tool test/cli/tui` — PASS, 874 pass / 10 skip / 0 fail.
+- `cd packages/cli && bun typecheck` — PASS (clean), re-run after the display-cell rework.
+- `cd packages/cli && bun test test/cli/tui/collapse.test.ts` — PASS, 16 pass / 0 fail (row estimation, clipping, CJK/emoji/tab widths, a budget invariant across grapheme classes, and the over-wide-cluster guard — verified to go red when the guard is removed).
+- `cd packages/cli && bun test test/tool/tool-script.test.ts` — PASS, 42 pass / 0 fail.
+- `cd packages/cli && bun test test/tool test/cli/tui` — PASS, 874 pass / 10 skip / 0 fail.
 - Independent subagent review of `47c8425f..b5dbe888`: both acceptance criteria met, no critical findings. Two of its three minor findings were fixed in `1e463724` (dead pending-branch props, missing `stripAnsi`); the third (`clip()` being a plain function rather than a memo) was rejected — reads of `expanded()` inside JSX children are tracked by the render effect. A second review covered the row-budget and display-cell work and found one CRITICAL — a per-code-point width walk under-charged variation-selector emoji and clipped ~2x the budget — fixed by segmenting graphemes (`36372846`), plus a scrollbox-chrome under-reservation. Its re-review passed after fuzzing the budget invariant over regional indicators, skin tones, combining marks and Hangul jamo; two residual nits were fixed in `6e23a566`. A third review covered that residual fix and found the new guard test was not exercising the guard (its budget equalled the cluster width) — tightened in `6479a56b`.
 - Not covered: there is no render harness for the components in `routes/session/index.tsx`, so wiring (which memo feeds which `<text>`) was reviewed by reading, not asserted. The row math itself is unit-tested. `exec` is gated to GPT-toolset models (`registry.ts:379-381`), so no live TUI run was performed; both display defects were reported from user screenshots, not caught by a test.
 
@@ -40,14 +40,14 @@ On the backend, `exec` re-publishes the per-tool `counts` map in its terminal me
 
 ## [S1] Problem
 
-The `exec` tool (parallel tool-call script, `packages/opencode/src/tool/tool-script.ts`, tool id `exec`) renders in the TUI through `ToolScript` (`packages/opencode/src/cli/cmd/tui/routes/session/index.tsx:2292-2345`) as a binary toggle:
+The `exec` tool (parallel tool-call script, `packages/cli/src/tool/tool-script.ts`, tool id `exec`) renders in the TUI through `ToolScript` (`packages/cli/src/cli/cmd/tui/routes/session/index.tsx:2292-2345`) as a binary toggle:
 
 - Collapsed (default): a single `InlineTool` line — `» exec 12 calls · read×7 grep×4`. Neither the script nor its output is visible.
 - Expanded: a `BlockTool` dumping the full `input.code` and the full `props.output` with no truncation at all.
 
 Every other block-shaped tool — `bash` above all (`index.tsx:2922-2987`) — treats collapse as *overflow protection*, not as compression to one line: the command is always visible, and the first 10 output lines leak through with a `…` marker. `exec` is the odd one out, so a batch of parallel tool calls is either invisible or floods the transcript.
 
-A second, smaller defect: per-tool counts are streamed live through `ctx.metadata` (`tool-script.ts:411-419`) but the terminal metadata returned by `execute` is only `{ status, toolCalls }` (`tool-script.ts:549,568,575`). `SessionProcessor.completeToolCall` **replaces** part metadata rather than merging it (`packages/opencode/src/session/processor.ts:359`), so the moment a run finishes the breakdown disappears and the summary degrades to `12 calls`.
+A second, smaller defect: per-tool counts are streamed live through `ctx.metadata` (`tool-script.ts:411-419`) but the terminal metadata returned by `execute` is only `{ status, toolCalls }` (`tool-script.ts:549,568,575`). `SessionProcessor.completeToolCall` **replaces** part metadata rather than merging it (`packages/cli/src/session/processor.ts:359`), so the moment a run finishes the breakdown disappears and the summary degrades to `12 calls`.
 
 ## [S2] Design
 
@@ -66,7 +66,7 @@ Restructure `ToolScript` to mirror `Bash`:
 - Slicing walks **grapheme clusters** (`Intl.Segmenter`), not code points: `Bun.stringWidth` is not additive over code points — `"❤️"` (U+2764 U+FE0F) measures 2 as a unit but 1 + 0 summed — so a per-code-point walk under-charges emoji-presentation sequences and overshoots the budget.
 - The prompt editor has its own width translation at `component/prompt/offset.ts` (tab = 2, newline = 1) because it must match `@opentui`'s *editor* offsets. That is a different coordinate system and is deliberately not shared with `Collapse`.
 - **Known limitation (accepted, follow-up):** the height estimate assumes character wrapping, but `<text>` renders through `@opentui` `TextBufferRenderable` whose `wrapMode` defaults to `"word"`. A row therefore breaks early at a space and the leftover spills into an extra row, so the collapsed block can exceed the 10-row budget and the final sliced row looks ragged rather than full. The budget is an approximate ceiling, not a hard bound. Two fixes exist and both were declined for now: simulating greedy word wrap in `Collapse` (duplicates renderer internals) and forcing `wrapMode="char"` on these bodies (loses word-boundary readability elsewhere). The collapsed view is readable as-is.
-- The row-budget helpers live in `packages/opencode/src/cli/cmd/tui/util/collapse.ts` (`lines`, `columns`, `rows`, `clip`) and are shared by `Bash` and `ToolScript` — bash has the same long-single-line defect. `hasLongDisplayLine` / `Write`'s line count reuse `Collapse.lines`.
+- The row-budget helpers live in `packages/cli/src/cli/cmd/tui/util/collapse.ts` (`lines`, `columns`, `rows`, `clip`) and are shared by `Bash` and `ToolScript` — bash has the same long-single-line defect. `hasLongDisplayLine` / `Write`'s line count reuse `Collapse.lines`.
 - The pending branch is only reachable while `code` is empty, so it carries no failure color, spinner, or summary. `InlineTool`'s `iconColor` prop has no other user and is removed.
 
 Not in this change: syntax highlighting for the script body, envelope parsing, live output streaming.

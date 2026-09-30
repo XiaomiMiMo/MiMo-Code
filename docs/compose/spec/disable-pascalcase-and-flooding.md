@@ -16,7 +16,7 @@ tool IDs are advertised and replayed again; prompt display names (`Edit`,
 `Grep`, `Glob`, …) remain unchanged. The FIFO safe-serial gate and fail-cascade
 guard stay intact.
 
-**Verification** — From `packages/opencode`:
+**Verification** — From `packages/cli`:
 
 - PASS: `bun typecheck`
 - PASS: `bun test test/session/tool-fail-cascade.test.ts test/session/invalid-tool-cascade.test.ts test/tool/gate.test.ts test/tool/fail-cascade.test.ts test/session/structured-output.test.ts --timeout 30000`
@@ -49,7 +49,7 @@ safety work:
 
 - Prompt and tool-description display labels (`Edit`, `Grep`, `Glob`, `Read`, …)
   introduced for human-facing instructions remain unchanged.
-- `packages/opencode/src/tool/gate.ts` FIFO admission (read/grep/glob overlap;
+- `packages/cli/src/tool/gate.ts` FIFO admission (read/grep/glob overlap;
   every other top-level tool serial within an assistant step).
 - Fail cascade in the same gate: `FailCascadeError`,
   `FAIL_CASCADE_MESSAGE`, `MIMOCODE_DISABLE_FAIL_CASCADE`, and all
@@ -62,7 +62,7 @@ safety work:
 Delete the mimo-v2.6 casing rewrite end to end so schema and history names stay
 canonical:
 
-- Delete `packages/opencode/src/tool/names.ts` (`usesPascalCaseTools`,
+- Delete `packages/cli/src/tool/names.ts` (`usesPascalCaseTools`,
   `defaultToolName`, `toolSurface`, `NamedTool`).
 - Drop `modelName` from tool definitions and the `MIMOCODE_PASCAL_CASE_TOOLS`
   flag.
@@ -80,7 +80,7 @@ canonical and need no behavioral change.
 
 Delete the flooding detector completely:
 
-- Delete `packages/opencode/src/session/toolcall-flooding.ts`
+- Delete `packages/cli/src/session/toolcall-flooding.ts`
   (middleware, `guardToolCallStream`, `ToolCallFloodingError`,
   `TOOLCALL_FLOODING_*`).
 - Remove middleware wiring and flooding name-restore from `session/llm.ts`.

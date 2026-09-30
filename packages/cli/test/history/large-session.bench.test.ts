@@ -8,7 +8,7 @@ import { backfillAll } from "./fixtures/seed-index"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
-// Opt-in, synthetic/in-memory only. Run from packages/opencode:
+// Opt-in, synthetic/in-memory only. Run from packages/cli:
 // HISTORY_BENCH=1 bun test test/history/large-session.bench.test.ts --timeout 120000
 // Optional: HISTORY_BENCH_CASE, HISTORY_BENCH_MESSAGES, HISTORY_BENCH_IMAGES,
 // HISTORY_BENCH_IMAGE_MIB (encoded base64 bytes, not decoded image bytes).

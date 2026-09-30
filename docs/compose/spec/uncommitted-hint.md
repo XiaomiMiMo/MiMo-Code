@@ -117,9 +117,9 @@ identity, or anti-loop rules — those belong in the engine.
 
 | Area | Location | Role |
 |------|----------|------|
-| Pure logic | `packages/opencode/src/session/prompt/uncommitted-hint.ts` | config resolve, `decideUncommittedHint`, hint text, counters, pending tokens |
-| Inject orchestration | `packages/opencode/src/session/prompt.ts` | `PromptInput.source` → `runLoop(turnSource)` → `firePostSession` |
-| Config schema | `packages/opencode/src/config/config.ts` | `experimental.uncommitted_hint` enabled-only |
+| Pure logic | `packages/cli/src/session/prompt/uncommitted-hint.ts` | config resolve, `decideUncommittedHint`, hint text, counters, pending tokens |
+| Inject orchestration | `packages/cli/src/session/prompt.ts` | `PromptInput.source` → `runLoop(turnSource)` → `firePostSession` |
+| Config schema | `packages/cli/src/config/config.ts` | `experimental.uncommitted_hint` enabled-only |
 | Tests | `test/session/uncommitted-hint.test.ts`, `test/session/prompt-effect.test.ts` | decide + live inject/anti-loop |
 
 ### Observable acceptance

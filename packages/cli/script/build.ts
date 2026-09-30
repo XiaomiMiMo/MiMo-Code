@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Build packages/opencode TUI binaries (and, when MIMOCODE_RELEASE is set,
+// Build packages/cli TUI binaries (and, when MIMOCODE_RELEASE is set,
 // upload them — GitHub Release via gh, Xiaomi FDS via ../../script/fds-upload.ts).
 // Called by script/release.ts and bun run build:local.
 //

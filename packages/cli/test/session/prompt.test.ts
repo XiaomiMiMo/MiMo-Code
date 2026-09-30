@@ -1157,7 +1157,7 @@ describe("session.prompt regression", () => {
           return new Response("not found", { status: 404 })
         }
         calls++
-        return new Response(chat("packages/opencode/src/session/processor.ts"), {
+        return new Response(chat("packages/cli/src/session/processor.ts"), {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
         })

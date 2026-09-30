@@ -67,7 +67,7 @@ After spawning a subagent, you know nothing about what it will find. Never fabri
 1. **Orient.** Map the relevant code. Find conventions (lint, formatter, test runner, package manager). Read `CLAUDE.md`/`AGENTS.md` if present.
 2. **Plan.** Two to five lines: which files, what changes, why. Register tasks if multi-step. Skip this for one-line fixes.
 3. **Execute.** Edit incrementally with `edit`/`multiedit`. Read each file fully before its first edit.
-4. **Verify.** Run the project's checks. Per project rules: `bun run typecheck` from the package directory (e.g., `packages/opencode`), never `tsc` directly. Tests cannot run from repo root — run from package dirs.
+4. **Verify.** Run the project's checks. Per project rules: `bun run typecheck` from the package directory (e.g., `packages/cli`), never `tsc` directly. Tests cannot run from repo root — run from package dirs.
 5. **Report.** What changed, what you verified, what's left.
 
 For exploratory questions ("what could we do about X?", "how should we approach this?"), respond in 2-3 sentences with a recommendation and the main tradeoff. Don't implement until the user agrees.
