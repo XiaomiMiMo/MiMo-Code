@@ -133,7 +133,6 @@ packages/ui           纯 web 组件库；TUI 对其 i18n 的引用已确认无�
 | `patches/` `packages/script/` `bin/mimo` | 运行/构建链 |
 | `docs/architecture/` `docs/harness/` | 仍在用的设计文档（勿按「无代码引用」误删） |
 | `src/skill/**/.bundle/**` `src/workflow/builtin/*.js` | Bun macro 字符串嵌入，动了会改二进制 |
-| `src/ext/**` 构建期 overlay 钩子 | 内部版注入点（`dev.ts` / `build.ts`） |
 | `docs/compose/` | 不在本范围 |
 
 ### 耦合点（删除时一并处理）

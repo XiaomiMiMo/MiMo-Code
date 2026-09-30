@@ -27,7 +27,6 @@ import { InstanceState } from "@/effect"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { isRecord } from "@/util/record"
 import { withStatics } from "@/util/schema"
-import { isFreeApiModel, isFreeApiSunset } from "@/util/free-api-sunset"
 
 import * as ProviderTransform from "./transform"
 import { ModelID, ProviderID } from "./schema"
@@ -1131,11 +1130,11 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
-// MiMo models (and the `mimo-auto` smart alias) only speak the OpenAI-compatible Chat
+// MiMo models only speak the OpenAI-compatible Chat
 // Completions API. Whatever npm a catalog entry or mimocode.json declares for such an
 // id, the model is pinned to @ai-sdk/openai-compatible.
 export function isMimoOrSmartModel(id: string) {
-  return /(^|[/_-])mimo(?:-|$)/i.test(id) || id === "mimo-auto"
+  return /(^|[/_-])mimo(?:-|$)/i.test(id)
 }
 
 function resolveModelNpm(npm: string, ...ids: string[]) {
@@ -1406,11 +1405,6 @@ const layer: Layer.Layer<
               release_date: model.release_date ?? existingModel?.release_date ?? "",
               cachePromptTTL: model.cachePromptTTL ?? existingModel?.cachePromptTTL,
               variants: {},
-            }
-            // mimo-auto is a free-tier routing alias absent from models.dev; it routes to a
-            // vision-capable model, so image input is supported.
-            if (providerID === "mimo" && modelID === "mimo-auto") {
-              parsedModel.capabilities.input.image = true
             }
             const merged = mergeDeep(ProviderTransform.variants(parsedModel), model.variants ?? {})
             parsedModel.variants = mapValues(
@@ -1786,9 +1780,6 @@ const layer: Layer.Layer<
     })
 
     const getLanguage = Effect.fn("Provider.getLanguage")(function* (model: Model) {
-      if (isFreeApiSunset() && isFreeApiModel({ providerID: model.providerID, modelID: model.id })) {
-        throw new Error("MiMo free API service has ended. Sign in or configure a third-party API.")
-      }
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`

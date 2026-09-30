@@ -39,7 +39,6 @@ const MIMOCODE_EXPERIMENTAL = truthy("MIMOCODE_EXPERIMENTAL")
 // Defaults to false. When enabled, mimocode runs in pure-mimo mode:
 //   — does NOT inherit Claude Code prompt files (CLAUDE.md, ~/.claude/CLAUDE.md)
 //   — does NOT pick up provider API keys from environment variables
-//   — falls back to the mimo-auto model as the default
 // Set MIMOCODE_MIMO_ONLY=true to disable .claude inheritance and env-based
 // provider auto-detection.
 const MIMOCODE_MIMO_ONLY = truthy("MIMOCODE_MIMO_ONLY")

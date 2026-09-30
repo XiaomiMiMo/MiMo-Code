@@ -30,11 +30,6 @@ export const dict = {
   "tui.home.placeholder.example.todo": "修復程式碼庫中的 TODO",
   "tui.home.placeholder.example.stack": "這個專案用了什麼技術棧？",
   "tui.home.placeholder.example.tests": "修復失敗的測試",
-  "tui.home.agreement.prefix": "使用 MiMoCode 即表示你同意我們的",
-  "tui.home.agreement.terms": "服務協議",
-  "tui.home.agreement.separator": "和",
-  "tui.home.agreement.privacy": "隱私政策",
-  "tui.home.agreement.suffix": "",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "新增檔案",
@@ -53,9 +48,6 @@ export const dict = {
   "tui.tips.theme_mode":
     "執行 {highlight}/dark{/highlight} 切換深色模式，{highlight}/light{/highlight} 切換淺色模式",
   "tui.tips.doc": "執行 {highlight}/doc{/highlight} 開啟使用文件",
-  "tui.tips.free_models": "限時提供免費模型中，立即體驗！",
-  "tui.tips.free_api_sunset":
-    "免費 API 服務已終止。請使用 {highlight}/login{/highlight} 登入，歡迎訂閱 MiMo Token Plan 或設定第三方 API 後使用 MiMo Code。",
   "tui.tips.multi_skills":
     "在同一則訊息中輸入多個 {highlight}/skill-name{/highlight} 可同時組合使用多個 Skills",
   "tui.tips.ask_slash_commands":
@@ -370,25 +362,8 @@ export const dict = {
   "tui.dialog.ok": "確定",
   "tui.dialog.confirm.cancel": "取消",
   "tui.dialog.confirm.confirm": "確認",
-  "tui.dialog.agreement.title": "服務協議與隱私政策",
-  "tui.dialog.agreement.message": "請閱讀並同意後繼續使用。",
-  "tui.dialog.agreement.confirm": "同意並繼續",
-  "tui.dialog.free_api_sunset.title": "免費 API 服務已終止",
-  "tui.dialog.free_api_sunset.message":
-    "請使用 /login 登入，歡迎訂閱 MiMo Token Plan 或設定第三方 API 後使用 MiMo Code。",
-  "tui.command.consent.revoke.title": "撤銷免費模型協議",
-  "tui.consent.revoked": "已撤銷免費模型協議 — 下次使用時將再次請求同意",
   "tui.dialog.select.placeholder": "搜尋",
   "tui.dialog.model.login_hint": "提示：先 /login 登入再切換模型",
-  "tui.model.mimo_auto.name": "MiMo Auto（MiMo-V2.5 限免至 7 月 26 日 18:00 · UTC+8）",
-  "tui.model.mimo_auto.sunset_name": "MiMo Auto（MiMo-V2.5）",
-  "tui.dialog.token_plan.title": "訂閱token plan或排隊等待",
-  "tui.dialog.token_plan.line1": "免費模式下目前需要排隊等待，若想穩定取得高品質服務，",
-  "tui.dialog.token_plan.subscribe": "歡迎訂閱 ",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
-  "tui.dialog.token_plan.link_suffix": "。",
-  "tui.dialog.token_plan.line3": "你也可以透過 /login 來設定自己的 API key。",
-  "tui.dialog.token_plan.confirm": "知道了",
   "tui.dialog.select.no_results": "找不到結果",
   "tui.dialog.prompt.placeholder": "輸入文字",
   "tui.dialog.prompt.busy": "處理中...",

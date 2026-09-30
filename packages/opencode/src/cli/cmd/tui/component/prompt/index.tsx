@@ -50,13 +50,7 @@ import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { DialogWorkspaceCreate, restoreWorkspaceSession } from "../dialog-workspace-create"
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
-import { DialogAgreement, FREE_AGREEMENT_KEY, FREE_MODEL_IDS } from "../dialog-agreement"
 import { useArgs } from "@tui/context/args"
-import {
-  isFreeApiModel,
-  isFreeApiSunset,
-  shouldBlockFreeApiRequest,
-} from "@tui/util/free-api-sunset"
 
 export type PromptProps = {
   sessionID?: string
@@ -798,23 +792,6 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
-        title: t("tui.command.consent.revoke.title"),
-        value: "consent.revoke",
-        category: "prompt",
-        slash: {
-          name: "revoke-consent",
-        },
-        onSelect: (dialog) => {
-          kv.delete(FREE_AGREEMENT_KEY)
-          dialog.clear()
-          toast.show({
-            message: t("tui.consent.revoked"),
-            variant: "info",
-            duration: 3000,
-          })
-        },
-      },
-      {
         title: voiceEnabled() ? t("tui.command.voice.toggle.title_on") : t("tui.command.voice.toggle.title_off"),
         value: "voice.toggle",
         category: "prompt",
@@ -1111,47 +1088,6 @@ export function Prompt(props: PromptProps) {
     const selectedModel = local.model.current()
     if (!selectedModel) {
       void promptModelWarning()
-      return false
-    }
-
-    const clientSlashSubmission =
-      store.mode !== "shell" && trimmed.startsWith("/") && command.slashes().some((slash) => slash.display === trimmed)
-    const modelClientSlash = ["/btw", "/compact", "/summarize"].includes(trimmed)
-    const freeApiSunset = isFreeApiSunset()
-    const sunsetFreeApi = freeApiSunset && isFreeApiModel(selectedModel)
-    if (
-      shouldBlockFreeApiRequest(selectedModel, {
-        sunset: freeApiSunset,
-        localOnly: clientSlashSubmission && !modelClientSlash,
-        shell: store.mode === "shell",
-      })
-    ) {
-      void DialogAlert.show(
-        dialog,
-        t("tui.dialog.free_api_sunset.title"),
-        t("tui.dialog.free_api_sunset.message"),
-      )
-      return false
-    }
-
-    // Free models require a one-time acknowledgment of the terms and privacy
-    // policy. Gate submission until the user accepts; the flag is stored in KV.
-    const isFreeModel = FREE_MODEL_IDS.has(selectedModel.modelID)
-    if (
-      isFreeModel &&
-      !kv.get(FREE_AGREEMENT_KEY) &&
-      !(sunsetFreeApi && ((clientSlashSubmission && !modelClientSlash) || store.mode === "shell"))
-    ) {
-      submitLock = true
-      DialogAgreement.show(dialog, {
-        onConfirm: () => {
-          kv.set(FREE_AGREEMENT_KEY, true)
-          void submit()
-        },
-        onClose: () => {
-          submitLock = false
-        },
-      })
       return false
     }
 
@@ -1837,12 +1773,9 @@ export function Prompt(props: PromptProps) {
                           >
                             {local.model.parsed().model}
                           </text>
-                          {/* Hide provider label for mimo-auto since model name already contains "MiMo" */}
-                          <Show when={!(local.model.current()?.providerID === "mimo" && local.model.current()?.modelID === "mimo-auto")}>
-                            <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>
-                              {currentProviderLabel()}
-                            </text>
-                          </Show>
+                          <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>
+                            {currentProviderLabel()}
+                          </text>
                           <Show when={showVariant()}>
                             <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
                             <text>

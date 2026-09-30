@@ -14,7 +14,6 @@ import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util"
 import * as Model from "../util/model"
 import { useLanguage } from "@tui/context/language"
-import { createFreeApiSunsetSignal, freeApiModelNameKey, isFreeApiModel } from "@tui/util/free-api-sunset"
 
 export { parse as parseModel } from "../util/model"
 
@@ -25,7 +24,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const sdk = useSDK()
     const toast = useToast()
     const t = useLanguage().t
-    const freeApiSunset = createFreeApiSunsetSignal()
 
     function isModelValid(model: { providerID: string; modelID: string }) {
       const provider = sync.data.provider.find((x) => x.id === model.providerID)
@@ -213,12 +211,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
         if (initial || !modelStore.ready) return initial
 
-        // No args/recent/config match: prefer the free mimo-auto channel so a
-        // clean install defaults to a usable free model rather than whatever
-        // provider happens to sit first (e.g. paid xiaomi/ultraspeed).
-        const mimo = sync.data.provider.find((p) => p.id === "mimo")
-        if (mimo && "mimo-auto" in mimo.models) {
-          return { providerID: "mimo", modelID: "mimo-auto" }
+        // No args/recent/config match: prefer the authenticated xiaomi pro
+        // model so a clean install lands on a usable paid default (login
+        // required) rather than whatever provider happens to sit first.
+        const xiaomi = sync.data.provider.find((p) => p.id === "xiaomi")
+        if (xiaomi && "mimo-v2.6-pro" in xiaomi.models) {
+          return { providerID: "xiaomi", modelID: "mimo-v2.6-pro" }
         }
 
         const provider = sync.data.provider[0]
@@ -268,10 +266,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           const info = provider?.models[value.modelID]
           return {
             provider: provider?.name || value.providerID,
-            model:
-              isFreeApiModel(value)
-                ? t(freeApiModelNameKey(freeApiSunset()))
-                : Model.name(sync.data.provider, value.providerID, value.modelID),
+            model: Model.name(sync.data.provider, value.providerID, value.modelID),
             reasoning: info?.capabilities?.reasoning ?? false,
           }
         }),

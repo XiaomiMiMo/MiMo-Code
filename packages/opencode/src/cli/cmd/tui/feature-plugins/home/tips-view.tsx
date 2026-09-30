@@ -4,11 +4,11 @@ import { useLanguage } from "@tui/context/language"
 import { useLocal } from "@tui/context/local"
 import { useSync } from "@tui/context/sync"
 import { Flag } from "@/flag/flag"
-import { createFreeApiSunsetSignal } from "@tui/util/free-api-sunset"
 
 const themeCount = Object.keys(DEFAULT_THEMES).length
 const TIP_ROTATION_MS = 10_000
 const COMPOSE_LOCK_TIP = "tui.tips.compose_next"
+const LOGIN_TIP = "tui.tips.login"
 
 // Weighted tip priority. Higher weight = shown more often.
 // Promote recently-added or critical features so users discover them.
@@ -16,8 +16,6 @@ const COMPOSE_LOCK_TIP = "tui.tips.compose_next"
 const PRIORITY_WEIGHTS: Record<string, number> = {
   "tui.tips.ask_slash_commands": 70,
   "tui.tips.multi_skills": 60,
-  "tui.tips.free_models": 50,
-  "tui.tips.free_api_sunset": 50,
   "tui.tips.background": 50,
   "tui.tips.vivid": 40,
   "tui.tips.login": 40,
@@ -32,7 +30,6 @@ const PRIORITY_WEIGHTS: Record<string, number> = {
 const TIP_KEYS = [
   "tui.tips.ask_slash_commands",
   "tui.tips.multi_skills",
-  "tui.tips.free_models",
   "tui.tips.background",
   "tui.tips.vivid",
   "tui.tips.theme_mode",
@@ -138,18 +135,9 @@ export function tipWeight(key: string) {
 }
 
 // Build the tip key pool. The platform-specific suspend tip is always appended last.
-export function buildTipKeys(
-  platform: NodeJS.Platform,
-  freeApiSunset = false,
-  xiaomiAuthenticated = false,
-): readonly string[] {
+export function buildTipKeys(platform: NodeJS.Platform): readonly string[] {
   const suspendKey = platform === "win32" ? "tui.tips.suspend.win" : "tui.tips.suspend.unix"
-  return [
-    ...TIP_KEYS.filter((key) => !freeApiSunset || key !== "tui.tips.free_models"),
-    ...(freeApiSunset && !xiaomiAuthenticated ? ["tui.tips.free_api_sunset"] : []),
-    "tui.tips.tab_agent",
-    suspendKey,
-  ]
+  return [...TIP_KEYS, "tui.tips.tab_agent", suspendKey]
 }
 
 type TipPart = { text: string; highlight: boolean }
@@ -194,14 +182,7 @@ export function Tips() {
   const lang = useLanguage()
   const local = useLocal()
   const sync = useSync()
-  const freeApiSunset = createFreeApiSunsetSignal()
-  const allKeys = createMemo(() =>
-    buildTipKeys(
-      process.platform,
-      freeApiSunset(),
-      sync.data.provider_next.authenticated.includes("xiaomi"),
-    ),
-  )
+  const allKeys = createMemo(() => buildTipKeys(process.platform))
   const [key, setKey] = createSignal(pickWeighted(allKeys()))
   createEffect(() => {
     if (allKeys().includes(key())) return
@@ -212,8 +193,14 @@ export function Tips() {
   // Display override: while the current agent is Compose, show the compose-next
   // deprecation tip in place of whatever the rotation currently holds. The
   // rotation keeps running underneath; leaving Compose reveals the current
-  // rotation key with no artificial swap.
-  const displayKey = createMemo(() => (local.agent.current()?.name === "compose" ? COMPOSE_LOCK_TIP : key()))
+  // rotation key with no artificial swap. With no authenticated provider,
+  // surface the /login tip instead so a credential-less install knows how to
+  // proceed (the default model requires login).
+  const displayKey = createMemo(() => {
+    if (local.agent.current()?.name === "compose") return COMPOSE_LOCK_TIP
+    if (!sync.data.provider_next.authenticated.length) return LOGIN_TIP
+    return key()
+  })
   const parts = createMemo(() => parse(lang.t(displayKey(), { count: themeCount })))
   const labelColor = createMemo(() => {
     const agent = local.agent.current()

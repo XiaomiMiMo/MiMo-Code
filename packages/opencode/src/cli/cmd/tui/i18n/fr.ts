@@ -30,11 +30,6 @@ export const dict = {
   "tui.home.placeholder.example.todo": "Corriger un TODO dans le code",
   "tui.home.placeholder.example.stack": "Quelle est la stack technique de ce projet ?",
   "tui.home.placeholder.example.tests": "Réparer les tests cassés",
-  "tui.home.agreement.prefix": "En utilisant MiMoCode, vous acceptez nos ",
-  "tui.home.agreement.terms": "Conditions d'utilisation",
-  "tui.home.agreement.separator": " et notre ",
-  "tui.home.agreement.privacy": "Politique de confidentialité",
-  "tui.home.agreement.suffix": "",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "joindre un fichier",
@@ -56,9 +51,6 @@ export const dict = {
   "tui.tips.theme_mode":
     "Exécutez {highlight}/dark{/highlight} pour le mode sombre ou {highlight}/light{/highlight} pour le mode clair",
   "tui.tips.doc": "Exécutez {highlight}/doc{/highlight} pour ouvrir la documentation utilisateur",
-  "tui.tips.free_models": "Modèles gratuits disponibles pour une durée limitée — essayez-les !",
-  "tui.tips.free_api_sunset":
-    "Le service API gratuit est terminé. Exécutez {highlight}/login{/highlight} pour vous connecter. Abonnez-vous au MiMo Token Plan ou configurez une API tierce pour utiliser MiMo Code.",
   "tui.tips.multi_skills":
     "Combinez plusieurs déclencheurs {highlight}/skill-name{/highlight} dans un même message pour utiliser plusieurs Skills ensemble",
   "tui.tips.ask_slash_commands":
@@ -383,26 +375,8 @@ export const dict = {
   "tui.dialog.ok": "OK",
   "tui.dialog.confirm.cancel": "Annuler",
   "tui.dialog.confirm.confirm": "Confirmer",
-  "tui.dialog.agreement.title": "Conditions et confidentialité",
-  "tui.dialog.agreement.message": "Veuillez les lire et les accepter pour continuer.",
-  "tui.dialog.agreement.confirm": "Accepter et continuer",
-  "tui.dialog.free_api_sunset.title": "Le service API gratuit est terminé",
-  "tui.dialog.free_api_sunset.message":
-    "Exécutez /login pour vous connecter. Abonnez-vous au MiMo Token Plan ou configurez une API tierce pour utiliser MiMo Code.",
-  "tui.command.consent.revoke.title": "Révoquer l'accord du modèle gratuit",
-  "tui.consent.revoked": "Accord du modèle gratuit révoqué — vous devrez l'accepter à nouveau",
   "tui.dialog.select.placeholder": "Rechercher",
   "tui.dialog.model.login_hint": "Astuce : exécutez /login pour vous connecter avant de changer de modèle",
-  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5 gratuit jusqu’au 26 juillet à 18:00 · UTC+8)",
-  "tui.model.mimo_auto.sunset_name": "MiMo Auto (MiMo-V2.5)",
-  "tui.dialog.token_plan.title": "Abonnez-vous à un Token Plan ou patientez dans la file",
-  "tui.dialog.token_plan.line1":
-    "En mode gratuit, les requêtes sont mises en file d'attente. Pour un service stable et de qualité,",
-  "tui.dialog.token_plan.subscribe": "abonnez-vous à ",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
-  "tui.dialog.token_plan.link_suffix": ".",
-  "tui.dialog.token_plan.line3": "Vous pouvez aussi exécuter /login pour configurer votre propre clé API.",
-  "tui.dialog.token_plan.confirm": "Compris",
   "tui.dialog.select.no_results": "Aucun résultat trouvé",
   "tui.dialog.prompt.placeholder": "Saisir du texte",
   "tui.dialog.prompt.busy": "Traitement...",
@@ -559,10 +533,6 @@ export const dict = {
   "tui.command.plugins.install.title": "Installer un plugin",
 
   // MiMo Auto (free) — TUI login dialog
-  "tui.dialog.login.mimo_free": "MiMo Auto (free)",
-  "tui.dialog.login.mimo_free.desc": "Canal anonyme gratuit — aucune connexion requise",
-  "tui.dialog.login.mimo_free.success": "MiMo Auto (free) est prêt — modèle par défaut défini sur mimo/mimo-auto",
-  "tui.dialog.login.mimo_free.unavailable": "Fournisseur MiMo Auto (free) non chargé",
   "tui.dialog.login.flow.title": "Connexion MiMo",
   "tui.dialog.login.flow.placeholder": "Collez le code (ou attendez le rappel du navigateur)",
   "tui.dialog.login.flow.busy": "Connexion en cours...",
@@ -575,13 +545,6 @@ export const dict = {
   "cli.providers.select": "Sélectionner un fournisseur",
   "cli.providers.other": "Autre fournisseur",
   "cli.providers.mimo.recommended_hint": "recommandé",
-  "cli.providers.mimo_free.hint": "Canal anonyme gratuit / mimo-auto",
-  "cli.providers.mimo_free.verifying": "Vérification du canal MiMo Auto (free)...",
-  "cli.providers.mimo_free.ready": "Canal MiMo Auto (free) prêt",
-  "cli.providers.mimo_free.failed": "Échec de la vérification de MiMo Auto (free)",
-  "cli.providers.mimo_free.default_set": "Modèle par défaut défini sur mimo/mimo-auto (contexte 1M, gratuit)",
-  "cli.providers.mimo_free.usage_hint":
-    "Aucune connexion requise — exécutez simplement mimo. Pour les modèles payants/premium, choisissez plutôt la connexion navigateur MiMo.",
   "cli.providers.mimo_login.decrypt_retry": "Échec du déchiffrement, veuillez réessayer ({remaining} tentatives restantes)",
   "cli.providers.mimo_login.decrypt_exhausted": "Échec du déchiffrement, nombre maximal de tentatives atteint",
 

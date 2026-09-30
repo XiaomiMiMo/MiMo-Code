@@ -318,7 +318,6 @@ async function mountUserMessage(parts: Part[]) {
     providers: () => new Map(),
     sync: { data: { message: {} } } as never,
     tui: { ready: true } as never,
-    freeApiSunset: () => false,
   }
   let done!: () => void
   const ready = new Promise<void>((resolve) => {

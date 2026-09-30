@@ -35,20 +35,8 @@ describe("buildTipKeys", () => {
     expect(buildTipKeys("linux")).toContain("tui.tips.suspend.unix")
   })
 
-  test("keeps the free-model promotion before sunset", () => {
-    expect(buildTipKeys("linux", false, false)).toContain("tui.tips.free_models")
-    expect(buildTipKeys("linux", false, false)).not.toContain("tui.tips.free_api_sunset")
-  })
-
-  test("replaces the free promotion with guidance for signed-out users after sunset", () => {
-    const keys = buildTipKeys("linux", true, false)
-    expect(keys).not.toContain("tui.tips.free_models")
-    expect(keys).toContain("tui.tips.free_api_sunset")
-  })
-
-  test("does not show sign-in guidance to authenticated Xiaomi users after sunset", () => {
-    const keys = buildTipKeys("linux", true, true)
-    expect(keys).not.toContain("tui.tips.free_models")
-    expect(keys).not.toContain("tui.tips.free_api_sunset")
+  test("keeps the login tip available for credential-less installs", () => {
+    expect(buildTipKeys("linux")).toContain("tui.tips.login")
+    Array.of(en, es, fr, ja, ru, zh, zht).forEach((dict) => expect(dict["tui.tips.login"]).toBeTruthy())
   })
 })

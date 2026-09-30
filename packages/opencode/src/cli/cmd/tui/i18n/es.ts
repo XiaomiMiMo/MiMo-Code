@@ -30,11 +30,6 @@ export const dict = {
   "tui.home.placeholder.example.todo": "Corregir un TODO en el código",
   "tui.home.placeholder.example.stack": "¿Cuál es el stack técnico del proyecto?",
   "tui.home.placeholder.example.tests": "Arreglar las pruebas fallidas",
-  "tui.home.agreement.prefix": "Al usar MiMoCode, aceptas nuestros ",
-  "tui.home.agreement.terms": "Términos de servicio",
-  "tui.home.agreement.separator": " y la ",
-  "tui.home.agreement.privacy": "Política de privacidad",
-  "tui.home.agreement.suffix": "",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "adjuntar archivo",
@@ -56,9 +51,6 @@ export const dict = {
   "tui.tips.theme_mode":
     "Ejecuta {highlight}/dark{/highlight} para el modo oscuro o {highlight}/light{/highlight} para el modo claro",
   "tui.tips.doc": "Ejecuta {highlight}/doc{/highlight} para abrir la documentación de usuario",
-  "tui.tips.free_models": "Modelos gratuitos disponibles por tiempo limitado — ¡pruébalos ahora!",
-  "tui.tips.free_api_sunset":
-    "El servicio de API gratuita ha finalizado. Ejecuta {highlight}/login{/highlight} para iniciar sesión. Suscríbete a MiMo Token Plan o configura una API de terceros para usar MiMo Code.",
   "tui.tips.multi_skills":
     "Combina varios {highlight}/skill-name{/highlight} en un mismo mensaje para usar varias Skills a la vez",
   "tui.tips.ask_slash_commands":
@@ -394,26 +386,8 @@ export const dict = {
   "tui.dialog.ok": "Aceptar",
   "tui.dialog.confirm.cancel": "Cancelar",
   "tui.dialog.confirm.confirm": "Confirmar",
-  "tui.dialog.agreement.title": "Términos y privacidad",
-  "tui.dialog.agreement.message": "Revísalos y acepta para continuar.",
-  "tui.dialog.agreement.confirm": "Aceptar y continuar",
-  "tui.dialog.free_api_sunset.title": "El servicio de API gratuita ha finalizado",
-  "tui.dialog.free_api_sunset.message":
-    "Ejecuta /login para iniciar sesión. Suscríbete a MiMo Token Plan o configura una API de terceros para usar MiMo Code.",
-  "tui.command.consent.revoke.title": "Revocar el acuerdo de modelo gratuito",
-  "tui.consent.revoked": "Acuerdo de modelo gratuito revocado: se te pedirá aceptarlo de nuevo",
   "tui.dialog.select.placeholder": "Buscar",
   "tui.dialog.model.login_hint": "Consejo: ejecuta /login para iniciar sesión antes de cambiar de modelo",
-  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5 gratis hasta el 26 de julio, 18:00 · UTC+8)",
-  "tui.model.mimo_auto.sunset_name": "MiMo Auto (MiMo-V2.5)",
-  "tui.dialog.token_plan.title": "Suscríbete a un Token Plan o espera en la cola",
-  "tui.dialog.token_plan.line1":
-    "En el modo gratuito, las solicitudes están en cola. Para un servicio estable y de calidad,",
-  "tui.dialog.token_plan.subscribe": "suscríbete a ",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
-  "tui.dialog.token_plan.link_suffix": ".",
-  "tui.dialog.token_plan.line3": "También puedes ejecutar /login para configurar tu propia clave API.",
-  "tui.dialog.token_plan.confirm": "Entendido",
   "tui.dialog.select.no_results": "No se encontraron resultados",
   "tui.dialog.prompt.placeholder": "Introduce texto",
   "tui.dialog.prompt.busy": "Trabajando...",

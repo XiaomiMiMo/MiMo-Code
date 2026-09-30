@@ -156,7 +156,7 @@ describe("ProviderTransform.maxOutputTokens", () => {
     expect(
       ProviderTransform.maxOutputTokens({
         ...baseModel,
-        id: ModelID.make("mimo-auto"),
+        id: ModelID.make("mimo-v2.5"),
         providerID: ProviderID.make("mimo"),
       }),
     ).toBe(128_000)

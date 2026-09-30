@@ -41,7 +41,6 @@ import type { WorkspaceAdaptor } from "@/control-plane/types"
 import { Glob } from "@mimo-ai/shared/util/glob"
 import fs from "fs"
 import path from "path"
-import { pathToFileURL, fileURLToPath } from "url"
 
 const log = Log.create({ service: "plugin" })
 
@@ -283,47 +282,6 @@ export const layer = Layer.effect(
             },
           }).pipe(Effect.option)
           if (init._tag === "Some") registerHook(hooks, hooksWithMeta, init.value, plugin.name || "internal")
-        }
-
-        // Load optional local extensions under src/ext/. Prefers the generated
-        // _manifest.ts (a fixed import specifier resolves inside Bun single-file
-        // executables, where filesystem scans do not); falls back to a directory
-        // scan for unbundled runs. Each *Plugin-named export is registered.
-        const extModules: Record<string, Record<string, unknown>> = {}
-        // @ts-ignore generated manifest; may not exist at type-check time
-        const manifest = yield* Effect.tryPromise(() => import("../ext/_manifest")).pipe(Effect.option)
-        if (manifest._tag === "Some") {
-          Object.assign(
-            extModules,
-            (manifest.value as { modules?: Record<string, Record<string, unknown>> }).modules ?? {},
-          )
-        } else {
-          const extDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "ext")
-          const extFiles = fs.existsSync(extDir)
-            ? fs.readdirSync(extDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts") && f !== "_manifest.ts")
-            : []
-          for (const entry of extFiles) {
-            const mod = yield* Effect.tryPromise({
-              try: () => import(/* @vite-ignore */ pathToFileURL(path.join(extDir, entry)).href),
-              catch: (err) => log.error("failed to import extension", { name: entry, error: err }),
-            }).pipe(Effect.option)
-            if (mod._tag === "Some") extModules[entry.replace(/\.ts$/, "")] = mod.value as Record<string, unknown>
-          }
-        }
-        for (const [name, value] of Object.entries(extModules)) {
-          // Only treat *Plugin-named function exports as plugins. Other modules
-          // (e.g. a CLI helper export) are not plugins and must not be invoked
-          // as plugin factories.
-          const overlay = Object.entries(value).find(
-            ([exportName, v]) => typeof v === "function" && exportName.endsWith("Plugin"),
-          )?.[1] as PluginInstance | undefined
-          if (!overlay) continue
-          // log.info("loading extension", { name })
-          const init = yield* Effect.tryPromise({
-            try: () => overlay(input),
-            catch: (err) => log.error("failed to load extension", { name, error: err }),
-          }).pipe(Effect.option)
-          if (init._tag === "Some") registerHook(hooks, hooksWithMeta, init.value, name)
         }
 
         const plugins = Flag.MIMOCODE_PURE ? [] : (cfg.plugin_origins ?? [])

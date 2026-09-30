@@ -193,7 +193,8 @@ function MimoOAuthFlow(props: { url: string; instructions: string }) {
     await sdk.client.instance.dispose()
     await sync.bootstrap()
     const xiaomi = sync.data.provider.find((p) => p.id === "xiaomi")
-    const defaultModel = xiaomi && "mimo-v2.5-pro" in xiaomi.models ? "mimo-v2.5-pro" : xiaomi ? Object.keys(xiaomi.models)[0] : undefined
+    const defaultModel =
+      xiaomi && "mimo-v2.6-pro" in xiaomi.models ? "mimo-v2.6-pro" : xiaomi ? Object.keys(xiaomi.models)[0] : undefined
     if (defaultModel) {
       local.model.set({ providerID: "xiaomi", modelID: defaultModel }, { recent: true })
     }

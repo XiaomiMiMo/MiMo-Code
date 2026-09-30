@@ -15,7 +15,6 @@ import { useLanguage } from "@tui/context/language"
 import * as Model from "../util/model"
 import { PROVIDER_PRIORITY } from "@/util/provider-priority"
 import * as fuzzysort from "fuzzysort"
-import { createFreeApiSunsetSignal, freeApiModelNameKey, isFreeApiModel } from "@tui/util/free-api-sunset"
 
 const ADD_MODEL_SENTINEL = "__add_model__"
 
@@ -38,11 +37,7 @@ export function DialogModel(props: { providerID?: string }) {
   const connected = useConnected()
   const providers = createDialogProviderOptions()
   const t = useLanguage().t
-  const freeApiSunset = createFreeApiSunsetSignal()
-  const modelName = (providerID: string, modelID: string) =>
-    isFreeApiModel({ providerID, modelID })
-      ? t(freeApiModelNameKey(freeApiSunset()))
-      : Model.name(sync.data.provider, providerID, modelID)
+  const modelName = (providerID: string, modelID: string) => Model.name(sync.data.provider, providerID, modelID)
 
   const showExtra = createMemo(() => connected() && !props.providerID)
 
@@ -69,8 +64,7 @@ export function DialogModel(props: { providerID?: string }) {
             key: item,
             value: { providerID: provider.id, modelID: model.id },
             title: modelName(provider.id, model.id),
-            // Hide provider name for mimo-auto to avoid redundancy
-            description: item.modelID === "mimo-auto" ? undefined : provider.name,
+            description: provider.name,
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
             footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
@@ -90,8 +84,7 @@ export function DialogModel(props: { providerID?: string }) {
       "Recent",
     )
 
-    // mimo-free and xiaomi provider pinned at top (after favorites/recents)
-    const mimoProvider = sync.data.provider.find((p) => p.id === "mimo")
+    // xiaomi provider pinned at top (after favorites/recents)
     const xiaomiProvider = sync.data.provider.find((p) => p.id === "xiaomi")
     const pinnedCategory = xiaomiProvider?.name ?? "MiMo"
     // Show pinned section when not scoped to a specific provider
@@ -99,22 +92,6 @@ export function DialogModel(props: { providerID?: string }) {
 
     const pinnedOptions = showPinned
       ? [
-          // mimo-free model
-          ...(mimoProvider && "mimo-auto" in mimoProvider.models && mimoProvider.models["mimo-auto"].status !== "deprecated" && (!showSections || !inShortcuts("mimo", "mimo-auto"))
-            ? [
-                {
-                  value: { providerID: "mimo", modelID: "mimo-auto" },
-                  title: modelName("mimo", "mimo-auto"),
-                  description: undefined as string | undefined,
-                  category: pinnedCategory,
-                  disabled: false,
-                  footer: undefined as "Free" | undefined,
-                  onSelect() {
-                    onSelect("mimo", "mimo-auto")
-                  },
-                },
-              ]
-            : []),
           // xiaomi provider models
           ...(xiaomiProvider
             ? [
@@ -170,11 +147,8 @@ export function DialogModel(props: { providerID?: string }) {
           provider.models,
           entries(),
           filter(([_, info]) => info.status !== "deprecated"),
-          filter(([model]) => !showPinned || provider.id !== "mimo" || model !== "mimo-auto"),
           // Scoped views ("you just connected provider X, pick a model from X")
-          // intentionally show only that provider's own models. The free
-          // mimo-auto belongs to the `mimo` provider, so it is NOT surfaced
-          // here — it stays pinned in the unscoped picker. Don't re-add it.
+          // intentionally show only that provider's own models.
           filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
           map(([model, info]) => ({
             value: { providerID: provider.id, modelID: model },

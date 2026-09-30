@@ -30,11 +30,6 @@ export const dict = {
   "tui.home.placeholder.example.todo": "コードベース内の TODO を修正",
   "tui.home.placeholder.example.stack": "このプロジェクトの技術スタックは？",
   "tui.home.placeholder.example.tests": "壊れたテストを修正",
-  "tui.home.agreement.prefix": "MiMoCode をご利用いただくことで、",
-  "tui.home.agreement.terms": "利用規約",
-  "tui.home.agreement.separator": "および",
-  "tui.home.agreement.privacy": "プライバシーポリシー",
-  "tui.home.agreement.suffix": "に同意したものとみなされます",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "ファイル添付",
@@ -54,9 +49,6 @@ export const dict = {
   "tui.tips.theme_mode":
     "{highlight}/dark{/highlight} でダークモード、{highlight}/light{/highlight} でライトモードに切り替えます",
   "tui.tips.doc": "{highlight}/doc{/highlight} を実行してユーザードキュメントを開きます",
-  "tui.tips.free_models": "期間限定で無料モデルを提供中。今すぐお試しください！",
-  "tui.tips.free_api_sunset":
-    "無料 API サービスは終了しました。{highlight}/login{/highlight} でログインしてください。MiMo Token Plan を購読するか、サードパーティ API を設定して MiMo Code をご利用ください。",
   "tui.tips.multi_skills":
     "1 つのメッセージ内で複数の {highlight}/skill-name{/highlight} を組み合わせて、複数の Skill を同時に使えます",
   "tui.tips.ask_slash_commands":
@@ -326,26 +318,8 @@ export const dict = {
   "tui.dialog.ok": "OK",
   "tui.dialog.confirm.cancel": "キャンセル",
   "tui.dialog.confirm.confirm": "確認",
-  "tui.dialog.agreement.title": "利用規約とプライバシー",
-  "tui.dialog.agreement.message": "内容を確認し、同意のうえで続行してください。",
-  "tui.dialog.agreement.confirm": "同意して続行",
-  "tui.dialog.free_api_sunset.title": "無料 API サービスは終了しました",
-  "tui.dialog.free_api_sunset.message":
-    "/login でログインしてください。MiMo Token Plan を購読するか、サードパーティ API を設定して MiMo Code をご利用ください。",
-  "tui.command.consent.revoke.title": "無料モデルの同意を取り消す",
-  "tui.consent.revoked": "無料モデルの同意を取り消しました — 次回利用時に再度同意を求めます",
   "tui.dialog.select.placeholder": "検索",
   "tui.dialog.model.login_hint": "ヒント：モデルを切り替える前に /login でログインしてください",
-  "tui.model.mimo_auto.name": "MiMo Auto（MiMo-V2.5 7月26日 18:00 まで無料 · UTC+8）",
-  "tui.model.mimo_auto.sunset_name": "MiMo Auto（MiMo-V2.5）",
-  "tui.dialog.token_plan.title": "Token Plan を購読するか順番待ち",
-  "tui.dialog.token_plan.line1":
-    "無料モードでは現在順番待ちが必要です。安定した高品質なサービスをご利用いただくには、",
-  "tui.dialog.token_plan.subscribe": "",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
-  "tui.dialog.token_plan.link_suffix": " のご購読をおすすめします。",
-  "tui.dialog.token_plan.line3": "/login で独自の API キーを設定することもできます。",
-  "tui.dialog.token_plan.confirm": "了解",
   "tui.dialog.select.no_results": "結果が見つかりません",
   "tui.dialog.prompt.placeholder": "テキストを入力",
   "tui.dialog.prompt.busy": "処理中...",
@@ -499,10 +473,6 @@ export const dict = {
   "tui.command.plugins.install.title": "プラグインをインストール",
 
   // MiMo Auto (free) — TUI login dialog
-  "tui.dialog.login.mimo_free": "MiMo Auto (free)",
-  "tui.dialog.login.mimo_free.desc": "ログイン不要の匿名無料チャネル",
-  "tui.dialog.login.mimo_free.success": "MiMo Auto (free) の準備完了 — デフォルトモデルを mimo/mimo-auto に設定しました",
-  "tui.dialog.login.mimo_free.unavailable": "MiMo Auto (free) プロバイダーが読み込まれていません",
   "tui.dialog.login.flow.title": "MiMo ログイン",
   "tui.dialog.login.flow.placeholder": "コードを貼り付け（またはブラウザコールバックを待機）",
   "tui.dialog.login.flow.busy": "ログイン中...",
@@ -515,13 +485,6 @@ export const dict = {
   "cli.providers.select": "プロバイダーを選択",
   "cli.providers.other": "その他のプロバイダー",
   "cli.providers.mimo.recommended_hint": "推奨",
-  "cli.providers.mimo_free.hint": "匿名無料チャネル / mimo-auto",
-  "cli.providers.mimo_free.verifying": "MiMo Auto (free) チャネルを検証中...",
-  "cli.providers.mimo_free.ready": "MiMo Auto (free) チャネル準備完了",
-  "cli.providers.mimo_free.failed": "MiMo Auto (free) の自己診断に失敗",
-  "cli.providers.mimo_free.default_set": "デフォルトモデルを mimo/mimo-auto に設定（1M コンテキスト、無料）",
-  "cli.providers.mimo_free.usage_hint":
-    "ログイン不要 — そのまま mimo を実行できます。有料/上位モデルを利用する場合は MiMo ブラウザログインを選択してください。",
   "cli.providers.mimo_login.decrypt_retry": "復号に失敗しました、再試行してください（残り {remaining} 回）",
   "cli.providers.mimo_login.decrypt_exhausted": "復号に失敗しました、最大再試行回数に達しました",
 
