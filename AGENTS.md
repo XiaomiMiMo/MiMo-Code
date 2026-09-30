@@ -3,7 +3,7 @@
 ## Conventions
 
 - Use MiMoCode Compose skills when available, otherwise use superpowers skill if installed.
-- To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
+- To regenerate the JavaScript SDK, run `./packages/sdk/script/build.ts`.
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The default branch in this repo is `main`.
 - CI triggers on `main`.

@@ -200,7 +200,7 @@
         "@opentui/solid",
       ],
     },
-    "packages/sdk/js": {
+    "packages/sdk": {
       "name": "@mimo-ai/sdk",
       "version": "0.1.15",
       "dependencies": {
@@ -715,7 +715,7 @@
 
     "@mimo-ai/plugin": ["@mimo-ai/plugin@workspace:packages/plugin"],
 
-    "@mimo-ai/sdk": ["@mimo-ai/sdk@workspace:packages/sdk/js"],
+    "@mimo-ai/sdk": ["@mimo-ai/sdk@workspace:packages/sdk"],
 
     "@mimo-ai/shared": ["@mimo-ai/shared@workspace:packages/shared"],
 

@@ -15,7 +15,7 @@ import { createClient } from "@hey-api/openapi-ts"
 const runtime = await mkdtemp(path.join(tmpdir(), "mimocode-sdk-"))
 try {
   await $`bun dev generate > ${dir}/openapi.json`
-    .cwd(path.resolve(dir, "../../opencode"))
+    .cwd(path.resolve(dir, "../cli"))
     .env({
       ...process.env,
       MIMOCODE_DB: ":memory:",

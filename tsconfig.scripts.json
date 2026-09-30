@@ -11,7 +11,7 @@
     "script/**/*.ts",
     "packages/cli/script/**/*.ts",
     "packages/plugin/script/**/*.ts",
-    "packages/sdk/js/script/**/*.ts"
+    "packages/sdk/script/**/*.ts"
   ],
   "exclude": [
     "packages/cli/script/generate.ts",

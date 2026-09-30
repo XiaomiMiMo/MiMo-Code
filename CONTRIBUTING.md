@@ -61,7 +61,7 @@ Development is focused on the terminal UI. The web, desktop, and console surface
 - `packages/cli` — core logic, server, and CLI (publishes as `@mimo-ai/cli`)
 - `packages/cli/src/cli/cmd/tui/` — the TUI, written in SolidJS with [opentui](https://github.com/sst/opentui)
 - `packages/plugin` — source for `@mimo-ai/plugin`
-- `packages/sdk/js` — the generated JavaScript SDK
+- `packages/sdk` — the generated JavaScript SDK
 
 ### Running against another directory
 

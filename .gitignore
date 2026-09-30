@@ -54,8 +54,8 @@ Thumbs.db
 
 # SDK codegen scratch: script/build.ts writes it, consumes it, then removes it.
 # A failed generation leaves it behind, where it is easy to commit by accident.
-/packages/sdk/js/openapi.json
-/packages/sdk/js/openapi-ts-error-*.log
+/packages/sdk/openapi.json
+/packages/sdk/openapi-ts-error-*.log
 
 # others
 codex/

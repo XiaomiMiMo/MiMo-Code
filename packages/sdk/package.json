@@ -11,7 +11,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/XiaomiMiMo/MiMo-Code.git",
-    "directory": "packages/sdk/js"
+    "directory": "packages/sdk"
   },
   "bugs": {
     "url": "https://github.com/XiaomiMiMo/MiMo-Code/issues"

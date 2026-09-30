@@ -6,6 +6,6 @@
     { "path": "./packages/cli" },
     { "path": "./packages/shared" },
     { "path": "./packages/plugin" },
-    { "path": "./packages/sdk/js" }
+    { "path": "./packages/sdk" }
   ]
 }

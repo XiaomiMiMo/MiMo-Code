@@ -108,7 +108,7 @@ function historyMessage(id: string, sessionID: string) {
 }
 
 function requestDirectory(request: Request) {
-  // Real SDK client (packages/sdk/js/src/v2/client.ts): GET/HEAD rewrite the
+  // Real SDK client (packages/sdk/src/v2/client.ts): GET/HEAD rewrite the
   // directory into the query string; every other method keeps it on the
   // x-mimocode-directory header, URI-encoded. Reading only the query therefore
   // misses every POST.
