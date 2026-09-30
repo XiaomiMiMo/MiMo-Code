@@ -50,10 +50,10 @@ corrected. T6 Report now names the deferred caller cleanup.
 - After a one-level package flatten, cwd-relative `Bun.file("../…")` needs one
   fewer `../` than file-relative imports; `packages/plugin/script/publish.ts`
   is the depth reference.
-- **Follow-up (not in this change):** delete `OPENCODE_CALLER` /
-  `alreadyInstalled()` in `packages/cli/src/ide/index.ts` and the related tests
-  (and the `sst-dev.opencode` install path if still shipped). No in-repo IDE
-  extension sets it any more.
+- **Follow-up (done in a separate commit on this branch, after the rename-only
+  range above):** removed `OPENCODE_CALLER` / `alreadyInstalled()`, the
+  `sst-dev.opencode` install path, and unused Ide error/event surface. No in-repo
+  IDE extension sets the env any more.
 
 ## [S1] Problem
 
