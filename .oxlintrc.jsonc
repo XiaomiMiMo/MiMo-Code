@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicolo-ribaudo/oxc-project.github.io/refs/heads/json-schema/src/public/.oxlintrc.schema.json",
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
   "options": {
     "typeAware": true
   },
