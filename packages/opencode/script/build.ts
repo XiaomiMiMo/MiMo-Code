@@ -298,7 +298,7 @@ if (Script.release) {
   // script reads from there). Skipped when credentials are absent so local
   // release builds still work.
   if (process.env.MIMO_FDS_AK && process.env.MIMO_FDS_SK) {
-    const { uploadFile } = await import("./fds-upload.ts")
+    const { uploadFile } = await import("../../../script/fds-upload.ts")
     const archives = fs.readdirSync("dist").filter((f) => f.endsWith(".zip") || f.endsWith(".tar.gz"))
     for (const file of archives) {
       await uploadFile(`dist/${file}`, `releases/v${Script.version}/${file}`)
