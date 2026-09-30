@@ -1,5 +1,6 @@
 import z from "zod"
 import { childProcessEnv } from "@/util/child-process-env"
+import crypto from "crypto"
 import os from "os"
 import { createWriteStream, existsSync, realpathSync } from "node:fs"
 import * as Tool from "./tool"
@@ -21,10 +22,15 @@ import * as MergeConflict from "./merge-conflict-notice"
 import { BashArity } from "@/permission/arity"
 import * as Truncate from "./truncate"
 import { Plugin } from "@/plugin"
-import { Git } from "@/git"
-import { Effect, Stream } from "effect"
+import { Git } from "../git"
+import { Session } from "../session"
+import { MessageV2 } from "../session/message-v2"
+import { inboxServiceRef } from "../inbox/inbox-ref"
+import * as BashJob from "./bash-job"
+import * as BashPredict from "./bash-predict"
+import { Deferred, Effect, Option, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
+import { ChildProcessSpawner, type ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner"
 import * as BashInteractive from "./bash-interactive"
 import * as BashTokenEfficient from "./bash_token_efficient_pipeline"
 import * as BashTokenEfficientHeuristic from "./bash_token_efficient_heuristic"
@@ -185,6 +191,94 @@ type Scan = {
 type Chunk = {
   text: string
   size: number
+}
+
+// The per-invocation inputs shared by the synchronous path (run) and the
+// background monitor (runBackground).
+type Input = {
+  shell: string
+  name: string
+  command: string
+  cwd: string
+  env: NodeJS.ProcessEnv
+  timeout: number
+  maxOutputTokens: number
+  description: string
+  // Slow-prediction identity for the timing store (project dir + normalized
+  // command). Captured in execute, where instance ALS is available, so
+  // finalize and the background monitor never read ALS themselves.
+  timingKey: string
+}
+
+// Output accumulator for one invocation: the drain callback appends into it
+// while the command runs and `finalize` turns its final state into the tool
+// result, so both execution paths produce identical output for identical
+// bytes. `activity` is the monitor's own liveness clock — it cannot come from
+// ctx.metadata, because a completed part's update is a no-op.
+type Accum = {
+  bytes: number
+  keep: number
+  full: string
+  first: string
+  last: string
+  list: Chunk[]
+  used: number
+  total: number
+  file: string
+  sink: ReturnType<typeof createWriteStream> | undefined
+  cut: boolean
+  expired: boolean
+  aborted: boolean
+  activity: number
+  // Invocation start, for the slow-prediction timing sample that finalize
+  // records (wall clock from spawn-side setup to the terminal outcome).
+  start: number
+}
+
+function accum(maxOutputTokens: number): Accum {
+  const bytes = maxOutputTokens * 4
+  return {
+    bytes,
+    keep: bytes * 2,
+    full: "",
+    first: "",
+    last: "",
+    list: [],
+    used: 0,
+    total: 0,
+    file: "",
+    sink: undefined,
+    cut: false,
+    expired: false,
+    aborted: false,
+    activity: Date.now(),
+    start: Date.now(),
+  }
+}
+
+// The three outcomes the background monitor can hand back to the still-awaited
+// tool call: the process ended (exit), the user aborted (abort), or the grace
+// period expired (grace). In the first two the tool finalizes locally exactly
+// like the classic path; grace means the tool returns a handoff result and
+// the monitor owns everything after.
+type Handoff = { kind: "exit" | "abort" | "grace"; code: number | null }
+
+// The monitor's terminal state after handoff, parked for finalize/delivery.
+type Monitor = { kind: "exit" | "signaled" | "stall"; code: number | null }
+
+// Stall detector for the background monitor: fails once the process has been
+// alive with no new output for stallMs. Polling instead of a per-chunk timer
+// because the chunk loop lives in the drain fiber — the poll only bounds
+// detection latency (never early, never more than one poll late: the
+// comparison is against the timestamp the drain wrote). Shape copied from
+// mcp/sampling.ts's stallWatch.
+function stallWatch(acc: Accum, stallMs: number) {
+  const poll = Math.max(25, Math.min(250, Math.floor(stallMs / 4)))
+  return Effect.forever(
+    Effect.sleep(poll).pipe(
+      Effect.flatMap(() => (Date.now() - acc.activity >= stallMs ? Effect.fail("stall") : Effect.void)),
+    ),
+  )
 }
 
 export const log = Log.create({ service: "bash-tool" })
@@ -489,6 +583,12 @@ export const BashTool = Tool.define(
     const trunc = yield* Truncate.Service
     const plugin = yield* Plugin.Service
     const gitSvc = yield* Git.Service
+    // Optional rather than a required service: fixtures that init this tool
+    // without a Session layer must keep working (they get None, and the
+    // background monitor simply skips the tool-part rewrite). In production
+    // the registry provides Session, so post-handoff outcomes land on the
+    // original tool part.
+    const session = Option.getOrUndefined(yield* Effect.serviceOption(Session.Service))
 
     // Layer-2 floor for git authorship: an agent may create a worktree/clone or
     // commit in an ad-hoc dir via this bash tool, bypassing Worktree.setup()'s
@@ -611,6 +711,34 @@ export const BashTool = Tool.define(
       return true
     })
 
+    // Whether some command in this line EXECUTES a project-built program — its
+    // head token is a path resolving inside the project directory/worktree
+    // (./dist/app, target/debug/foo, .\run.ps1), as opposed to an OS tool like
+    // ls/git or a PATH-resolved bare name. Such a program's runtime cannot be
+    // predicted, which is what earns the command background-job mode in
+    // `execute`. Deliberately narrow, failing closed to the classic path:
+    //   - only PATH-SHAPED heads (containing a separator or starting with ~)
+    //     are even resolved; a bare name resolves through PATH to anywhere.
+    //   - a head `argPath` declines to resolve — a $VAR-composed path, a glob
+    //     (see `dynamic`) — cannot be proven to be project code, so it is not.
+    //   - a resolved path outside the project is someone else's program.
+    const projectCommand = Effect.fn("BashTool.projectCommand")(function* (
+      root: Node,
+      cwd: string,
+      ps: boolean,
+      shell: string,
+    ) {
+      for (const node of commands(root)) {
+        const command = parts(node)
+        const head = command[0]?.text
+        if (!head) continue
+        if (!/[/\\]/.test(head) && !head.startsWith("~")) continue
+        const resolved = yield* argPath(head, cwd, ps, shell)
+        if (resolved && Instance.containsPath(resolved)) return true
+      }
+      return false
+    })
+
     const collect = Effect.fn("BashTool.collect")(function* (root: Node, cwd: string, ps: boolean, shell: string) {
       const scan: Scan = {
         dirs: new Set<string>(),
@@ -677,32 +805,176 @@ export const BashTool = Tool.define(
       }
     })
 
-    const run = Effect.fn("BashTool.run")(function* (
-      input: {
-        shell: string
-        name: string
-        command: string
-        cwd: string
-        env: NodeJS.ProcessEnv
-        timeout: number
-        maxOutputTokens: number
-        description: string
-      },
+    const drain = Effect.fn("BashTool.drain")(function* (
+      handle: ChildProcessHandle,
+      acc: Accum,
+      input: Input,
       ctx: Tool.Context,
     ) {
-      const bytes = input.maxOutputTokens * 4
-      const keep = bytes * 2
-      let full = ""
-      let first = ""
-      let last = ""
-      const list: Chunk[] = []
-      let used = 0
-      let total = 0
-      let file = ""
-      let sink: ReturnType<typeof createWriteStream> | undefined
-      let cut = false
-      let expired = false
-      let aborted = false
+      yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
+        const size = Buffer.byteLength(chunk, "utf-8")
+        acc.total += size
+        acc.activity = Date.now()
+        if (Buffer.byteLength(acc.first, "utf-8") < Math.floor(acc.bytes / 2)) {
+          acc.first = headBytes(acc.first + chunk, Math.floor(acc.bytes / 2))
+        }
+        acc.list.push({ text: chunk, size })
+        acc.used += size
+        while (acc.used > acc.keep && acc.list.length > 1) {
+          const item = acc.list.shift()
+          if (!item) break
+          acc.used -= item.size
+          acc.cut = true
+        }
+
+        acc.last = preview(acc.last + chunk)
+
+        if (acc.file) {
+          acc.sink?.write(chunk)
+        } else {
+          acc.full += chunk
+          if (Buffer.byteLength(acc.full, "utf-8") > acc.bytes) {
+            return trunc.write(acc.full).pipe(
+              Effect.andThen((next) =>
+                Effect.sync(() => {
+                  acc.file = next
+                  acc.cut = true
+                  acc.sink = createWriteStream(next, { flags: "a" })
+                  acc.full = ""
+                }),
+              ),
+              Effect.andThen(
+                ctx.metadata({
+                  metadata: {
+                    output: acc.last,
+                    description: input.description,
+                  },
+                }),
+              ),
+            )
+          }
+        }
+
+        return ctx.metadata({
+          metadata: {
+            output: acc.last,
+            description: input.description,
+          },
+        })
+      })
+    })
+
+    const finalize = Effect.fn("BashTool.finalize")(function* (acc: Accum, input: Input, code: number | null) {
+      // One timing sample per invocation — phase-1 and monitor finalize are
+      // mutually exclusive (the deferred protocol), and a user abort is
+      // skipped so its partial lifetime never lands in the history. A
+      // timeout/stall kill records its full life, which is exactly what the
+      // next run needs to predict (self-healing cold start).
+      if (!acc.aborted && Flag.MIMOCODE_EXPERIMENTAL_BASH_PREDICT) {
+        yield* Effect.promise(() => BashPredict.record(input.timingKey, Date.now() - acc.start))
+      }
+      const meta: string[] = []
+      if (acc.expired) {
+        meta.push(
+          `bash tool terminated command after exceeding timeout ${input.timeout} ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout value in milliseconds.`,
+        )
+      }
+      if (acc.aborted) meta.push("User aborted the command")
+      const raw = acc.list.map((item) => item.text).join("")
+      const end = tail(raw, acc.bytes)
+      if (end.cut) acc.cut = true
+      if (!acc.file && end.cut) {
+        acc.file = yield* trunc.write(raw)
+      }
+
+      // Token-efficient post-cleanse: RTK-style ANSI strip / progress fold /
+      // secret redact / long-line elide. Only applied when no tool storage is
+      // involved — once the output spills to a truncation file, the on-disk
+      // archive stays raw and cleaning is skipped to keep the inline preview
+      // consistent with the archive.
+      const cleaned =
+        !acc.file && Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY
+          ? BashTokenEfficient.clean(end.text, { command: input.command })
+          : null
+      if (cleaned && cleaned.bytesOut < cleaned.bytesIn) {
+        log.info("bash output cleaned", {
+          bytesIn: cleaned.bytesIn,
+          bytesOut: cleaned.bytesOut,
+          saved: cleaned.bytesIn - cleaned.bytesOut,
+        })
+      }
+
+      // Heuristic (shape-based) pipeline runs AFTER the common pipeline and
+      // only when both flags are on. Same never-worse contract — a shape that
+      // doesn't shrink the bytes is discarded.
+      const heuristic =
+        !acc.file &&
+        Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY &&
+        Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_HEURISTIC
+          ? BashTokenEfficientHeuristic.cleanHeuristic(cleaned?.text ?? end.text, { command: input.command })
+          : null
+      if (heuristic && heuristic.bytesOut < heuristic.bytesIn) {
+        log.info("bash output heuristic cleaned", {
+          shape: heuristic.shape,
+          bytesIn: heuristic.bytesIn,
+          bytesOut: heuristic.bytesOut,
+          saved: heuristic.bytesIn - heuristic.bytesOut,
+        })
+      }
+
+      let output = heuristic?.text ?? cleaned?.text ?? end.text
+      if (!output) output = "(no output)"
+
+      if (acc.cut && acc.file) {
+        const suffix = tail(raw, acc.bytes - Buffer.byteLength(acc.first, "utf-8")).text
+        const shown = Buffer.byteLength(acc.first, "utf-8") + Buffer.byteLength(suffix, "utf-8")
+        output = `Warning: truncated output (original token count: ${Math.ceil(acc.total / 4)})\n\n${acc.first}\n…${Math.ceil((acc.total - shown) / 4)} tokens truncated…\n${suffix}`
+      }
+
+      if (meta.length > 0) {
+        output += "\n\n<bash_metadata>\n" + meta.join("\n") + "\n</bash_metadata>"
+      }
+
+      // Conflict-ownership affordance. When this command left git mid-merge with
+      // unmerged paths, the result itself carries the rule (the conflict belongs
+      // to the branch's owner) and the two literal commands that follow it —
+      // because the model reads a tool result before its next tool call, and
+      // does not re-read a system prompt assembled requests ago. Appended after command
+      // output and never blocking; a tool-storage pointer may follow it so a
+      // truncated result always ends with the address of its complete output.
+      output += yield* MergeConflict.annotate({
+        git: gitSvc,
+        cwd: input.cwd,
+        command: input.command,
+        output,
+      })
+      if (acc.cut && acc.file) output += `\n\nFull output saved to: ${acc.file}`
+      if (acc.sink) {
+        const stream = acc.sink
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              stream.end(() => resolve())
+              stream.on("error", () => resolve())
+            }),
+        )
+      }
+
+      return {
+        title: input.description,
+        metadata: {
+          output: acc.last || preview(output),
+          exit: code,
+          description: input.description,
+          truncated: acc.cut,
+          ...(acc.cut && acc.file ? { outputPath: acc.file } : {}),
+        },
+        output,
+      }
+    })
+
+    const run = Effect.fn("BashTool.run")(function* (input: Input, ctx: Tool.Context) {
+      const acc = accum(input.maxOutputTokens)
 
       yield* ctx.metadata({
         metadata: {
@@ -715,58 +987,7 @@ export const BashTool = Tool.define(
         Effect.gen(function* () {
           const handle = yield* spawner.spawn(cmd(input.shell, input.name, input.command, input.cwd, input.env))
 
-          yield* Effect.forkScoped(
-            Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
-              const size = Buffer.byteLength(chunk, "utf-8")
-              total += size
-              if (Buffer.byteLength(first, "utf-8") < Math.floor(bytes / 2)) {
-                first = headBytes(first + chunk, Math.floor(bytes / 2))
-              }
-              list.push({ text: chunk, size })
-              used += size
-              while (used > keep && list.length > 1) {
-                const item = list.shift()
-                if (!item) break
-                used -= item.size
-                cut = true
-              }
-
-              last = preview(last + chunk)
-
-              if (file) {
-                sink?.write(chunk)
-              } else {
-                full += chunk
-                if (Buffer.byteLength(full, "utf-8") > bytes) {
-                  return trunc.write(full).pipe(
-                    Effect.andThen((next) =>
-                      Effect.sync(() => {
-                        file = next
-                        cut = true
-                        sink = createWriteStream(next, { flags: "a" })
-                        full = ""
-                      }),
-                    ),
-                    Effect.andThen(
-                      ctx.metadata({
-                        metadata: {
-                          output: last,
-                          description: input.description,
-                        },
-                      }),
-                    ),
-                  )
-                }
-              }
-
-              return ctx.metadata({
-                metadata: {
-                  output: last,
-                  description: input.description,
-                },
-              })
-            }),
-          )
+          yield* Effect.forkScoped(drain(handle, acc, input, ctx))
 
           const abort = Effect.callback<void>((resume) => {
             if (ctx.abort.aborted) return resume(Effect.void)
@@ -784,11 +1005,11 @@ export const BashTool = Tool.define(
           ])
 
           if (exit.kind === "abort") {
-            aborted = true
+            acc.aborted = true
             yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
           }
           if (exit.kind === "timeout") {
-            expired = true
+            acc.expired = true
             yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
           }
 
@@ -796,103 +1017,208 @@ export const BashTool = Tool.define(
         }),
       ).pipe(Effect.orDie)
 
-      const meta: string[] = []
-      if (expired) {
-        meta.push(
-          `bash tool terminated command after exceeding timeout ${input.timeout} ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout value in milliseconds.`,
-        )
-      }
-      if (aborted) meta.push("User aborted the command")
-      const raw = list.map((item) => item.text).join("")
-      const end = tail(raw, bytes)
-      if (end.cut) cut = true
-      if (!file && end.cut) {
-        file = yield* trunc.write(raw)
-      }
+      return yield* finalize(acc, input, code)
+    })
 
-      // Token-efficient post-cleanse: RTK-style ANSI strip / progress fold /
-      // secret redact / long-line elide. Only applied when no tool storage is
-      // involved — once the output spills to a truncation file, the on-disk
-      // archive stays raw and cleaning is skipped to keep the inline preview
-      // consistent with the archive.
-      const cleaned =
-        !file && Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY
-          ? BashTokenEfficient.clean(end.text, { command: input.command })
-          : null
-      if (cleaned && cleaned.bytesOut < cleaned.bytesIn) {
-        log.info("bash output cleaned", {
-          bytesIn: cleaned.bytesIn,
-          bytesOut: cleaned.bytesOut,
-          saved: cleaned.bytesIn - cleaned.bytesOut,
-        })
-      }
+    // Background mode for project-built executables and predicted-slow
+    // commands (see projectCommand and bash-predict): the command runs
+    // synchronously behind the tool call for `grace` — the full GRACE_MS when
+    // nothing is known about the runtime, or the predicted duration (down to
+    // a warmup floor) when this project's history says the command is slow —
+    // with identical streaming and metadata updates to the classic path. If
+    // it is still running at grace expiry the tool returns a handoff result
+    // (no numeric `exit`, so a caller's non-zero-exit gate never fires on a
+    // job that has not finished) while this monitor, forked into the instance
+    // scope, owns the process: finalize on exit, kill on a STALL_MS output
+    // stall, rewrite the tool part, and deliver the outcome to the session.
+    // An explicit `timeout` param never reaches here — it opts into the
+    // classic kill-at-timeout (run) instead.
+    const runBackground = Effect.fn("BashTool.runBackground")(function* (
+      input: Input,
+      ctx: Tool.Context,
+      grace: number,
+      estimate?: number,
+    ) {
+      const acc = accum(input.maxOutputTokens)
+      const stallMs = Flag.MIMOCODE_EXPERIMENTAL_BASH_JOB_STALL_MS
+      const jobID = crypto.randomUUID()
+      const resume = yield* Deferred.make<Handoff>()
 
-      // Heuristic (shape-based) pipeline runs AFTER the common pipeline and
-      // only when both flags are on. Same never-worse contract — a shape that
-      // doesn't shrink the bytes is discarded.
-      const heuristic =
-        !file &&
-        Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY &&
-        Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_HEURISTIC
-          ? BashTokenEfficientHeuristic.cleanHeuristic(cleaned?.text ?? end.text, { command: input.command })
-          : null
-      if (heuristic && heuristic.bytesOut < heuristic.bytesIn) {
-        log.info("bash output heuristic cleaned", {
-          shape: heuristic.shape,
-          bytesIn: heuristic.bytesIn,
-          bytesOut: heuristic.bytesOut,
-          saved: heuristic.bytesIn - heuristic.bytesOut,
-        })
-      }
-
-      let output = heuristic?.text ?? cleaned?.text ?? end.text
-      if (!output) output = "(no output)"
-
-      if (cut && file) {
-        const suffix = tail(raw, bytes - Buffer.byteLength(first, "utf-8")).text
-        const shown = Buffer.byteLength(first, "utf-8") + Buffer.byteLength(suffix, "utf-8")
-        output = `Warning: truncated output (original token count: ${Math.ceil(total / 4)})\n\n${first}\n…${Math.ceil((total - shown) / 4)} tokens truncated…\n${suffix}`
-      }
-
-      if (meta.length > 0) {
-        output += "\n\n<bash_metadata>\n" + meta.join("\n") + "\n</bash_metadata>"
-      }
-
-      // Conflict-ownership affordance. When this command left git mid-merge with
-      // unmerged paths, the result itself carries the rule (the conflict belongs
-      // to the branch's owner) and the two literal commands that follow it —
-      // because the model reads a tool result before its next tool call, and does
-      // not re-read a system prompt assembled requests ago. Appended after command
-      // output and never blocking; a tool-storage pointer may follow it so a
-      // truncated result always ends with the address of its complete output.
-      output += yield* MergeConflict.annotate({
-        git: gitSvc,
-        cwd: input.cwd,
-        command: input.command,
-        output,
+      yield* ctx.metadata({
+        metadata: {
+          output: "",
+          description: input.description,
+        },
       })
-      if (cut && file) output += `\n\nFull output saved to: ${file}`
-      if (sink) {
-        const stream = sink
-        yield* Effect.promise(
-          () =>
-            new Promise<void>((resolve) => {
-              stream.end(() => resolve())
-              stream.on("error", () => resolve())
-            }),
-        )
+
+      const monitor = Effect.gen(function* () {
+        let handed = false
+        let outcome: Monitor | undefined
+
+        const exit = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const handle = yield* spawner.spawn(cmd(input.shell, input.name, input.command, input.cwd, input.env))
+            yield* Effect.forkScoped(drain(handle, acc, input, ctx))
+
+            const abort = Effect.callback<void>((resumeRace) => {
+              if (ctx.abort.aborted) return resumeRace(Effect.void)
+              const handler = () => resumeRace(Effect.void)
+              ctx.abort.addEventListener("abort", handler, { once: true })
+              return Effect.sync(() => ctx.abort.removeEventListener("abort", handler))
+            })
+
+            const first = yield* Effect.raceAll([
+              handle.exitCode.pipe(Effect.map((code) => ({ kind: "exit" as const, code }))),
+              abort.pipe(Effect.map(() => ({ kind: "abort" as const, code: null }))),
+              Effect.sleep(`${grace} millis`).pipe(Effect.map(() => ({ kind: "grace" as const, code: null }))),
+            ])
+
+            if (first.kind !== "grace") {
+              if (first.kind === "abort") yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
+              return first
+            }
+
+            handed = true
+            yield* Deferred.succeed(resume, first)
+
+            // Post-handoff the abort leg is deliberately dropped: ctx.abort
+            // fires on normal turn teardown, which must not kill a job the
+            // model was told would keep running. From here only the stall
+            // watch — and instance disposal, through the forked scope — stop it.
+            outcome = yield* Effect.raceFirst(
+              handle.exitCode.pipe(
+                Effect.map((code) => ({ kind: "exit" as const, code })),
+                Effect.catch(() => Effect.succeed({ kind: "signaled" as const, code: null })),
+              ),
+              stallWatch(acc, stallMs),
+            ).pipe(
+              Effect.catch(() => Effect.succeed({ kind: "stall" as const, code: null })),
+            )
+            if (outcome.kind === "stall") {
+              yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
+            }
+            return first
+          }),
+        ).pipe(Effect.orDie, Effect.exit)
+
+        // Exactly-one completion for the tool's await: runs after the scope
+        // closed (so the drain fiber is interrupted before a phase-1 finalize
+        // reads the accumulator — the classic path's ordering), is a no-op
+        // when grace already completed the deferred, and must not be skippable
+        // by a pending interruption or the tool would hang forever.
+        yield* Deferred.done(resume, exit).pipe(Effect.uninterruptible)
+
+        if (!handed) return
+
+        // Handoff is out; the monitor owns delivery: shared finalize → tool
+        // part rewrite → inbox.
+        if (!outcome) log.warn("bash background monitor ended without an outcome", { jobID })
+        const result = yield* finalize(acc, input, outcome?.code ?? null)
+        const notes: string[] = []
+        if (outcome?.kind === "stall") {
+          notes.push(
+            `bash job ${jobID}: the process produced no output for ${stallMs} ms while still running and was killed. The output above ends where it stalled — diagnose from there (hang, deadlock, or waiting on input), fix the cause, and rerun. If the command legitimately runs silently for longer than ${stallMs} ms, rerun with an explicit timeout parameter so the classic timer applies instead.`,
+          )
+        }
+        if (outcome?.kind === "signaled") {
+          notes.push(`bash job ${jobID}: the process was terminated by an external signal (not a timeout or stall kill).`)
+        }
+        if (!outcome) {
+          notes.push(`bash job ${jobID}: the background monitor ended unexpectedly; the state above may be incomplete.`)
+        }
+        const output =
+          notes.length > 0
+            ? result.output + "\n\n<bash_metadata>\n" + notes.join("\n") + "\n</bash_metadata>"
+            : result.output
+
+        // Rewrite the original tool part in place (plan.ts precedent): the
+        // handoff result the processor stamped says "running in background";
+        // the transcript must show the real terminal state once the job ends.
+        if (session) {
+          const part = MessageV2.parts(ctx.messageID).find((item) => item.type === "tool" && item.callID === ctx.callID)
+          if (part?.type === "tool") {
+            yield* session.updatePart({
+              ...part,
+              state: {
+                status: "completed",
+                input: part.state.input,
+                output,
+                metadata: { ...result.metadata, jobID },
+                title: result.title,
+                time: {
+                  start: "time" in part.state ? part.state.time.start : Date.now(),
+                  end: Date.now(),
+                },
+              },
+            })
+          }
+        }
+
+        // Deliver to this session so the model continues with the real
+        // outcome (type "text" → render.ts's <inbox> wrapper; receiver "main"
+        // is the session-level default from actor/notification.ts). A missing
+        // ref (fixtures) or unknown receiver degrades to a log — the part
+        // rewrite above already persists the outcome for the next turn.
+        const inbox = inboxServiceRef.current
+        if (!inbox) {
+          log.warn("bash job outcome not delivered: no inbox service wired", { jobID })
+        }
+        if (inbox) {
+          const status =
+            outcome?.kind === "stall"
+              ? "killed after output stall"
+              : outcome?.kind === "signaled"
+                ? "terminated by external signal"
+                : `exit code ${String(outcome?.code ?? "unknown")}`
+          yield* inbox
+            .send({
+              receiverSessionID: ctx.sessionID,
+              receiverActorID: "main",
+              content: `Background command ${outcome?.kind === "stall" ? "was stopped by the monitor" : "finished"} (job ${jobID}).\nCommand: ${input.command}\nResult: ${status}\n\n${output}`,
+              type: "text",
+            })
+            .pipe(
+              Effect.catch(() =>
+                Effect.sync(() => log.warn("bash job outcome could not be delivered to the inbox", { jobID })),
+              ),
+            )
+        }
+      })
+
+      const started = yield* Effect.tryPromise(() => BashJob.start(jobID, monitor)).pipe(Effect.option)
+      if (Option.isNone(started)) {
+        // The monitor never forked (no instance runtime at this call site):
+        // no process exists yet, so the classic path can take over cleanly.
+        log.warn("could not fork background bash monitor; running synchronously instead", { jobID })
+        return yield* run(input, ctx)
+      }
+
+      // The monitor resolves this on every phase-1 outcome: an exit or abort
+      // within the grace window means the classic synchronous return (the
+      // monitor already killed on abort, and the drain fiber is interrupted
+      // before this finalize reads the accumulator — same ordering as run),
+      // while grace means the job outlived the window and is now the
+      // monitor's to deliver.
+      const first = yield* Deferred.await(resume)
+      if (first.kind !== "grace") {
+        if (first.kind === "abort") acc.aborted = true
+        return yield* finalize(acc, input, first.code)
       }
 
       return {
         title: input.description,
+        output: `Command was still running after ${grace} ms${estimate === undefined ? "" : ` (history predicts about ${estimate} ms for this command)`}, so it has been handed off to a background monitor (job ${jobID}). The final output and exit status will arrive in this session as an inbox message when the process ends — do NOT poll with repeated bash calls. The monitor kills the process if it produces no output for ${stallMs} ms and then sends repair instructions. Pass an explicit timeout parameter if you instead want the classic synchronous kill-at-timeout behavior.`,
         metadata: {
-          output: last || preview(output),
-          exit: code,
+          output: `running in background (job ${jobID})`,
+          // exit stays null (not a number) while the job runs: the caller's
+          // non-zero-exit gate only fires on numeric exits, and the monitor
+          // rewrites the part with the real code once the process ends.
+          exit: null,
           description: input.description,
-          truncated: cut,
-          ...(cut && file ? { outputPath: file } : {}),
+          truncated: false,
+          running: true,
+          jobID,
         },
-        output,
       }
     })
 
@@ -975,19 +1301,38 @@ export const BashTool = Tool.define(
                 }
               }
 
-              return yield* run(
-                {
-                  shell,
-                  name,
-                  command: params.command,
-                  cwd,
-                  env: yield* shellEnv(ctx, cwd),
-                  timeout,
-                  maxOutputTokens: params.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-                  description: params.description,
-                },
-                ctx,
-              )
+              const projectDir = Instance.directory
+              const input: Input = {
+                shell,
+                name,
+                command: params.command,
+                cwd,
+                env: yield* shellEnv(ctx, cwd),
+                timeout,
+                maxOutputTokens: params.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+                description: params.description,
+                timingKey: BashPredict.key(projectDir, params.command),
+              }
+              // Background-job mode: an explicit timeout opts into the classic
+              // kill-at-timeout, and interactive already returned above. Two
+              // eligibility signals otherwise — a project-built executable
+              // (runtime unpredictable) or slow prediction (static family or
+              // this project's history, see bash-predict). Only a prediction
+              // shortens the grace window: no history means the full GRACE_MS;
+              // a known duration waits out that estimate, so a fast finish
+              // still returns synchronously and an overrun hands off.
+              const eligible = params.timeout === undefined && Flag.MIMOCODE_EXPERIMENTAL_BASH_JOB
+              const predict = eligible && Flag.MIMOCODE_EXPERIMENTAL_BASH_PREDICT
+              const estimate = predict
+                ? yield* Effect.promise(() => BashPredict.estimate(projectDir, params.command))
+                : undefined
+              const predicted =
+                predict &&
+                (BashPredict.slowCommand(params.command) ||
+                  (estimate !== undefined && estimate >= Flag.MIMOCODE_EXPERIMENTAL_BASH_PREDICT_SLOW_MS))
+              const backgroundable = eligible && (predicted || (yield* projectCommand(root, cwd, ps, shell)))
+              if (backgroundable) return yield* runBackground(input, ctx, BashPredict.graceFor(estimate), estimate)
+              return yield* run(input, ctx)
             }),
         }
       })
