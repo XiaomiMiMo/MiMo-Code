@@ -98,7 +98,7 @@ bun run --cwd packages/cli test # tests cannot run from the repo root
 ./script/format.ts                   # prettier, if your editor does not do it
 ```
 
-A `pre-push` hook runs `bun run typecheck`, so a broken build will not reach the remote.
+CI runs `bun run typecheck` on every PR and push to `main`.
 
 If you change the server API, regenerate the SDK and OpenAPI schema:
 
