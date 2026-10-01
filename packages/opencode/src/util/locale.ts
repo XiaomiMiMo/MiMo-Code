@@ -1,4 +1,5 @@
 export function titlecase(str: string) {
+  if (typeof str !== "string") return String(str)
   return str.replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
