@@ -52,6 +52,7 @@ export namespace ProviderTest {
       layer: Layer.succeed(
         Provider.Service,
         Provider.Service.of({
+          prepareRefresh: () => Effect.succeed(() => {}),
           list: Effect.fn("TestProvider.list")(() => Effect.succeed({ [row.id]: row })),
           getProvider: Effect.fn("TestProvider.getProvider")((providerID) => {
             if (providerID === row.id) return Effect.succeed(row)

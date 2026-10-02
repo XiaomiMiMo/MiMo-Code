@@ -3,7 +3,7 @@ import path from "path"
 import { pathToFileURL } from "url"
 import os from "os"
 import z from "zod"
-import { mergeDeep, pipe } from "remeda"
+import { clone, mergeDeep, pipe } from "remeda"
 import { Global } from "../global"
 import fsNode from "fs/promises"
 import { NamedError } from "@mimo-ai/shared/util/error"
@@ -514,7 +514,11 @@ type State = {
   consoleState: ConsoleState
 }
 
+export const MODEL_KEYS = ["provider", "enabled_providers", "disabled_providers", "model", "small_model", "vision_model", "model_groups"] as const
+
 export interface Interface {
+  readonly invalidateSource: () => Effect.Effect<void>
+  readonly prepareModelRefresh: () => Effect.Effect<{ config: Info; commit: () => void }>
   readonly get: () => Effect.Effect<Info>
   readonly getGlobal: () => Effect.Effect<Info>
   readonly getConsoleState: () => Effect.Effect<ConsoleState>
@@ -589,7 +593,7 @@ export const layer = Layer.effect(
 
     const loadConfig = Effect.fnUntraced(function* (
       text: string,
-      options: { path: string } | { dir: string; source: string },
+      options: { path: string; modelsOnly?: boolean } | { dir: string; source: string },
     ) {
       const source = "path" in options ? options.path : options.source
       const expanded = yield* Effect.promise(() =>
@@ -599,7 +603,7 @@ export const layer = Layer.effect(
       )
       const parsed = ConfigParse.jsonc(expanded, source)
       const data = ConfigParse.schema(Info, normalizeLoadedConfig(parsed, source), source)
-      if (!("path" in options)) return data
+      if (!("path" in options) || options.modelsOnly) return data
 
       yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))
       if (!data.$schema || data.$schema === "https://opencode.ai/config.json") {
@@ -616,21 +620,22 @@ export const layer = Layer.effect(
       return data
     })
 
-    const loadFile = Effect.fnUntraced(function* (filepath: string) {
+    const loadFile = Effect.fnUntraced(function* (filepath: string, modelsOnly = false) {
       log.info("loading", { path: filepath })
       const text = yield* readConfigFile(filepath)
       if (!text) return {} as Info
-      return yield* loadConfig(text, { path: filepath })
+      return yield* loadConfig(text, { path: filepath, modelsOnly })
     })
 
-    const loadGlobal = Effect.fnUntraced(function* () {
+    const loadGlobal = Effect.fnUntraced(function* (modelsOnly = false) {
       let result: Info = pipe(
         {},
-        mergeDeep(yield* loadFile(path.join(Global.Path.config, "config.json"))),
-        mergeDeep(yield* loadFile(path.join(Global.Path.config, "mimocode.json"))),
-        mergeDeep(yield* loadFile(path.join(Global.Path.config, "mimocode.jsonc"))),
+        mergeDeep(yield* loadFile(path.join(Global.Path.config, "config.json"), modelsOnly)),
+        mergeDeep(yield* loadFile(path.join(Global.Path.config, "mimocode.json"), modelsOnly)),
+        mergeDeep(yield* loadFile(path.join(Global.Path.config, "mimocode.jsonc"), modelsOnly)),
       )
 
+      if (modelsOnly) return result
       const legacy = path.join(Global.Path.config, "config")
       if (existsSync(legacy)) {
         yield* Effect.promise(() =>
@@ -694,7 +699,7 @@ export const layer = Layer.effect(
     })
 
     const loadInstanceState = Effect.fn("Config.loadInstanceState")(
-      function* (ctx: InstanceContext) {
+      function* (ctx: InstanceContext, modelsOnly = false) {
         const auth = yield* authSvc.all().pipe(Effect.orDie)
 
         let result: Info = {}
@@ -740,7 +745,7 @@ export const layer = Layer.effect(
         const merge = (source: string, next: Info, kind?: ConfigPlugin.Scope) => {
           result = mergeConfigConcatArrays(result, next)
           mergeMcpOrigins(source, next, "opencode")
-          return mergePluginOrigins(source, next.plugin, kind)
+          return modelsOnly ? Effect.void : mergePluginOrigins(source, next.plugin, kind)
         }
 
         const readClaudeConfig = Effect.fnUntraced(function* (source: string) {
@@ -810,17 +815,17 @@ export const layer = Layer.effect(
           }
         }
 
-        const global = yield* getGlobal()
+        const global = yield* (modelsOnly ? loadGlobal(true) : getGlobal())
         yield* merge(Global.Path.config, global, "global")
 
         if (Flag.MIMOCODE_CONFIG) {
-          yield* merge(Flag.MIMOCODE_CONFIG, yield* loadFile(Flag.MIMOCODE_CONFIG))
+          yield* merge(Flag.MIMOCODE_CONFIG, yield* loadFile(Flag.MIMOCODE_CONFIG, modelsOnly))
           log.debug("loaded custom config", { path: Flag.MIMOCODE_CONFIG })
         }
 
         if (!Flag.MIMOCODE_DISABLE_PROJECT_CONFIG) {
           for (const file of yield* ConfigPaths.files("mimocode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
-            yield* merge(file, yield* loadFile(file), "local")
+            yield* merge(file, yield* loadFile(file, modelsOnly), "local")
           }
         }
 
@@ -837,7 +842,7 @@ export const layer = Layer.effect(
         const deps: Fiber.Fiber<void, never>[] = []
 
         // Load Claude Code commands first so .mimocode commands override on name collision.
-        for (const dir of yield* ConfigPaths.claudeCommandDirectories(ctx.directory, ctx.worktree)) {
+        for (const dir of modelsOnly ? [] : yield* ConfigPaths.claudeCommandDirectories(ctx.directory, ctx.worktree)) {
           result.command = mergeDeep(result.command ?? {}, yield* Effect.promise(() => ConfigCommand.load(dir)))
         }
 
@@ -846,13 +851,14 @@ export const layer = Layer.effect(
             for (const file of ["mimocode.json", "mimocode.jsonc"]) {
               const source = path.join(dir, file)
               log.debug(`loading config from ${source}`)
-              yield* merge(source, yield* loadFile(source))
+              yield* merge(source, yield* loadFile(source, modelsOnly))
               result.agent ??= {}
               result.mode ??= {}
               result.plugin ??= []
             }
           }
 
+          if (modelsOnly) continue
           yield* ensureGitignore(dir).pipe(Effect.orDie)
 
           const dep = yield* npmSvc
@@ -940,7 +946,7 @@ export const layer = Layer.effect(
         if (existsSync(managedDir)) {
           for (const file of ["mimocode.json", "mimocode.jsonc"]) {
             const source = path.join(managedDir, file)
-            yield* merge(source, yield* loadFile(source), "global")
+            yield* merge(source, yield* loadFile(source, modelsOnly), "global")
           }
         }
 
@@ -955,7 +961,7 @@ export const layer = Layer.effect(
           mergeMcpOrigins(managed.source, next, "opencode")
         }
 
-        if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_MCP) {
+        if (!modelsOnly && !Flag.MIMOCODE_DISABLE_CLAUDE_CODE_MCP) {
           yield* mergeClaudeMcp(path.join(Global.Path.home, ".claude.json"))
           yield* mergeClaudeMcp(path.join(ctx.directory, ".claude.json"))
         }
@@ -1036,6 +1042,21 @@ export const layer = Layer.effect(
       }),
     )
 
+    const prepareModelRefresh = Effect.fn("Config.prepareModelRefresh")(function* () {
+      const target = yield* InstanceState.get(state)
+      const fresh = yield* loadInstanceState(yield* InstanceState.context, true).pipe(Effect.orDie)
+      const next: Info = clone(target.config)
+      for (const key of MODEL_KEYS) Object.assign(next, { [key]: fresh.config[key] })
+      return {
+        config: next,
+        commit: () => {
+          const committed = { ...target.config }
+          for (const key of MODEL_KEYS) Object.assign(committed, { [key]: next[key] })
+          target.config = committed
+        },
+      }
+    })
+
     const get = Effect.fn("Config.get")(function* () {
       return yield* InstanceState.use(state, (s) => s.config)
     })
@@ -1102,6 +1123,8 @@ export const layer = Layer.effect(
     })
 
     return Service.of({
+      invalidateSource: () => invalidateGlobal,
+      prepareModelRefresh,
       get,
       getGlobal,
       getConsoleState,

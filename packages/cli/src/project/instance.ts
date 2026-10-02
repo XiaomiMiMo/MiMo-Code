@@ -27,6 +27,7 @@ const context = LocalContext.create<InstanceContext>("instance")
 const cache = new Map<string, Promise<InstanceContext>>()
 const gates = new Map<string, { requests: number; executions: number; pending: boolean; closing?: Promise<void>; failed?: boolean; requested: number; applied: number }>()
 let revision = 0
+let updating: Promise<void> | undefined
 const project = makeRuntime(Project.Service, Project.defaultLayer)
 const DIRECTORY_DISPOSE_TIMEOUT = 2_000
 
@@ -173,6 +174,7 @@ export const Instance = {
     const directory = AppFileSystem.resolve(input.directory)
     assertSafeDirectory(directory)
     for (;;) {
+      if (updating) { await updating.catch(() => undefined); continue }
       if (gate(directory).failed) throw new InstanceBusyError(directory)
       const closing = gate(directory).closing
       if (closing) {
@@ -209,7 +211,7 @@ export const Instance = {
   claim(input: string) {
     const directory = AppFileSystem.resolve(input)
     const state = gate(directory)
-    if (state.closing) throw new InstanceBusyError(directory)
+    if (state.closing || updating) throw new InstanceBusyError(directory)
     state.executions++
     let released = false
     return () => {
@@ -279,7 +281,7 @@ export const Instance = {
         return 0
       }
     })()
-    if (state.executions || state.closing || state.pending || state.requests > ownRequest) throw new InstanceBusyError(directory)
+    if (updating || state.executions || state.closing || state.pending || state.requests > ownRequest) throw new InstanceBusyError(directory)
     const generation = state.requested
     const current = cache.get(directory)
     const closing = current ? disposeCached(directory, current) : Promise.resolve()
@@ -299,7 +301,23 @@ export const Instance = {
       schedule(directory)
     }
   },
+  /** Update instance-owned resources without disposing their execution or observation scopes.
+   * Admission is held until the callback commits or fails; unknown/busy gates defer the update.
+   */
+  async updateIdle(fn: (contexts: readonly InstanceContext[]) => Promise<void>): Promise<boolean> {
+    if (updating || [...gates.values()].some((state) => state.requests || state.executions || state.closing || state.pending || state.failed)) return false
+    const current = [...cache.values()]
+    const task = Promise.resolve().then(async () => fn(await Promise.all(current)))
+    updating = task
+    try {
+      await task
+      return true
+    } finally {
+      if (updating === task) updating = undefined
+    }
+  },
   async disposeDirectory(input: string) {
+    if (updating) await updating.catch(() => undefined)
     const directory = AppFileSystem.resolve(input)
     assertSafeDirectory(directory)
     const closing = requestDispose(directory)
@@ -312,6 +330,7 @@ export const Instance = {
     await Instance.disposeDirectory(Instance.directory)
   },
   async disposeAll() {
+    if (updating) await updating.catch(() => undefined)
     const generation = ++revision
     const directories = new Set([...cache.keys(), ...gates.keys()])
     const closings = [...directories].map((directory) => requestDispose(directory, generation)).filter((value): value is Promise<void> => !!value)

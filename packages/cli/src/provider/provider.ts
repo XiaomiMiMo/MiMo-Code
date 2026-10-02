@@ -1073,6 +1073,7 @@ export function defaultModelIDs<T extends { models: Record<string, { id: string 
 }
 
 export interface Interface {
+  readonly prepareRefresh: (config: Config.Info) => Effect.Effect<() => void>
   readonly list: () => Effect.Effect<Record<ProviderID, Info>>
   readonly getProvider: (providerID: ProviderID) => Effect.Effect<Info>
   readonly getModel: (providerID: ProviderID, modelID: ModelID) => Effect.Effect<Model>
@@ -1088,6 +1089,7 @@ export interface Interface {
 }
 
 interface State {
+  auth: Record<string, string>
   models: Map<string, LanguageModelV3>
   providers: Record<ProviderID, Info>
   sdk: Map<string, BundledSDK>
@@ -1239,11 +1241,11 @@ const layer: Layer.Layer<
     const env = yield* Env.Service
     const plugin = yield* Plugin.Service
 
-    const state = yield* InstanceState.make<State>(() =>
+    const buildState = (cfg: Config.Info) =>
       Effect.gen(function* () {
         using _ = log.time("state")
         const bridge = yield* EffectBridge.make()
-        const cfg = yield* config.get()
+        const authAtStart = yield* auth.all().pipe(Effect.orDie)
         const modelsDev = yield* Effect.promise(() => ModelsDev.get())
         const database = mapValues(modelsDev, fromModelsDevProvider)
 
@@ -1261,7 +1263,7 @@ const layer: Layer.Layer<
         } = {}
         const dep = {
           auth: (id: string) => auth.get(id).pipe(Effect.orDie),
-          config: () => config.get(),
+          config: () => Effect.succeed(cfg),
           env: () => env.all(),
           get: (key: string) => env.get(key),
         }
@@ -1596,16 +1598,41 @@ const layer: Layer.Layer<
         }
 
         return {
+          auth: Object.fromEntries(Object.entries(authAtStart).map(([id, value]) => [id, authIdentity(value)])),
           models: languages,
           providers,
           sdk,
           modelLoaders,
           varsLoaders,
         }
-      }),
-    )
+      })
 
-    const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
+    const state = yield* InstanceState.make(() => Effect.gen(function* () {
+      return { current: yield* buildState(yield* config.get()) }
+    }))
+    const getState = () => InstanceState.use(state, (entry) => entry.current)
+    const prepareRefresh = Effect.fn("Provider.prepareRefresh")(function* (cfg: Config.Info) {
+      // Reuse existing hooks; never load a newly configured plugin factory here.
+      for (const hook of yield* plugin.list()) {
+        const configure = (hook as { config?: (config: Config.Info) => Promise<void> }).config
+        if (configure) yield* Effect.promise(() => Promise.resolve(configure(cfg)))
+      }
+      if (!(yield* InstanceState.has(state))) return () => {}
+      const target = yield* InstanceState.get(state)
+      const next = yield* buildState(cfg)
+      const packages = new Set(Object.values(target.current.providers).flatMap((provider) =>
+        Object.values(provider.models).map((model) => model.api.npm)))
+      for (const provider of Object.values(next.providers)) {
+        for (const model of Object.values(provider.models)) {
+          if (!BUNDLED_PROVIDERS[model.api.npm] && !packages.has(model.api.npm)) {
+            throw new Error("Loading a new provider SDK requires an application restart")
+          }
+        }
+      }
+      return () => { target.current = next }
+    })
+
+    const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.current.providers))
 
     async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>) {
       try {
@@ -1672,7 +1699,10 @@ const layer: Layer.Layer<
         delete options["chunkTimeout"]
         delete options["headerTimeout"]
 
+        const expectedAuth = s.auth[model.providerID] ?? authIdentity(undefined)
         options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
+          const currentAuth = await Effect.runPromise(auth.get(model.providerID).pipe(Effect.orDie))
+          if (authIdentity(currentAuth) !== expectedAuth) throw new Error("Provider authentication changed; refresh before sending another request")
           const fetchFn = customFetch ?? fetch
           const opts = init ?? {}
           const callerSignal = requestSignal(input, opts)
@@ -1758,11 +1788,11 @@ const layer: Layer.Layer<
     }
 
     const getProvider = Effect.fn("Provider.getProvider")((providerID: ProviderID) =>
-      InstanceState.use(state, (s) => s.providers[providerID]),
+      InstanceState.use(state, (s) => s.current.providers[providerID]),
     )
 
     const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderID, modelID: ModelID) {
-      const s = yield* InstanceState.get(state)
+      const s = yield* getState()
       const provider = s.providers[providerID]
       if (!provider) {
         const available = Object.keys(s.providers)
@@ -1780,7 +1810,7 @@ const layer: Layer.Layer<
     })
 
     const getLanguage = Effect.fn("Provider.getLanguage")(function* (model: Model) {
-      const s = yield* InstanceState.get(state)
+      const s = yield* getState()
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`
       if (s.models.has(key)) return s.models.get(key)!
@@ -1813,7 +1843,7 @@ const layer: Layer.Layer<
     })
 
     const closest = Effect.fn("Provider.closest")(function* (providerID: ProviderID, query: string[]) {
-      const s = yield* InstanceState.get(state)
+      const s = yield* getState()
       const provider = s.providers[providerID]
       if (!provider) return undefined
       for (const item of query) {
@@ -1908,7 +1938,7 @@ const layer: Layer.Layer<
     // (tool_call false, context 0), which titles/agents cannot call.
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
       const cfg = yield* config.get()
-      const s = yield* InstanceState.get(state)
+      const s = yield* getState()
 
       if (cfg.model) {
         const parsed = parseModel(cfg.model)
@@ -1953,7 +1983,7 @@ const layer: Layer.Layer<
       throw new Error("no models found")
     })
 
-    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, getVisionModel, defaultModel, resolveModelRef })
+    return Service.of({ prepareRefresh, list, getProvider, getModel, getLanguage, closest, getSmallModel, getVisionModel, defaultModel, resolveModelRef })
   }),
 )
 
@@ -2008,3 +2038,9 @@ export const InitError = NamedError.create(
     providerID: ProviderID.zod,
   }),
 )
+
+/** Token renewal keeps the same OAuth account; replacement/revocation invalidates old SDK requests. */
+function authIdentity(value: Auth.Info | undefined): string {
+  if (value?.type === "oauth" && value.accountId) return JSON.stringify([value.type, value.accountId, value.enterpriseUrl])
+  return JSON.stringify(value ?? null)
+}

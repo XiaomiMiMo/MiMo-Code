@@ -1,3 +1,4 @@
+import { refreshProviders } from "@/provider/refresh"
 import { Hono, type Context } from "hono"
 import { describeRoute, resolver, validator } from "hono-openapi"
 import { streamSSE } from "hono/streaming"
@@ -217,6 +218,17 @@ export const GlobalRoutes = lazy(() =>
         const next = await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.updateGlobal(config)))
         return c.json(next)
       },
+    )
+    .post(
+      "/provider/refresh",
+      describeRoute({
+        summary: "Refresh model configuration and provider caches without rebuilding instances",
+        operationId: "global.provider.refresh",
+        responses: { 200: { description: "Model refresh application status", content: {
+          "application/json": { schema: resolver(z.object({ state: z.enum(["pending", "applied"]) })) },
+        } } },
+      }),
+      async (c) => c.json(await refreshProviders()),
     )
     .post(
       "/dispose",

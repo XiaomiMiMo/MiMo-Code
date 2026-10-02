@@ -113,16 +113,18 @@ const instance = HttpRouter.middleware()(
           }
         }
 
-        const ctx = yield* Effect.promise(() =>
-          Instance.provide({
+        const next = workspace ? effect.pipe(Effect.provideService(WorkspaceRef, workspace)) : effect
+        // Keep the real HTTP API operation inside the instance admission lifetime.
+        // Resolving only its context would release the request before its effect runs.
+        return yield* Effect.acquireUseRelease(
+          Effect.promise(() => Instance.provide({
             directory,
             init: () => AppRuntime.runPromise(InstanceBootstrap),
-            fn: () => Instance.current,
-          }),
+            fn: () => ({ context: Instance.current, release: Instance.claim(directory) }),
+          })),
+          ({ context }) => next.pipe(Effect.provideService(InstanceRef, context)),
+          ({ release }) => Effect.sync(release),
         )
-
-        const next = workspace ? effect.pipe(Effect.provideService(WorkspaceRef, workspace)) : effect
-        return yield* next.pipe(Effect.provideService(InstanceRef, ctx))
       })
   }),
 ).layer
