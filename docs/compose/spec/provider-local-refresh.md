@@ -1,14 +1,69 @@
 ---
 feature: provider-local-refresh
-status: in-progress
+status: delivered
 updated: 2026-10-03
 branch: codex/provider-local-refresh
-commits:
+commits: 698f0f29..4f749ae2
 ---
 
 # Provider Refresh Without Instance Disposal
 
 ## Report
+
+**What was built** — An explicit model refresh API prepares and publishes Config
+model fields and Provider caches while preserving directory instances. Busy
+instances return `pending` without scheduling work; failed preparation leaves
+prior views active. HTTP operations and MCP sampling hold activity claims, and
+callbacks belonging to closing instances are rejected.
+
+MCP registration and authentication mechanisms are unchanged. MCP, skill, and
+plugin configuration still requires an explicit restart. No Desktop changes or
+database migrations are included.
+
+**Verification** — Independent Compose Next review of
+`698f0f29..4f749ae2` passed spec compliance, correctness, and codebase consistency,
+with no unresolved findings.
+
+- Broader CLI regression selection: 933 passed, 4 skipped across 55 Config,
+  Provider, non-mocking MCP, Instance, and Effect test files. Separate MCP runs
+  for `headers`, `lifecycle`, `oauth-auto-connect`, `oauth-browser`, and
+  `stdio-exit-observe` passed 47 tests; six HTTP regression files passed 26.
+- The final teardown fix passed the following affected regression command from
+  `packages/cli` (110 passed, 0 failed):
+
+  ```sh
+  bun test test/provider/{refresh,refresh-boundaries}.test.ts \
+    test/project/instance-dispose.test.ts \
+    test/mcp/{sampling,sampling-e2e}.test.ts \
+    test/server/{session-prompt-busy,session-recovery,project-init-git,openapi-refs,session-select,session-actions}.test.ts \
+    --timeout 120000
+  ```
+
+- Root `bun run typecheck` passed. Root `bun run lint` reported 3,287 warnings
+  and 0 errors; this is not a warning-free lint result.
+- SDK generation and `bun tsc -b packages/sdk/tsconfig.json --force` passed.
+  Generation also surfaced unrelated existing SDK drift, which is excluded
+  from this change.
+- `bun script/build-node.ts` from `packages/cli`, with fixture models and a
+  local version/channel, passed. A plain Node HTTP/SDK smoke confirmed the
+  OpenAPI operation, unauthenticated rejection, authenticated refresh, and the
+  unchanged existing Provider client. `git diff --check` passed.
+- Regression probes reproduced OAuth renewal failure, consecutive-update
+  disposal, cold initialization, missing sampling activity, and teardown
+  cancellation before the corresponding corrections; retained cases now pass.
+
+**Journey log**
+
+1. Keep refresh limited to model settings. Removing extra credential and MCP
+   registration mechanisms kept the change within the requested scope.
+2. Count actual asynchronous operations, including MCP callbacks, rather than
+   only the request that creates their context. Closing-owner admission must
+   reject promptly so cancellation cannot wait for its own teardown.
+3. Preserve cold state and reuse initialized plugin hooks; refresh must not
+   accidentally run full configuration or plugin initialization.
+4. A flat SDK operation ID preserves the existing exported Provider client.
+   Force SDK compilation after generation when stale incremental metadata can
+   otherwise omit emitted files.
 
 ## [S1] Problem and scope
 
@@ -115,8 +170,8 @@ integration limits.
 
 ## Tasks
 
-- [ ] T1: Verify admission and publication — acceptance: busy requests and executions defer refresh; update, request, reload, and disposal lifetimes do not race or deadlock; failed preparation does not partially publish. (covers: S1, S2)
-- [ ] T2: Verify configuration and provider isolation — acceptance: refreshed model data is executable, caches adopt it coherently, static configuration stays unchanged, and initialized plugins retain their contributions before and after first Provider use. (covers: S3; depends: T1)
-- [ ] T3: Verify authentication compatibility — acceptance: successful refresh adopts current provider credentials, failed refresh retains the prior view, and normal OAuth renewal works for clients that never use refresh. (covers: S4; depends: T2)
-- [ ] T4: Verify MCP activity admission — acceptance: active sampling defers refresh, completion releases admission, and stale callbacks cannot claim a replacement instance. (covers: S5)
-- [ ] T5: Verify and independently review the full engine change — acceptance: relevant tests, typecheck, Node build, schema checks, and v2 SDK transport checks pass or have demonstrated baseline limitations; the reviewer gives separate spec-compliance, correctness, and codebase-consistency conclusions with no unresolved critical finding. (covers: S1, S2, S3, S4, S5, S6; depends: T1, T2, T3, T4)
+- [x] T1: Verify admission and publication — acceptance: busy requests and executions defer refresh; update, request, reload, and disposal lifetimes do not race or deadlock; failed preparation does not partially publish. (covers: S1, S2)
+- [x] T2: Verify configuration and provider isolation — acceptance: refreshed model data is executable, caches adopt it coherently, static configuration stays unchanged, and initialized plugins retain their contributions before and after first Provider use. (covers: S3; depends: T1)
+- [x] T3: Verify authentication compatibility — acceptance: successful refresh adopts current provider credentials, failed refresh retains the prior view, and normal OAuth renewal works for clients that never use refresh. (covers: S4; depends: T2)
+- [x] T4: Verify MCP activity admission — acceptance: active sampling defers refresh, completion releases admission, and stale callbacks cannot claim a replacement instance. (covers: S5)
+- [x] T5: Verify and independently review the full engine change — acceptance: relevant tests, typecheck, Node build, schema checks, and v2 SDK transport checks pass or have demonstrated baseline limitations; the reviewer gives separate spec-compliance, correctness, and codebase-consistency conclusions with no unresolved critical finding. (covers: S1, S2, S3, S4, S5, S6; depends: T1, T2, T3, T4)
