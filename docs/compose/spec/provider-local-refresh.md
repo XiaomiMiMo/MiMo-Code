@@ -32,7 +32,8 @@ publication are separate work.
 `POST /global/provider/refresh` returns `{ "state": "applied" }` after a
 successful refresh, or `{ "state": "pending" }` when an instance has an active
 request, execution reservation, update, or unresolved cleanup. A busy response
-must not cancel work or dispose an instance. The v2 JavaScript SDK exposes the
+does not queue a background refresh: the caller must retry after work finishes.
+It must not cancel work or dispose an instance. The v2 JavaScript SDK exposes the
 same operation as `client.global.refreshProviders()` without renaming the
 existing provider client.
 
@@ -60,12 +61,14 @@ and `model_groups`. Source precedence follows ordinary configuration loading.
 The preparation path does not install dependencies, rewrite configuration
 files, scan commands/agents/plugins, or publish unrelated configuration changes.
 Global source invalidation allows subsequently created instances to read fresh
-configuration without invalidating the current instances.
+configuration without invalidating the current instances. An instance whose
+Config has not been initialized remains cold until ordinary use initializes it.
 
 Provider candidates use the refreshed model fields and already initialized
 plugin configuration/authentication hooks. Configured plugin factories are not
 reloaded as part of a model refresh. Plugin-contributed models must survive
-refresh even if that instance has not read its Provider state yet.
+refresh even if that instance has not read its Provider state yet. Refresh does
+not initialize cold plugin state.
 
 A committed Provider view has fresh SDK and LanguageModel caches. Existing
 supported adapters can pick up new options and model definitions; this feature
@@ -74,26 +77,27 @@ In-flight execution must not mix models, options, and SDKs from different views.
 
 ## [S4] Credentials and compatibility
 
-Cached SDKs must not send new requests using revoked or replaced API
-credentials. Authentication checks must not expose credentials in diagnostics.
-Known-account OAuth renewal remains supported; account replacement and
-revocation must not be confused with renewal. Existing supported OAuth flows
-must continue to work for CLI callers as well as embedding clients.
+Authentication retains its existing behavior, including OAuth token renewal.
+A successful refresh builds the next Provider view from current configuration
+and authentication sources. A pending or failed refresh leaves the previous
+view in use; saving credentials alone does not mean refresh has succeeded.
+Callers must check the result before presenting new settings as active.
 
-A failed model refresh may retain the previous usable model view, but it must
-not use that retention to bypass a credential revocation. The authenticated
-refresh endpoint uses the server's existing authorization boundary.
+Immediate invalidation of previously obtained SDK objects and credential
+revocation enforcement are outside this API's scope. Callers that require an
+immediate reset must use the existing explicit lifecycle operation. The refresh
+endpoint uses the server's existing authorization boundary.
 
-## [S5] Explicit MCP registration
+## [S5] MCP activity and static configuration
 
-`MCP.add` retains the supplied configuration for that registered connection so
-status, tools, and OAuth can resolve it without refreshing all Config or
-disposing an instance. This is the existing single-server registration path,
-not general MCP configuration hot reload.
+Server-initiated MCP sampling counts as active execution for its owning
+instance. Refresh must wait until it finishes, and a callback from a disposed
+instance must not claim a replacement instance.
 
-HostMcp ownership and generation checks retain precedence. Failed, superseded,
-or concurrent registration and OAuth completion must not pair one connection
-with another configuration or override a host-owned server.
+MCP registration, connection configuration, and OAuth semantics are unchanged.
+This feature adds no duplicate-name registration support or MCP configuration
+hot reload. Ordinary MCP, skill, and plugin configuration changes require an
+explicit restart; model refresh must not imply that those changes were applied.
 
 ## [S6] Boundaries and verification
 
@@ -103,7 +107,7 @@ Explicit disposal, shutdown, and isolated-worktree cleanup remain separate
 lifecycle operations.
 
 Verification covers real Instance/Config/Provider behavior; configuration and
-provider regression tests; MCP ownership, registration, and OAuth lifecycle;
+provider regression tests; MCP sampling and existing lifecycle behavior;
 request/cleanup admission; schema generation; typechecking; and the Node build.
 External OAuth providers and third-party plugin side effects cannot be proven
 by local fixtures. Review must distinguish tested mechanisms from those live
@@ -113,6 +117,6 @@ integration limits.
 
 - [ ] T1: Verify admission and publication — acceptance: busy requests and executions defer refresh; update, request, reload, and disposal lifetimes do not race or deadlock; failed preparation does not partially publish. (covers: S1, S2)
 - [ ] T2: Verify configuration and provider isolation — acceptance: refreshed model data is executable, caches adopt it coherently, static configuration stays unchanged, and initialized plugins retain their contributions before and after first Provider use. (covers: S3; depends: T1)
-- [ ] T3: Verify authentication compatibility — acceptance: replaced/revoked API credentials cannot be reused, supported OAuth renewal and account switching remain correct, and clients that never use refresh do not regress. (covers: S4; depends: T2)
-- [ ] T4: Verify MCP registration ownership — acceptance: registered configuration supports status/tools/OAuth without disposal; late, failed, and concurrent completions retain connection/configuration ownership. (covers: S5)
+- [ ] T3: Verify authentication compatibility — acceptance: successful refresh adopts current provider credentials, failed refresh retains the prior view, and normal OAuth renewal works for clients that never use refresh. (covers: S4; depends: T2)
+- [ ] T4: Verify MCP activity admission — acceptance: active sampling defers refresh, completion releases admission, and stale callbacks cannot claim a replacement instance. (covers: S5)
 - [ ] T5: Verify and independently review the full engine change — acceptance: relevant tests, typecheck, Node build, schema checks, and v2 SDK transport checks pass or have demonstrated baseline limitations; the reviewer gives separate spec-compliance, correctness, and codebase-consistency conclusions with no unresolved critical finding. (covers: S1, S2, S3, S4, S5, S6; depends: T1, T2, T3, T4)

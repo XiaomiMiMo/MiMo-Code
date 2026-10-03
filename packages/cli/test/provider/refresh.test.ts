@@ -7,7 +7,6 @@ import { Instance } from "../../src/project/instance"
 import { Config } from "../../src/config"
 import { Provider } from "../../src/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
-import { Auth } from "../../src/auth"
 import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
 import { refreshProviders } from "../../src/provider/refresh"
 
@@ -24,7 +23,7 @@ const view = () => AppRuntime.runPromise(Effect.gen(function* () {
   return { instance: Instance.current, model, provider: yield* provider.getProvider(id),
     language: yield* provider.getLanguage(model), config: yield* Config.Service.use(s => s.get()) }
 }))
-afterEach(async () => { Auth.inject(undefined); await Instance.disposeAll() })
+afterEach(async () => { await Instance.disposeAll() })
 
 // Desktop engine-runtime [TP-R12-01]: model refresh preserves instance and static configuration.
 test("refresh changes model and SDK config without disposing the shared directory instance", async () => {
@@ -80,51 +79,6 @@ test("invalid config leaves existing models usable and a later refresh recovers"
   await Bun.write(path.join(tmp.path, "mimocode.json"), JSON.stringify(config("after")))
   expect(await refreshProviders()).toEqual({ state: "applied" })
   expect((await Instance.provide({ directory: tmp.path, fn: view })).provider.options.apiKey).toBe("after")
-})
-
-// Desktop engine-runtime [TP-R12-03]: even an already obtained SDK cannot use revoked credentials.
-test("cached SDK rejects a new request after API credentials are replaced", async () => {
-  await using tmp = await tmpdir({ config: config("from-config") })
-  Auth.inject(JSON.stringify({ [id]: { type: "api", key: "before" } }))
-  const before = await Instance.provide({ directory: tmp.path, fn: view })
-  Auth.inject(JSON.stringify({ [id]: { type: "api", key: "after" } }))
-  await expect(before.language.doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }] }))
-    .rejects.toThrow("authentication changed")
-})
-
-// Desktop engine-runtime [TP-R13-01]: explicit single-server registration can authenticate without a global rebuild.
-test("MCP add retains its own configuration for OAuth without replacing Config", async () => {
-  const { MCP } = await import("../../src/mcp")
-  await using tmp = await tmpdir({ config: { mcp: {} } })
-  await Instance.provide({ directory: tmp.path, fn: () => AppRuntime.runPromise(Effect.gen(function* () {
-    const mcp = yield* MCP.Service
-    yield* mcp.add("registered", { type: "remote", url: "http://127.0.0.1:1/mcp" })
-    expect(yield* mcp.supportsOAuth("registered")).toBe(true)
-    expect((yield* Config.Service.use(s => s.get())).mcp?.registered).toBeUndefined()
-  })) })
-})
-
-// Desktop engine-runtime [TP-R12-03]: known-account renewal is live, unknown identity never reuses stale credentials.
-test("cached SDK permits known-account OAuth renewal but rejects an unidentifiable replacement", async () => {
-  for (const accountId of ["account-example", undefined]) {
-    await using tmp = await tmpdir({ config: config("oauth-config") })
-    Auth.inject(JSON.stringify({ [id]: { type: "oauth", access: "before", refresh: "before", expires: 1, accountId } }))
-    const before = await Instance.provide({ directory: tmp.path, fn: view })
-    Auth.inject(JSON.stringify({ [id]: { type: "oauth", access: "after", refresh: "after", expires: 2, accountId } }))
-    const original = globalThis.fetch
-    let calls = 0
-    globalThis.fetch = Object.assign(async () => {
-      calls++
-      return Response.json({ id: "completion-example", created: 1, model: "example", choices: [
-        { index: 0, message: { role: "assistant", content: "renewed" }, finish_reason: "stop" },
-      ], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })
-    }, { preconnect: original.preconnect }) as typeof fetch
-    try {
-      const request = before.language.doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }] })
-      if (accountId) { await request; expect(calls).toBe(1) }
-      else { await expect(request).rejects.toThrow("authentication changed"); expect(calls).toBe(0) }
-    } finally { globalThis.fetch = original; await Instance.disposeDirectory(tmp.path) }
-  }
 })
 
 // Desktop engine-runtime [TP-R12-03]: a later candidate failure must not partially update earlier instances.

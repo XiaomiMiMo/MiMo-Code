@@ -1089,7 +1089,6 @@ export interface Interface {
 }
 
 interface State {
-  auth: Record<string, string>
   models: Map<string, LanguageModelV3>
   providers: Record<ProviderID, Info>
   sdk: Map<string, BundledSDK>
@@ -1245,7 +1244,6 @@ const layer: Layer.Layer<
       Effect.gen(function* () {
         using _ = log.time("state")
         const bridge = yield* EffectBridge.make()
-        const authAtStart = yield* auth.all().pipe(Effect.orDie)
         const modelsDev = yield* Effect.promise(() => ModelsDev.get())
         const database = mapValues(modelsDev, fromModelsDevProvider)
 
@@ -1598,7 +1596,6 @@ const layer: Layer.Layer<
         }
 
         return {
-          auth: Object.fromEntries(Object.entries(authAtStart).map(([id, value]) => [id, authIdentity(value)])),
           models: languages,
           providers,
           sdk,
@@ -1613,7 +1610,7 @@ const layer: Layer.Layer<
     const getState = () => InstanceState.use(state, (entry) => entry.current)
     const prepareRefresh = Effect.fn("Provider.prepareRefresh")(function* (cfg: Config.Info) {
       // Reuse existing hooks; never load a newly configured plugin factory here.
-      for (const hook of yield* plugin.list()) {
+      for (const hook of yield* plugin.list({ initialize: false })) {
         const configure = (hook as { config?: (config: Config.Info) => Promise<void> }).config
         if (configure) yield* Effect.promise(() => Promise.resolve(configure(cfg)))
       }
@@ -1699,10 +1696,7 @@ const layer: Layer.Layer<
         delete options["chunkTimeout"]
         delete options["headerTimeout"]
 
-        const expectedAuth = s.auth[model.providerID] ?? authIdentity(undefined)
         options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
-          const currentAuth = await Effect.runPromise(auth.get(model.providerID).pipe(Effect.orDie))
-          if (authIdentity(currentAuth) !== expectedAuth) throw new Error("Provider authentication changed; refresh before sending another request")
           const fetchFn = customFetch ?? fetch
           const opts = init ?? {}
           const callerSignal = requestSignal(input, opts)
@@ -2038,9 +2032,3 @@ export const InitError = NamedError.create(
     providerID: ProviderID.zod,
   }),
 )
-
-/** Token renewal keeps the same OAuth account; replacement/revocation invalidates old SDK requests. */
-function authIdentity(value: Auth.Info | undefined): string {
-  if (value?.type === "oauth" && value.accountId) return JSON.stringify([value.type, value.accountId, value.enterpriseUrl])
-  return JSON.stringify(value ?? null)
-}

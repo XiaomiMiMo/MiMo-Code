@@ -170,7 +170,7 @@ async function disposeCached(directory: string, current: Promise<InstanceContext
 }
 
 export const Instance = {
-  async provide<R>(input: { directory: string; init?: () => Promise<any>; fn: () => R }): Promise<R> {
+  async provide<R>(input: { directory: string; init?: () => Promise<any>; expected?: InstanceContext; fn: () => R }): Promise<R> {
     const directory = AppFileSystem.resolve(input.directory)
     assertSafeDirectory(directory)
     for (;;) {
@@ -186,11 +186,13 @@ export const Instance = {
     }
     try {
       let existing = cache.get(directory)
+      if (input.expected && !existing) throw new InstanceBusyError(directory)
       if (!existing) {
         Log.Default.info("creating instance", { directory })
         existing = track(directory, boot({ directory, init: input.init }))
       }
       const ctx = await existing
+      if (input.expected && ctx !== input.expected) throw new InstanceBusyError(directory)
       return await context.provide(ctx, async () => input.fn())
     } finally {
       leave(directory)
@@ -317,7 +319,7 @@ export const Instance = {
     }
   },
   async disposeDirectory(input: string) {
-    if (updating) await updating.catch(() => undefined)
+    while (updating) await updating.catch(() => undefined)
     const directory = AppFileSystem.resolve(input)
     assertSafeDirectory(directory)
     const closing = requestDispose(directory)
@@ -330,7 +332,7 @@ export const Instance = {
     await Instance.disposeDirectory(Instance.directory)
   },
   async disposeAll() {
-    if (updating) await updating.catch(() => undefined)
+    while (updating) await updating.catch(() => undefined)
     const generation = ++revision
     const directories = new Set([...cache.keys(), ...gates.keys()])
     const closings = [...directories].map((directory) => requestDispose(directory, generation)).filter((value): value is Promise<void> => !!value)

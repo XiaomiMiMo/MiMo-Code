@@ -518,7 +518,7 @@ export const MODEL_KEYS = ["provider", "enabled_providers", "disabled_providers"
 
 export interface Interface {
   readonly invalidateSource: () => Effect.Effect<void>
-  readonly prepareModelRefresh: () => Effect.Effect<{ config: Info; commit: () => void }>
+  readonly prepareModelRefresh: () => Effect.Effect<{ config: Info; commit: () => void } | undefined>
   readonly get: () => Effect.Effect<Info>
   readonly getGlobal: () => Effect.Effect<Info>
   readonly getConsoleState: () => Effect.Effect<ConsoleState>
@@ -1043,6 +1043,7 @@ export const layer = Layer.effect(
     )
 
     const prepareModelRefresh = Effect.fn("Config.prepareModelRefresh")(function* () {
+      if (!(yield* InstanceState.has(state))) return undefined
       const target = yield* InstanceState.get(state)
       const fresh = yield* loadInstanceState(yield* InstanceState.context, true).pipe(Effect.orDie)
       const next: Info = clone(target.config)

@@ -13,6 +13,7 @@ export async function refreshProviders() {
         const config = yield* Config.Service
         const provider = yield* Provider.Service
         const candidate = yield* config.prepareModelRefresh()
+        if (!candidate) return () => {}
         const publish = yield* provider.prepareRefresh(candidate.config)
         return () => { candidate.commit(); publish() }
       }))))

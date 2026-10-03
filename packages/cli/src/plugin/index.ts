@@ -125,7 +125,7 @@ export interface Interface {
     input: Input,
     output: Output,
   ) => Effect.Effect<Output>
-  readonly list: () => Effect.Effect<Hooks[]>
+  readonly list: (options?: { initialize?: boolean }) => Effect.Effect<Hooks[]>
   readonly init: () => Effect.Effect<void>
   readonly reloadFileHooks: () => Effect.Effect<void>
   readonly triggerActorPreStop: (
@@ -675,7 +675,8 @@ export const layer = Layer.effect(
       return output
     })
 
-    const list = Effect.fn("Plugin.list")(function* () {
+    const list = Effect.fn("Plugin.list")(function* (options?: { initialize?: boolean }) {
+      if (options?.initialize === false && !(yield* InstanceState.has(state))) return []
       const s = yield* InstanceState.get(state)
       return s.hooks
     })

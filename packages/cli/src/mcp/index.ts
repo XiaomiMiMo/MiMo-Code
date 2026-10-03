@@ -466,7 +466,6 @@ type AuthResult =
 // --- Effect Service ---
 
 interface State {
-  added: Record<string, ConfigMCP.Info>
   host: Record<string, string>
   hostRetryAt: Record<string, number>
   retired: Set<MCPClient>
@@ -821,7 +820,6 @@ export const layer = Layer.effect(
         )
         const config = { ...cfg.mcp, ...host }
         const s: State = {
-          added: {},
           host: Object.fromEntries(Object.entries(host).map(([key, value]) => [key, JSON.stringify(value)])),
           hostRetryAt: {},
           retired: new Set(),
@@ -1037,7 +1035,7 @@ export const layer = Layer.effect(
       yield* refreshHost(s)
 
       const cfg = yield* cfgSvc.get()
-      const config = { ...cfg.mcp, ...s.added, ...HostMcp.get() }
+      const config = { ...cfg.mcp, ...HostMcp.get() }
       const result: Record<string, Status> = {}
 
       for (const [key, mcp] of Object.entries(config)) {
@@ -1113,9 +1111,8 @@ export const layer = Layer.effect(
         // Return the real current status — do not fabricate "disabled".
         return { status: { ...s.status, [name]: s.status[name] ?? { status: "disabled" as const } } }
       }
-      const s = yield* InstanceState.get(state)
-      s.added[name] = structuredClone(mcp)
       yield* createAndStore(name, mcp, undefined, { fromHost: false })
+      const s = yield* InstanceState.get(state)
       return { status: s.status }
     })
 
@@ -1155,7 +1152,7 @@ export const layer = Layer.effect(
       yield* refreshHost(s)
 
       const cfg = yield* cfgSvc.get()
-      const config = { ...cfg.mcp, ...s.added, ...HostMcp.get() }
+      const config = { ...cfg.mcp, ...HostMcp.get() }
       const defaultTimeout = cfg.experimental?.mcp_timeout
 
       const connectedClients = Object.entries(s.clients).filter(
@@ -1270,7 +1267,7 @@ export const layer = Layer.effect(
     const getMcpConfig = Effect.fnUntraced(function* (mcpName: string) {
       const cfg = yield* cfgSvc.get()
       const hostEntry = HostMcp.get()[mcpName]
-      const mcpConfig = hostEntry ?? (yield* InstanceState.get(state)).added[mcpName] ?? cfg.mcp?.[mcpName]
+      const mcpConfig = hostEntry ?? cfg.mcp?.[mcpName]
       if (!mcpConfig || !isMcpConfigured(mcpConfig)) return undefined
       // Capture ownership with the config object so async connect cannot re-bind
       // sampling to a later HostMcp revision.
