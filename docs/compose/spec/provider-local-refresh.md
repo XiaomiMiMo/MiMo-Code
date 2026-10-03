@@ -3,7 +3,7 @@ feature: provider-local-refresh
 status: delivered
 updated: 2026-10-03
 branch: codex/provider-local-refresh
-commits: 698f0f29..4f749ae2
+commits: 698f0f29..296b24ca
 ---
 
 # Provider Refresh Without Instance Disposal
@@ -21,13 +21,17 @@ plugin configuration still requires an explicit restart. No Desktop changes or
 database migrations are included.
 
 **Verification** — Independent Compose Next review of
-`698f0f29..4f749ae2` passed spec compliance, correctness, and codebase consistency,
+`698f0f29..296b24ca` passed spec compliance, correctness, and codebase consistency,
 with no unresolved findings.
 
 - Broader CLI regression selection: 933 passed, 4 skipped across 55 Config,
   Provider, non-mocking MCP, Instance, and Effect test files. Separate MCP runs
   for `headers`, `lifecycle`, `oauth-auto-connect`, `oauth-browser`, and
   `stdio-exit-observe` passed 47 tests; six HTTP regression files passed 26.
+- CI runs each provider refresh suite in a separate process because the API
+  requires process-wide idleness, while other suites exercise detached session
+  work. Exact isolated commands passed 6 core and 7 boundary tests; YAML parsing
+  and the focused CI review passed. No test or assertion was removed.
 - The final teardown fix passed the following affected regression command from
   `packages/cli` (110 passed, 0 failed):
 
@@ -64,6 +68,10 @@ with no unresolved findings.
 4. A flat SDK operation ID preserves the existing exported Provider client.
    Force SDK compilation after generation when stale incremental metadata can
    otherwise omit emitted files.
+5. Global-idle tests need an isolated process. Existing resume fixtures leave
+   notification/wake activity alive beyond their assertions; a fresh process
+   avoids order dependence without weakening production admission or expanding
+   this feature into unrelated fixture lifecycle changes.
 
 ## [S1] Problem and scope
 
