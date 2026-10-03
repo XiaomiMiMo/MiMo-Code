@@ -38,6 +38,8 @@ jobs:
       # process below so they neither replace real transports in integration tests
       # nor inherit a ManagedClient subclass bound to another suite's SDK Client.
       # runtime-worktree and stdio-exit-observe also keep their isolated runs.
+      # Provider refresh checks process-wide idleness, so run those suites apart
+      # from session fixtures that leave detached notification/wake work alive.
       # Path-hash sharding keeps existing files in the same shard when files change.
       - name: Run unit tests (shard ${{ matrix.shard }})
         timeout-minutes: 8
@@ -57,7 +59,9 @@ jobs:
             ! -path 'test/mcp/lifecycle.test.ts' \
             ! -path 'test/mcp/headers.test.ts' \
             ! -path 'test/mcp/oauth-auto-connect.test.ts' \
-            ! -path 'test/mcp/oauth-browser.test.ts' | sort))
+            ! -path 'test/mcp/oauth-browser.test.ts' \
+            ! -path 'test/provider/refresh.test.ts' \
+            ! -path 'test/provider/refresh-boundaries.test.ts' | sort))
           # Empty shard: `bun test` with no file args discovers everything,
           # including the excluded isolation files. Skip instead of running
           # the whole suite in this leg.
@@ -76,6 +80,15 @@ jobs:
         with:
           name: junit-shard-${{ strategy.job-index }}
           path: packages/cli/.artifacts/unit/junit.xml
+
+      - name: Run provider refresh tests (isolated)
+        if: matrix.shard == '4/4'
+        timeout-minutes: 3
+        working-directory: packages/cli
+        run: |
+          for file in test/provider/refresh.test.ts test/provider/refresh-boundaries.test.ts; do
+            bun test "$file" --timeout 120000
+          done
 
       - name: Run MCP mock suites (isolated)
         if: matrix.shard == '4/4'
