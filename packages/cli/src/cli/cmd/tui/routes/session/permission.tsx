@@ -223,6 +223,20 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
+  let replied = false
+
+  // The server already ignores a duplicate reply, but the client kept sending
+  // them: the dialog only unmounts once `permission.replied` comes back, so a
+  // held or mashed key re-POSTed the same request for as long as it stayed up,
+  // and a reply storm eventually wedged `setRawMode` with EIO and killed the
+  // keyboard for the rest of the session (#2565). The latch is per request
+  // rather than per prompt because a confirmation answers and then drops back
+  // to the first stage, where a fresh prompt would otherwise answer again.
+  const reply = (body: { reply: "once" | "always" | "reject"; message?: string }) => {
+    if (replied) return
+    replied = true
+    void sdk.client.permission.reply({ ...body, requestID: props.request.id })
+  }
 
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
 
@@ -273,21 +287,14 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
           onSelect={(option) => {
             setStore("stage", "permission")
             if (option === "cancel") return
-            void sdk.client.permission.reply({
-              reply: "always",
-              requestID: props.request.id,
-            })
+            reply({ reply: "always" })
           }}
         />
       </Match>
       <Match when={store.stage === "reject"}>
         <RejectPrompt
           onConfirm={(message) => {
-            void sdk.client.permission.reply({
-              reply: "reject",
-              requestID: props.request.id,
-              message: message || undefined,
-            })
+            reply({ reply: "reject", message: message || undefined })
           }}
           onCancel={() => {
             setStore("stage", "permission")
@@ -568,16 +575,10 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
                     setStore("stage", "reject")
                     return
                   }
-                  void sdk.client.permission.reply({
-                    reply: "reject",
-                    requestID: props.request.id,
-                  })
+                  reply({ reply: "reject" })
                   return
                 }
-                void sdk.client.permission.reply({
-                  reply: "once",
-                  requestID: props.request.id,
-                })
+                reply({ reply: "once" })
               }}
             />
           )
