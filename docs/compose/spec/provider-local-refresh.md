@@ -91,8 +91,8 @@ endpoint uses the server's existing authorization boundary.
 ## [S5] MCP activity and static configuration
 
 Server-initiated MCP sampling counts as active execution for its owning
-instance. Refresh must wait until it finishes, and a callback from a disposed
-instance must not claim a replacement instance.
+instance. Refresh returns `pending` until it finishes. Callbacks from a closing or
+disposed instance are rejected and must not claim a replacement instance.
 
 MCP registration, connection configuration, and OAuth semantics are unchanged.
 This feature adds no duplicate-name registration support or MCP configuration

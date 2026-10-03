@@ -178,6 +178,7 @@ export const Instance = {
       if (gate(directory).failed) throw new InstanceBusyError(directory)
       const closing = gate(directory).closing
       if (closing) {
+        if (input.expected) throw new InstanceBusyError(directory)
         await closing
         continue
       }

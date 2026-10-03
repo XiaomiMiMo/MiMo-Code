@@ -231,3 +231,60 @@ test("an old sampling owner cannot claim an absent or replacement instance", asy
   expect(entered).toBe(false)
   expect(await Instance.provide({ directory: tmp.path, fn: () => Instance.current })).toBe(replacement)
 })
+
+test("sampling cancellation can finish while its owning instance is closing", async () => {
+  await using tmp = await tmpdir()
+  const { EffectBridge } = await import("../../src/effect")
+  const { McpSampling } = await import("../../src/mcp/sampling")
+  const { registerDisposer } = await import("../../src/effect/instance-registry")
+  let handler: Parameters<import("../../src/mcp/sampling").SamplingClient["setRequestHandler"]>[1]
+  const client: import("../../src/mcp/sampling").SamplingClient = {
+    setRequestHandler(_schema, next) {
+      handler = next
+    },
+  }
+  await Instance.provide({
+    directory: tmp.path,
+    fn: () =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const bridge = yield* EffectBridge.make()
+          McpSampling.serve("example", client, bridge, undefined, undefined, "allow")
+        }),
+      ),
+  })
+  const closingEntered = Promise.withResolvers<void>()
+  const beginCancel = Promise.withResolvers<void>()
+  const escape = Promise.withResolvers<void>()
+  let cancelled = false
+  let cancellation: Promise<void> | undefined
+  const off = registerDisposer(async (directory) => {
+    if (directory !== tmp.path) return
+    closingEntered.resolve()
+    await beginCancel.promise
+    cancellation = AppRuntime.runPromise(McpSampling.cancelAll(client)).then(() => {
+      cancelled = true
+    })
+    // Real MCP teardown waits for cancellation; the escape keeps a failing test clean.
+    await Promise.race([cancellation, escape.promise])
+  })
+  const disposal = Instance.disposeDirectory(tmp.path)
+  await closingEntered.promise
+  const request = handler!(
+    { params: { messages: [{ role: "user", content: { type: "text", text: "hello" } }], maxTokens: 20 } },
+    {},
+  ).catch(() => {})
+  expect(McpSampling.inFlightCount(client)).toBe(1)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  beginCancel.resolve()
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(cancelled).toBe(true)
+  } finally {
+    escape.resolve()
+    await disposal
+    await cancellation
+    await request
+    off()
+  }
+})
