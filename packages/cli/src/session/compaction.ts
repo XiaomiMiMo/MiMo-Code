@@ -533,6 +533,8 @@ export const layer: Layer.Layer<
         return yield* rollback("Compaction exceeded the model context limit")
       }
 
+      if (typeof result === "object")
+        return yield* rollback(`Compaction degenerated into repetition (${result.degenerate.kind}: ${result.degenerate.pattern})`)
       if (result === "text-repeat") return yield* rollback("Compaction produced repeated text")
       if (result === "stop") return yield* rollback("Compaction failed before producing a summary")
       if (
