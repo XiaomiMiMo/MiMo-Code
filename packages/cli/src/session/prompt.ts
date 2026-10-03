@@ -106,6 +106,13 @@ import {
   TEXT_NGRAM_RECOVERY_REMIND,
   TEXT_NGRAM_RECOVERY_REPLAN,
 } from "../session/prompt/text-ngram-detection"
+import {
+  type DegenerateFinding,
+  type NoopToolObservation,
+  degenerateRecoveryText,
+  findNoopBashRun,
+  noopBashRecoveryText,
+} from "../session/prompt/degenerate-generation"
 import { builtinSkillRoot, matchDocumentSkills } from "@/skill/builtin/extract"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
@@ -4055,6 +4062,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         let textLoopRecoveryAttempts = 0
         let textNgramRecoveryAttempts = 0
         let loopStreakCropped = false
+        const noopBashBuffer: NoopToolObservation[] = []
+        let toolDegenerateRecoveryAttempts = 0
+        let textDegenerateRecoveryAttempts = 0
 
         // Contract (T05): on finish="length", inject a continuation nudge ONLY for
         // plain text. If any non-providerExecuted client tool part exists we bail
@@ -4449,6 +4459,62 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           } satisfies MessageV2.TextPart)
           textNgramRecoveryAttempts++
           yield* slog.info("text n-gram: recovery injected", { attempt: textNgramRecoveryAttempts })
+          return true
+        })
+
+        // Degenerate-generation recovery for the two guard channels (text
+        // stream shapes and no-op tool narration). Mirrors handleTextRepeat:
+        // budget per channel, synthetic user turn carrying the pattern-naming
+        // system-reminder, false on budget exhaustion terminates the loop.
+        const handleDegenerate = Effect.fn("SessionPrompt.handleDegenerate")(function* (input: {
+          lastUser: MessageV2.User
+          finding: DegenerateFinding
+        }) {
+          const toolChannel = input.finding.channel === "tool"
+          const attempts = toolChannel ? toolDegenerateRecoveryAttempts : textDegenerateRecoveryAttempts
+          const maxRecovery = Flag.MIMOCODE_DEGENERATE_MAX_RECOVERY
+          if (attempts >= maxRecovery) {
+            yield* slog.info("degenerate generation: max recovery exceeded, terminating", {
+              channel: input.finding.channel,
+              kind: input.finding.kind,
+            })
+            yield* bus.publish(Session.Event.Error, {
+              sessionID,
+              error: new NamedError.Unknown({
+                message: `Degenerate generation detected (${input.finding.kind}: ${input.finding.pattern}) after ${maxRecovery} recovery attempts. Session terminated.`,
+              }).toObject(),
+            })
+            return false
+          }
+          const recoveryText = toolChannel
+            ? noopBashRecoveryText(input.finding)
+            : degenerateRecoveryText(input.finding, attempts)
+          const reentry = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user" as const,
+            sessionID,
+            agentID: input.lastUser.agentID,
+            agent: input.lastUser.agent,
+            model: input.lastUser.model,
+            tools: input.lastUser.tools,
+            format: input.lastUser.format,
+            time: { created: Date.now() },
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: reentry.id,
+            sessionID,
+            type: "text",
+            synthetic: true,
+            text: recoveryText,
+          } satisfies MessageV2.TextPart)
+          if (toolChannel) toolDegenerateRecoveryAttempts++
+          if (!toolChannel) textDegenerateRecoveryAttempts++
+          yield* slog.info("degenerate generation: recovery injected", {
+            channel: input.finding.channel,
+            kind: input.finding.kind,
+            attempt: attempts + 1,
+          })
           return true
         })
 
@@ -5266,6 +5332,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     if (yield* handleTextRepeat({ lastUser })) return "continue" as const
                     return "break" as const
                   }
+                  if (typeof result === "object") {
+                    if (yield* handleDegenerate({ lastUser, finding: result.degenerate })) return "continue" as const
+                    return "break" as const
+                  }
                   if (result === "stop") return "break" as const
 
                   if (structured !== undefined) {
@@ -5571,6 +5641,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   if (yield* handleTextRepeat({ lastUser })) return "continue" as const
                   return "break" as const
                 }
+                if (typeof result === "object") {
+                  if (yield* handleDegenerate({ lastUser, finding: result.degenerate })) return "continue" as const
+                  return "break" as const
+                }
                 if (result === "stop") return "break" as const
 
                 if (structured !== undefined) {
@@ -5768,6 +5842,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
           if (outcome === "break") {
             if (yield* goalGate(lastUser)) continue
+            break
+          }
+
+          // --- No-op bash narration detection (cross-step tool channel) ---
+          // Echo/printf narration runs are invisible to signature-level loop
+          // keys (the strings vary); the trailing run of literal no-op bash
+          // calls is the signal. Non-bash tool calls enter the buffer so they
+          // reset the run the same way a real command does. Runs after a
+          // completing outcome are not degeneration — a finished turn wins.
+          for (const p of completedParts) {
+            if (p.type !== "tool") continue
+            const input = p.state && "input" in p.state ? (p.state.input as Record<string, unknown>) : {}
+            noopBashBuffer.push({
+              tool: p.tool,
+              command: p.tool === "bash" && typeof input.command === "string" ? input.command : "",
+            })
+          }
+          if (noopBashBuffer.length > 64) noopBashBuffer.splice(0, noopBashBuffer.length - 64)
+          const noopFinding = findNoopBashRun(noopBashBuffer, Flag.MIMOCODE_DEGENERATE_TOOL_RUN_MIN)
+          if (noopFinding) {
+            noopBashBuffer.length = 0
+            if (yield* handleDegenerate({ lastUser, finding: noopFinding })) continue
             break
           }
           continue

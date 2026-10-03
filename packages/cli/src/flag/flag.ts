@@ -194,6 +194,13 @@ export const Flag = {
   MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 20,
   MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,
 
+  // Degenerate-generation guard: trailing no-op bash narration runs and
+  // bare-token +1 sequences / suffix-period repeats in the streamed text.
+  MIMOCODE_DEGENERATE_TOOL_RUN_MIN: number("MIMOCODE_DEGENERATE_TOOL_RUN_MIN") ?? 4,
+  MIMOCODE_DEGENERATE_SEQ_MIN: number("MIMOCODE_DEGENERATE_SEQ_MIN") ?? 12,
+  MIMOCODE_DEGENERATE_MIN_COPIES: number("MIMOCODE_DEGENERATE_MIN_COPIES") ?? 4,
+  MIMOCODE_DEGENERATE_MAX_RECOVERY: number("MIMOCODE_DEGENERATE_MAX_RECOVERY") ?? 2,
+
   // Caps applied to image attachments before a prompt is sent.
   // MIMOCODE_MAX_PROMPT_IMAGES (default undefined = no count limit) bounds how
   // many images may be sent per request (oldest excess images are dropped).
