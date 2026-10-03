@@ -3492,6 +3492,24 @@ export type GlobalConfigUpdateResponses = {
 
 export type GlobalConfigUpdateResponse = GlobalConfigUpdateResponses[keyof GlobalConfigUpdateResponses]
 
+export type GlobalRefreshProvidersData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/global/provider/refresh"
+}
+
+export type GlobalRefreshProvidersResponses = {
+  /**
+   * Model refresh application status
+   */
+  200: {
+    state: "pending" | "applied"
+  }
+}
+
+export type GlobalRefreshProvidersResponse = GlobalRefreshProvidersResponses[keyof GlobalRefreshProvidersResponses]
+
 export type GlobalDisposeData = {
   body?: never
   path?: never

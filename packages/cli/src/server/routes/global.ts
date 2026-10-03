@@ -223,7 +223,7 @@ export const GlobalRoutes = lazy(() =>
       "/provider/refresh",
       describeRoute({
         summary: "Refresh model configuration and provider caches without rebuilding instances",
-        operationId: "global.provider.refresh",
+        operationId: "global.refreshProviders",
         responses: { 200: { description: "Model refresh application status", content: {
           "application/json": { schema: resolver(z.object({ state: z.enum(["pending", "applied"]) })) },
         } } },

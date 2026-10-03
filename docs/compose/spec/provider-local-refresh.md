@@ -32,7 +32,9 @@ publication are separate work.
 `POST /global/provider/refresh` returns `{ "state": "applied" }` after a
 successful refresh, or `{ "state": "pending" }` when an instance has an active
 request, execution reservation, update, or unresolved cleanup. A busy response
-must not cancel work or dispose an instance.
+must not cancel work or dispose an instance. The v2 JavaScript SDK exposes the
+same operation as `client.global.refreshProviders()` without renaming the
+existing provider client.
 
 The refresh prepares candidates for the existing directory contexts while
 holding an admission barrier. New requests wait, and synchronous execution
@@ -113,4 +115,4 @@ integration limits.
 - [ ] T2: Verify configuration and provider isolation — acceptance: refreshed model data is executable, caches adopt it coherently, static configuration stays unchanged, and initialized plugins retain their contributions before and after first Provider use. (covers: S3; depends: T1)
 - [ ] T3: Verify authentication compatibility — acceptance: replaced/revoked API credentials cannot be reused, supported OAuth renewal and account switching remain correct, and clients that never use refresh do not regress. (covers: S4; depends: T2)
 - [ ] T4: Verify MCP registration ownership — acceptance: registered configuration supports status/tools/OAuth without disposal; late, failed, and concurrent completions retain connection/configuration ownership. (covers: S5)
-- [ ] T5: Verify and independently review the full engine change — acceptance: relevant tests, typecheck, Node build, and schema checks pass or have demonstrated baseline limitations; the reviewer gives separate spec-compliance, correctness, and codebase-consistency conclusions with no unresolved critical finding. (covers: S1, S2, S3, S4, S5, S6; depends: T1, T2, T3, T4)
+- [ ] T5: Verify and independently review the full engine change — acceptance: relevant tests, typecheck, Node build, schema checks, and v2 SDK transport checks pass or have demonstrated baseline limitations; the reviewer gives separate spec-compliance, correctness, and codebase-consistency conclusions with no unresolved critical finding. (covers: S1, S2, S3, S4, S5, S6; depends: T1, T2, T3, T4)
