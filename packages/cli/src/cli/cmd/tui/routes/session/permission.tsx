@@ -285,8 +285,8 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
 
   return (
     <Show when={!dismissed()}>
-    <Switch>
-      <Match when={store.stage === "always"}>
+      <Switch>
+        <Match when={store.stage === "always"}>
         <Prompt
           title="Always allow"
           body={
@@ -615,14 +615,14 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
           return body
         })()}
       </Match>
-    </Switch>
+      </Switch>
     </Show>
   )
 }
 
 function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: () => void }) {
   let input: TextareaRenderable
-  let rejectSettled = false
+  const [settled, setSettled] = createSignal(false)
   const { theme } = useTheme()
   const keybind = useKeybind()
   const textareaKeybindings = useTextareaKeybindings()
@@ -635,15 +635,15 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
 
     if (evt.name === "escape" || keybind.match("app_exit", evt)) {
       evt.preventDefault()
-      if (rejectSettled) return
-      rejectSettled = true
+      if (settled()) return
+      setSettled(true)
       props.onCancel()
       return
     }
     if (evt.name === "return") {
       evt.preventDefault()
-      if (rejectSettled) return
-      rejectSettled = true
+      if (settled()) return
+      setSettled(true)
       props.onConfirm(input.plainText)
     }
   })
@@ -720,10 +720,10 @@ function Prompt<const T extends Record<string, string>>(props: {
   // One-shot: Enter / Esc / mouse-up each call onSelect. Without this a still
   // mounted prompt (permission.replied in flight or lost) re-fires and POSTs
   // the same requestID until the TTY dies.
-  let settled = false
+  const [settled, setSettled] = createSignal(false)
   const settle = (option: keyof T) => {
-    if (settled) return
-    settled = true
+    if (settled()) return
+    setSettled(true)
     props.onSelect(option)
   }
   const diffKey = Keybind.parse("ctrl+f")[0]
