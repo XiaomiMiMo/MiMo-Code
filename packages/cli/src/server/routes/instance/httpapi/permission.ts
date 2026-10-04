@@ -57,12 +57,12 @@ export const permissionHandlers = Layer.unwrap(
       params: { requestID: PermissionID }
       payload: Permission.ReplyBody
     }) {
-      yield* svc.reply({
+      // false = requestID already gone (orphaned ask). Clients dismiss.
+      return yield* svc.reply({
         requestID: ctx.params.requestID,
         reply: ctx.payload.reply,
         message: ctx.payload.message,
       })
-      return true
     })
 
     return HttpApiBuilder.group(PermissionApi, "permission", (handlers) =>

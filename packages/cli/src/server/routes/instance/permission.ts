@@ -39,12 +39,12 @@ export const PermissionRoutes = lazy(() =>
           const params = c.req.valid("param")
           const json = c.req.valid("json")
           const svc = yield* Permission.Service
-          yield* svc.reply({
+          // false = requestID already gone (orphaned ask). Clients dismiss.
+          return yield* svc.reply({
             requestID: params.requestID,
             reply: json.reply,
             message: json.message,
           })
-          return true
         }),
     )
     .get(

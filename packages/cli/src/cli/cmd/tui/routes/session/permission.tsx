@@ -1,5 +1,5 @@
-import { createStore } from "solid-js/store"
-import { createMemo, For, Match, Show, Switch } from "solid-js"
+import { createStore, produce } from "solid-js/store"
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
 import { Portal, useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
@@ -17,6 +17,7 @@ import { Global } from "@/global"
 import { useDialog } from "../../ui/dialog"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../context/tui-config"
+import { Binary } from "@mimo-ai/shared/util/binary"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -223,6 +224,47 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
+  // One network reply per prompt. Enter / Esc / mouse can each call into the
+  // send path; without this latch a still-mounted prompt (waiting on
+  // permission.replied) POSTs the same requestID again and can wedge the TTY.
+  const [replied, setReplied] = createSignal(false)
+  // Local unmount when the server no longer knows this ask (orphaned after
+  // turn teardown) or the reply fails. permission.replied never arrives then,
+  // so waiting on the event leaves the dialog up and eating input forever.
+  const [dismissed, setDismissed] = createSignal(false)
+
+  const dismiss = () => {
+    setDismissed(true)
+    const requests = sync.data.permission[props.request.sessionID]
+    if (!requests) return
+    const match = Binary.search(requests, props.request.id, (r) => r.id)
+    if (!match.found) return
+    sync.set(
+      "permission",
+      props.request.sessionID,
+      produce((draft) => {
+        draft.splice(match.index, 1)
+      }),
+    )
+  }
+
+  const sendReply = (body: { reply: "once" | "always" | "reject"; message?: string }) => {
+    if (replied()) return
+    setReplied(true)
+    void sdk.client
+      .permission.reply({
+        reply: body.reply,
+        requestID: props.request.id,
+        message: body.message,
+      })
+      .then((res) => {
+        // true = accepted; permission.replied will clear the store entry.
+        // false = orphaned requestID. error = transport/API failure. Both must
+        // dismiss or the dialog outlives the ask and swallows every key.
+        if (res.error || res.data !== true) dismiss()
+      })
+      .catch(() => dismiss())
+  }
 
   const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
 
@@ -242,6 +284,7 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
   const config = useTuiConfig()
 
   return (
+    <Show when={!dismissed()}>
     <Switch>
       <Match when={store.stage === "always"}>
         <Prompt
@@ -273,21 +316,14 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
           onSelect={(option) => {
             setStore("stage", "permission")
             if (option === "cancel") return
-            void sdk.client.permission.reply({
-              reply: "always",
-              requestID: props.request.id,
-            })
+            sendReply({ reply: "always" })
           }}
         />
       </Match>
       <Match when={store.stage === "reject"}>
         <RejectPrompt
           onConfirm={(message) => {
-            void sdk.client.permission.reply({
-              reply: "reject",
-              requestID: props.request.id,
-              message: message || undefined,
-            })
+            sendReply({ reply: "reject", message: message || undefined })
           }}
           onCancel={() => {
             setStore("stage", "permission")
@@ -568,16 +604,10 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
                     setStore("stage", "reject")
                     return
                   }
-                  void sdk.client.permission.reply({
-                    reply: "reject",
-                    requestID: props.request.id,
-                  })
+                  sendReply({ reply: "reject" })
                   return
                 }
-                void sdk.client.permission.reply({
-                  reply: "once",
-                  requestID: props.request.id,
-                })
+                sendReply({ reply: "once" })
               }}
             />
           )
@@ -586,11 +616,13 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
         })()}
       </Match>
     </Switch>
+    </Show>
   )
 }
 
 function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: () => void }) {
   let input: TextareaRenderable
+  let rejectSettled = false
   const { theme } = useTheme()
   const keybind = useKeybind()
   const textareaKeybindings = useTextareaKeybindings()
@@ -603,11 +635,15 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
 
     if (evt.name === "escape" || keybind.match("app_exit", evt)) {
       evt.preventDefault()
+      if (rejectSettled) return
+      rejectSettled = true
       props.onCancel()
       return
     }
     if (evt.name === "return") {
       evt.preventDefault()
+      if (rejectSettled) return
+      rejectSettled = true
       props.onConfirm(input.plainText)
     }
   })
@@ -681,6 +717,15 @@ function Prompt<const T extends Record<string, string>>(props: {
     selected: keys[0],
     expanded: false,
   })
+  // One-shot: Enter / Esc / mouse-up each call onSelect. Without this a still
+  // mounted prompt (permission.replied in flight or lost) re-fires and POSTs
+  // the same requestID until the TTY dies.
+  let settled = false
+  const settle = (option: keyof T) => {
+    if (settled) return
+    settled = true
+    props.onSelect(option)
+  }
   const diffKey = Keybind.parse("ctrl+f")[0]
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
@@ -704,12 +749,12 @@ function Prompt<const T extends Record<string, string>>(props: {
 
     if (evt.name === "return") {
       evt.preventDefault()
-      props.onSelect(store.selected)
+      settle(store.selected)
     }
 
     if (props.escapeKey && (evt.name === "escape" || keybind.match("app_exit", evt))) {
       evt.preventDefault()
-      props.onSelect(props.escapeKey)
+      settle(props.escapeKey)
     }
 
     if (props.fullscreen && diffKey && Keybind.match(diffKey, keybind.parse(evt))) {
@@ -777,7 +822,7 @@ function Prompt<const T extends Record<string, string>>(props: {
                 onMouseOver={() => setStore("selected", option)}
                 onMouseUp={() => {
                   setStore("selected", option)
-                  props.onSelect(option)
+                  settle(option)
                 }}
               >
                 <text fg={option === store.selected ? selectedForeground(theme, theme.warning) : theme.textMuted}>
