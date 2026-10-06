@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { createMemo, For, Match, Show, Switch } from "solid-js"
+import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { Portal, useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
@@ -598,8 +598,12 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
 
+  // Ignore events after unmount: a leaked handler would swallow keys and
+  // freeze the TUI after the ask is gone (timeout / reply).
+  const [alive, setAlive] = createSignal(true)
+  onCleanup(() => setAlive(false))
   useKeyboard((evt) => {
-    if (dialog.stack.length > 0) return
+    if (!alive() || dialog.stack.length > 0) return
 
     if (evt.name === "escape" || keybind.match("app_exit", evt)) {
       evt.preventDefault()
@@ -685,8 +689,12 @@ function Prompt<const T extends Record<string, string>>(props: {
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
 
+  // Zombie-handler guard: after timeout auto-reject the Prompt unmounts; a
+  // leftover keyboard listener still preventDefaults arrows/enter/escape.
+  const [alive, setAlive] = createSignal(true)
+  onCleanup(() => setAlive(false))
   useKeyboard((evt) => {
-    if (dialog.stack.length > 0) return
+    if (!alive() || dialog.stack.length > 0) return
 
     if (evt.name === "left" || evt.name == "h") {
       evt.preventDefault()
