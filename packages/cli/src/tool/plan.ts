@@ -41,6 +41,7 @@ export const PlanExitTool = Tool.define(
           const plan = path.relative(Instance.worktree, Session.plan(info))
           const answers = yield* question.ask({
             sessionID: ctx.sessionID,
+            abortSignal: ctx.abort,
             questions: [
               {
                 key: "plan_exit",

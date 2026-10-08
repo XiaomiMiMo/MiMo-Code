@@ -48,6 +48,29 @@ const pending = Effect.fn("PlanToolTest.pending")(function* (question: Question.
 })
 
 describe("tool.plan", () => {
+  it.live("plan_exit Stop withdraws its question without switching agents [TP-SR-R21-25]", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const question = yield* Question.Service
+        const info = yield* sessions.create({ title: "Test" })
+        const tool = yield* (yield* PlanExitTool).init()
+        const controller = new AbortController()
+        const fiber = yield* tool
+          .execute({}, { ...ctx(info.id, "plan"), abort: controller.signal })
+          .pipe(Effect.forkScoped)
+        const item = yield* pending(question)
+        expect(item.questions[0].key).toBe("plan_exit")
+        controller.abort()
+        const exit = yield* Fiber.await(fiber)
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(JSON.stringify(exit)).toContain("QuestionRejectedError")
+        expect(yield* question.list()).toEqual([])
+        expect(yield* sessions.messages({ sessionID: info.id })).toEqual([])
+      }).pipe(Effect.timeout("5 seconds")),
+    ),
+  )
+
   it.live("plan_exit answering No resolves with continue-planning guidance", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

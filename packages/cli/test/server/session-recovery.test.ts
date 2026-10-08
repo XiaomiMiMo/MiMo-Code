@@ -12,6 +12,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Log } from "../../src/util"
 import { Bus } from "../../src/bus"
 import { tmpdir } from "../fixture/fixture"
+import { startScriptedLLMServer, textStopResponse } from "../lib/scripted-llm-server"
 
 void Log.init({ print: false })
 
@@ -160,10 +161,20 @@ test("SDK serializes resume titleLocale in the query string", async () => {
   expect(captured!.body).toBeNull()
 })
 
-// [TP-SR-R21-07] Recovery predicate: completed+tool-calls / completed+length / no completed are candidates;
-// completed+stop / completed+other are not.
+const finalDeliveries = [
+  { structured: { answer: 4 } },
+  { structured: false },
+  { structured: 0 },
+  { structured: "" },
+  { structured: null },
+  { summary: true },
+]
+
+// [TP-SR-R21-07]
 describe("recovery candidate predicate", () => {
-  async function setupAssistant(overrides: Partial<{ finish: string; completed: boolean; error: boolean }>) {
+  async function setupAssistant(overrides: Partial<{
+    finish: string; completed: boolean; error: boolean; text: string; structured: unknown; summary: boolean
+  }>) {
     await using tmp = await tmpdir({ git: true })
     // Await so `await using` disposal (rm -rf tmpdir) cannot race provide's setup writes.
     return await Instance.provide({
@@ -196,11 +207,23 @@ describe("recovery candidate predicate", () => {
             : { created: Date.now() },
           ...(overrides.finish ? { finish: overrides.finish as "stop" | "length" | "tool-calls" | "other" } : {}),
           ...(overrides.error ? { error: { name: "APIError", data: { message: "model unavailable", statusCode: 503, isRetryable: true } } } : {}),
+          ...(overrides.structured !== undefined ? { structured: overrides.structured } : {}),
+          ...(overrides.summary ? { summary: overrides.summary } : {}),
         } as Parameters<typeof sessions.updateMessage>[0])
+        if (overrides.text) yield* sessions.updatePart({
+          id: PartID.ascending(), sessionID: session.id, messageID: assistant.id,
+          type: "text", text: overrides.text,
+        })
         const candidates = yield* SessionPrompt.Service.use((svc) =>
           svc.recovery({ sessionID: session.id, agentID: "main" }),
         )
-        return { candidates, assistantId: assistant.id }
+        const rejected = candidates.length === 0
+          ? yield* Effect.promise(() => Promise.resolve(Server.Default().app.request(
+              `/session/${session.id}/resume?directory=${encodeURIComponent(tmp.path)}`,
+              { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+            )))
+          : undefined
+        return { candidates, assistantId: assistant.id, resumeStatus: rejected?.status }
       })),
     })
   }
@@ -223,9 +246,25 @@ describe("recovery candidate predicate", () => {
     expect(result.candidates.length).toBe(1)
   })
 
-  test("completed + stop → NOT candidate", async () => {
-    const result = await setupAssistant({ completed: true, finish: "stop" })
+  test("completed + stop with final text → NOT candidate", async () => {
+    const result = await setupAssistant({ completed: true, finish: "stop", text: "final answer" })
     expect(result.candidates.length).toBe(0)
+  })
+
+  for (const completed of [false, true]) {
+    for (const delivery of finalDeliveries) {
+      test(`stop + ${JSON.stringify(delivery)} completed=${completed} is not resumed`, async () => {
+        const result = await setupAssistant({ finish: "stop", completed, ...delivery })
+        expect(result.candidates).toEqual([])
+        expect(result.resumeStatus).toBe(404)
+      })
+    }
+  }
+
+  test("completed + content-filter with no output → NOT candidate", async () => {
+    const result = await setupAssistant({ completed: true, finish: "content-filter" })
+    expect(result.candidates).toEqual([])
+    expect(result.resumeStatus).toBe(404)
   })
 
   test("completed + other → NOT candidate", async () => {
@@ -244,6 +283,131 @@ describe("recovery candidate predicate", () => {
     const result = await setupAssistant({ completed: false, error: true })
     expect(result.candidates.length).toBe(1)
   })
+})
+
+// [TP-SR-R21-07]
+describe("empty stop recovery matrix", () => {
+  for (const output of ["empty", "placeholders", "text"] as const) {
+    const content = output === "text"
+    for (const completed of [false, true]) {
+      for (const error of [false, true]) {
+        const label = `content=${content} completed=${completed} error=${error}${output === "placeholders" ? " placeholders" : ""}`
+        test(label, async () => {
+          await using tmp = await tmpdir({ git: true })
+          const stub = startScriptedLLMServer([{ lines: textStopResponse("recovered answer") }])
+          try {
+            await Bun.write(`${tmp.path}/mimocode.json`, JSON.stringify({
+              enabled_providers: ["alibaba"],
+              provider: { alibaba: { options: { apiKey: "test-key", baseURL: `${stub.origin}/v1` } } },
+              agent: { build: { model: "alibaba/qwen-plus" } },
+            }))
+            const result = await Instance.provide({
+              directory: tmp.path,
+              fn: () => AppRuntime.runPromise(Effect.gen(function* () {
+                const sessions = yield* Session.Service
+                const session = yield* sessions.create({ title: "empty-stop-matrix" })
+                const user = yield* sessions.updateMessage({
+                  id: MessageID.ascending(), role: "user", sessionID: session.id, agent: "build",
+                  model: { providerID: ProviderID.make("alibaba"), modelID: ModelID.make("qwen-plus") },
+                  time: { created: Date.now() },
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(), sessionID: session.id, messageID: user.id,
+                  type: "text", text: "Answer my question.",
+                })
+                const assistantInfo = {
+                  role: "assistant" as const, parentID: user.id, sessionID: session.id,
+                  mode: "build", agent: "build", path: { cwd: tmp.path, root: tmp.path }, cost: 0,
+                  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                  modelID: ModelID.make("qwen-plus"), providerID: ProviderID.make("alibaba"),
+                  time: { created: Date.now(), ...(completed ? { completed: Date.now() } : {}) },
+                  finish: "stop",
+                  ...(error ? { error: { name: "APIError" as const, data: { message: "model unavailable", statusCode: 503, isRetryable: true } } } : {}),
+                }
+                for (const delivery of finalDeliveries) yield* sessions.updateMessage({
+                  ...assistantInfo, id: MessageID.ascending(), error: undefined,
+                  time: { created: Date.now(), completed: Date.now() }, ...delivery,
+                })
+                const reasoning = yield* sessions.updateMessage({
+                  ...assistantInfo, id: MessageID.ascending(), error: undefined,
+                  modelID: ModelID.make("gpt-5.5"), time: { created: Date.now(), completed: Date.now() },
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(), sessionID: session.id, messageID: reasoning.id,
+                  type: "reasoning", text: "reasoned answer", time: { start: Date.now(), end: Date.now() },
+                })
+                const beforeDeliveries = (yield* sessions.messages({ sessionID: session.id, agentID: "main" }))
+                  .filter((message) => message.info.role === "assistant")
+                const created = Date.now() + 1
+                const assistant = yield* sessions.updateMessage({
+                  ...assistantInfo, id: MessageID.ascending(),
+                  time: { created, ...(completed ? { completed: created } : {}) },
+                })
+                if (content) yield* sessions.updatePart({
+                  id: PartID.ascending(), sessionID: session.id, messageID: assistant.id,
+                  type: "text", text: "ordinary answer",
+                })
+                if (output === "placeholders") {
+                  for (const placeholder of [
+                    { text: " \n\t" },
+                    { text: "synthetic placeholder", synthetic: true },
+                    { text: "ignored placeholder", ignored: true },
+                  ]) yield* sessions.updatePart({
+                    id: PartID.ascending(), sessionID: session.id, messageID: assistant.id,
+                    type: "text", ...placeholder,
+                  })
+                }
+                let plan: { action: string; assistantMessageID?: string; parentMessageID?: string } | undefined
+                ResumeTestHooks.onPlanResolved = (value) => { plan = value }
+                const app = Server.Default().app
+                const query = `?directory=${encodeURIComponent(tmp.path)}`
+                const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
+                const candidates = yield* Effect.promise(() => listed.json())
+                const resumed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/resume${query}`, {
+                  method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+                })))
+                for (let attempt = 0; resumed.status === 202 && attempt < 100; attempt++) {
+                  const messages = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+                  if (messages.some((message) => message.info.role === "assistant" && message.info.time.completed && !message.info.error && message.parts.some((part) => part.type === "text" && part.text === "recovered answer"))) break
+                  yield* Effect.sleep("50 millis")
+                }
+                const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+                return {
+                  recoveryStatus: listed.status, candidates, resumeStatus: resumed.status,
+                  plan, providerCalls: stub.captures.length,
+                  shellRemoved: !after.some((message) => message.info.id === assistant.id),
+                  recovered: after.find((message) => message.info.role === "assistant" && message.info.time.completed && !message.info.error && message.parts.some((part) => part.type === "text" && part.text === "recovered answer")),
+                  beforeDeliveries,
+                  afterDeliveries: after.filter((message) => beforeDeliveries.some((before) => before.info.id === message.info.id)),
+                  users: after.filter((message) => message.info.role === "user").map((message) => message.info.id),
+                  userID: user.id,
+                }
+              })),
+            })
+            const shouldRecover = !content || error
+            expect(result.users).toEqual([result.userID])
+            expect(result.afterDeliveries).toEqual(result.beforeDeliveries)
+            expect(result.recoveryStatus).toBe(200)
+            expect(result.candidates.length).toBe(shouldRecover ? 1 : 0)
+            expect(result.resumeStatus).toBe(shouldRecover ? 202 : 404)
+            if (shouldRecover) {
+              expect(result.plan?.action).toBe(content ? "tool-resume" : "user-resume")
+              expect(result.recovered?.info).toMatchObject({ role: "assistant", parentID: result.userID })
+              expect(result.providerCalls).toBe(1)
+              expect(result.shellRemoved).toBe(!content)
+            } else {
+              expect(result.shellRemoved).toBe(false)
+              expect(result.providerCalls).toBe(0)
+            }
+          } finally {
+            ResumeTestHooks.onPlanResolved = undefined
+            await Instance.disposeAll()
+            await stub.stop()
+          }
+        }, 30_000)
+      }
+    }
+  }
 })
 
 // [TP-SR-R21-08] model params: modelProviderID / modelID must be provided together.

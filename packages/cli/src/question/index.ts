@@ -131,6 +131,7 @@ export interface Interface {
     sessionID: SessionID
     questions: ReadonlyArray<Info>
     tool?: Tool
+    abortSignal?: AbortSignal
   }) => Effect.Effect<ReadonlyArray<Answer>, RejectedError>
   readonly reply: (input: { requestID: QuestionID; answers: ReadonlyArray<Answer> }) => Effect.Effect<void>
   readonly reject: (requestID: QuestionID) => Effect.Effect<void>
@@ -169,8 +170,10 @@ export const layer = Layer.effect(
       sessionID: SessionID
       questions: ReadonlyArray<Info>
       tool?: Tool
+      abortSignal?: AbortSignal
     }) {
       const pending = (yield* InstanceState.get(state)).pending
+      if (input.abortSignal?.aborted) return yield* Effect.fail(new RejectedError())
       const id = QuestionID.ascending()
       log.info("asking", { id, questions: input.questions.length })
 
@@ -182,8 +185,24 @@ export const layer = Layer.effect(
         tool: input.tool,
       })
       pending.set(id, { info, deferred })
+      const signal = input.abortSignal
+      const awaiting = signal
+        ? Effect.raceFirst(
+            Deferred.await(deferred),
+            Effect.callback<ReadonlyArray<Answer>, RejectedError>((resume) => {
+              // Reuse request ownership: a reply already in flight must win over a late abort.
+              const onAbort = () => resume(reject(id).pipe(Effect.andThen(Deferred.await(deferred))))
+              if (signal.aborted) {
+                onAbort()
+                return Effect.void
+              }
+              signal.addEventListener("abort", onAbort, { once: true })
+              return Effect.sync(() => signal.removeEventListener("abort", onAbort))
+            }),
+          )
+        : Deferred.await(deferred)
       return yield* Effect.ensuring(
-        bus.publish(Event.Asked, info).pipe(Effect.andThen(Deferred.await(deferred))),
+        bus.publish(Event.Asked, info).pipe(Effect.andThen(awaiting)),
         Effect.gen(function* () {
           // A caller interrupt (e.g. MCP cancellation) must also withdraw the UI.
           if (!pending.delete(id)) return

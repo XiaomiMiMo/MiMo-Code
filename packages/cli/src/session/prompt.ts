@@ -3518,15 +3518,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       })
 
     const isEmptyAssistantResidue = (assistant: MessageV2.Assistant, parts: readonly MessageV2.Part[]) =>
-      assistant.role === "assistant" && !hasUsefulAssistantParts(parts)
+      assistant.structured === undefined && !assistant.summary && !hasUsefulAssistantParts(parts)
 
     /**
-     * Shared step-level "still incomplete / recoverable" predicate for `/recovery`
-     * listing and resume planning.
-     * tool-calls / length / missing finish / any error => recoverable;
-     * completed+stop/other without error => not.
+     * Provider stop alone is not a valid delivery: empty stops can resume from
+     * their parent even after completion was persisted, before classification.
      */
-    const isRecoveryWorthyAssistant = (info: MessageV2.Assistant) => {
+    const isRecoveryWorthyAssistant = (info: MessageV2.Assistant, parts: readonly MessageV2.Part[]) => {
+      if (info.finish === "stop" && isEmptyAssistantResidue(info, parts)) return true
       if (
         "completed" in info.time &&
         !info.error &&
@@ -3545,7 +3544,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
      * - Live empty shells (busy, no terminal marker) are skipped by default.
      * - `preserveError`: keep empty shells that carry `error` (recovery candidates / failure site).
      * - `force`: post-run ensuring sweep; still respects preserveError.
-     * Emptiness is parts-only; `error` is not useful parts but is a keep-for-recovery signal.
+     * Resolved structured output and summaries are retained even without useful parts.
+     * `error` is a keep-for-recovery signal, not useful content.
      */
     const cleanupEmptyResidueAssistants = Effect.fn("SessionPrompt.cleanupEmptyResidueAssistants")(function* (input: {
       sessionID: SessionID
@@ -3598,7 +3598,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // Only incomplete assistants are recovery candidates (shared with resume planning via
         // isRecoveryWorthyAssistant). error => not finished => recoverable; abandoned
         // completed+AbortedError remains retryable.
-        if (!isRecoveryWorthyAssistant(msg.info)) continue
+        if (!isRecoveryWorthyAssistant(msg.info, msg.parts)) continue
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
         if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue
