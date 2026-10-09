@@ -80,6 +80,18 @@ describe("runSessionRecover (TUI /recover entry)", () => {
     expect(calls.active).toEqual(["msg_a1"])
   })
 
+  // [TP-SR-R21-23] Empty candidates use the exact assistant alias; never dispatch U alone.
+  for (const explicit of [false, true]) test(`empty parent-user recovery retains shell identity (explicit=${explicit})`, async () => {
+    const { calls, base } = deps({
+      listCandidates: async () => [{ kind: "parent-user", userMessageID: "msg_u2", emptyAssistantMessageID: "msg_shell", created: 2 }],
+      ...(explicit ? { assistantMessageID: "msg_shell" } : {}),
+    })
+    expect(await runSessionRecover(base)).toEqual({ type: "started", kind: "parent-user", id: "msg_u2" })
+    expect(calls.resumeAssistant).toEqual(["msg_shell"])
+    expect(calls.resumeUser).toEqual([])
+    expect(calls.active).toEqual(["msg_u2"])
+  })
+
   test("no candidate → none, no dispatch", async () => {
     const { calls, base } = deps({ listCandidates: async () => [] })
     const out = await runSessionRecover(base)

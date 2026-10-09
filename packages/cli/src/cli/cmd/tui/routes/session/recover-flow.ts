@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 
 export type RecoverCandidate =
-  | { kind: "parent-user"; userMessageID: string; created: number }
+  | { kind: "parent-user"; userMessageID: string; emptyAssistantMessageID?: string; created: number }
   | { kind: "assistant"; assistantMessageID: string; parentMessageID: string; created: number }
 
 export type RecoverOutcome =
@@ -75,12 +75,15 @@ export async function runSessionRecover(deps: RecoverDeps): Promise<RecoverOutco
     return { type: "error", ...recoverErrorMessage(error) }
   }
   const candidate = deps.assistantMessageID
-    ? list.find((item) => item.kind === "assistant" && item.assistantMessageID === deps.assistantMessageID)
+    ? list.find((item) => item.kind === "assistant"
+      ? item.assistantMessageID === deps.assistantMessageID
+      : item.emptyAssistantMessageID === deps.assistantMessageID)
     : list.at(-1)
   if (!candidate) return { type: "none" }
   try {
     if (candidate.kind === "parent-user") {
-      await deps.resumeUser({ userMessageID: candidate.userMessageID })
+      if (candidate.emptyAssistantMessageID) await deps.resumeAssistant({ assistantMessageID: candidate.emptyAssistantMessageID })
+      else await deps.resumeUser({ userMessageID: candidate.userMessageID })
       deps.setActive(candidate.userMessageID)
       return { type: "started", kind: "parent-user", id: candidate.userMessageID }
     }

@@ -2297,9 +2297,9 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
   ),
 )
 
-// [TP-SR-R21-16] user-resume: empty residue assistant → re-dispatch parent user without assistant prefill.
-it.live(
-  "resume empty residue re-dispatches parent user without assistant prefill",
+// [TP-SR-R21-16][TP-SR-R21-23] Empty recovery must create a new assistant under the original user.
+for (const entry of ["paired", "assistant", "latest"] as const) it.live(
+  `resume empty residue re-dispatches parent user without assistant prefill (${entry})`,
   () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -2326,14 +2326,19 @@ it.live(
         yield* llm.text("found 2 resumes")
 
         const candidates = yield* prompt.recovery({ sessionID: chat.id, allowBusy: true })
-        expect(candidates.some((c) => c.kind === "assistant" && c.assistantMessageID === shell.id)).toBe(true)
-        expect(candidates.every((c) => c.kind === "assistant" && Object.keys(c).sort().join(",") === "assistantMessageID,created,kind,parentMessageID")).toBe(true)
+        expect(candidates).toEqual([{
+          kind: "parent-user", userMessageID: parent.id,
+          emptyAssistantMessageID: shell.id, created: shell.time.created,
+        }])
 
         const result = yield* prompt.resume({
           sessionID: chat.id,
-          assistantMessageID: shell.id,
-          model: ref,
+          ...(entry === "paired" ? { userMessageID: parent.id, emptyAssistantMessageID: shell.id } :
+            entry === "assistant" ? { assistantMessageID: shell.id } : {}),
+          model: mcpRef,
         })
+        expect(result.info).toMatchObject({ parentID: parent.id, modelID: mcpRef.modelID })
+        expect(result.info.id).not.toBe(shell.id)
         const requests = yield* llm.inputs
         expect(requests.length).toBeGreaterThan(0)
         const messages = ((requests[0]?.messages ?? []) as { role: string; content?: unknown }[]).filter(
@@ -2371,6 +2376,102 @@ it.live(
         config: providerCfg,
       },
     ),
+)
+
+// [TP-SR-R21-24] Each boundary must reject stale U/A without modifying any surviving history.
+for (const seam of ["beforePlan", "beforeExclusiveOccupy", "beforeAdmissionRecheck", "afterAdmissionBeforeCleanup"] as const) {
+  for (const change of ["removed", "parent", "text", "reasoning", "tool", "completed", "later-user", "later-assistant"] as const) {
+    it.live(`empty recovery stale ${change} at ${seam}`, () =>
+      provideTmpdirServer(Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const prompt = yield* SessionPrompt.Service
+        const chat = yield* sessions.create({ title: "empty recovery race" })
+        const seeded = yield* seed(chat.id)
+        const shell = yield* sessions.updateMessage({ ...seeded.assistant, id: MessageID.ascending() })
+        const barrier = resumeRaceBarrier()
+        ResumeTestHooks[seam] = barrier.hook
+        yield* Effect.addFinalizer(() => Effect.sync(() => ResumeTestHooks.reset()))
+        const fiber = yield* prompt.resume({
+          sessionID: chat.id, userMessageID: seeded.user.id, emptyAssistantMessageID: shell.id,
+        }).pipe(Effect.exit, Effect.forkChild)
+        yield* Effect.promise(() => barrier.reached).pipe(Effect.timeout("3 seconds"))
+        if (change === "removed") yield* sessions.removeMessage({ sessionID: chat.id, messageID: shell.id })
+        if (change === "parent") yield* sessions.updateMessage({ ...shell, parentID: MessageID.ascending() })
+        if (change === "completed") yield* sessions.updateMessage({ ...shell, finish: "stop", time: { ...shell.time, completed: Date.now() } })
+        if (change === "text" || change === "reasoning") yield* sessions.updatePart({
+          id: PartID.ascending(), sessionID: chat.id, messageID: shell.id, type: change, text: "useful content", time: { start: 1, end: 2 },
+        })
+        if (change === "tool") yield* sessions.updatePart({
+          id: PartID.ascending(), sessionID: chat.id, messageID: shell.id, type: "tool", tool: "bash", callID: "call_test",
+          state: { status: "completed", input: { command: "true" }, output: "done", title: "test", metadata: {}, time: { start: 1, end: 2 } },
+        })
+        if (change === "later-user") yield* user(chat.id, "later")
+        if (change === "later-assistant") yield* sessions.updateMessage({ ...shell, id: MessageID.ascending() })
+        const before = messagePartSnapshot(yield* sessions.messages({ sessionID: chat.id }))
+        barrier.release()
+        const result = yield* Fiber.join(fiber).pipe(Effect.timeout("5 seconds"))
+        expect(Exit.isFailure(result)).toBe(true)
+        if (Exit.isFailure(result)) expect(namedErrorMessage(Cause.squash(result.cause))).toContain("resumable")
+        expect(messagePartSnapshot(yield* sessions.messages({ sessionID: chat.id }))).toEqual(before)
+        expect(yield* llm.calls).toBe(0)
+      }), { git: true, config: providerCfg }),
+    )
+  }
+}
+
+// [TP-SR-R21-24] The deletion transaction revalidates after the last asynchronous history read.
+it.live("empty recovery rejects content arriving at the actual deletion boundary", () =>
+  provideTmpdirServer(Effect.fnUntraced(function* ({ llm }) {
+    const sessions = yield* Session.Service
+    const prompt = yield* SessionPrompt.Service
+    const chat = yield* sessions.create({ title: "deletion boundary" })
+    const seeded = yield* seed(chat.id)
+    const shell = yield* sessions.updateMessage({ ...seeded.assistant, id: MessageID.ascending() })
+    const original = sessions.removeMessage
+    const spy = spyOn(sessions, "removeMessage").mockImplementationOnce((input) => Effect.gen(function* () {
+      yield* sessions.updatePart({ id: PartID.ascending(), sessionID: chat.id, messageID: shell.id, type: "text", text: "arrived at deletion" })
+      return yield* original(input)
+    }))
+    yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()))
+    const result = yield* prompt.resume({ sessionID: chat.id, userMessageID: seeded.user.id, emptyAssistantMessageID: shell.id }).pipe(Effect.exit)
+    expect(Exit.isFailure(result)).toBe(true)
+    const history = yield* sessions.messages({ sessionID: chat.id })
+    expect(history.find((m) => m.info.id === shell.id)?.parts.some((part) => part.type === "text" && part.text === "arrived at deletion")).toBe(true)
+    expect(yield* llm.calls).toBe(0)
+  }), { git: true, config: providerCfg }),
+)
+
+// [TP-SR-R21-24] Fork remaps both recovery identities and cannot mutate its source.
+it.live("empty recovery fork remaps U/A and isolates source history", () =>
+  provideTmpdirServer(Effect.fnUntraced(function* ({ llm }) {
+    const sessions = yield* Session.Service
+    const prompt = yield* SessionPrompt.Service
+    const source = yield* sessions.create({ title: "source" })
+    const seeded = yield* seed(source.id)
+    const shell = yield* sessions.updateMessage({ ...seeded.assistant, id: MessageID.ascending() })
+    const before = messagePartSnapshot(yield* sessions.messages({ sessionID: source.id }))
+    const target = yield* sessions.fork({ sessionID: source.id })
+    const candidates = yield* prompt.recovery({ sessionID: target.id })
+    const candidate = candidates[0]!
+    expect(candidate.kind).toBe("parent-user")
+    if (candidate.kind !== "parent-user") return
+    expect(candidate.userMessageID).not.toBe(seeded.user.id)
+    expect(candidate.emptyAssistantMessageID).not.toBe(shell.id)
+    const targetBefore = messagePartSnapshot(yield* sessions.messages({ sessionID: target.id }))
+    for (const ids of [
+      { userMessageID: seeded.user.id, emptyAssistantMessageID: shell.id },
+      { userMessageID: candidate.userMessageID, emptyAssistantMessageID: shell.id },
+      { userMessageID: candidate.userMessageID },
+    ]) {
+      expect(Exit.isFailure(yield* prompt.resume({ sessionID: target.id, ...ids }).pipe(Effect.exit))).toBe(true)
+      expect(messagePartSnapshot(yield* sessions.messages({ sessionID: target.id }))).toEqual(targetBefore)
+    }
+    yield* llm.text("fork recovered")
+    const result = yield* prompt.resume({ sessionID: target.id, userMessageID: candidate.userMessageID, emptyAssistantMessageID: candidate.emptyAssistantMessageID })
+    expect(result.info).toMatchObject({ role: "assistant", parentID: candidate.userMessageID })
+    expect(result.parts.some((p) => p.type === "text" && p.text === "fork recovered")).toBe(true)
+    expect(messagePartSnapshot(yield* sessions.messages({ sessionID: source.id }))).toEqual(before)
+  }), { git: true, config: providerCfg }),
 )
 
 it.live(

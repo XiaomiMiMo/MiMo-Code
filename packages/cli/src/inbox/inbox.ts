@@ -4,6 +4,7 @@ import { Database, eq, and, lte, inArray } from "@/storage"
 import { Bus } from "@/bus"
 import { ActorRegistry } from "@/actor/registry"
 import { Session } from "@/session"
+import { SessionRequests } from "@/session/requests"
 import { MessageID, PartID } from "@/session/schema"
 import { InboxArrived } from "@/actor/events"
 import type { SessionID } from "@/session/schema"
@@ -207,7 +208,7 @@ export const layer: Layer.Layer<
             // prompt()/Desktop/TUI/HTTP/command which default source to "user".
             source: "spawn",
           })
-          .pipe(Effect.ignore, Effect.forkIn(scope))
+          .pipe(Effect.provideService(SessionRequests.Current, undefined), Effect.ignore, Effect.forkIn(scope))
       } else {
         // Test fixtures / renderer-only paths can run without SessionPrompt.
         // Row is durable; will be drained on next runLoop iteration.

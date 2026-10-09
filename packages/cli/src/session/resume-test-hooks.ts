@@ -6,6 +6,7 @@ import { Effect } from "effect"
  * work after runner occupy and before admission re-check / step-0 parent lock.
  */
 export const ResumeTestHooks = {
+  beforePlan: undefined as undefined | (() => Effect.Effect<void>),
   /** After runner occupy (start/ensureExclusive), before user-resume admission re-check. */
   beforeAdmissionRecheck: undefined as undefined | (() => Effect.Effect<void>),
   /** [C003] After admission re-check / handshake, before any residue cleanup read. */
@@ -17,6 +18,7 @@ export const ResumeTestHooks = {
   /** [R004] After planResume succeeds, receives the resolved plan so tests can assert the actual target. */
   onPlanResolved: undefined as undefined | ((plan: { action: string; assistantMessageID?: string; parentMessageID?: string }) => void),
   reset() {
+    this.beforePlan = undefined
     this.beforeAdmissionRecheck = undefined
     this.afterAdmissionBeforeCleanup = undefined
     this.beforeStep0ParentCheck = undefined

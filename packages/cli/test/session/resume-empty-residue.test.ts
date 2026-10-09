@@ -38,7 +38,7 @@ function shellMessage(input: { sessionID: string; parentID: string; created: num
 
 // [TP-SR-R21-16] Resume has only tool-resume (useful parts) / user-resume (no parts; re-run from parent user).
 describe("resume empty residue", () => {
-  test("user-resume cleans empty shells without Abandoned-as-resumed", async () => {
+  test("user-resume cleans only the selected empty shell without Abandoned-as-resumed", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({
       directory: tmp.path,
@@ -69,7 +69,7 @@ describe("resume empty residue", () => {
             yield* Effect.sleep("200 millis")
             const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
             return {
-              parents: before.flatMap((c) => (c.kind === "assistant" ? [c.parentMessageID] : [])),
+              parents: before.flatMap((c) => (c.kind === "parent-user" ? [c.userMessageID] : [])),
               userParent: user.id,
               shell1Gone: after.find((m) => m.info.id === shell1.id) === undefined,
               shell2Gone: after.find((m) => m.info.id === shell2.id) === undefined,
@@ -85,9 +85,9 @@ describe("resume empty residue", () => {
         ),
     })
     expect(result.candidateCount).toBeGreaterThan(0)
-    expect(result.parents.every((p) => p === result.userParent)).toBe(true)
-    // [TP-SR-R21-16]
-    expect(result.shell1Gone).toBe(true)
+    expect(result.parents).toEqual([result.userParent])
+    // [TP-SR-R21-16][TP-SR-R21-24]
+    expect(result.shell1Gone).toBe(false)
     expect(result.shell2Gone).toBe(true)
     expect(result.anyAbandonedAsResumed).toBe(false)
   })
@@ -415,7 +415,7 @@ describe("resume empty residue", () => {
               shellMessage({ sessionID: session.id, parentID: user.id, created: Date.now(), cwd: tmp.path }) as Parameters<typeof sessions.updateMessage>[0],
             )
             const before = yield* prompt.recovery({ sessionID: session.id, agentID: "main", allowBusy: true })
-            expect(before.some((c) => c.kind === "assistant" && c.assistantMessageID === shell.id)).toBe(true)
+            expect(before.some((c) => c.kind === "parent-user" && c.userMessageID === user.id && c.emptyAssistantMessageID === shell.id)).toBe(true)
             yield* sessions.removeMessage({ sessionID: session.id, messageID: shell.id })
             const exit = yield* prompt
               .resumeBackground({ sessionID: session.id, assistantMessageID: shell.id, agentID: "main" })
@@ -464,7 +464,7 @@ describe("resume empty residue", () => {
             yield* Effect.sleep("150 millis")
             const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
             return {
-              listed: candidates.some((c) => c.kind === "assistant" && c.assistantMessageID === assistant.id),
+              listed: candidates.some((c) => c.kind === "parent-user" && c.userMessageID === user.id && c.emptyAssistantMessageID === assistant.id),
               shellGone: after.find((m) => m.info.id === assistant.id) === undefined,
             }
           }),
