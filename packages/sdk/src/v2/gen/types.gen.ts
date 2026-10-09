@@ -5604,6 +5604,7 @@ export type SessionResumeResponses = {
 export type SessionResumeUserData = {
   body?: {
     userMessageID?: string
+    assistantMessageID?: string
   }
   path: {
     sessionID: string

@@ -454,10 +454,10 @@ describe("subagent resume recovery negatives", () => {
                 (m) => m.info.role === "assistant",
               ).length
               const patched = Object.assign(
-                (sid: SessionID, aid: string, oi: never, work: never) =>
-                  origStart(sid, aid, oi, work).pipe(
+                (...args: Parameters<typeof origStart>) =>
+                  origStart(...args).pipe(
                     Effect.tap(() =>
-                      aid === "main" && sid === session.id
+                      args[1] === "main" && args[0] === session.id
                         ? Effect.promise(async () => {
                             await Effect.runPromise(Deferred.succeed(accepted, undefined))
                             await Effect.runPromise(Deferred.await(release))
