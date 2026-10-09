@@ -41,7 +41,7 @@ const warnedContextDefaults = new Set<string>()
 // defaultModel() runs per cheap task; warn once per stale cfg.model, not every call
 const warnedStaleDefaultModels = new Set<string>()
 
-export const DEFAULT_OPENAI_HEADER_TIMEOUT = 300_000
+export const DEFAULT_HEADER_TIMEOUT = 300_000
 export const DEFAULT_CHUNK_TIMEOUT = 480_000 // 8 minutes — bounds single-attempt SSE stall.
 // Tuned for mimo-v2.5-pro on MiMo Router whose cold-path TTFT after context
 // rebuild can dip to ~5 minutes silent. Reasoning models with multi-minute
@@ -113,13 +113,25 @@ function wrapResponse(res: Response, body: ReadableStream<Uint8Array>) {
   return wrapped
 }
 
-function timeoutController(ms: number, message = `Response header timed out after ${ms}ms`) {
+export function timeoutController(ms: number, message = `Response header timed out after ${ms}ms`) {
   const ctl = new AbortController()
   const id = setTimeout(() => ctl.abort(Object.assign(new Error(message), { code: "ETIMEDOUT" })), ms)
   return {
     signal: ctl.signal,
     clear: () => clearTimeout(id),
   }
+}
+
+/**
+ * How long to wait for response headers. Applies to every provider: without a
+ * bound, a connect/TLS black-hole hangs the attempt forever — chunkTimeout only
+ * arms once a Response exists, so the session just sits there until the user
+ * aborts it manually. Opt out per provider with `headerTimeout: false`.
+ */
+export function resolveHeaderTimeout(value: unknown): number | undefined {
+  if (value === false) return undefined
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value
+  return DEFAULT_HEADER_TIMEOUT
 }
 
 type AbortSource = "request" | "timeout"
@@ -324,7 +336,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
           return sdk.responses(modelID)
         },
-        options: { headerTimeout: DEFAULT_OPENAI_HEADER_TIMEOUT },
+        options: {},
       }),
     xai: () =>
       Effect.succeed({
@@ -1701,7 +1713,7 @@ const layer: Layer.Layer<
           const opts = init ?? {}
           const callerSignal = requestSignal(input, opts)
           const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
-          const headerTimeoutMs = headerTimeout === false ? undefined : headerTimeout
+          const headerTimeoutMs = resolveHeaderTimeout(headerTimeout)
           const headerTimeoutCtl = typeof headerTimeoutMs === "number" ? timeoutController(headerTimeoutMs) : undefined
           const requestTimeoutCtl =
             typeof options["timeout"] === "number" && options["timeout"] > 0
