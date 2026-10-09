@@ -1246,11 +1246,28 @@ export function topK(model: Provider.Model) {
 const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
+// Claude 4.7 and later (every Claude 5.x model included) reject
+// `thinking.type: "enabled"` and accept only adaptive thinking with an effort.
+// Parse the version rather than listing IDs so each new release is covered.
+// Matches family-first IDs (claude-opus-4.7) and version-first IDs (claude-4.7-opus);
+// minors are capped at two digits so release dates such as claude-opus-4-20250514
+// are not read as versions.
+function anthropicUsesModernAdaptiveThinking(apiId: string) {
+  if (!apiId.toLowerCase().includes("claude-")) return false
+  const version = /claude-(?:[a-z]+-)?(\d+)(?:[.-](\d{1,2}))?(?:[.@-]|$)/i.exec(apiId)
+  if (!version) return true
+  const major = Number(version[1])
+  const minor = Number(version[2] ?? 0)
+  return major > 4 || (major === 4 && minor >= 7)
+}
+
 function anthropicAdaptiveEfforts(apiId: string): string[] | null {
-  if (["opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"].some((v) => apiId.includes(v))) {
-    return ["low", "medium", "high", "xhigh", "max"]
-  }
-  if (["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"].some((v) => apiId.includes(v))) {
+  if (anthropicUsesModernAdaptiveThinking(apiId)) return ["low", "medium", "high", "xhigh", "max"]
+  if (
+    ["opus-4-6", "opus-4.6", "4-6-opus", "4.6-opus", "sonnet-4-6", "sonnet-4.6", "4-6-sonnet", "4.6-sonnet"].some((v) =>
+      apiId.includes(v),
+    )
+  ) {
     return ["low", "medium", "high", "max"]
   }
   return null
@@ -1464,9 +1481,8 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
             {
               thinking: {
                 type: "adaptive",
-                ...(["opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"].some((v) => model.api.id.includes(v))
-                  ? { display: "summarized" }
-                  : {}),
+                // Claude 4.7+ defaults `display` to "omitted"; ask for summaries back.
+                ...(anthropicUsesModernAdaptiveThinking(model.api.id) ? { display: "summarized" } : {}),
               },
               effort,
             },
@@ -1499,9 +1515,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
               reasoningConfig: {
                 type: "adaptive",
                 maxReasoningEffort: effort,
-                ...(["opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"].some((v) => model.api.id.includes(v))
-                  ? { display: "summarized" }
-                  : {}),
+                ...(anthropicUsesModernAdaptiveThinking(model.api.id) ? { display: "summarized" } : {}),
               },
             },
           ]),
