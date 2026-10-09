@@ -3728,6 +3728,26 @@ describe("ProviderTransform.variants", () => {
       expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
     })
 
+    test("anthropic claude 5 models return adaptive thinking options with xhigh", () => {
+      const model = createMockModel({
+        id: "anthropic/claude-sonnet-5",
+        providerID: "gateway",
+        api: {
+          id: "anthropic/claude-sonnet-5",
+          url: "https://gateway.ai",
+          npm: "@ai-sdk/gateway",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.max).toEqual({
+        thinking: {
+          type: "adaptive",
+        },
+        effort: "max",
+      })
+    })
+
     test("anthropic models return anthropic thinking options", () => {
       const model = createMockModel({
         id: "anthropic/claude-sonnet-4",
@@ -4164,6 +4184,83 @@ describe("ProviderTransform.variants", () => {
       })
     })
 
+    // Regression: https://github.com/XiaomiMiMo/MiMo-Code/issues/1765 — Claude 5
+    // models fell through to `thinking.type: "enabled"`, which the API rejects.
+    test("claude 5 series models return adaptive thinking options with xhigh", () => {
+      for (const apiId of [
+        "claude-sonnet-5",
+        "claude-sonnet-5-20260716",
+        "claude-opus-5-5",
+        "claude-opus-5-fast",
+        "claude-haiku-5-5",
+        "claude-fable-5-1",
+        "claude-5-opus",
+        "claude-opus-4-8",
+      ]) {
+        const model = createMockModel({
+          id: `anthropic/${apiId}`,
+          providerID: "anthropic",
+          api: {
+            id: apiId,
+            url: "https://api.anthropic.com",
+            npm: "@ai-sdk/anthropic",
+          },
+        })
+        const result = ProviderTransform.variants(model)
+        expect(Object.keys(result), apiId).toEqual(["low", "medium", "high", "xhigh", "max"])
+        expect(result.max, apiId).toEqual({
+          thinking: {
+            type: "adaptive",
+            display: "summarized",
+          },
+          effort: "max",
+        })
+      }
+    })
+
+    test("version-first 4.6 ids return adaptive thinking options without xhigh", () => {
+      const model = createMockModel({
+        id: "anthropic/claude-4.6-sonnet",
+        providerID: "anthropic",
+        api: {
+          id: "claude-4.6-sonnet",
+          url: "https://api.anthropic.com",
+          npm: "@ai-sdk/anthropic",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "max"])
+      expect(result.high).toEqual({
+        thinking: {
+          type: "adaptive",
+        },
+        effort: "high",
+      })
+    })
+
+    test("pre-4.6 models keep budgeted thinking, even with release dates in the id", () => {
+      for (const apiId of [
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-1-20250805",
+        "claude-haiku-4-5",
+        "claude-sonnet-4-5@20250929",
+        "claude-3-7-sonnet-20250219",
+      ]) {
+        const model = createMockModel({
+          id: `anthropic/${apiId}`,
+          providerID: "anthropic",
+          api: {
+            id: apiId,
+            url: "https://api.anthropic.com",
+            npm: "@ai-sdk/anthropic",
+          },
+        })
+        const result = ProviderTransform.variants(model)
+        expect(Object.keys(result), apiId).toEqual(["high", "max"])
+        expect(result.high.thinking.type, apiId).toBe("enabled")
+      }
+    })
+
     test("returns high and max with thinking config", () => {
       const model = createMockModel({
         id: "anthropic/claude-4",
@@ -4235,6 +4332,27 @@ describe("ProviderTransform.variants", () => {
         reasoningConfig: {
           type: "adaptive",
           maxReasoningEffort: "max",
+          display: "summarized",
+        },
+      })
+    })
+
+    test("anthropic claude 5 returns adaptive reasoning options with xhigh", () => {
+      const model = createMockModel({
+        id: "bedrock/anthropic-claude-opus-5-5",
+        providerID: "bedrock",
+        api: {
+          id: "us.anthropic.claude-opus-5-5-v1:0",
+          url: "https://bedrock.amazonaws.com",
+          npm: "@ai-sdk/amazon-bedrock",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.high).toEqual({
+        reasoningConfig: {
+          type: "adaptive",
+          maxReasoningEffort: "high",
           display: "summarized",
         },
       })
@@ -4449,6 +4567,26 @@ describe("ProviderTransform.variants", () => {
           type: "adaptive",
         },
         effort: "max",
+      })
+    })
+
+    test("anthropic claude 5 models return adaptive thinking variants with xhigh", () => {
+      const model = createMockModel({
+        id: "sap-ai-core/anthropic--claude-opus-5",
+        providerID: "sap-ai-core",
+        api: {
+          id: "anthropic--claude-opus-5",
+          url: "https://api.ai.sap",
+          npm: "@jerome-benoit/sap-ai-provider-v2",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh", "max"])
+      expect(result.xhigh).toEqual({
+        thinking: {
+          type: "adaptive",
+        },
+        effort: "xhigh",
       })
     })
 
