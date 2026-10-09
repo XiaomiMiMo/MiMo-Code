@@ -4,7 +4,7 @@
   "description": "AI-powered development tool",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "dev": "bun run --cwd packages/cli script/dev.ts",
     "build:local": "bun run --cwd packages/cli build:local",
@@ -21,7 +21,7 @@
       "@effect/opentelemetry": "4.0.0-beta.48",
       "@effect/platform-node": "4.0.0-beta.48",
       "@npmcli/arborist": "9.4.0",
-      "@types/bun": "1.3.11",
+      "@types/bun": "1.4.2",
       "@types/cross-spawn": "6.0.6",
       "@octokit/rest": "22.0.0",
       "@hono/zod-validator": "0.4.2",
