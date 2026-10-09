@@ -413,29 +413,50 @@ export const layer = Layer.effect(
         guarded = Effect.timeoutOrElse(guarded, {
           duration: `${timeoutMs} millis`,
           orElse: () =>
-            bus
-              .publish(Event.Replied, {
-                sessionID: info.sessionID,
-                requestID: info.id,
-                reply: "reject",
-              })
-              .pipe(
-                Effect.andThen(() =>
-                  Effect.fail(
-                    new CorrectedError({
-                      feedback: `No user response within ${Math.round(timeoutMs / 1000)}s. This action was auto-rejected as a safety measure — NOT an explicit user denial. Skip this operation and continue with the rest of the task.`,
-                    }),
+            // Remove the entry before publishing: the ensuring below treats a
+            // surviving entry as "ended without a reply" and would publish a
+            // second Replied for the same id.
+            Effect.sync(() => pending.delete(id)).pipe(
+              Effect.andThen(() =>
+                bus
+                  .publish(Event.Replied, {
+                    sessionID: info.sessionID,
+                    requestID: info.id,
+                    reply: "reject",
+                  })
+                  .pipe(
+                    Effect.andThen(() =>
+                      Effect.fail(
+                        new CorrectedError({
+                          feedback: `No user response within ${Math.round(timeoutMs / 1000)}s. This action was auto-rejected as a safety measure — NOT an explicit user denial. Skip this operation and continue with the rest of the task.`,
+                        }),
+                      ),
+                    ),
                   ),
-                ),
               ),
+            ),
         })
       }
 
       return yield* Effect.ensuring(
         guarded,
-        Effect.sync(() => {
-          pending.delete(id)
-        }),
+        // reply()/skipAll()/timeout all delete the entry before they publish
+        // Replied, so a surviving entry means the ask died without an answer
+        // (abort signal, fiber interruption, instance teardown). Without this
+        // publish the TUI keeps the dead prompt forever: every later reply
+        // no-ops server-side, the dialog never closes, and the user mashes a
+        // prompt that looks like a frozen TUI.
+        Effect.flatMap(
+          Effect.sync(() => pending.delete(id)),
+          (deleted) =>
+            deleted
+              ? bus.publish(Event.Replied, {
+                  sessionID: info.sessionID,
+                  requestID: info.id,
+                  reply: "reject",
+                })
+              : Effect.void,
+        ),
       )
     })
 
