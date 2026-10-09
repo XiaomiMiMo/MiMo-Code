@@ -5,12 +5,12 @@ The user has no existing template to preserve.
 
 ## Library choice
 
-| Task                                       | Library      | Why |
-|--------------------------------------------|--------------|-----|
-| Bulk data → single tidy sheet              | `pandas`     | `df.to_excel` handles thousands of rows in one call |
-| Formulas, formatting, multiple sheets      | `openpyxl`   | Full read/write access, formula strings, styles |
-| Very large writes, no formulas needed      | `xlsxwriter` | Streaming writer, smaller memory footprint |
-| Both — data + formulas + formatting        | Start in pandas, finish in openpyxl (see below) |
+| Task                                  | Library               | Why                                                 |
+| ------------------------------------- | --------------------- | --------------------------------------------------- |
+| Bulk data → single tidy sheet         | `pandas`              | `df.to_excel` handles thousands of rows in one call |
+| Formulas, formatting, multiple sheets | `openpyxl`            | Full read/write access, formula strings, styles     |
+| Very large writes, no formulas needed | `xlsxwriter`          | Streaming writer, smaller memory footprint          |
+| Both — data + formulas + formatting   | `pandas` + `openpyxl` | Start in pandas, finish in openpyxl (see below)     |
 
 `openpyxl` is the default. Reach for pandas when the payload is a DataFrame,
 and xlsxwriter only when memory or throughput bites.
