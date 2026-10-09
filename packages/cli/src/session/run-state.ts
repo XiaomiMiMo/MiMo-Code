@@ -10,13 +10,14 @@ import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan
 
 export interface Interface {
   readonly assertNotBusy: (sessionID: SessionID, agentID?: string) => Effect.Effect<void, Session.BusyError>
-  readonly start: (sessionID: SessionID, agentID: string, onInterrupt: Effect.Effect<MessageV2.WithParts>, work: Effect.Effect<MessageV2.WithParts>) => Effect.Effect<void, Session.BusyError>
+  readonly start: (sessionID: SessionID, agentID: string, onInterrupt: Effect.Effect<MessageV2.WithParts>, work: Effect.Effect<MessageV2.WithParts>, admit?: Effect.Effect<void>) => Effect.Effect<void, Session.BusyError>
   /** [C001] Start and return cancel bound to this run id only. */
   readonly startOwned: (
     sessionID: SessionID,
     agentID: string,
     onInterrupt: Effect.Effect<MessageV2.WithParts>,
     work: Effect.Effect<MessageV2.WithParts>,
+    admit?: Effect.Effect<void>,
   ) => Effect.Effect<{ readonly runId: number; readonly interruptOwned: Effect.Effect<void> }, Session.BusyError>
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly cancelActor: (sessionID: SessionID, agentID: string) => Effect.Effect<void>
@@ -144,9 +145,10 @@ export const layer = Layer.effect(
       agentID: string,
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
+      admit?: Effect.Effect<void>,
     ) {
       const active = yield* runner(sessionID, agentID, onInterrupt)
-      yield* active.start(withOrphanSweep(sessionID, agentID, work))
+      yield* active.start((admit ?? Effect.void).pipe(Effect.andThen(withOrphanSweep(sessionID, agentID, work))))
       return
     })
 
@@ -155,9 +157,11 @@ export const layer = Layer.effect(
       agentID: string,
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
+      admit?: Effect.Effect<void>,
     ) {
       const active = yield* runner(sessionID, agentID, onInterrupt)
-      return yield* active.startOwned(withOrphanSweep(sessionID, agentID, work))
+      // An unadmitted run owns no history to settle, even on cancellation.
+      return yield* active.startOwned((admit ?? Effect.void).pipe(Effect.andThen(withOrphanSweep(sessionID, agentID, work))))
     })
 
     // Process-group kill: session abort cancels EVERY runner under this session

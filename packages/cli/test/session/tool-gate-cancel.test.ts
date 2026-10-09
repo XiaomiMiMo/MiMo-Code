@@ -23,7 +23,7 @@ const it = testEffect(
 )
 
 it.live(
-  "a cancelled write queued behind a question in the same step never executes",
+  "a cancelled write queued behind a question in the same step never executes [TP-SR-R21-25]",
   () =>
     Effect.gen(function* () {
       const server = startScriptedLLMServer([
@@ -53,9 +53,16 @@ it.live(
             const questions = yield* Question.Service
             // Observe actual release without replacing the gate implementation.
             const leaving = spyOn(ToolGate.prototype, "leave")
+            const entering = spyOn(ToolGate.prototype, "run")
             yield* Effect.addFinalizer(() => Effect.sync(() => leaving.mockRestore()))
+            yield* Effect.addFinalizer(() => Effect.sync(() => entering.mockRestore()))
             const asked = yield* Deferred.make<void>()
             const queued = yield* Deferred.make<void>()
+            const rejected: Question.Request["id"][] = []
+            const unsubscribeRejected = yield* bus.subscribeCallback(Question.Event.Rejected, (event) => {
+              if (event.properties.sessionID === session.id) rejected.push(event.properties.requestID)
+            })
+            yield* Effect.addFinalizer(() => Effect.sync(unsubscribeRejected))
             const unsubscribeAsked = yield* bus.subscribeCallback(Question.Event.Asked, (event) => {
               if (event.properties.sessionID === session.id) Deferred.doneUnsafe(asked, Effect.void)
             })
@@ -96,9 +103,14 @@ it.live(
             yield* prompt.cancel(session.id)
             const result = yield* Fiber.join(running)
             expect(result.info.role === "assistant" && result.info.error?.name).toBe("MessageAbortedError")
-            // Base question cancellation is unchanged. End its outstanding wait
-            // explicitly, then let the old batch drain before checking for writes.
-            yield* Effect.forEach(yield* questions.list(), (question) => questions.reject(question.id), { discard: true })
+            expect(entering.mock.calls.find(([tool, callID]) => tool === "question" && callID === "ask-user")?.[3]?.signal?.aborted).toBe(true)
+            const pendingAfterStop = yield* questions.list()
+            const toolsAfterStop = (yield* sessions.messages({ sessionID: session.id }))
+              .flatMap((message) => message.parts)
+              .filter((part) => part.type === "tool")
+            expect(toolsAfterStop).toHaveLength(2)
+            expect(toolsAfterStop.every((part) => part.state.status === "error")).toBe(true)
+            expect({ pending: pendingAfterStop, rejected }).toEqual({ pending: [], rejected: [expect.any(String)] })
             yield* Effect.promise(async () => {
               while (true) {
                 const index = leaving.mock.calls.findIndex(([token]) => token.startsWith("ask-user#"))

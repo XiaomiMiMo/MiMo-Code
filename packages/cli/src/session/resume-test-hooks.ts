@@ -1,12 +1,12 @@
 import { Effect } from "effect"
 
 /**
- * Deterministic race seams for trailing-user resume tests.
+ * Deterministic race seams for exact-target resume tests.
  * Production leaves these undefined (no-ops). Tests install barriers to stop
  * work after runner occupy and before admission re-check / step-0 parent lock.
  */
 export const ResumeTestHooks = {
-  /** After runner occupy (start/ensureExclusive), before user-resume admission re-check. */
+  /** After runner occupy (start/ensureExclusive), before exact-target admission re-check. */
   beforeAdmissionRecheck: undefined as undefined | (() => Effect.Effect<void>),
   /** [C003] After admission re-check / handshake, before any residue cleanup read. */
   afterAdmissionBeforeCleanup: undefined as undefined | (() => Effect.Effect<void>),

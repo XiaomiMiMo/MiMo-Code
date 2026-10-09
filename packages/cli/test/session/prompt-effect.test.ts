@@ -5171,6 +5171,7 @@ describe("trailing-user resume integration", () => {
             .resume({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })
             .pipe(Effect.exit, Effect.forkChild)
           yield* Effect.promise(() => beforeOccupy.reached)
+          ResumeTestHooks.beforeExclusiveOccupy = undefined
           // Second start-mode resume occupies the runner while first is still pre-occupy.
           const second = yield* prompt
             .resumeBackground({ sessionID: chat.id, userMessageID: user2.id, agentID: "main", model: ref })

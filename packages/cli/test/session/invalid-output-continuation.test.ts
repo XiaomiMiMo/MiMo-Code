@@ -9,8 +9,10 @@
  */
 
 import path from "path"
-import { afterEach, describe, expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { Effect, Fiber, Layer } from "effect"
+import { SessionPrefixSnapshot } from "../../src/session/prefix-snapshot"
+import { Server } from "../../src/server/server"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
@@ -88,6 +90,75 @@ function writeGPTConfig(dir: string, origin: string) {
 }
 
 describe("invalid-output continuation — integration", () => {
+  // [TP-SR-R21-07]
+  test("cancel after empty stop persistence remains recoverable", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }, { lines: textStopResponse("recovered answer") }])
+    const entered = Promise.withResolvers<void>()
+    // Completion is durable here, but output validity has not been classified.
+    const advance = spyOn(SessionPrefixSnapshot, "advance").mockImplementation(() =>
+      Effect.sync(entered.resolve).pipe(Effect.andThen(Effect.never)),
+    )
+    try {
+      await writeConfig(tmp.path, stub.origin)
+      const result = await Instance.provide({
+        directory: tmp.path,
+        fn: () => run(Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const prompt = yield* SessionPrompt.Service
+          const session = yield* sessions.create({ title: "empty-stop-cancel-window" })
+          const fiber = yield* prompt.prompt({
+            sessionID: session.id, agent: "build", parts: [{ type: "text", text: "Answer my question." }],
+          }).pipe(Effect.exit, Effect.forkChild)
+          yield* Effect.promise(() => entered.promise).pipe(Effect.timeout("10 seconds"))
+          expect(advance).toHaveBeenCalledTimes(1)
+          const atBarrier = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+          yield* prompt.cancel(session.id)
+          yield* Fiber.join(fiber)
+          advance.mockRestore()
+          const afterCancel = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+          const query = `?directory=${encodeURIComponent(tmp.path)}`
+          const app = Server.Default().app
+          const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
+          const candidates = yield* Effect.promise(() => listed.json())
+          const resumed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/resume${query}`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          })))
+          for (let attempt = 0; resumed.status === 202 && attempt < 100; attempt++) {
+            const messages = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+            if (messages.some((message) => message.info.role === "assistant" && message.info.time.completed && !message.info.error && message.parts.some((part) => part.type === "text" && part.text === "recovered answer"))) break
+            yield* Effect.sleep("50 millis")
+          }
+          const afterResume = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+          return { atBarrier, afterCancel, afterResume, recoveryStatus: listed.status, candidates, resumeStatus: resumed.status, providerCalls: stub.captures.length }
+        })),
+      })
+      expect(result.afterCancel).toEqual(result.atBarrier)
+      const assistant = result.afterCancel.find((message) => message.info.role === "assistant")
+      expect(assistant?.info.role).toBe("assistant")
+      if (assistant?.info.role === "assistant") {
+        expect(assistant.info.finish).toBe("stop")
+        expect(assistant.info.time.completed).toBeDefined()
+        expect(assistant.info.error).toBeUndefined()
+      }
+      expect(assistant?.parts.map((part) => part.type)).toEqual(["step-start", "step-finish"])
+      expect(result.recoveryStatus).toBe(200)
+      expect(result.candidates).toMatchObject([{ kind: "assistant", assistantMessageID: assistant?.info.id }])
+      expect(result.resumeStatus).toBe(202)
+      expect(result.providerCalls).toBe(2)
+      expect(result.afterResume.some((message) => message.info.id === assistant?.info.id)).toBe(false)
+      const users = result.afterResume.filter((message) => message.info.role === "user")
+      expect(users.map((message) => message.info.id)).toEqual(result.atBarrier.filter((message) => message.info.role === "user").map((message) => message.info.id))
+      const recovered = result.afterResume.find((message) => message.info.role === "assistant")
+      expect(recovered?.info).toMatchObject({ role: "assistant", parentID: users[0].info.id, finish: "stop", time: { completed: expect.any(Number) } })
+      expect(recovered?.parts.some((part) => part.type === "text" && part.text === "recovered answer")).toBe(true)
+    } finally {
+      advance.mockRestore()
+      await Instance.disposeAll()
+      await stub.stop()
+    }
+  }, 30_000)
+
   test("empty stop step is nudged, second call produces a non-empty final assistant", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }, { lines: textStopResponse("final answer") }])
@@ -216,6 +287,7 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
+  // [TP-SR-R21-07]
   test("GPT reasoning-only stop step is terminal and is not retried", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
@@ -242,6 +314,14 @@ describe("invalid-output continuation — integration", () => {
               if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
               expect(result.parts.some((p) => p.type === "reasoning" && p.text.includes("let me think"))).toBe(true)
               expect(result.parts.some((p) => p.type === "text")).toBe(false)
+              expect(yield* prompt.recovery({ sessionID: session.id, agentID: "main" })).toEqual([])
+              const resumed = yield* Effect.promise(() => Promise.resolve(Server.Default().app.request(
+                `/session/${session.id}/resume?directory=${encodeURIComponent(tmp.path)}`,
+                { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+              )))
+              expect(resumed.status).toBe(404)
+              expect(stub.captures.length).toBe(1)
+              expect((yield* sessions.messages({ sessionID: session.id, agentID: "main" })).find((message) => message.info.id === result.info.id)).toEqual(result)
             }),
           ),
       })

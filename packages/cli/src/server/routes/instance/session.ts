@@ -1137,8 +1137,8 @@ export const SessionRoutes = lazy(() =>
     .post(
       "/:sessionID/resume",
       describeRoute({
-        summary: "Resume from a trailing user",
-        description: "Start the next turn from a trailing user message without creating another user message.",
+        summary: "Resume an exact recovery target",
+        description: "Admit a user or assistant recovery target without creating another user message. Omit the target to select the latest candidate.",
         operationId: "session.resumeUser",
         responses: {
           202: { description: "Resume accepted" },
@@ -1158,9 +1158,11 @@ export const SessionRoutes = lazy(() =>
         modelID: z.string().optional(),
       })),
       // Body is optional: empty/{} = resume latest recovery candidate.
-      // userMessageID still accepted for explicit trailing-user targeting (TUI / cascade).
       validator("json", z.object({
         userMessageID: MessageID.zod.optional(),
+        assistantMessageID: MessageID.zod.optional(),
+      }).refine((body) => !(body.userMessageID && body.assistantMessageID), {
+        message: "userMessageID and assistantMessageID are mutually exclusive",
       }).optional()),
       async (c) => {
         const params = c.req.valid("param")
@@ -1174,29 +1176,6 @@ export const SessionRoutes = lazy(() =>
           c,
           SessionRunState.Service.use((svc) => svc.assertNotBusy(params.sessionID, query.agentID)),
         )
-        // Explicit userMessageID → validate it is still the trailing user.
-        // Omitted → the engine resolves the latest recovery candidate (404 if none).
-        if (body?.userMessageID) {
-          await runRequest(
-            "SessionRoutes.resumeUser.validate",
-            c,
-            SessionPrompt.Service.use((svc) =>
-              svc.recovery({ sessionID: params.sessionID, agentID: query.agentID }).pipe(
-                Effect.flatMap((candidates) =>
-                  candidates.some(
-                    (candidate) => candidate.kind === "parent-user" && candidate.userMessageID === body.userMessageID,
-                  )
-                    ? Effect.void
-                    : Effect.fail(
-                        new NotFoundError({
-                          message: "No resumable trailing user found for message " + body.userMessageID,
-                        }),
-                      ),
-                ),
-              ),
-            ),
-          )
-        }
         // [TP-SR-R21-10] 202 = admission complete (plan + exclusive start), not fire-and-forget.
         // Main agent also cascades subagent recovery (same as /turn/:id/resume).
         const admitted = await runRequest(
@@ -1206,7 +1185,8 @@ export const SessionRoutes = lazy(() =>
             (query.agentID === undefined || query.agentID === "main")
               ? svc.resumeMainCascading({
                   sessionID: params.sessionID,
-                  ...(body?.userMessageID ? { userMessageID: body.userMessageID } : {}),
+                  ...body,
+                  waitForAdmission: true,
                   agentID: query.agentID,
                   task_id: query.task_id,
                   titleLocale: query.titleLocale,
@@ -1214,7 +1194,8 @@ export const SessionRoutes = lazy(() =>
                 })
               : svc.resumeBackground({
                   sessionID: params.sessionID,
-                  ...(body?.userMessageID ? { userMessageID: body.userMessageID } : {}),
+                  ...body,
+                  waitForAdmission: true,
                   agentID: query.agentID,
                   task_id: query.task_id,
                   titleLocale: query.titleLocale,

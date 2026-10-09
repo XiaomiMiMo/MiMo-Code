@@ -47,6 +47,7 @@ export const QuestionTool = Tool.define<typeof parameters, Metadata, Question.Se
           const answers = yield* question.ask({
             sessionID: ctx.sessionID,
             questions: params.questions,
+            abortSignal: ctx.abort,
             tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
           })
 
