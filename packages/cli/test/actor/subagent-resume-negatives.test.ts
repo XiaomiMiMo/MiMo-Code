@@ -417,6 +417,7 @@ describe("subagent resume recovery negatives", () => {
               const mainAsst = yield* sessions.updateMessage(
                 incompleteAsst({ sessionID: session.id, parentID: mainUser.id, agent: "build", cwd: tmp.path }),
               )
+              yield* sessions.updatePart({ id: PartID.ascending(), sessionID: session.id, messageID: mainAsst.id, type: "text", text: "partial response" })
               yield* reg.register({
                 sessionID: session.id,
                 actorID: "custom-1",

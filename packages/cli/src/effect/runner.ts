@@ -3,7 +3,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Schema, Scope, SynchronizedRef } 
 export interface Runner<A, E = never, B = never> {
   readonly state: State<A, E>
   readonly busy: boolean
-  readonly ensureRunning: (work: Effect.Effect<A, E>) => Effect.Effect<A, E>
+  readonly ensureRunning: (work: Effect.Effect<A, E>, onCancelled?: Effect.Effect<A, E>) => Effect.Effect<A, E>
   /** [R003] Start work only if idle; busy → fail B. Never join an existing run. */
   readonly ensureExclusive: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
   readonly start: (work: Effect.Effect<A, E>) => Effect.Effect<void, B>
@@ -16,6 +16,7 @@ export interface Runner<A, E = never, B = never> {
   ) => Effect.Effect<{ readonly runId: number; readonly interruptOwned: Effect.Effect<void> }, B>
   readonly startShell: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
   readonly cancel: Effect.Effect<void>
+  readonly captureCancel: Effect.Effect<Effect.Effect<void>>
 }
 
 export class Cancelled extends Schema.TaggedErrorClass<Cancelled>()("RunnerCancelled", {}) {}
@@ -68,6 +69,9 @@ export const make = <A, E = never, B = never>(
     onReentryWarn?: (info: { label: string; existingRunId: number }) => Effect.Effect<void>
     onRunStart?: Effect.Effect<() => void>
     onShellStart?: Effect.Effect<() => void>
+    onExecutionStart?: (id: number) => Effect.Effect<void>
+    mapWork?: (work: Effect.Effect<A, E>, id: number) => Effect.Effect<A, E>
+    onExecutionExit?: (id: number, exit: Exit.Exit<A, E>) => Effect.Effect<void>
   },
 ): Runner<A, E, B> => {
   const ref = SynchronizedRef.makeUnsafe<State<A, E>>({ _tag: "Idle" })
@@ -98,7 +102,8 @@ export const make = <A, E = never, B = never>(
     Effect.gen(function* () {
       const id = next()
       const release = opts?.onRunStart ? yield* opts.onRunStart : () => {}
-      const fiber = yield* work.pipe(
+      if (opts?.onExecutionStart) yield* opts.onExecutionStart(id)
+      const fiber = yield* (opts?.mapWork ? opts.mapWork(work, id) : work).pipe(
         Effect.onExit((exit) => finishRun(id, done, exit)),
         Effect.forkIn(scope),
       )
@@ -106,7 +111,7 @@ export const make = <A, E = never, B = never>(
       // on the effect do not run — settle `done` from the fiber exit so waiters
       // (ensureExclusive / admission) cannot hang.
       yield* Fiber.await(fiber).pipe(
-        Effect.flatMap((exit) => complete(done, exit)),
+        Effect.flatMap((exit) => (opts?.onExecutionExit?.(id, exit) ?? Effect.void).pipe(Effect.andThen(complete(done, exit)))),
         Effect.ensuring(Effect.sync(release)),
         Effect.forkIn(scope),
       )
@@ -169,7 +174,7 @@ export const make = <A, E = never, B = never>(
 
   const stopShell = (shell: ShellHandle<A, E>) => Fiber.interrupt(shell.fiber)
 
-  const ensureRunning = (work: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+  const ensureRunning = (work: Effect.Effect<A, E>, onCancelled?: Effect.Effect<A, E>): Effect.Effect<A, E> =>
     SynchronizedRef.modifyEffect(
       ref,
       Effect.fnUntraced(function* (st) {
@@ -240,7 +245,7 @@ export const make = <A, E = never, B = never>(
             return [
               Fiber.await(fiber).pipe(
                 Effect.ignore,
-                Effect.andThen(Effect.suspend(() => ensureRunning(work))),
+                Effect.andThen(Effect.suspend(() => ensureRunning(work, onCancelled))),
               ),
               st,
             ] as const
@@ -250,7 +255,7 @@ export const make = <A, E = never, B = never>(
     ).pipe(
       Effect.flatten,
       Effect.catch(
-        (e): Effect.Effect<A, E> => (e instanceof Cancelled ? (onInterrupt ?? Effect.die(e)) : Effect.fail(e as E)),
+        (e): Effect.Effect<A, E> => (e instanceof Cancelled ? (onCancelled ?? onInterrupt ?? Effect.die(e)) : Effect.fail(e as E)),
       ),
     )
 
@@ -316,22 +321,18 @@ export const make = <A, E = never, B = never>(
    * [C001] Cancel only the run with this id, reusing the Cancelling lifecycle:
    * stay non-Idle until finalizers finish; settle pending waiters like `cancel`.
    */
+  const retire = (run: RunHandle<A, E>) => Effect.gen(function* () {
+    if (run.pending) yield* Deferred.fail(run.pending.done, new Cancelled()).pipe(Effect.ignore)
+    yield* Fiber.interrupt(run.fiber)
+    yield* SynchronizedRef.modify(ref, (st) => st._tag === "Cancelling" && st.run.id === run.id
+      ? [idle, { _tag: "Idle" } as const] as const : [Effect.void, st] as const).pipe(Effect.flatten)
+  })
+
   const interruptOwned = (runId: number) =>
     SynchronizedRef.modify(ref, (st) => {
       if (st._tag === "Running" && st.run.id === runId) {
         return [
-          Effect.gen(function* () {
-            if (st.run.pending) yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
-            // Interrupt WAITS for the fiber, including ensuring/finalizers.
-            // State stays Cancelling until finishRun (RL-ORPHAN-D01).
-            yield* Fiber.interrupt(st.run.fiber)
-            yield* SynchronizedRef.modify(ref, (s) => {
-              if (s._tag === "Cancelling" && s.run.id === runId) {
-                return [idle, { _tag: "Idle" }] as const
-              }
-              return [Effect.void, s] as const
-            }).pipe(Effect.flatten)
-          }),
+          retire(st.run),
           { _tag: "Cancelling", run: st.run } as const,
         ] as const
       }
@@ -370,21 +371,7 @@ export const make = <A, E = never, B = never>(
         return [Fiber.await(st.run.fiber).pipe(Effect.asVoid, Effect.ignore), st] as const
       case "Running":
         return [
-          Effect.gen(function* () {
-            if (st.run.pending) yield* Deferred.fail(st.run.pending.done, new Cancelled()).pipe(Effect.ignore)
-            // Interrupt WAITS for the fiber, including ensuring/finalizers.
-            // State stays Cancelling until finishRun or this effect flips Idle
-            // so start/ensureRunning cannot begin mid-finalizer (RL-ORPHAN-D01).
-            yield* Fiber.interrupt(st.run.fiber)
-            // finishRun usually already converged Cancelling → Idle; this is
-            // belt-and-suspenders if the fiber exited without onExit ordering.
-            yield* SynchronizedRef.modify(ref, (s) => {
-              if (s._tag === "Cancelling" && s.run.id === st.run.id) {
-                return [idle, { _tag: "Idle" }] as const
-              }
-              return [Effect.void, s] as const
-            }).pipe(Effect.flatten)
-          }),
+          retire(st.run),
           { _tag: "Cancelling", run: st.run } as const,
         ] as const
       case "Shell":
@@ -420,5 +407,15 @@ export const make = <A, E = never, B = never>(
     startOwned,
     startShell,
     cancel,
+    captureCancel: SynchronizedRef.modify(ref, (st) => {
+      if (st._tag === "Running") return [retire(st.run), { _tag: "Cancelling", run: st.run } as const] as const
+      if (st._tag === "Cancelling") return [Fiber.await(st.run.fiber).pipe(Effect.asVoid), st] as const
+      if (st._tag === "Idle") return [Effect.void, st] as const
+      return [Effect.gen(function* () {
+        if (st._tag === "ShellThenRun") yield* Deferred.fail(st.run.done, new Cancelled())
+        yield* stopShell(st.shell)
+        yield* idleIfCurrent()
+      }), { _tag: "Idle" } as const] as const
+    }),
   }
 }

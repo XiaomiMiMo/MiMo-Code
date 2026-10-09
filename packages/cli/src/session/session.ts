@@ -500,7 +500,7 @@ export interface Interface {
   readonly children: (parentID: SessionID, options?: { visible?: boolean }) => Effect.Effect<Info[]>
   readonly remove: (sessionID: SessionID) => Effect.Effect<void>
   readonly updateMessage: <T extends MessageV2.Info>(msg: T) => Effect.Effect<T>
-  readonly removeMessage: (input: { sessionID: SessionID; messageID: MessageID }) => Effect.Effect<MessageID>
+  readonly removeMessage: (input: { sessionID: SessionID; messageID: MessageID; guard?: () => boolean }) => Effect.Effect<MessageID>
   readonly removePart: (input: { sessionID: SessionID; messageID: MessageID; partID: PartID }) => Effect.Effect<PartID>
   readonly getPart: (input: {
     sessionID: SessionID
@@ -906,13 +906,15 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
     const removeMessage = Effect.fn("Session.removeMessage")(function* (input: {
       sessionID: SessionID
       messageID: MessageID
+      guard?: () => boolean
     }) {
-      yield* Effect.sync(() =>
+      yield* Effect.sync(() => Database.transaction(() => {
+        if (input.guard && !input.guard()) throw new NotFoundError({ message: "Message is no longer resumable" })
         SyncEvent.run(MessageV2.Event.Removed, {
           sessionID: input.sessionID,
           messageID: input.messageID,
-        }),
-      )
+        })
+      }, { behavior: "immediate" }))
       return input.messageID
     })
 

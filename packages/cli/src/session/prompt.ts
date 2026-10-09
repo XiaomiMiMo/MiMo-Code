@@ -145,12 +145,13 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Truncate } from "@/tool"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Scope, Context } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Scope, Context, Scheduler } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
 import { PARALLEL_READONLY_TOOLS } from "@/tool/gate"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
 import { SessionRunState } from "./run-state"
+import { SessionRequests } from "./requests"
 import { ResumeTestHooks } from "./resume-test-hooks"
 import { Goal } from "./goal"
 import { TaskRegistry } from "@/task/registry"
@@ -553,6 +554,7 @@ const elog = EffectLogger.create({ service: "session.prompt" })
 
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
+  readonly captureCancel: (sessionID: SessionID) => Effect.Effect<Effect.Effect<void>>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts>
   readonly recovery: (input: { sessionID: SessionID; agentID?: string; allowBusy?: boolean }) => Effect.Effect<RecoveryCandidate[]>
   readonly resume: (input: ResumeTurnInput) => Effect.Effect<MessageV2.WithParts, InstanceType<typeof NotFoundError> | Session.BusyError>
@@ -587,6 +589,7 @@ export type RecoveryCandidate =
   | {
       kind: "parent-user"
       userMessageID: MessageID
+      emptyAssistantMessageID?: MessageID
       created: number
     }
 
@@ -596,6 +599,7 @@ export interface ResumeTurnInput {
   assistantMessageID?: MessageID
   /** trailing-user resume: start a new run from this user (no new user message). */
   userMessageID?: MessageID
+  emptyAssistantMessageID?: MessageID
   agentID?: string
   task_id?: string
   titleLocale?: string
@@ -634,6 +638,7 @@ export const layer = Layer.effect(
     const scope = yield* Scope.Scope
     const instruction = yield* Instruction.Service
     const state = yield* SessionRunState.Service
+    const requests = yield* SessionRequests.Service
     const goal = yield* Goal.Service
 
     const revert = yield* SessionRevert.Service
@@ -760,77 +765,54 @@ export const layer = Layer.effect(
     // session-level switch: a new main turn must not re-arm wake for a cancelled
     // execution's late terminal notify, and resume must not inherit quiet.
     //
-    // Order: mark every known non-main execution BEFORE any interrupt can fire
-    // terminal handlers, then cancel runners, then Actor.cancel({wake:false}).
-    //
-    // Registry status is NOT a pre-filter: an idle registry row can still hold an
-    // ActorExecution. Actor.cancel checks the execution registry first.
-    const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
+    // Freeze execution identities before interrupting anything: later work must
+    // not be included, even when a captured execution's finalizer yields.
+    const captureCancel = Effect.fn("SessionPrompt.captureCancel")(function* (sessionID: SessionID) {
       yield* elog.info("cancel", { sessionID })
       // Invalidate any delayed uncommitted-hint follow-up still waiting to claim.
       cancelPendingHints(sessionID)
       // Invalidate remaining cascade items that have not yet acquired ActorExecution.
       cascadeEpochBySession.set(sessionID, (cascadeEpochBySession.get(sessionID) ?? 0) + 1)
-      const actors = yield* actorRegistry.listBySession(sessionID)
-      const nonMain = actors.filter((actor) => actor.actorID !== "main")
-      // Phase 1 — mark executions before interrupt (terminal handlers read this flag).
-      yield* Effect.forEach(
-        nonMain,
-        (actor) =>
-          Effect.gen(function* () {
-            const execution = yield* executions.current(sessionID, actor.actorID)
-            if (execution) execution.groupAbort = true
-          }).pipe(Effect.ignore),
-        { concurrency: "unbounded", discard: true },
-      )
-      // Phase 2 — interrupt runners.
-      yield* state.cancel(sessionID)
-      // Phase 3 — cascade Actor.cancel; wake:false for any registry-only terminal.
-      yield* Effect.forEach(
-        nonMain,
-        (actor) =>
-          Effect.gen(function* () {
-            const svc = spawnRef.current
-            if (svc) {
-              yield* svc.cancel(sessionID, actor.actorID, "graceful", { wake: false })
-              return
-            }
-            const execution = yield* executions.current(sessionID, actor.actorID)
-            if (execution) {
-              execution.groupAbort = true
-              yield* executions.requestCancel(execution)
-              yield* state.cancelActor(sessionID, actor.actorID)
-              yield* executions.interrupt(execution)
-              return
-            }
-            if (actor.status === "idle") return
-            yield* state.cancelActor(sessionID, actor.actorID)
+      const captured = yield* Effect.gen(function* () {
+        const cancelRequests = yield* requests.capture(sessionID)
+        const cancelRunners = yield* state.captureCancel(sessionID)
+        const ownedActors = yield* executions.list(sessionID)
+        for (const execution of ownedActors) {
+          execution.groupAbort = true
+          execution.cancelled = true
+        }
+        const actors = yield* actorRegistry.listBySession(sessionID)
+        return {
+          cancelRequests,
+          cancelRunners,
+          ownedActors,
+          registryOnly: actors.filter((actor) => actor.actorID !== "main" && actor.status !== "idle" &&
+            !ownedActors.some((execution) => execution.actorID === actor.actorID)),
+        }
+      }).pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true), Effect.uninterruptible)
+      return Effect.gen(function* () {
+        yield* Effect.all([
+          captured.cancelRequests,
+          captured.cancelRunners,
+          Effect.forEach(captured.ownedActors, (execution) => executions.interrupt(execution), {
+            concurrency: "unbounded", discard: true,
+          }),
+          Effect.forEach(captured.registryOnly, (actor) => Effect.gen(function* () {
+            if (yield* executions.current(sessionID, actor.actorID)) return
             const current = yield* actorRegistry.get(sessionID, actor.actorID)
-            if (!current || current.status === "idle") return
-            yield* actorRegistry.updateStatus(sessionID, actor.actorID, {
-              status: "idle",
-              lastOutcome: "cancelled",
-            })
-            // Registry-only path: no live fiber → no notifyTerminal. Materialize
-            // a cancelled notification into parent history so chat inline can
-            // show terminal state (wake still false — no LLM turn).
-            yield* notifyTerminal({
-              sessionID,
-              actorID: actor.actorID,
-              source: "pending",
-              status: "cancelled",
-              wake: false,
-            })
-          }).pipe(Effect.ignore),
-        { concurrency: "unbounded", discard: true },
-      )
-      // R14 terminal inline: quiet abort still persists cancelled notifications
-      // (wake:false skips auto-fork only). Drain parent main inbox NOW so those
-      // rows become synthetic <actor-notification> message parts on the parent
-      // session — desktop live/history both read that part for the terminal pill.
-      // drain does NOT start an LLM turn.
-      yield* inbox.drain(sessionID, "main").pipe(Effect.ignore)
+            if (!current || current.status === "idle" || current.time.updated !== actor.time.updated) return
+            yield* actorRegistry.updateStatus(sessionID, actor.actorID, { status: "idle", lastOutcome: "cancelled" })
+            if (actor.lastOutcome === "cancelled") return
+            yield* notifyTerminal({ sessionID, actorID: actor.actorID, source: "pending", status: "cancelled", wake: false })
+          }).pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true), Effect.uninterruptible), {
+            concurrency: "unbounded", discard: true,
+          }),
+        ], { concurrency: "unbounded", discard: true })
+        // Quiet abort persists terminal notifications without starting another turn.
+        yield* inbox.drain(sessionID, "main").pipe(Effect.ignore)
+      })
     })
+    const cancel = (sessionID: SessionID) => captureCancel(sessionID).pipe(Effect.flatten)
 
     // Shared rebuild-from-checkpoint step used by BOTH the automatic overflow
     // path in runLoop and the manual `/rebuild` command, so the two can never
@@ -1732,6 +1714,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       harness?: MessageV2.User["harness"]
     }) {
       using _ = log.time("resolveTools")
+      const requestExecution = yield* requests.snapshot(input.processor.message.parentID)
       // Share the step's gate with processor cleanup so cancellation reasons
       // survive an early stream stop, including a rejected permission request.
       const gate = input.processor.toolGate
@@ -1809,6 +1792,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       })
 
       const context = (args: any, options: ToolExecutionOptions): Tool.Context => ({
+        ...(requestExecution ? { requestExecution } : {}),
         sessionID: input.session.id,
         abort: options.abortSignal!,
         messageID: input.processor.message.id,
@@ -3455,6 +3439,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const eligibleTitle = input.source !== "hook" && input.source !== "spawn" && !input.provenance && session.titleSource === "fallback" && session.titleRevision === 0 && !session.parentID && (input.agentID ?? "main") === "main"
         const previous = eligibleTitle ? yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" }) : []
         const message = yield* createUserMessage(input)
+        yield* requests.user(input.sessionID, message.info.id, message.info.agentID ?? "main")
         yield* sessions.touch(input.sessionID)
         const permissions: Permission.Ruleset = []
         for (const [t, enabled] of Object.entries(input.tools ?? {})) {
@@ -3539,6 +3524,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return true
     }
 
+    const emptyRecoveryTarget = (msgs: readonly MessageV2.WithParts[], userMessageID: MessageID, assistantMessageID: MessageID) => {
+      const tail = msgs.at(-1)
+      return tail?.info.role === "assistant" && tail.info.id === assistantMessageID &&
+        tail.info.parentID === userMessageID &&
+        msgs.findLast((m) => m.info.role === "user")?.info.id === userMessageID &&
+        isRecoveryWorthyAssistant(tail.info) && isEmptyAssistantResidue(tail.info, tail.parts)
+    }
+
     /**
      * Delete empty-residue assistants under one parent user.
      * `parentMessageID` is required: cleanup is parent-scoped, never session-wide.
@@ -3602,7 +3595,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
         if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue
-        candidates.push({
+        if (isEmptyAssistantResidue(assistant, msg.parts) && !emptyRecoveryTarget(msgs, assistant.parentID, assistant.id)) continue
+        candidates.push(isEmptyAssistantResidue(assistant, msg.parts) ? {
+          kind: "parent-user",
+          userMessageID: assistant.parentID,
+          emptyAssistantMessageID: assistant.id,
+          created: assistant.time.created,
+        } : {
           kind: "assistant",
           assistantMessageID: assistant.id,
           parentMessageID: assistant.parentID,
@@ -4662,6 +4661,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
+          yield* requests.consume(sessionID, resolvedAgentID, msgs.filter((m) => m.info.role === "user").map((m) => m.info.id))
           step++
           // Per-step turn heartbeat: only writer of turn_count; advances last_turn_time/time_updated so the orchestrator can tell progressing children from stalled ones. Safe 0-row no-op when no registry row exists.
           yield* actorRegistry.updateTurn(sessionID, resolvedAgentID).pipe(Effect.ignore)
@@ -5030,6 +5030,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const { handle, outcome } = yield* Effect.acquireUseRelease(
             sessions.updateMessage(msg),
             () => Effect.gen(function* () {
+              yield* requests.consume(sessionID, resolvedAgentID, msgs.filter((m) => m.info.role === "user").map((m) => m.info.id), msg.id)
               const handle = yield* processor.create({
                 assistantMessage: msg,
                 sessionID,
@@ -6257,7 +6258,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
      */
     type ResumePlan =
       | { action: "tool-resume"; assistantMessageID: MessageID; parentMessageID: MessageID }
-      | { action: "user-resume"; parentMessageID: MessageID; strictTail?: boolean }
+      | { action: "user-resume"; parentMessageID: MessageID; emptyAssistantMessageID?: MessageID; strictTail?: boolean }
       | { action: "reject"; error: InstanceType<typeof NotFoundError> | Session.BusyError }
 
     const planResume = Effect.fn("SessionPrompt.planResume")(function* (input: {
@@ -6265,12 +6266,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       agentID: string
       assistantMessageID?: MessageID
       userMessageID?: MessageID
+      emptyAssistantMessageID?: MessageID
       /**
        * Cascade / concurrent actor resume: main may already be busy at the
        * session status layer. Only the per-agent Runner admission applies.
        */
       allowSessionBusy?: boolean
     }) {
+      if (ResumeTestHooks.beforePlan) yield* ResumeTestHooks.beforePlan()
       const runnerBusy = yield* state
         .assertNotBusy(input.sessionID, input.agentID)
         .pipe(Effect.exit, Effect.map((exit) => exit._tag === "Failure"))
@@ -6289,6 +6292,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // [D16f] Trailing-user resume: re-validate the user is still the slice tail, then re-run from it.
       if (input.userMessageID) {
         const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
+        if (input.emptyAssistantMessageID) {
+          if (!emptyRecoveryTarget(msgs, input.userMessageID, input.emptyAssistantMessageID)) {
+            return { action: "reject", error: new NotFoundError({ message: "No resumable empty assistant found" }) } satisfies ResumePlan
+          }
+          return { action: "user-resume", parentMessageID: input.userMessageID, emptyAssistantMessageID: input.emptyAssistantMessageID } satisfies ResumePlan
+        }
         const last = msgs.at(-1)
         if (last?.info.role !== "user" || last.info.id !== input.userMessageID) {
           const missing: ResumePlan = {
@@ -6334,7 +6343,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return tool
       }
 
-      const user: ResumePlan = { action: "user-resume", parentMessageID }
+      if (!emptyRecoveryTarget(targetMsgs, parentMessageID, target.info.id)) {
+        return { action: "reject", error: new NotFoundError({ message: "No resumable empty assistant found" }) } satisfies ResumePlan
+      }
+      const user: ResumePlan = { action: "user-resume", parentMessageID, emptyAssistantMessageID: target.info.id }
       return user
     })
 
@@ -6375,6 +6387,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const beforeAdmission = ResumeTestHooks.beforeAdmissionRecheck
               if (beforeAdmission) yield* beforeAdmission()
               const tailMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
+              if (plan.emptyAssistantMessageID && !emptyRecoveryTarget(tailMsgs, plan.parentMessageID, plan.emptyAssistantMessageID)) {
+                throw new NotFoundError({ message: "No resumable empty assistant found at admission" })
+              }
               const parentIdx = tailMsgs.findIndex(
                 (m) => m.info.role === "user" && m.info.id === plan.parentMessageID,
               )
@@ -6408,6 +6423,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* Deferred.fail(admission, err)
                 throw err
               }
+              yield* requests.user(input.sessionID, plan.parentMessageID, input.agentID)
               // Admission granted — tell the waiting HTTP/sync caller before runLoop.
               yield* Deferred.succeed(admission, void 0)
               // [C003] Test seam: after handshake, before any cleanup read.
@@ -6415,15 +6431,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               if (afterAdmission) yield* afterAdmission()
               // [C003] strict trailing-user must NOT pre-clean: deleting a later
               // empty assistant would manufacture a legal tail after admission.
-              // Empty-shell user-resume still clears residue under parent so
-              // lastAssistant is not a dirty shell blocking re-dispatch.
-              if (!strictTail) {
-                yield* cleanupEmptyResidueAssistants({
-                  sessionID: input.sessionID,
-                  agentID: input.agentID,
-                  parentMessageID: plan.parentMessageID,
-                  sessionBusy: false,
-                  preserveError: false,
+              // Empty-shell user-resume deletes only its revalidated target.
+              if (plan.emptyAssistantMessageID) {
+                const current = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
+                if (!emptyRecoveryTarget(current, plan.parentMessageID, plan.emptyAssistantMessageID)) {
+                  throw new NotFoundError({ message: "No resumable empty assistant found before deletion" })
+                }
+                yield* sessions.removeMessage({
+                  sessionID: input.sessionID, messageID: plan.emptyAssistantMessageID,
+                  guard: () => emptyRecoveryTarget(Array.from(MessageV2.stream(input.sessionID, { agentID: input.agentID })).reverse(), plan.parentMessageID, plan.emptyAssistantMessageID!),
                 })
               }
               // [C003] Force cleanup runs only after successful runLoop return so a later
@@ -6483,6 +6499,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 assistantMessageID: plan.assistantMessageID,
                 agentID: input.agentID,
               })
+              yield* requests.user(input.sessionID, plan.parentMessageID, input.agentID)
               yield* Deferred.succeed(admission, void 0)
               return yield* runLoop(
                 input.sessionID,
@@ -6529,10 +6546,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (input.mode === "ensure") {
         return yield* state.ensureExclusive(input.sessionID, input.agentID, resumeInterrupt, work)
       }
-      // [C001] Trailing-user resumeUser: wait for admission handshake, and on
-      // timeout interrupt THIS run only (never a replacement). Assistant resume /
-      // cascade stay fire-and-forget after start() (D16f-HTTP).
-      if (plan.action === "user-resume" && plan.strictTail === true) {
+      // User-resume waits for admission; timeout interrupts only its owned run.
+      // Useful-assistant resume remains fire-and-forget after start().
+      if (plan.action === "user-resume") {
         const owned = yield* state.startOwned(input.sessionID, input.agentID, resumeInterrupt, work)
         const handshake = yield* Deferred.await(admission).pipe(
           Effect.timeout("5 seconds"),
@@ -6568,8 +6584,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const candidate = input.userMessageID || input.assistantMessageID
         ? candidates.find((item) =>
             input.userMessageID
-              ? item.kind === "parent-user" && item.userMessageID === input.userMessageID
-              : item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+              ? item.kind === "parent-user" && item.userMessageID === input.userMessageID && item.emptyAssistantMessageID === input.emptyAssistantMessageID
+              : item.kind === "assistant" ? item.assistantMessageID === input.assistantMessageID
+                : item.emptyAssistantMessageID === input.assistantMessageID,
           )
         : candidates.at(-1)
       if (candidate === undefined) {
@@ -6585,7 +6602,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
       const target = candidate.kind === "assistant"
         ? { assistantMessageID: candidate.assistantMessageID }
-        : { userMessageID: candidate.userMessageID }
+        : { userMessageID: candidate.userMessageID, emptyAssistantMessageID: candidate.emptyAssistantMessageID }
       const agentID = input.agentID ?? "main"
       // Validate model override before abandon: getModel failure must not stamp the old message first.
       if (input.model) {
@@ -6596,6 +6613,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agentID,
         assistantMessageID: target.assistantMessageID,
         userMessageID: target.userMessageID,
+        emptyAssistantMessageID: target.emptyAssistantMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
       // [R004] Test seam: expose resolved plan so tests can assert the actual target.
@@ -6635,8 +6653,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const candidate = input.userMessageID || input.assistantMessageID
         ? candidates.find((item) =>
             input.userMessageID
-              ? item.kind === "parent-user" && item.userMessageID === input.userMessageID
-              : item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+              ? item.kind === "parent-user" && item.userMessageID === input.userMessageID && item.emptyAssistantMessageID === input.emptyAssistantMessageID
+              : item.kind === "assistant" ? item.assistantMessageID === input.assistantMessageID
+                : item.emptyAssistantMessageID === input.assistantMessageID,
           )
         : candidates.at(-1)
       if (candidate === undefined) {
@@ -6652,7 +6671,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
       const target = candidate.kind === "assistant"
         ? { assistantMessageID: candidate.assistantMessageID }
-        : { userMessageID: candidate.userMessageID }
+        : { userMessageID: candidate.userMessageID, emptyAssistantMessageID: candidate.emptyAssistantMessageID }
       const agentID = input.agentID ?? "main"
       if (input.model) {
         yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
@@ -6662,6 +6681,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agentID,
         assistantMessageID: target.assistantMessageID,
         userMessageID: target.userMessageID,
+        emptyAssistantMessageID: target.emptyAssistantMessageID,
       })
       if (plan.action === "reject") return yield* Effect.fail(plan.error)
       // [R004] Test seam: expose resolved plan so tests can assert the actual target.
@@ -6692,7 +6712,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const agentID = input.agentID ?? "main"
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID, allowBusy: true })
       const candidate = candidates.find(
-        (item) => item.kind === "assistant" && item.assistantMessageID === input.assistantMessageID,
+        (item) => item.kind === "assistant" ? item.assistantMessageID === input.assistantMessageID : item.emptyAssistantMessageID === input.assistantMessageID,
       )
       if (candidate === undefined) {
         return yield* Effect.fail(
@@ -6729,7 +6749,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // completed a new turn while we waited for this slot.
             const still = yield* recovery({ sessionID: input.sessionID, agentID, allowBusy: true })
             if (
-              !still.some((c) => c.kind === "assistant" && c.assistantMessageID === input.assistantMessageID)
+              !still.some((c) => c.kind === "assistant" ? c.assistantMessageID === input.assistantMessageID : c.emptyAssistantMessageID === input.assistantMessageID)
             ) {
               return yield* Effect.fail(
                 new NotFoundError({
@@ -6871,14 +6891,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           continue
         }
         const latest = candidates[candidates.length - 1]
-        if (latest.kind !== "assistant") {
+        if (latest.kind !== "assistant" && !latest.emptyAssistantMessageID) {
           outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "no-recovery-candidate" })
           continue
         }
         const admitted = yield* Deferred.make<void>()
         const fiber = yield* resumeActorBackground({
           sessionID,
-          assistantMessageID: latest.assistantMessageID,
+          assistantMessageID: latest.kind === "assistant" ? latest.assistantMessageID : latest.emptyAssistantMessageID,
           agentID: actor.actorID,
           cascadeEpoch: epoch,
           onAdmitted: () => {
@@ -6933,6 +6953,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     const impl = Service.of({
       cancel,
+      captureCancel,
       prompt,
       recovery,
       resume,
@@ -6963,12 +6984,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     )
     return impl
   }),
-).pipe(Layer.provide(ActorExecution.layer))
+).pipe(Layer.provide([ActorExecution.layer, SessionRequests.defaultLayer]))
 
 /** App composition variant with MCP supplied by the process-wide layer. */
 export const appLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(SessionRunState.defaultLayer),
+    Layer.provide(SessionRequests.defaultLayer),
     Layer.provide(SessionStatus.defaultLayer),
     Layer.provide(SessionPrune.defaultLayer),
     Layer.provide(SessionCheckpoint.defaultLayer),

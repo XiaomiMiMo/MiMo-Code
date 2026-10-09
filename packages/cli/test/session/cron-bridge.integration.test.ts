@@ -37,6 +37,7 @@ const makeCaptureLayer = (captured: { value: CapturedPrompt[] }) =>
     SessionPrompt.Service,
     SessionPrompt.Service.of({
       cancel: () => Effect.void,
+      captureCancel: () => Effect.succeed(Effect.void),
       prompt: (input: PromptInput) =>
         Effect.sync(() => {
           captured.value.push(input)
