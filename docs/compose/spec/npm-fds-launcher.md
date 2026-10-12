@@ -104,17 +104,21 @@ Goal (user constraint): keep install/CLI compatibility, have `@mimo-ai/cli` pull
    - target name: `mimocode-${os}-${arch}[-baseline][-musl]`
 3. **Version pin.** The launcher downloads the binary **of its own package version** (`@mimo-ai/cli@X.Y.Z` → `releases/vX.Y.Z/<target>.{tar.gz|zip}`), not `releases/latest`. "确切的一份" = one artifact, one version, one target. `releases/latest` remains for the curl installer only.
 4. **Fetch location (FDS).** `MIMO_FDS_BASE` (default `https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode`) + `/releases/v${version}/${archive}`. Same base override the curl installer already honors.
-5. **On-disk location (designated).** One directory shared across npm installs, **outside** the wipeable XDG cache tree:
+5. **On-disk location (designated) — package-local is the default** so `npm uninstall` clears the binary without lifecycle hooks.
 
-   | Mode | Path |
-   | --- | --- |
-   | `MIMOCODE_HOME` set | `$MIMOCODE_HOME/vendor/bin/v${version}/${target}/mimo[.exe]` |
-   | XDG default | `${XDG_DATA_HOME\|~/.local/share}/mimocode/vendor/bin/v${version}/${target}/mimo[.exe]` |
+   | Mode | Path | Cleared on `npm/pnpm/bun uninstall`? |
+   | --- | --- | --- |
+   | **Default (recommended)** | `<package-root>/vendor/v${version}/${target}/mimo[.exe]` (i.e. inside `node_modules/@mimo-ai/cli/`) | **Yes** — the package manager deletes the package directory |
+   | Opt-in shared (`MIMOCODE_VENDOR_DIR`) | that directory, versioned | Only via uninstall script / `mimo uninstall` |
 
-   Reasons:
-   - `Global.Path.cache` is **wiped when `CACHE_VERSION` changes** (`packages/cli/src/global/index.ts`); `Path.bin = cache/bin` must not own the launcher binary.
-   - Path is versioned so N npm installs / rollbacks can coexist; a single symlink/copy is not rewritten in place while running.
-   - `MIMOCODE_HOME` isolation keeps tests and multi-profile machines from sharing one binary.
+   Why package-local first:
+   - `npm uninstall` / `pnpm remove` / `bun remove` and plain `rm -rf node_modules` all remove the downloaded binary because it lives **inside** the package tree. No `postuninstall` required, immune to `--ignore-scripts`.
+   - Still satisfies "确切的一份": each install location has exactly one target binary (global = 1, each local `node_modules` = 1) — same disk shape as today's single useful optional package, without the 2–4× surplus.
+   - `MIMOCODE_HOME` isolation is unchanged (it only matters if shared mode is on).
+   - Upgrade `npm i -g @mimo-ai/cli@X.Y.Z` replaces the package directory; the old binary goes with it; the new version re-fetches `vX.Y.Z` (or prefetches in postinstall).
+   - Must **not** use `Global.Path.cache` / `cache/bin`: wiped on `CACHE_VERSION` bump and not owned by the package.
+
+   Shared cache is optional for multi-install dedup; if enabled, clear it in `preuninstall`/`postuninstall` **and** from `mimo uninstall`, accepting that `--ignore-scripts` / `rm -rf` can orphan files (see S5).
 6. **Fetch protocol.** First launch (or postinstall best-effort) downloads one archive to `*.partial`, verifies length and optionally SHA-256 (publish side writes `releases/vX.Y.Z/<target>.sha256`), extracts the single `mimo` executable, `chmod 755`, then `rename` into place. Concurrent launches take a lock (same `Flock` idea as elsewhere) and wait on the winner.
 7. **Exec.** `child_process.spawn(bin, process.argv.slice(2), { stdio: "inherit" })`, forward signals where the platform allows, exit with the child's code. Do not rewrite args, cwd, or env except a documented user-agent if needed. Priority order preserved:
    1. `MIMOCODE_BIN_PATH` (escape hatch; no download)
@@ -160,7 +164,9 @@ Recommendation: **A**, with B as a cheap interim patch if a launcher lands later
 | **FDS reachability outside CN / corporate proxy** | high | `MIMO_FDS_BASE` mirror; keep GitHub Release archives as secondary fallback (same filenames); document env |
 | **Trust shift** (npm integrity/signatures → HTTPS FDS) | high | publish SHA-256 next to each archive; verify before exec; consider detached signature later; curl channel has the same gap today |
 | **Supply chain / MITM** | high | TLS + checksum; never `curl \| bash` the binary from the launcher; pin version, do not follow `latest` |
-| **Cache wipe footgun** | high if wrong path | do **not** store under `Global.Path.cache` / `cache/bin`; use `data/vendor` or `MIMOCODE_HOME/vendor` |
+| **Cache wipe footgun** | high if wrong path | package-local `vendor/` (default) or `data/vendor`; never `Global.Path.cache` |
+| **Uninstall orphans** | low (default) / med (shared) | default package-local: nothing to orphan; shared mode: `preuninstall`/`postuninstall` + `mimo uninstall` best-effort |
+| **`--ignore-scripts` / `rm -rf node_modules`** | low (default) | package-local binary dies with the package dir; shared mode may leave files |
 | **Windows AV / SmartScreen** on freshly extracted PE | medium | extract with predictable name `mimo.exe`, mark downloaded, keep existing postinstall note about extensionless PE; same as curl channel |
 | **Concurrent `mimo` first-run** (CI matrix, parallel npm) | medium | file lock + atomic rename; single extractor |
 | **Version skew** launcher vs binary | medium | pin to package version; refuse to run if vendor binary `--version` mismatches (cheap self-check) |
@@ -194,7 +200,7 @@ Recommendation: **A**, with B as a cheap interim patch if a launcher lands later
 ## Tasks
 
 - [ ] T1: Land `libc` on platform packages and/or document the 2× baseline residual — acceptance: published platform package.json sets `libc: ["glibc"]` or `["musl"]` where applicable, or the doc explicitly defers this; Linux x64 install downloads ≤2 optional packages with a modern npm (covers: S2)
-- [ ] T2: Implement version-pinned FDS launcher in `@mimo-ai/cli` (`bin/mimo` + tiny download helper) — acceptance: `npm i -g` of the packed wrapper with zero optionalDependencies runs `mimo --version` by fetching `releases/vX.Y.Z/<target>` into the S3 vendor path, honors `MIMOCODE_BIN_PATH` first, forwards argv, and is offline-capable after first fetch (covers: S3)
+- [ ] T2: Implement version-pinned FDS launcher in `@mimo-ai/cli` (`bin/mimo` + tiny download helper) — acceptance: `npm i -g` of the packed wrapper with zero optionalDependencies runs `mimo --version` by fetching `releases/vX.Y.Z/<target>` into package-local `vendor/`, honors `MIMOCODE_BIN_PATH` first, forwards argv, is offline-capable after first fetch, and `npm uninstall -g @mimo-ai/cli` removes the binary with the package directory (covers: S3)
 - [ ] T3: Publish per-archive SHA-256 and verify in the launcher — acceptance: release stage uploads `<target>.sha256` beside each archive; launcher refuses a mismatched payload (covers: S3, S5)
 - [ ] T4: Adjust release/npm stages to stop treating 12 platform packages as optional deps of `@mimo-ai/cli` — acceptance: `script/release.ts` packs a wrapper without `optionalDependencies`, still publishes platform packages for direct install; trust list unchanged or updated explicitly (covers: S3)
 - [ ] T5: Compatibility tests — acceptance: wrappers tests cover argv/exit-code forwarding, `MIMOCODE_BIN_PATH`, vendor cache hit without network, first-run fetch with a stub server, and `installation.method` still classifies the child binary (covers: S3, S5)
