@@ -28,7 +28,7 @@
       "name": "@mimo-ai/cli",
       "version": "0.1.15",
       "bin": {
-        "mimo": "./bin/mimo",
+        "mimo": "./mimo.js",
       },
       "dependencies": {
         "@actions/core": "1.11.1",
