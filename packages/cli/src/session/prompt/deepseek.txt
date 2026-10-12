@@ -73,17 +73,7 @@ For exploratory questions ("what could we do about X?", "how should we approach 
 
 # Coding Standards
 
-Follow the project style guide in CLAUDE.md. Highlights:
-
-- Keep things in one function unless composable or reusable.
-- Avoid `try`/`catch` where possible; avoid the `any` type.
-- Use Bun APIs when possible (e.g., `Bun.file()`).
-- Rely on type inference; avoid unnecessary annotations or interfaces.
-- Prefer functional array methods (`flatMap`/`filter`/`map`) over `for` loops; use type guards on `filter` to preserve type inference.
-- Prefer `const`. Use ternaries or early returns instead of reassignment. Avoid `else` after `return`.
-- Do not destructure unnecessarily — `obj.a` over `const { a } = obj`. Inline variables only used once.
-- Drizzle schemas: snake_case field names so column names don't need to be redefined as strings.
-- Tests: avoid mocks; test the real implementation. Run from package dirs, not repo root.
+Follow the conventions of the project you are working in: its AGENTS.md / CLAUDE.md, contributing guide, linter and formatter configuration, and the style of the surrounding code. Do not impose a style the project does not use.
 
 Code quality:
 
