@@ -127,6 +127,31 @@ else
       fi
     fi
 
+    # mimocode's binary is compiled with bun, which links against glibc >= 2.27.
+    # Older localized/enterprise distros (e.g. Kylin/UOS built on an Ubuntu
+    # 16.04-era base) can ship an older glibc, where the binary aborts at startup
+    # with a cryptic "version 'GLIBC_2.xx' not found". Detect that here and fail
+    # with an actionable message instead. Bypass with MIMOCODE_SKIP_GLIBC_CHECK=1.
+    if [ "$os" = "linux" ] && [ "$is_musl" = "false" ] && [ "${MIMOCODE_SKIP_GLIBC_CHECK:-}" != "1" ]; then
+      glibc_ver=""
+      if command -v ldd >/dev/null 2>&1; then
+        glibc_ver=$(ldd --version 2>&1 | head -n1 | grep -oE '[0-9]+\.[0-9]+' | head -n1)
+      fi
+      if [ -n "$glibc_ver" ]; then
+        glibc_major=${glibc_ver%%.*}
+        glibc_minor=${glibc_ver#*.}
+        if [ "$glibc_major" -lt 2 ] || { [ "$glibc_major" -eq 2 ] && [ "$glibc_minor" -lt 27 ]; }; then
+          echo -e "${RED}Error: detected glibc ${glibc_ver}, but mimocode requires glibc >= 2.27.${NC}"
+          echo -e "${MUTED}The prebuilt binary cannot run on this system's C library.${NC}"
+          echo -e "${MUTED}Options:${NC}"
+          echo -e "${MUTED}  - Run on a newer distro (glibc >= 2.27, e.g. Ubuntu 18.04+ or a current Kylin/UOS release).${NC}"
+          echo -e "${MUTED}  - Use a container or toolbox that provides a newer glibc.${NC}"
+          echo -e "${MUTED}  - Override at your own risk: MIMOCODE_SKIP_GLIBC_CHECK=1 (the binary will most likely still fail to start).${NC}"
+          exit 1
+        fi
+      fi
+    fi
+
     needs_baseline=false
     if [ "$arch" = "x64" ]; then
       if [ "$os" = "linux" ]; then
