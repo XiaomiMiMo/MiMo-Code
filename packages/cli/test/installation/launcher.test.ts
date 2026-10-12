@@ -13,6 +13,7 @@ import {
   vendorBinaryPath,
   DEFAULT_FDS_BASE,
   ensureBinary,
+  stageWindowsRunCopy,
 } from "../../launcher.js"
 
 describe("launcher targets", () => {
@@ -76,6 +77,16 @@ describe("launcher targets", () => {
     await using tmp = await tmpdir()
     const dest = vendorBinaryPath(tmp.path, "mimocode-windows-x64")
     expect(dest).toBe(path.join(tmp.path, "vendor", "mimo.exe"))
+  })
+
+  test("stageWindowsRunCopy is identity off-Windows (vendor stays the real file)", async () => {
+    if (process.platform === "win32") return
+    await using tmp = await tmpdir()
+    const source = path.join(tmp.path, "vendor", "mimo")
+    fs.mkdirSync(path.dirname(source), { recursive: true })
+    fs.writeFileSync(source, "bin")
+    expect(stageWindowsRunCopy(source, "9.9.9")).toBe(source)
+    expect(fs.readFileSync(source, "utf8")).toBe("bin")
   })
 })
 

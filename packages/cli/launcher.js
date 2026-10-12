@@ -294,3 +294,25 @@ export function runBinary(targetPath, args = process.argv.slice(2)) {
   const code = typeof result.status === "number" ? result.status : 0
   process.exit(code)
 }
+
+/**
+ * Windows locks a running PE. Executing vendor/mimo.exe in place would block
+ * `npm uninstall`/`upgrade` from deleting the package directory. Copy the
+ * binary out to %TEMP% once per version and run that; vendor/ stays deletable.
+ */
+export function stageWindowsRunCopy(sourcePath, version) {
+  if (process.platform !== "win32") return sourcePath
+  const dir = path.join(os.tmpdir(), "mimocode-bin", version || "dev")
+  const runPath = path.join(dir, path.basename(sourcePath))
+  try {
+    if (!fs.existsSync(runPath) || fs.statSync(runPath).size !== fs.statSync(sourcePath).size) {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.copyFileSync(sourcePath, runPath)
+      fs.chmodSync(runPath, 0o755)
+    }
+    return runPath
+  } catch {
+    // Fall back to running the package file (may block uninstall while running).
+    return sourcePath
+  }
+}

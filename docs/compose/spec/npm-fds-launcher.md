@@ -63,6 +63,8 @@ Detection (one target, all 12 published names):
 
 Binary lives inside the package directory → `npm uninstall` / `pnpm remove` / `bun remove` / `rm -rf node_modules` all remove it. No uninstall lifecycle hook.
 
+On Windows a running PE is locked: `bin/mimo` copies `vendor/mimo.exe` to `%TEMP%/mimocode-bin/<version>/` once and executes that copy, so `vendor/` itself stays deletable while mimo runs (upgrade/uninstall from a live TUI). The temp copy is a run artifact, not the install.
+
 ## [S3] Compatibility
 
 | Surface | Behavior |

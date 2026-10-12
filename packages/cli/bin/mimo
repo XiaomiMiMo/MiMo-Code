@@ -8,7 +8,9 @@ import {
   detectTarget,
   ensureBinary,
   packageRoot,
+  readVersion,
   runBinary,
+  stageWindowsRunCopy,
   vendorBinaryPath,
 } from "../launcher.js"
 
@@ -28,12 +30,13 @@ async function main() {
   const dest = vendorBinaryPath(root, target)
 
   if (fs.existsSync(dest)) {
-    runBinary(dest)
+    const version = readVersion(root)
+    runBinary(stageWindowsRunCopy(dest, version))
   }
 
   try {
     const binary = await ensureBinary({ root, target })
-    runBinary(binary)
+    runBinary(stageWindowsRunCopy(binary, readVersion(root)))
   } catch (error) {
     const detail = error && error.message ? error.message : String(error)
     console.error(`Failed to install MiMoCode binary (${target}) from FDS: ${detail}`)
