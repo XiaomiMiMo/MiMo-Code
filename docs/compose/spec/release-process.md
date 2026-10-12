@@ -1,14 +1,41 @@
 ---
 feature: release-process
-status: in-progress
+status: delivered
 updated: 2026-10-12
 branch: codex/release-process
-commits:
+commits: f98dcd1c..a33d7a62
 ---
 
 # 发版流程与分发边界
 
 ## Report
+
+**What was built** — 发布 workflow 已支持手动输入正式版 tag；自动 tag 触发段保持注释。校验固定提交和人工准备的版本后，CI 运行既有检查，编译已提交源码，依次发布 GitHub Release（自动 PR 列表）、FDS 和 npm。当前仍发布 SDK、plugin、12 个平台包和 CLI wrapper，共 15 包；S5 明确了未来两包迁移的步骤。本次没有启动 CI、创建 tag 或执行云端发布。
+
+Config/TUI 不再自动安装配置目录依赖，内置功能不等待同版本 plugin npm 包。显式 npm 插件继续支持。新增打包式插件开发项目、双语 README details 和迁移指引；调试命令可在普通/Codex 工具模式执行示例，并拒绝无效参数。SDK 人工生成步骤保持原样，Desktop 未修改，也没有新增 channel。
+
+**Verification** — 以下命令及检查均已读到完成结果：
+
+- 根目录 `bun ci`：PASS，按现有锁文件安装，锁文件未改。
+- 根目录 `bun typecheck`：PASS，全部 workspace 和发布脚本类型检查通过。
+- `bun test script/release/release.test.ts`：PASS，19 tests、53 assertions；使用本地 Git/CLI fixtures，覆盖正式 tag、版本准备、完整 15 包清单、GitHub 命令、发布顺序和失败停止，没有真实发布。
+- `packages/cli` 中 `bun test test/cli/debug-agent.test.ts test/config/plugin-dependencies.test.ts test/plugin/bundled.test.ts --timeout 30000`：PASS，9 tests、40 assertions。
+- `packages/cli` 中 `bun test test/config/config.test.ts test/config/tui.test.ts test/config/plugin-dependencies.test.ts test/plugin/bundled.test.ts test/plugin/loader-shared.test.ts test/cli/debug-agent.test.ts test/cli/tui/plugin-*.test.ts --timeout 30000`：PASS，171 tests、4 平台相关 skip。随后新增的调试参数校验由上一条重新验证，其余运行时代码未再改动。
+- `packages/cli` 中独立运行 `bun test test/provider/refresh.test.ts --timeout 30000`：PASS，6 tests、28 assertions。
+- 示例项目 `bun run typecheck && bun run build && bun pm pack --ignore-scripts --dry-run`：PASS，包内为 package.json、README 和已包含运行依赖的 dist/server.js。SDK/plugin 的真实 compile/pack 检查也通过，未运行 SDK codegen。
+- 主机 `bun packages/cli/script/build.ts --single --skip-install --archive`：PASS，使用本地模型 fixture、测试身份 `0.0.0-unpublished`，产出 macOS arm64 二进制及压缩包。实际二进制在隔离目录加载解压后的示例包，`debug agent build --tool greet --params '{"name":"Example"}'` 返回 `Hello, Example!`，没有产生 node_modules；最终参数校验另由上述 CLI 子进程测试覆盖。
+- actionlint 1.7.11：PASS，所有 workflow，以及仅在校验输入中取消 tag 注释的版本。Prettier、相对文档链接、spec 引用及 `git diff --check`：PASS。
+- 对全部变更 TS/JS 文件运行显式绝对路径的 `oxlint --no-ignore --disable-nested-config -c`：PASS，108 warnings、0 errors。PRE-EXISTING `WORKTREE-LINT`：普通 `bun lint` 会忽略 `.worktrees` 内的路径；显式配置和绝对路径避开该环境问题。
+- 独立审查：`f98dcd1c..a33d7a62` 通过，spec、正确性和代码库一致性均无剩余阻塞项。
+
+未运行完整 12 平台构建或真实 GitHub/FDS/npm 发布；这部分按用户要求留到维护者决定启动 CI 时执行。
+
+**Journey log** —
+
+1. SDK 人工生成本来就是现行流程；历史内部文档只用于理解环境约定，脚本以主仓为准。
+2. 自动安装源于为零散插件源码准备依赖，宿主所需能力已内置，因此选择删除 bootstrap 并提供打包式开发路径。
+3. 实际示例验证发现 debug 命令未执行 Effect、隐藏自定义工具；独立审查又补出了参数校验边界，均已有回归测试。
+4. 按低频发布场景收敛为正常顺序和明确报错，部分发布由维护者人工处置，不引入通用远端恢复协议。
 
 ## [S1] Problem
 
@@ -232,12 +259,12 @@ CI 本次验收包括 workflow 语法、触发/权限/依赖关系、tag 与本�
 
 ## Tasks
 
-- [ ] T1: 形成 PR → tag → CI 流程 — acceptance: 主仓为脚本依据，SDK 人工流程不变，写清自动 notes、发布顺序、凭据和人工失败处置 (covers: S2,S4)
-- [ ] T2: 明确 npm CLI 弃用 — acceptance: 约 v0.2.0 占位包、迁移前置条件与 SDK/plugin 保留范围可审查 (covers: S5)
-- [ ] T3: 分析 npm JS 调用及内置功能边界 — acceptance: 说明 Arborist 调用原因、已内置能力、去除 bootstrap 的范围，以及 npm 尚未发布时的运行验收 (covers: S6,S8)
-- [ ] T4: 核查 Desktop 反馈 — acceptance: 提供下游真实构建/调用证据，未发现自动触发则不新增 channel、不设修复任务 (covers: S7)
-- [ ] T5: 校验并独立审查交付 — acceptance: 相关测试、类型检查、文档和差异检查通过，独立审查覆盖事实、行为和约定，Report 记录证据 (covers: S2; depends: T1,T2,T3,T4,T6,T7,T8,T9)
-- [ ] T6: 删除 Config/TUI 自动安装及等待链 — acceptance: 无需 Npm 安装服务即可加载两类配置，不生成或恢复 SDK 依赖，删除死版本选择器，保留显式 npm 加载 (covers: S6,S8; depends: T3)
-- [ ] T7: 添加回归验证和可运行插件开发项目 — acceptance: 自包含插件可加载，现有清单保留，缺依赖提示正确；中英文 README details 可发现开发/构建/部署说明；普通及 Codex 工具模式均能通过 debug 命令实际执行示例 (covers: S6,S8; depends: T3)
-- [ ] T8: 实现分阶段发布脚本 — acceptance: build/github/fds/npm 消费同一份本地产物清单，build 不改版本或生成 SDK，GitHub 自动生成描述，FDS 后发布旧范围 15 个 npm 包，失败明确停止，单测不调用真实发布 API (covers: S4,S5,S8; depends: T1)
-- [ ] T9: 实现发布 workflow 与 secret 接口 — acceptance: 手动输入已有正式 tag；自动 tag 段保持注释；校验/测试固定 tag SHA；发布前检查三个 secret，GitHub/FDS/npm 顺序执行且共用发布互斥；静态校验通过 (covers: S4,S8; depends: T1,T8)
+- [x] T1: 形成 PR → tag → CI 流程 — acceptance: 主仓为脚本依据，SDK 人工流程不变，写清自动 notes、发布顺序、凭据和人工失败处置 (covers: S2,S4)
+- [x] T2: 明确 npm CLI 弃用 — acceptance: 约 v0.2.0 占位包、迁移前置条件与 SDK/plugin 保留范围可审查 (covers: S5)
+- [x] T3: 分析 npm JS 调用及内置功能边界 — acceptance: 说明 Arborist 调用原因、已内置能力、去除 bootstrap 的范围，以及 npm 尚未发布时的运行验收 (covers: S6,S8)
+- [x] T4: 核查 Desktop 反馈 — acceptance: 提供下游真实构建/调用证据，未发现自动触发则不新增 channel、不设修复任务 (covers: S7)
+- [x] T5: 校验并独立审查交付 — acceptance: 相关测试、类型检查、文档和差异检查通过，独立审查覆盖事实、行为和约定，Report 记录证据 (covers: S2; depends: T1,T2,T3,T4,T6,T7,T8,T9)
+- [x] T6: 删除 Config/TUI 自动安装及等待链 — acceptance: 无需 Npm 安装服务即可加载两类配置，不生成或恢复 SDK 依赖，删除死版本选择器，保留显式 npm 加载 (covers: S6,S8; depends: T3)
+- [x] T7: 添加回归验证和可运行插件开发项目 — acceptance: 自包含插件可加载，现有清单保留，缺依赖提示正确；中英文 README details 可发现开发/构建/部署说明；普通及 Codex 工具模式均能通过 debug 命令实际执行示例 (covers: S6,S8; depends: T3)
+- [x] T8: 实现分阶段发布脚本 — acceptance: build/github/fds/npm 消费同一份本地产物清单，build 不改版本或生成 SDK，GitHub 自动生成描述，FDS 后发布旧范围 15 个 npm 包，失败明确停止，单测不调用真实发布 API (covers: S4,S5,S8; depends: T1)
+- [x] T9: 实现发布 workflow 与 secret 接口 — acceptance: 手动输入已有正式 tag；自动 tag 段保持注释；校验/测试固定 tag SHA；发布前检查三个 secret，GitHub/FDS/npm 顺序执行且共用发布互斥；静态校验通过 (covers: S4,S8; depends: T1,T8)
