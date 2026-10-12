@@ -4,7 +4,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 
-const SCRIPT_PATH = path.join(import.meta.dirname, "../../script/postinstall.mjs")
+const SCRIPT_PATH = path.join(import.meta.dirname, "../../postinstall.mjs")
 const LAUNCHER_PATH = path.join(import.meta.dirname, "../../launcher.js")
 
 function stagePackage(dir: string) {

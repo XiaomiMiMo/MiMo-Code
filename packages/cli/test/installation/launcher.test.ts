@@ -186,4 +186,38 @@ describe("ensureBinary", () => {
       }
     }
   })
+
+  test("fails closed when the checksum endpoint errors (not 404)", async () => {
+    await using tmp = await tmpdir()
+    const root = tmp.path
+    const target = "mimocode-linux-x64"
+    const work = path.join(root, "build")
+    fs.mkdirSync(work, { recursive: true })
+    fs.writeFileSync(path.join(work, "mimo"), "binary-bytes")
+    const archivePath = path.join(root, "a.tar.gz")
+    Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, "mimo"])
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url)
+        if (url.pathname.endsWith(".sha256")) return new Response("oops", { status: 500 })
+        return new Response(Bun.file(archivePath))
+      },
+    })
+    try {
+      await expect(
+        ensureBinary({
+          root,
+          target,
+          version: "9.9.9",
+          dest: path.join(root, "vendor", "mimo"),
+          url: `http://127.0.0.1:${server.port}/releases/v9.9.9/${target}.tar.gz`,
+        }),
+      ).rejects.toThrow(/Checksum fetch failed/)
+      expect(fs.existsSync(path.join(root, "vendor", "mimo"))).toBe(false)
+    } finally {
+      server.stop()
+    }
+  })
 })

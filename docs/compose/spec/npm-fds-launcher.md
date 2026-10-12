@@ -14,7 +14,7 @@ commits: 8e1df4ab..f78f35fb
 
 Upgrade is package replace, not tree migration: no leftover-`node_modules` fallback. If the first run cannot reach FDS, it says so and points at curl/irm.
 
-**Verification** — `bun test ./test/installation/launcher.test.ts ./test/installation/launcher-bin.test.ts ./test/installation/postinstall.test.ts` in `packages/cli` — PASS, 27 tests (12-target matrix, URL pin + `MIMO_FDS_BASE`, vendor hit offline, FDS fetch via stub, optional sha256 mismatch reject, argv/exit codes, postinstall best-effort, FDS-down error + curl/irm hint).
+**Verification** — `bun test ./test/installation/launcher.test.ts ./test/installation/launcher-bin.test.ts ./test/installation/postinstall.test.ts` in `packages/cli` — PASS, 28 tests (12-target matrix, URL pin + `MIMO_FDS_BASE`, vendor hit offline, FDS fetch via stub, sha256 match/mismatch/fail-closed, argv/exit codes, postinstall best-effort, FDS-down error + curl/irm hint). Independent review of `8e1df4ab..5707931b` met T2/T4/T5/T6 acceptance; criticals (download timeout, sha256 fail-open, Windows rename race, postinstall import layout) fixed in follow-up commits.
 
 **Journey log**
 
@@ -101,7 +101,7 @@ Not done here: release-stage upload of `*.sha256`, CONTRIBUTING deep-dive, `inst
 ## Tasks
 
 - [ ] T1: Land `libc` on platform packages — **not done** (launcher supersedes; optionalDependencies removed from the wrapper)
-- [x] T2: Version-pinned FDS launcher in `@mimo-ai/cli` (`bin/mimo` + `launcher.cjs`) — `bin` is `mimo`; package-local `vendor/`; `MIMOCODE_BIN_PATH` first; FDS failure exits 1 with curl/irm hint (covers: S2)
+- [x] T2: Version-pinned FDS launcher in `@mimo-ai/cli` (`bin/mimo` + `launcher.js`) — `bin` is `mimo`; package-local `vendor/`; `MIMOCODE_BIN_PATH` first; FDS failure exits 1 with curl/irm hint (covers: S2)
 - [ ] T3: Publish per-archive SHA-256 — launcher verifies when `<url>.sha256` exists; **release upload of checksums not added**
 - [x] T4: `script/release.ts` packs the wrapper without `optionalDependencies`; platform packages still published (covers: S2)
 - [x] T5: Tests for argv/exit codes, `MIMOCODE_BIN_PATH`, vendor hit, FDS fetch, sha256 mismatch, postinstall best-effort, FDS-down hint (covers: S2, S5)

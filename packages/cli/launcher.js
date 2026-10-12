@@ -181,7 +181,9 @@ function exec(file, args, options = {}) {
   })
 }
 
-async function downloadTo(url, dest, { timeoutMs = 120_000 } = {}) {
+async function downloadTo(url, dest, { timeoutMs = 15 * 60_000 } = {}) {
+  // Large platform archives (~100MB+); a short whole-body timeout aborts slow
+  // but healthy first-run downloads.
   const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) })
   if (!res.ok || !res.body) {
     throw new Error(`FDS download failed ${res.status} for ${url}`)
@@ -192,16 +194,22 @@ async function downloadTo(url, dest, { timeoutMs = 120_000 } = {}) {
 async function verifySha256(filePath, url) {
   const checksumUrl = `${url}.sha256`
   let expected
+  let res
   try {
-    const res = await fetch(checksumUrl, { signal: AbortSignal.timeout(30_000) })
-    if (res.status === 404) return false
-    if (!res.ok) return false
-    const text = (await res.text()).trim().split(/\s+/)[0]
-    if (!/^[a-f0-9]{64}$/i.test(text)) return false
-    expected = text.toLowerCase()
-  } catch {
-    return false
+    res = await fetch(checksumUrl, { signal: AbortSignal.timeout(60_000) })
+  } catch (error) {
+    throw new Error(`Failed to fetch checksum ${checksumUrl}: ${error && error.message ? error.message : error}`)
   }
+  // 404 means checksums are not published for this artifact — skip check.
+  if (res.status === 404) return false
+  if (!res.ok) {
+    throw new Error(`Checksum fetch failed ${res.status} for ${checksumUrl}`)
+  }
+  const text = (await res.text()).trim().split(/\s+/)[0]
+  if (!/^[a-f0-9]{64}$/i.test(text)) {
+    throw new Error(`Invalid checksum body for ${checksumUrl}`)
+  }
+  expected = text.toLowerCase()
 
   const hash = createHash("sha256")
   await pipeline(fs.createReadStream(filePath), hash)
@@ -249,7 +257,8 @@ export async function ensureBinary(options = {}) {
   if (fs.existsSync(dest)) return dest
 
   const archiveName = archiveNameFor(target)
-  const partial = `${dest}.partial`
+  // Unique partial per attempt so concurrent first-runs do not clobber each other.
+  const partial = `${dest}.partial.${process.pid}.${Math.random().toString(36).slice(2, 8)}`
   const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "mimocode-fetch-"))
   const archivePath = path.join(tmpDir, archiveName)
   try {
@@ -258,7 +267,16 @@ export async function ensureBinary(options = {}) {
     await verifySha256(archivePath, url)
     await extractBinary(archivePath, target, partial)
     await fs.promises.mkdir(path.dirname(dest), { recursive: true })
-    await fs.promises.rename(partial, dest)
+    try {
+      await fs.promises.rename(partial, dest)
+    } catch (error) {
+      // Windows rename fails if dest exists — another first-run won the race.
+      if (fs.existsSync(dest)) {
+        await fs.promises.rm(partial, { force: true })
+        return dest
+      }
+      throw error
+    }
     log(`Installed ${dest}`)
     return dest
   } finally {

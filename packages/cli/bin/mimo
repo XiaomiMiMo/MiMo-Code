@@ -21,7 +21,6 @@ async function main() {
   const envPath = process.env.MIMOCODE_BIN_PATH
   if (envPath) {
     runBinary(envPath)
-    return
   }
 
   const root = packageRoot(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."))
@@ -30,7 +29,6 @@ async function main() {
 
   if (fs.existsSync(dest)) {
     runBinary(dest)
-    return
   }
 
   try {
