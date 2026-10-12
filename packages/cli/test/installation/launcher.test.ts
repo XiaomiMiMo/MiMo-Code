@@ -173,7 +173,7 @@ describe("ensureBinary", () => {
         fetch(req) {
           const url = new URL(req.url)
           if (url.pathname.endsWith(".sha256")) return new Response(checksum)
-          return new Response(bytes)
+          return new Response(new Uint8Array(bytes))
         },
       })
       try {
