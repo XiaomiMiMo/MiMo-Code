@@ -116,9 +116,9 @@ Releases run only in CI (`.github/workflows/release.yml`):
 2. Tag that main commit and push the tag: `git tag vX.Y.Z <sha> && git push origin vX.Y.Z`.
 3. CI verifies the tag, reruns the checks, builds on macOS, then publishes npm `@mimo-ai/sdk` and `@mimo-ai/plugin`, the GitHub Release (generated notes), FDS archives and `releases/latest`, and finally the npm platform packages and `@mimo-ai/cli`.
 
-If a publish step fails, fix the cause and use **Re-run failed jobs**; steps that already landed are skipped. Never retag a version that has published anything — ship a new patch instead.
+Release one version at a time: runs share one concurrency group, and GitHub keeps only one pending run in it. If a publish step fails, fix the cause and use **Re-run failed jobs**; steps that already landed are skipped. If the original run is gone, start the workflow manually with **Use workflow from** set to the tag. Never retag a version that has published anything — ship a new patch instead.
 
-Repository setup: secrets `MIMO_FDS_AK` / `MIMO_FDS_SK` (optional variables `MIMO_FDS_ENDPOINT`, `MIMO_FDS_BUCKET`, `MIMO_FDS_PREFIX`). npm uses trusted publishing, so there is no npm token; every published `@mimo-ai/*` package needs a trusted publisher on npmjs.com for repository `XiaomiMiMo/MiMo-Code` and workflow `release.yml`.
+Repository setup: secrets `MIMO_FDS_AK` / `MIMO_FDS_SK` (optional variables `MIMO_FDS_ENDPOINT`, `MIMO_FDS_BUCKET`, `MIMO_FDS_PREFIX`). npm uses trusted publishing, so there is no npm token; every published `@mimo-ai/*` package needs a trusted publisher on npmjs.com for repository `XiaomiMiMo/MiMo-Code`, workflow `release.yml`, environment `release`.
 
 ### Setting up a debugger
 

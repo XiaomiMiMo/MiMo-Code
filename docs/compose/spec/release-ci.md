@@ -40,7 +40,7 @@ flowchart LR
 1. **verify** (ubuntu): `bun script/release.ts verify`. Fails unless the ref is a tag matching `vMAJOR.MINOR.PATCH` (no prerelease/leading zeros), HEAD is the tag commit and is reachable from `origin/main`, and `packages/{cli,sdk,plugin,shared}/package.json` versions all equal the tag version.
 2. **checks**: the existing typecheck, lint and test workflows gain a `workflow_call` trigger and run against the tag commit.
 3. **build** (`macos-latest`, matching how past releases were produced: darwin binaries ad-hoc signed by the native toolchain): `bun script/release.ts build` re-runs verify, builds all 12 targets via `packages/cli/script/build.ts --archive`, compiles SDK/plugin from committed sources with `tsc` (never the SDK generator), packs 15 npm tarballs, writes `dist/release/{archives,npm}/`, then asserts the checkout has no tracked or untracked changes. The directory is uploaded as one Actions artifact.
-4. **publish** (ubuntu, `contents: write`, `id-token: write`): downloads the artifact and runs stages in order. Each stage is idempotent so "re-run failed jobs" resumes safely:
+4. **publish** (ubuntu, environment `release`, `contents: write`, `id-token: write`): downloads the artifact and runs stages in order. Each stage is idempotent so "re-run failed jobs" resumes safely:
    - `npm libs` — `@mimo-ai/sdk`, then `@mimo-ai/plugin`. Publishing these first removes the window where a downloadable binary references an unpublished plugin version.
    - `github` — create release `vX.Y.Z` with `--verify-tag --generate-notes` and only the 12 archives. If a draft exists (earlier partial attempt) upload with `--clobber` and publish it; if a published release exists, skip.
    - `fds` — upload the 12 archives to `releases/vX.Y.Z/`, then write `releases/latest` last.
@@ -49,7 +49,7 @@ flowchart LR
 
 ### npm publication
 
-- Trusted Publishing (OIDC) only: no `NPM_TOKEN` secret. Each of the 15 packages must have a trusted publisher configured on npmjs.com for repository `XiaomiMiMo/MiMo-Code`, workflow `release.yml`. npm CLI ≥ 11.5.1 is required; the job installs `npm@11` and the script asserts the version.
+- Trusted Publishing (OIDC) only: no `NPM_TOKEN` secret. Each of the 15 packages must have a trusted publisher configured on npmjs.com for repository `XiaomiMiMo/MiMo-Code`, workflow `release.yml`, environment `release`. npm CLI ≥ 11.5.1 is required; the job installs `npm@11` and the script asserts the version.
 - Every tarball publishes with `--access public --tag latest`. A package whose exact version already exists on the registry is skipped, which makes reruns safe.
 - Pack rules: `bun pm pack` resolves `workspace:*` / `catalog:`; the script temporarily rewrites SDK/plugin `exports` from `./src/*.ts` to `./dist/*.{js,d.ts}`, copies `README_npm.md` and `LICENSE`, and restores the original files afterwards. After packing, the tarball's `package.json` must have the expected name/version, no `workspace:`/`catalog:` specifiers, and every export target present in the tarball.
 

@@ -83,6 +83,8 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    # npm trusted publishers can be bound to this environment; add reviewers to it for a manual gate.
+    environment: release
     timeout-minutes: 60
     permissions:
       contents: write
