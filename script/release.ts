@@ -135,6 +135,7 @@ async function packCli(version: string, dest: string) {
   const stage = path.join(out, "stage/cli")
   await mkdir(stage, { recursive: true })
   await cp(path.join(cli, "bin"), path.join(stage, "bin"), { recursive: true })
+  await cp(path.join(cli, "launcher.cjs"), path.join(stage, "launcher.cjs"))
   await cp(path.join(cli, "script/postinstall.mjs"), path.join(stage, "postinstall.mjs"))
   await cp(path.join(root, "README_npm.md"), path.join(stage, "README.md"))
   await cp(path.join(root, "LICENSE"), path.join(stage, "LICENSE"))
@@ -153,7 +154,6 @@ async function packCli(version: string, dest: string) {
         keywords: ["ai", "cli", "code", "xiaomi", "mimo", "mimocode"],
         bin: { mimo: "./bin/mimo" },
         scripts: { postinstall: "bun ./postinstall.mjs || node ./postinstall.mjs" },
-        optionalDependencies: Object.fromEntries(platforms.map((name) => [`@mimo-ai/${name}`, version])),
       },
       null,
       2,

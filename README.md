@@ -47,9 +47,6 @@ curl -fsSL https://mimo.xiaomi.com/install | bash
 # One-line install (Windows PowerShell)
 powershell -ep Bypass -c "irm https://mimo.xiaomi.com/install.ps1 | iex"
 
-# Or install via npm (all platforms)
-npm install -g @mimo-ai/cli
-
 # Run
 mimo
 ```

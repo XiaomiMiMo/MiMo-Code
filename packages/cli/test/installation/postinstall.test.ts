@@ -5,87 +5,140 @@ import path from "path"
 import os from "os"
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "../../script/postinstall.mjs")
+const LAUNCHER_PATH = path.join(import.meta.dirname, "../../launcher.cjs")
+
+function stagePackage(dir: string) {
+  fs.mkdirSync(path.join(dir, "bin"), { recursive: true })
+  fs.copyFileSync(SCRIPT_PATH, path.join(dir, "postinstall.mjs"))
+  fs.copyFileSync(LAUNCHER_PATH, path.join(dir, "launcher.cjs"))
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "@mimo-ai/cli", version: "9.9.9", bin: { mimo: "./bin/mimo" } }),
+  )
+}
+
+function runPostinstall(dir: string, env: Record<string, string> = {}) {
+  // Async spawn: a Bun.serve stub in this process must stay free to answer HTTP.
+  return Bun.spawn(["node", "postinstall.mjs"], {
+    cwd: dir,
+    env: { ...process.env, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+}
+
+async function waitPostinstall(proc: ReturnType<typeof runPostinstall>) {
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  return { exitCode, stdout, stderr }
+}
 
 describe("postinstall", () => {
-  const platform = os.platform() === "win32" ? "windows" : os.platform() === "darwin" ? "darwin" : "linux"
-  const arch = os.arch()
-  const binaryName = platform === "windows" ? "mimo.exe" : "mimo"
-  const packageName = `@mimo-ai/mimocode-${platform}-${arch}`
-
-  test("creates .mimocode binary cache from platform package", async () => {
+  test("prints migration notice on stdout", async () => {
     await using tmp = await tmpdir()
     const dir = tmp.path
+    stagePackage(dir)
 
-    const binDir = path.join(dir, "bin")
-    fs.mkdirSync(binDir)
-
-    const pkgBinDir = path.join(dir, "node_modules", packageName, "bin")
-    fs.mkdirSync(pkgBinDir, { recursive: true })
-    fs.writeFileSync(path.join(dir, "node_modules", packageName, "package.json"), JSON.stringify({ name: packageName }))
-
-    const fakeBinary = Buffer.from("FAKE_BINARY_CONTENT")
-    fs.writeFileSync(path.join(pkgBinDir, binaryName), fakeBinary)
-
-    fs.copyFileSync(SCRIPT_PATH, path.join(dir, "postinstall.mjs"))
-
-    const result = Bun.spawnSync(["node", "postinstall.mjs"], {
-      cwd: dir,
-      env: { ...process.env, NODE_PATH: path.join(dir, "node_modules") },
-    })
+    // Point at a closed port so prefetch fails quickly and stays best-effort.
+    const result = await waitPostinstall(
+      runPostinstall(dir, {
+        MIMO_FDS_BASE: "http://127.0.0.1:9",
+        MIMOCODE_BIN_PATH: "",
+      }),
+    )
 
     expect(result.exitCode).toBe(0)
-
-    const cached = path.join(binDir, ".mimocode")
-    expect(fs.existsSync(cached)).toBe(true)
-    expect(fs.readFileSync(cached)).toEqual(fakeBinary)
-  })
-
-  test("prints migration notice to stdout", async () => {
-    await using tmp = await tmpdir()
-    const dir = tmp.path
-
-    const binDir = path.join(dir, "bin")
-    fs.mkdirSync(binDir)
-    const pkgBinDir = path.join(dir, "node_modules", packageName, "bin")
-    fs.mkdirSync(pkgBinDir, { recursive: true })
-    fs.writeFileSync(path.join(dir, "node_modules", packageName, "package.json"), JSON.stringify({ name: packageName }))
-    fs.writeFileSync(path.join(pkgBinDir, binaryName), "binary")
-
-    fs.copyFileSync(SCRIPT_PATH, path.join(dir, "postinstall.mjs"))
-
-    const result = Bun.spawnSync(["node", "postinstall.mjs"], {
-      cwd: dir,
-      env: { ...process.env, NODE_PATH: path.join(dir, "node_modules") },
-    })
-
     const stdout = result.stdout.toString()
     expect(stdout).toContain("Recommended: install MiMoCode natively for a better")
     expect(stdout).toContain(os.platform() === "win32" ? "    irm" : "    curl")
   })
 
-  test("exits with error when binary package is missing", async () => {
+  test("best-effort prefetch leaves vendor empty and exits 0 when FDS is down", async () => {
     await using tmp = await tmpdir()
     const dir = tmp.path
+    stagePackage(dir)
 
-    fs.mkdirSync(path.join(dir, "bin"))
-    fs.copyFileSync(SCRIPT_PATH, path.join(dir, "postinstall.mjs"))
+    const result = await waitPostinstall(
+      runPostinstall(dir, {
+        MIMO_FDS_BASE: "http://127.0.0.1:9",
+        MIMOCODE_BIN_PATH: "",
+      }),
+    )
 
-    const result = Bun.spawnSync(["node", "postinstall.mjs"], {
-      cwd: dir,
-      env: { ...process.env, NODE_PATH: path.join(dir, "node_modules") },
-    })
-
-    expect(result.exitCode).toBe(1)
-    expect(result.stdout.toString()).toContain("Recommended: install MiMoCode natively")
+    expect(result.exitCode).toBe(0)
+    expect(fs.existsSync(path.join(dir, "vendor"))).toBe(false)
+    const combined = result.stdout + result.stderr
+    expect(combined).toMatch(/skipped binary prefetch|first `mimo` run/i)
   })
 
-  test("skips binary cache on windows but still prints notice", () => {
-    const source = fs.readFileSync(SCRIPT_PATH, "utf8")
-    const mainBody = source.slice(source.indexOf("async function main()"))
-    // Windows skip must come AFTER printMigrationNotice()
-    const noticeIdx = mainBody.indexOf("printMigrationNotice()")
-    const winCheckIdx = mainBody.indexOf("os.platform() === \"win32\"")
-    expect(noticeIdx).toBeGreaterThan(-1)
-    expect(winCheckIdx).toBeGreaterThan(noticeIdx)
+  test("prefetches into package-local vendor when FDS serves the archive", async () => {
+    await using tmp = await tmpdir()
+    const dir = tmp.path
+    stagePackage(dir)
+
+    const target = launcherTarget()
+    const archiveName = target.includes("linux") ? `${target}.tar.gz` : `${target}.zip`
+    const work = path.join(dir, "build")
+    fs.mkdirSync(work, { recursive: true })
+    const binaryName = target.includes("windows") ? "mimo.exe" : "mimo"
+    fs.writeFileSync(path.join(work, binaryName), "FAKE_BINARY")
+    const archivePath = path.join(dir, archiveName)
+    if (target.includes("linux")) {
+      const pack = Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, binaryName])
+      expect(pack.exitCode).toBe(0)
+    } else {
+      const pack = Bun.spawnSync(["tar", "-cf", archivePath, "-C", work, binaryName])
+      expect(pack.exitCode).toBe(0)
+    }
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url)
+        if (url.pathname.endsWith(".sha256")) return new Response(null, { status: 404 })
+        return new Response(Bun.file(archivePath))
+      },
+    })
+    try {
+      const result = await waitPostinstall(
+        runPostinstall(dir, {
+          MIMO_FDS_BASE: `http://127.0.0.1:${server.port}`,
+          MIMOCODE_BIN_PATH: "",
+        }),
+      )
+      expect(result.exitCode).toBe(0)
+      const dest = path.join(dir, "vendor", binaryName)
+      expect(fs.existsSync(dest)).toBe(true)
+      expect(fs.readFileSync(dest, "utf8")).toBe("FAKE_BINARY")
+    } finally {
+      server.stop()
+    }
+  })
+
+  test("skips download when MIMOCODE_BIN_PATH is set", async () => {
+    await using tmp = await tmpdir()
+    const dir = tmp.path
+    stagePackage(dir)
+
+    const result = await waitPostinstall(
+      runPostinstall(dir, {
+        MIMO_FDS_BASE: "http://127.0.0.1:9",
+        MIMOCODE_BIN_PATH: "/nonexistent/escape-hatch",
+      }),
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(fs.existsSync(path.join(dir, "vendor"))).toBe(false)
+    expect(result.stdout).toContain("Recommended: install MiMoCode natively")
   })
 })
+
+function launcherTarget() {
+  // Mirror detectTarget naming for the current host (x64/arm64 only in CI).
+  const platform = os.platform() === "win32" ? "windows" : os.platform() === "darwin" ? "darwin" : "linux"
+  const arch = os.arch() === "x64" || os.arch() === "arm64" ? os.arch() : "x64"
+  return `mimocode-${platform}-${arch}`
+}

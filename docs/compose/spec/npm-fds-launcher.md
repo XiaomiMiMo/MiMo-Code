@@ -143,6 +143,28 @@ Goal (user constraint): keep install/CLI compatibility, have `@mimo-ai/cli` pull
 | `MIMOCODE_HOME` | isolation for vendor binary too |
 | first-run UX | may download once; later runs offline |
 
+### Upgrade / migration from pre-launcher installs
+
+Upgrade is **replace the package**, not migrate its tree: `npm i -g @mimo-ai/cli@X.Y.Z` (or pnpm/bun, or the built-in upgrade) drops the old `@mimo-ai/cli` and its optionalDependencies, installs the thin launcher, and that launcher fetches `vX.Y.Z` into its own `vendor/`. No special-case fallback to leftover `node_modules/@mimo-ai/mimocode-*` packages.
+
+| Path | What happens | Works? |
+| --- | --- | --- |
+| `npm i -g @mimo-ai/cli@new` (manual) | old package gone; postinstall best-effort prefetch; first run downloads if needed | yes |
+| TUI `/upgrade` (npm/pnpm/bun) | `npm install -g @mimo-ai/cli@target` while the old binary runs; next `mimo` is the new launcher | yes |
+| TUI `/upgrade` (curl) | `install` script — untouched | yes |
+| First run cannot reach FDS | exit 1 with the real error + recommended `curl`/`irm` native install command | by design |
+| `--ignore-scripts` | no prefetch; first run downloads | yes |
+| `mimo uninstall` / `npm uninstall` | package dir (incl. `vendor/`) removed | yes |
+| `bin` entry | `"mimo": "./bin/mimo"` — PATH command stays `mimo` | yes |
+| Method detection after launcher | child `execPath` is `…/vendor/mimo` → falls through to `npm list` → `@mimo-ai/cli` | yes |
+| Publish order | FDS archives **before** `npm cli` (already true) so `vX.Y.Z` exists when the launcher `X.Y.Z` installs | yes |
+
+Resolution order (bin/mimo):
+
+1. `MIMOCODE_BIN_PATH`
+2. package-local `vendor/<binary>`
+3. FDS download into `vendor/` (on failure: honest error + curl/irm hint)
+
 ## [S4] Alternatives
 
 | Option | Exactly-1 download | Compat | Notes |
@@ -200,7 +222,7 @@ Recommendation: **A**, with B as a cheap interim patch if a launcher lands later
 ## Tasks
 
 - [ ] T1: Land `libc` on platform packages and/or document the 2× baseline residual — acceptance: published platform package.json sets `libc: ["glibc"]` or `["musl"]` where applicable, or the doc explicitly defers this; Linux x64 install downloads ≤2 optional packages with a modern npm (covers: S2)
-- [ ] T2: Implement version-pinned FDS launcher in `@mimo-ai/cli` (`bin/mimo` + tiny download helper) — acceptance: `npm i -g` of the packed wrapper with zero optionalDependencies runs `mimo --version` by fetching `releases/vX.Y.Z/<target>` into package-local `vendor/`, honors `MIMOCODE_BIN_PATH` first, forwards argv, is offline-capable after first fetch, and `npm uninstall -g @mimo-ai/cli` removes the binary with the package directory (covers: S3)
+- [ ] T2: Implement version-pinned FDS launcher in `@mimo-ai/cli` (`bin/mimo` + tiny download helper) — acceptance: `bin` entry is `mimo`; `npm i -g` of the packed wrapper with zero optionalDependencies runs `mimo --version` by fetching `releases/vX.Y.Z/<target>` into package-local `vendor/`, honors `MIMOCODE_BIN_PATH` first, forwards argv, is offline-capable after first fetch; FDS failure exits 1 with the real error and a curl/irm native-install hint; `npm uninstall -g @mimo-ai/cli` removes the binary with the package directory (covers: S3)
 - [ ] T3: Publish per-archive SHA-256 and verify in the launcher — acceptance: release stage uploads `<target>.sha256` beside each archive; launcher refuses a mismatched payload (covers: S3, S5)
 - [ ] T4: Adjust release/npm stages to stop treating 12 platform packages as optional deps of `@mimo-ai/cli` — acceptance: `script/release.ts` packs a wrapper without `optionalDependencies`, still publishes platform packages for direct install; trust list unchanged or updated explicitly (covers: S3)
 - [ ] T5: Compatibility tests — acceptance: wrappers tests cover argv/exit-code forwarding, `MIMOCODE_BIN_PATH`, vendor cache hit without network, first-run fetch with a stub server, and `installation.method` still classifies the child binary (covers: S3, S5)

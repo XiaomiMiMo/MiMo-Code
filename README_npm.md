@@ -16,20 +16,26 @@ MiMo Auto is built in as a free-for-limited-time channel, so you can start with 
 
 ## Quick Start
 
+npm is in limited support. Prefer the native installer over `npm install -g @mimo-ai/cli`:
+
 ```bash
-# One-line install (macOS / Linux)
+# One-line install (macOS / Linux) — replaces `npm install -g @mimo-ai/cli`
 curl -fsSL https://mimo.xiaomi.com/install | bash
 
 # One-line install (Windows PowerShell)
 powershell -ep Bypass -c "irm https://mimo.xiaomi.com/install.ps1 | iex"
 
-# Or install via npm (all platforms)
-# Mirror registries (e.g. cnpm/taobao) may have delayed platform package sync
-npm install -g @mimo-ai/cli --registry https://registry.npmjs.org
-
 # Run
 mimo
 ```
+
+If you still need the npm package (limited support), the package name is the one above — `@mimo-ai/cli` — and the launcher downloads exactly one platform binary from FDS on first use:
+
+```bash
+npm install -g @mimo-ai/cli --registry https://registry.npmjs.org
+```
+
+Upgrades replace the package; `MIMO_FDS_BASE` can point at a FDS mirror.
 
 The first launch guides you through configuration automatically. Supported options:
 - **MiMo Auto (free for a limited time)** — anonymous channel, zero configuration

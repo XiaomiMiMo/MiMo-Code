@@ -1,77 +1,21 @@
 #!/usr/bin/env node
 
-import fs from "fs"
-import path from "path"
-import os from "os"
-import { fileURLToPath } from "url"
+// Best-effort FDS prefetch. Failures must not fail `npm install` — bin/mimo
+// downloads the binary on first run when vendor/ is still empty.
+
 import { createRequire } from "module"
+import path from "path"
+import { fileURLToPath } from "url"
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
-
-function detectPlatformAndArch() {
-  // Map platform names
-  let platform
-  switch (os.platform()) {
-    case "darwin":
-      platform = "darwin"
-      break
-    case "linux":
-      platform = "linux"
-      break
-    case "win32":
-      platform = "windows"
-      break
-    default:
-      platform = os.platform()
-      break
-  }
-
-  // Map architecture names
-  let arch
-  switch (os.arch()) {
-    case "x64":
-      arch = "x64"
-      break
-    case "arm64":
-      arch = "arm64"
-      break
-    case "arm":
-      arch = "arm"
-      break
-    default:
-      arch = os.arch()
-      break
-  }
-
-  return { platform, arch }
-}
-
-function findBinary() {
-  const { platform, arch } = detectPlatformAndArch()
-  const packageName = `@mimo-ai/mimocode-${platform}-${arch}`
-  const binaryName = platform === "windows" ? "mimo.exe" : "mimo"
-
-  try {
-    // Use require.resolve to find the package
-    const packageJsonPath = require.resolve(`${packageName}/package.json`)
-    const packageDir = path.dirname(packageJsonPath)
-    const binaryPath = path.join(packageDir, "bin", binaryName)
-
-    if (!fs.existsSync(binaryPath)) {
-      throw new Error(`Binary not found at ${binaryPath}`)
-    }
-
-    return { binaryPath, binaryName }
-  } catch (error) {
-    throw new Error(`Could not find package ${packageName}: ${error.message}`, { cause: error })
-  }
-}
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const launcher = require(path.join(__dirname, "launcher.cjs"))
 
 function printMigrationNotice() {
-  const install = os.platform() === "win32"
-    ? "irm https://mimo.xiaomi.com/install.ps1 | iex"
-    : "curl -fsSL https://mimo.xiaomi.com/install | bash"
+  const install =
+    process.platform === "win32"
+      ? "irm https://mimo.xiaomi.com/install.ps1 | iex"
+      : "curl -fsSL https://mimo.xiaomi.com/install | bash"
   console.log()
   console.log("  Recommended: install MiMoCode natively for a better install and upgrade experience:")
   console.log(`    ${install}`)
@@ -81,32 +25,24 @@ function printMigrationNotice() {
 async function main() {
   printMigrationNotice()
 
-  if (os.platform() === "win32") {
-    // On Windows the bin/mimo wrapper finds the binary via node_modules traversal.
-    // Skipping the .mimocode cache avoids creating an extensionless PE file that
-    // may trigger antivirus false-positives.
+  if (process.env.MIMOCODE_BIN_PATH) {
     return
   }
 
   try {
-    const { binaryPath } = findBinary()
-    const target = path.join(__dirname, "bin", ".mimocode")
-    if (fs.existsSync(target)) fs.unlinkSync(target)
-    try {
-      fs.linkSync(binaryPath, target)
-    } catch {
-      fs.copyFileSync(binaryPath, target)
+    const root = launcher.packageRoot(__dirname)
+    const target = launcher.detectTarget()
+    const dest = launcher.vendorBinaryPath(root, target)
+    if (!require("fs").existsSync(dest)) {
+      await launcher.ensureBinary({ root, target })
     }
-    fs.chmodSync(target, 0o755)
   } catch (error) {
-    console.error("Failed to setup mimocode binary:", error.message)
-    process.exit(1)
+    console.warn(`postinstall: skipped binary prefetch: ${error && error.message ? error.message : error}`)
+    console.warn("The first `mimo` run will download the binary from FDS.")
   }
 }
 
-try {
-  void main()
-} catch (error) {
-  console.error("Postinstall script error:", error.message)
+main().catch(() => {
+  // Best-effort only — never fail install.
   process.exit(0)
-}
+})
