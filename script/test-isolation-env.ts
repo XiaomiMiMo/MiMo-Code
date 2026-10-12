@@ -1,27 +1,30 @@
 /**
  * Root test isolation env (defense in depth).
  *
- * Sets process env BEFORE any test/src import so xdg-basedir / Flag.MIMOCODE_DB
- * cannot bind to the developer's real home or production mimocode.db.
- * packages/cli/test/preload.ts remains the full fixture preload when tests
- * run from packages/cli; this file only makes a mistaken root-level run safe.
+ * Force-assigns process env BEFORE any test/src import so xdg-basedir /
+ * Flag.MIMOCODE_HOME / Flag.MIMOCODE_DB cannot bind to the developer's real
+ * home or production mimocode.db. Mirrors packages/cli/test/preload.ts
+ * isolation; that file remains the full fixture preload when suites run
+ * from packages/cli.
  *
- * Does not override values already set by the caller or by packages/cli preload.
+ * Force-assign (not setIfEmpty): HOME/XDG/MIMOCODE_* are often already set
+ * in the parent shell and must not win over the disposable test home.
  */
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-const setIfEmpty = (key: string, value: string) => {
-  if (process.env[key] === undefined || process.env[key] === "") process.env[key] = value
-}
-
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "mimocode-root-test-"))
-setIfEmpty("MIMOCODE_DB", ":memory:")
-setIfEmpty("XDG_DATA_HOME", path.join(root, "share"))
-setIfEmpty("XDG_CACHE_HOME", path.join(root, "cache"))
-setIfEmpty("XDG_CONFIG_HOME", path.join(root, "config"))
-setIfEmpty("XDG_STATE_HOME", path.join(root, "state"))
-// Keep a disposable HOME so engine config discovery never reads ~/.config/mimocode.
-setIfEmpty("HOME", path.join(root, "home"))
-setIfEmpty("USERPROFILE", path.join(root, "home"))
+const home = path.join(root, "home")
+fs.mkdirSync(home, { recursive: true })
+
+// resolveMimocodeHome prefers MIMOCODE_HOME over XDG — drop it explicitly.
+delete process.env.MIMOCODE_HOME
+process.env.MIMOCODE_DB = ":memory:"
+process.env.XDG_DATA_HOME = path.join(root, "share")
+process.env.XDG_CACHE_HOME = path.join(root, "cache")
+process.env.XDG_CONFIG_HOME = path.join(root, "config")
+process.env.XDG_STATE_HOME = path.join(root, "state")
+// Production code reads HOME/USERPROFILE directly (Bun caches os.homedir()).
+process.env.HOME = home
+process.env.USERPROFILE = home
