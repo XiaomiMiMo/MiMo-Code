@@ -21,7 +21,6 @@ const env = {
   MIMOCODE_CHANNEL: process.env["MIMOCODE_CHANNEL"],
   MIMOCODE_BUMP: process.env["MIMOCODE_BUMP"],
   MIMOCODE_VERSION: process.env["MIMOCODE_VERSION"],
-  MIMOCODE_RELEASE: process.env["MIMOCODE_RELEASE"],
 }
 const CHANNEL = await (async () => {
   if (env.MIMOCODE_CHANNEL) return env.MIMOCODE_CHANNEL
@@ -67,8 +66,5 @@ export const Script = {
   },
   get preview() {
     return IS_PREVIEW
-  },
-  get release(): boolean {
-    return env.MIMOCODE_RELEASE === "1" || env.MIMOCODE_RELEASE === "true"
   },
 }

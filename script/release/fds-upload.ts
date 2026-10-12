@@ -15,7 +15,7 @@
 //   MIMO_FDS_ENDPOINT                    upload+signing host (default cnbj1 prod)
 //   MIMO_FDS_BUCKET / MIMO_FDS_PREFIX    object layout (default mimocode/mimocode)
 //
-// CLI: bun script/fds-upload.ts <localFile> <objectSubPath> [--content-type=...]
+// CLI: bun script/release/fds-upload.ts <localFile> <objectSubPath> [--content-type=...]
 //   objectSubPath is relative to "<bucket>/<prefix>/", e.g. "releases/latest".
 import crypto from "node:crypto"
 
@@ -165,7 +165,7 @@ if (import.meta.main) {
   const ctFlag = process.argv.find((a) => a.startsWith("--content-type="))?.split("=")[1]
   const [localFile, subPath] = args
   if (!localFile || !subPath) {
-    console.error("Usage: bun script/fds-upload.ts <localFile> <objectSubPath> [--content-type=...]")
+    console.error("Usage: bun script/release/fds-upload.ts <localFile> <objectSubPath> [--content-type=...]")
     process.exit(1)
   }
   const name = await uploadFile(localFile, subPath, ctFlag)

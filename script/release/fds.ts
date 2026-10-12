@@ -1,5 +1,5 @@
 import path from "node:path"
-import { uploadFile } from "../fds-upload"
+import { uploadFile } from "./fds-upload"
 import { directory, required, type Release } from "./context"
 import type { Manifest } from "./manifest"
 

@@ -47,7 +47,7 @@ test("explains missing runtime dependencies for file plugins without hiding the 
   expect(errors).toHaveLength(1)
   expect(String(errors[0])).toContain("missing-runtime.js")
   expect(String(errors[0])).toContain("Bundle your plugin's runtime dependencies")
-  expect(String(errors[0])).toContain("docs/plugins.md")
+  expect(String(errors[0])).toContain("examples/plugins/greeting/README.md")
 })
 
 test("preserves ordinary plugin errors without dependency migration advice", async () => {

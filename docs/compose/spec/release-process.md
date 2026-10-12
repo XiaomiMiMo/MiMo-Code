@@ -1,9 +1,9 @@
 ---
 feature: release-process
-status: delivered
+status: in-progress
 updated: 2026-10-12
 branch: codex/release-process
-commits: f98dcd1c..a33d7a62
+commits:
 ---
 
 # Release Process and Distribution Boundaries
@@ -109,13 +109,14 @@ The initial workflow supports only `vMAJOR.MINOR.PATCH` stable versions. Prerele
 - Fetch complete tag/main history, dereference the tag, and verify that its commit belongs to `origin/main`. Pin every check and build to that SHA rather than following a later main head.
 - The tag without `v` must match the CLI, SDK, plugin, and shared package.json versions and their `bun.lock` workspace versions. The root package.json has no version; do not add one. Reject environment variables that request a version bump or bypass validation.
 - Reuse existing typecheck, lint, sharded tests, and isolated tests. Release-script tests also run in the regular test workflow. Pre-merge PR checks alone are insufficient.
-- Pin Bun through packageManager and install with `bun ci`. Cross-platform builds use `bun ci --os='*' --cpu='*'`, followed by CLI build with `--skip-install --archive`. CLI build itself does not upload.
+- Pin Bun through packageManager and install with `bun ci`. The repository currently specifies `bun@1.3.14`; setup-bun reads that exact value through `bun-version-file: package.json`. Both release preflight and CLI compilation enforce it. The broader caret check in shared script metadata does not override these exact release checks. Cross-platform builds use `bun ci --os='*' --cpu='*'`, followed by CLI build with `--skip-install --archive`.
+- Use the latest patch of Node 24 LTS in release jobs (`node-version: "24"`, `check-latest: true`). Node supplies npm and supporting tooling; the pinned Bun produces the compiled binaries and npm tarballs. The Node 22 TypeScript configuration and type definitions describe a compatibility baseline, not a requirement to run CI on an old Node 22 patch. Bun upgrades remain deliberate repository changes because its runtime is embedded in compiled CLI binaries.
 - Compile committed SDK sources with TypeScript; **do not invoke the SDK build script that regenerates them**. Do not change versions, lockfiles, or create commits. Check that tracked source remains clean after building.
 - Save one models.dev snapshot for all targets in a build. Record the version, SHA, file inventory, and local digests in `dist/release/manifest.json`, and hand these to the publishing job with the archives, npm tarballs, and snapshot. The manifest checks that jobs use the correct complete build output; it is not a remote recovery protocol.
 
 ### Four script stages
 
-The common entry point is `bun script/release.ts --stage build|github|fds|npm`. `MIMOCODE_VERSION` supplies the version, and the channel is fixed to `latest`. `--dry-run` performs preflight or existing-artifact validation only; it does not mean a build or upload has completed.
+The maintainer entry point is `bun script/release/index.ts --stage build|github|fds|npm`; the root `bun run release` package command invokes the same module. `MIMOCODE_VERSION` supplies the version, and the channel is fixed to `latest`. `--dry-run` performs preflight or existing-artifact validation only; it does not mean a build or upload has completed.
 
 | Stage  | Behavior                                                                                                                                                                                                               |
 | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -130,7 +131,7 @@ A publishing-job lock prevents simultaneously started versions from interleaving
 
 GitHub/FDS may become available before npm; npm failure does not withdraw them. S6 removes built-in functionality's runtime installation dependency on the matching plugin npm package, so this interval no longer requires npm to finish simultaneously.
 
-Legacy package-level publish and draft-only version entry points exit with migration guidance. A command that appears to publish only the SDK must not unexpectedly publish the whole set. The root release entry point coordinates publication, retaining the current npm CLI scope.
+Release-specific code lives under `script/release/`, including the FDS uploader. Obsolete package-level publishers, root publication/version aliases, and the root SDK-generation forwarding wrapper are removed. General developer entry points remain: CLI dev/build, the downstream Node build, and `packages/sdk/script/build.ts` for manual SDK generation. `CONTRIBUTING.md` points directly to that generator. Archive creation uses the explicit `--archive` flag; the obsolete `MIMOCODE_RELEASE` switch is removed. Publication retains the current 15-package npm scope.
 
 ### Secrets and environment variables
 
@@ -217,7 +218,7 @@ The old installation-identity resolver requested the same SDK version for a vali
 5. Do not delete existing configuration-directory package.json, lockfiles, or node_modules automatically; their ownership cannot be inferred reliably. Removing bootstrap stops proactive SDK restoration. Existing source plugins may continue using prepared dependencies while developers migrate or clean up as appropriate.
 6. Preserve installation of explicitly configured npm plugins through the independent `resolvePluginTarget → Npm.add` path. Their declared transitive dependencies may still include the SDK; that is an external plugin's distribution choice, not a prerequisite for built-in functionality.
 
-Migration guidance lives in `docs/plugins.md`, linked from plugin-development details in both READMEs. Bundled distribution is the recommended default. `examples/plugins/greeting` provides public SDK development dependencies, typechecking, build/watch scripts, and deployment instructions. Developers initialize a lockfile in their own project and use frozen installation afterward.
+The full plugin tutorial lives beside the tested example: `examples/plugins/greeting/README.md` in English and `README.zh.md` in Chinese. Root README details and missing-dependency guidance link to that example. User documentation explains preparation, authoring, bundling, packaging, loading, and debugging; historical implementation changes stay in this Compose document. The example provides public SDK development dependencies, typechecking, and build/watch scripts, and remains the source used by bundle/debug regression tests. Developers initialize a lockfile in their own project and use frozen installation afterward.
 
 Run `mimo debug agent build --tool greet --params '{"name":"Example"}'` to verify a registered tool directly; it returns `Hello, Example!`. The debug entry point uses the full registered tool set, retaining model/agent/permission filtering without GPT top-level tool compression. It parses parameters against the tool schema before executing the Effect through AppRuntime. Invalid arguments fail before execution instead of producing `Hello, undefined!`.
 
@@ -255,7 +256,7 @@ CI acceptance covers workflow syntax, triggers/permissions/dependencies, tag and
 
 ## References
 
-- Main repository: [release](../../../script/release.ts), [version](../../../script/version.ts), [publish](../../../script/publish.ts), [CLI build](../../../packages/cli/script/build.ts), [FDS uploader](../../../script/fds-upload.ts), [SDK build](../../../packages/sdk/script/build.ts), [package-level npm publication](../../../packages/plugin/script/publish.ts), [CI setup](../../../.github/actions/setup-bun/action.yml).
+- Main repository: [release](../../../script/release/index.ts), [release packaging](../../../script/release/pack.ts), [CLI build](../../../packages/cli/script/build.ts), [FDS uploader](../../../script/release/fds-upload.ts), [SDK build](../../../packages/sdk/script/build.ts), [CI setup](../../../.github/actions/setup-bun/action.yml).
 - Built-in sources: [server plugins](../../../packages/cli/src/plugin/index.ts), [TUI plugins](../../../packages/cli/src/cli/cmd/tui/plugin/internal.ts), [plugin helper](../../../packages/plugin/src/tool.ts), [tool registry](../../../packages/cli/src/tool/registry.ts), [provider](../../../packages/cli/src/provider/provider.ts), [Node build](../../../packages/cli/script/build-node.ts).
 - Historical context only: [github-release.md](https://git.n.xiaomi.com/mimo-innovation/mimoapi/-/blob/3b6a8f62092c496af2778d7ffc213d9e4f73cc19/docs/github-release.md), [release-handover.md](https://git.n.xiaomi.com/mimo-innovation/mimoapi/-/blob/3b6a8f62092c496af2778d7ffc213d9e4f73cc19/docs/release-handover.md), [npm-publish.md](https://git.n.xiaomi.com/mimo-innovation/mimoapi/-/blob/3b6a8f62092c496af2778d7ffc213d9e4f73cc19/docs/npm-publish.md). These do not establish current main-repository behavior.
 
@@ -270,3 +271,4 @@ CI acceptance covers workflow syntax, triggers/permissions/dependencies, tag and
 - [x] T7: Add regression coverage and a runnable plugin development project — acceptance: self-contained plugins load, existing manifests remain, missing-dependency guidance is accurate, bilingual README details link development/build/deployment instructions, and the debug command executes the example in normal and Codex tool modes (covers: S6,S8; depends: T3)
 - [x] T8: Implement staged release scripts — acceptance: build/github/fds/npm consume one local artifact inventory; build does not change versions or generate SDK sources; GitHub generates the description; the existing 15 npm packages follow FDS; failures stop clearly; tests invoke no real publication API (covers: S4,S5,S8; depends: T1)
 - [x] T9: Implement the workflow and secret interface — acceptance: manual dispatch accepts an existing stable tag; the automatic tag block remains commented; checks/builds use the fixed SHA; three secrets are checked before publication; GitHub/FDS/npm run sequentially under one publication lock; static validation passes (covers: S4,S8; depends: T1,T8)
+- [ ] T10: Apply toolchain and documentation review feedback — acceptance: release jobs follow Node 24 LTS patches while Bun remains repository-pinned; obsolete forwarding/error-only scripts are removed and maintainer entry points live under script/release; English/Chinese action-oriented tutorials live with the tested example; all current callers and links resolve (covers: S4,S6,S8)

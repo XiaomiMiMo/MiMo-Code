@@ -1,16 +1,16 @@
 #!/usr/bin/env bun
 // Stable releases consume an existing main-branch tag and committed versions.
 // Usage: bun run release <version>, or MIMOCODE_VERSION=<version>
-// MIMOCODE_CHANNEL=latest bun script/release.ts --stage build|github|fds|npm.
+// MIMOCODE_CHANNEL=latest bun script/release/index.ts --stage build|github|fds|npm.
 // --dry-run performs read-only preflight and local artifact validation.
 import path from "node:path"
 import { parseArgs } from "node:util"
-import { build } from "./release/build"
-import { directory, preflight, required } from "./release/context"
-import { fds } from "./release/fds"
-import { github } from "./release/github"
-import { validateManifest, verifyFiles } from "./release/manifest"
-import { npm } from "./release/npm"
+import { build } from "./build"
+import { directory, preflight, required } from "./context"
+import { fds } from "./fds"
+import { github } from "./github"
+import { validateManifest, verifyFiles } from "./manifest"
+import { npm } from "./npm"
 
 export async function release(options: { stage?: string; version?: string; dryRun?: boolean } = {}) {
   const stage = options.stage

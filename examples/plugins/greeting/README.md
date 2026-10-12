@@ -1,10 +1,23 @@
-# Greeting 插件开发项目
+# Plugin development and deployment
 
-一个可复制的 MiMoCode 服务端插件项目，提供 `greet` 工具。源码保留在开发项目中，对外交付包含 `package.json`、`dist/server.js` 和说明文件的插件包。MiMoCode 根据包入口加载构建产物；SDK 和 `tool` 用到的运行时依赖已包含其中。
+English | [简体中文](README.zh.md)
 
-## 初始化
+Use this Greeting plugin project as a starting point: write TypeScript and manage dependencies in a standalone project, bundle the entry point and runtime dependencies into JavaScript, and deliver a plugin package containing `package.json` and the build output. The project includes type checking, build, and watch scripts.
 
-需要 Bun 和已完成首次配置的 MiMoCode。从 MiMoCode 仓库根目录复制示例到独立位置：
+Use `@mimo-ai/plugin` as a development SDK in your plugin project. Declare dependencies there, bundle the runtime dependencies used by the plugin, and configure MiMoCode to load the finished package. For plugins distributed through npm, configure the published package name and version so the loader can install the package and its declared runtime dependencies.
+
+## Understand where each plugin runs
+
+| Type                                                    | Configuration and entry points                                                           | Who prepares dependencies                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Server plugins: tools, events, authentication, and more | `plugin` in `mimocode.json(c)`, or `plugin/` and `plugins/` in a configuration directory | Developers bundle local build output; the loader installs explicitly configured npm plugins |
+| TUI plugins: commands, UI, themes, and more             | `plugin` in the separate `tui.json(c)`, or the `tui/` directory                          | Developers bundle their own dependencies; Solid/OpenTUI use the host's shared runtime       |
+
+Server and TUI configuration are independent. A package can provide both entry points. Give each entry point a default export for its runtime: `server` for the server entry point and `tui` for the TUI entry point.
+
+## Develop a server tool plugin
+
+Prepare Bun, then copy the template from the MiMoCode repository root into a standalone project:
 
 ```bash
 mkdir -p /tmp/example
@@ -12,17 +25,66 @@ cp -R examples/plugins/greeting /tmp/example/plugin-dev
 cd /tmp/example/plugin-dev
 ```
 
-此模板没有独立锁文件。**只在复制出的插件项目中**首次添加公开依赖，生成自己的 `bun.lock`：
+The template's `package.json` uses public npm dependencies. Initialize **the copied plugin project's** own lockfile with:
 
 ```bash
 bun add --dev @mimo-ai/plugin@0.1.15 @types/bun@1.3.11 typescript@5.8.2
 ```
 
-提交插件项目的 `package.json` 和 `bun.lock`。之后在其他机器或 CI 中检出时，使用 `bun ci`。如果只是验证 MiMoCode 仓库中的示例，先在仓库根目录运行 `bun ci`，然后进入本目录执行下方脚本即可，无需修改仓库锁文件。
+Commit the plugin project's dependency declarations together with the generated `bun.lock`. On subsequent checkouts, use `bun ci` to restore the locked dependencies. Choose the SDK version based on API compatibility with your plugin. To validate this example directly in the MiMoCode repository, use the dependencies installed by `bun ci` at the repository root, then run the example's scripts in its directory.
 
-## 构建并交付插件包
+Edit the project's [`src/server.ts`](src/server.ts) to define your tools. The greeting example provides:
 
-在插件开发项目中运行：
+```ts
+import type { PluginModule } from "@mimo-ai/plugin"
+import { tool } from "@mimo-ai/plugin/tool"
+
+export default {
+  id: "example.greeting",
+  async server() {
+    return {
+      tool: {
+        greet: tool({
+          description: "Return a greeting for a name",
+          args: {
+            name: tool.schema.string().describe("Name to greet"),
+          },
+          async execute(args) {
+            return `Hello, ${args.name}!`
+          },
+        }),
+      },
+    }
+  },
+} satisfies PluginModule
+```
+
+`import type` and `satisfies` provide development-time checks and are erased during the build. `tool` is a runtime import: bundle it and the dependencies it actually uses with the output, or supply them in the deployment environment.
+
+Check types, then build:
+
+```bash
+bun run typecheck
+bun run build
+```
+
+The `build` script runs this command to bundle the example and its runtime dependencies into a single ESM file:
+
+```bash
+bun build ./src/server.ts --target=bun --format=esm --outfile=./dist/server.js
+```
+
+Use `typecheck` to validate types and `build` to bundle JavaScript and runtime dependencies. This example bundles the SDK and the dependencies it uses into `dist/server.js`, ready to deploy as a standalone file. For more complex plugins with native modules, dynamically loaded files, or additional assets, include those contents in your deployment and validate them in the target runtime environment.
+
+Run `bun run dev` to watch source changes and rebuild `dist/server.js`. Copy the updated output to the deployment location and restart MiMoCode to load it.
+
+## Deliver and configure a server plugin
+
+Deliver a complete package directory or archive so MiMoCode can load the build output through the package entry point. A single JavaScript file is also a lightweight alternative. Configure one loading method for each plugin.
+
+### Recommended: a plugin package directory or archive
+
+In the plugin development project, check types, build, and then create a distributable archive:
 
 ```bash
 bun run typecheck
@@ -30,18 +92,18 @@ bun run build
 bun pm pack --ignore-scripts
 ```
 
-`build` 将代码和运行时依赖打包进 `dist/server.js`；`pack` 再按 `package.json` 的 `files` 生成 `example-mimocode-greeting-1.0.0.tgz`，不会上传 npm。改了包名或版本后，压缩包名也会相应变化。
+`build` includes runtime dependencies. `pack` creates a local archive containing `package.json`, `dist/server.js`, `README.md`, and `README.zh.md`. This example produces `example-mimocode-greeting-1.0.0.tgz`; changing the package name or version changes the archive's filename accordingly.
 
-把这个压缩包交给使用者，或在本机解压到目标项目：
+Deliver the archive to users and extract it into the target project's plugin directory:
 
 ```bash
 mkdir -p /tmp/example/project/.mimocode/extensions/greeting
 tar -xzf ./example-mimocode-greeting-1.0.0.tgz -C /tmp/example/project/.mimocode/extensions/greeting --strip-components=1
 ```
 
-解压后的目录包含 `package.json`、`dist/server.js`、`README.md`。`--strip-components=1` 去掉压缩包内部的 `package/` 外层目录。这个示例的部署目录不需要 `node_modules`，也不用安装 SDK。
+`--strip-components=1` removes the archive's outer `package/` directory. The resulting `greeting/` directory contains `package.json`, `dist/server.js`, `README.md`, and `README.zh.md`; you can also transfer that package directory directly. These files contain everything this example needs at runtime.
 
-在目标项目的 `/tmp/example/project/.mimocode/mimocode.json` 中合并：
+Merge this into `/tmp/example/project/.mimocode/mimocode.json`:
 
 ```json
 {
@@ -49,31 +111,100 @@ tar -xzf ./example-mimocode-greeting-1.0.0.tgz -C /tmp/example/project/.mimocode
 }
 ```
 
-这里引用的是**插件包目录**，MiMoCode 会读取其中 `package.json` 的 `./server` 导出。相对路径以配置文件为基准。如果选择直接传输文件夹，保留相同的包目录结构即可。退出目标项目中已经运行的 MiMoCode，再启动：
+The configuration references the extracted package directory. The loader reads `exports["./server"]` from its `package.json` and loads `dist/server.js`. Relative paths resolve from **the configuration file that declares them**. You can also use `"file:///tmp/example/project/.mimocode/extensions/greeting"`.
+
+Give local plugin modules a stable `id`, such as `example.greeting` in this example. After changing deployed files or configuration, quit the running MiMoCode instance and restart it in the target project:
 
 ```bash
 cd /tmp/example/project
 mimo
 ```
 
-### 轻量备选：单个 JavaScript 文件
+### Lightweight alternative: a single JavaScript file
 
-这个示例的所有运行时依赖都已包含在一个文件中，也可以只复制 `dist/server.js` 到目标项目的 `.mimocode/plugins/greeting.js` 自动发现；这样就不需要 `plugin` 配置。包目录与单文件方式任选一种，避免重复加载。交付包含额外资源的插件时，优先保留完整插件包。
+The example's runtime dependencies are already included in `dist/server.js`, so you can copy just that file:
 
-## 验证与迭代
+```bash
+mkdir -p /tmp/example/project/.mimocode/plugins
+cp ./dist/server.js /tmp/example/project/.mimocode/plugins/greeting.js
+```
 
-在目标项目目录中可直接执行工具，无需让模型选择调用：
+Start MiMoCode in the target project to load the file through automatic discovery. `.mimocode/plugin/` is also supported; place built `*.js` files directly in the directory's top level. The same rules apply to `plugin/` and `plugins/` in the global configuration directory, which defaults to `~/.config/mimocode`.
+
+To configure a file path explicitly, place the output at `.mimocode/extensions/greeting.js`, outside automatic discovery, and set `"plugin": ["./extensions/greeting.js"]` in `.mimocode/mimocode.json`. Choose one loading method: automatic discovery, an explicit file, or a package directory. Prefer a complete plugin package when you need additional assets or multiple entry points.
+
+### Verification and everyday development
+
+Run this in the target project directory:
 
 ```bash
 mimo debug agent build --tool greet --params '{"name":"Example"}'
 ```
 
-返回 JSON 的 `result.output` 应为 `Hello, Example!`。此命令使用 MiMoCode 的默认模型配置来准备工具环境，但问候工具本身不请求模型，也不需要特定模型。
+Complete MiMoCode's normal first-time setup so its default model configuration is available to prepare the tool environment. The debug command executes the greeting tool directly and returns JSON with `result.output` set to `Hello, Example!`. The tool builds its response locally from the supplied name.
 
-开发时在插件项目中运行 `bun run dev`，保存 `src/server.ts` 后会自动重新生成 `dist/server.js`。这个 watch 脚本只负责重新构建，不会自动部署或热重载插件。每次准备交付时运行 `bun run typecheck`、`bun run build` 和 `bun pm pack --ignore-scripts`，用新包更新目标目录，再重启验证。
+The delivery workflow is: edit source → `bun run typecheck` → `bun run build` → `bun pm pack --ignore-scripts` → update the target package directory → restart and verify. During development, you can point `plugin` to `"file:///tmp/example/plugin-dev"` to reference the development project's package directory directly. The loader reads the build output through the `./server` export. With `bun run dev` running, save source files to rebuild, then restart or rerun the debug command. Keep the development package as the single configured entry while using this workflow.
 
-开发调试可以将 `plugin` 配置指向 `file:///tmp/example/plugin-dev`，直接引用开发项目的包目录。MiMoCode 仍通过 `./server` 导出读取 `dist/server.js`；watch 构建后只需重启或重新运行 debug 命令，无需重复解压。不要同时保留部署版入口，对外仍交付构建好的插件包。
+## Configure TUI plugins separately
 
-如果想发布自己的 npm 插件，先修改包名并移除 `private`，保留 `files` 与 `./server` 导出，确保发布包内有构建产物。本项目没有发布脚本。
+TUI plugins define their own entry points using types from `@mimo-ai/plugin/tui`. For example, this notification plugin in `src/tui.ts` uses the toast API:
 
-更多服务端、TUI 和迁移说明见 [插件开发、部署与迁移指南](../../../docs/plugins.md)（在 MiMoCode 仓库中阅读）。
+```ts
+import type { TuiPluginModule } from "@mimo-ai/plugin/tui"
+
+export default {
+  id: "example.notification",
+  async tui(api) {
+    api.ui.toast({ message: "Example plugin loaded", variant: "info" })
+  },
+} satisfies TuiPluginModule
+```
+
+This example has only type imports and can be built with:
+
+```bash
+bun build ./src/tui.ts --target=bun --format=esm --outfile=./dist/tui.js
+```
+
+Copy it to `/tmp/example/project/.mimocode/extensions/example-tui.js` and merge this into `/tmp/example/project/.mimocode/tui.json`:
+
+```json
+{
+  "plugin": ["./extensions/example-tui.js"]
+}
+```
+
+The TUI also automatically discovers built `*.js` files directly in `.mimocode/tui/` under the current working directory and in `tui/` under the global configuration directory. Choose either automatic discovery or an entry in `tui.json` for each plugin.
+
+For plugins with UI components, use a build process compatible with OpenTUI's Solid JSX setup. Keep `solid-js`, `@opentui/solid`, `@opentui/core`, and their related subpaths as external dependencies (`external`) so the host's shared runtime manages reactive state and rendering. Bundle or supply the plugin's other runtime dependencies yourself. Build with the OpenTUI toolchain used by the target MiMoCode version and verify the actual UI.
+
+## Distribute feature plugins through npm
+
+To load a published npm plugin, add its package name and version to the `plugin` array, such as `"example-mimocode-plugin@1.0.0"`. Replace this example package name with an actual published plugin. Use `mimocode.json(c)` for server plugins and `tui.json(c)` for TUI plugins. The loader installs the configured package into its cache and resolves its declared runtime dependencies.
+
+To publish a copy of this example, choose your package name, remove `private` from `package.json`, and build the plugin. For a package publishing only the server entry point above, the key fields can be:
+
+```json
+{
+  "name": "example-mimocode-plugin",
+  "version": "1.0.0",
+  "type": "module",
+  "files": ["dist"],
+  "main": "./dist/server.js",
+  "exports": {
+    "./server": "./dist/server.js"
+  }
+}
+```
+
+To also provide a TUI plugin, build a separate `dist/tui.js` and add the required TUI export `"./tui": "./dist/tui.js"`. Before publishing, check that the package contains its entry files and required assets, and retain dependency declarations: bundled development dependencies can stay in `devDependencies`, runtime dependencies supplied through installation belong in `dependencies`, and shared UI runtimes should be declared as peer dependencies according to compatibility requirements.
+
+## Develop directly from local source
+
+For local source development, declare and install the source's runtime dependencies in a location where they resolve from the plugin file. The top level of server `plugin/` and `plugins/` directories supports `*.ts` and `*.js`; the top level of the TUI `tui/` directory supports `*.ts`, `*.tsx`, and `*.js`.
+
+When preparing a plugin for delivery, build and package it using the workflow above. Keep development source in the development project and configure one deployed entry point in the target project.
+
+## Troubleshoot loading
+
+For dependency resolution errors, check the configured entry point and ensure each runtime import is bundled or resolves from the plugin file's location. For TUI entry point errors, check `tui.json(c)` and the package's `./tui` export. After correcting the configuration or deployment, restart MiMoCode and verify the plugin's tools or UI.

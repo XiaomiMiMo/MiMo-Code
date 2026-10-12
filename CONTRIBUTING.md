@@ -103,7 +103,7 @@ CI runs `bun run typecheck` on every PR and push to `main`.
 If you change the server API, regenerate the SDK and OpenAPI schema:
 
 ```bash
-./script/generate.ts
+./packages/sdk/script/build.ts
 ```
 
 Please follow the [style guide](./AGENTS.md#style-guide).

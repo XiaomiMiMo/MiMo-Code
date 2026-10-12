@@ -57,7 +57,7 @@ jobs:
           # The first release tag must include the new workflow and stage scripts.
           # The dispatch branch selects CI; every source checkout below uses this SHA.
           git cat-file -e "$sha:.github/workflows/release.yml"
-          git cat-file -e "$sha:script/release.ts"
+          git cat-file -e "$sha:script/release/index.ts"
           printf 'tag=%s\nsha=%s\nversion=%s\n' "$RELEASE_TAG" "$sha" "${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
 
   credentials:
@@ -115,11 +115,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Node and npm for reproducible tarballs
+      - name: Setup Node 24 LTS
         uses: actions/setup-node@v6
         with:
-          # This Node distribution includes npm 10.9.3.
-          node-version: "22.20.0"
+          node-version: "24"
+          check-latest: true
           package-manager-cache: false
 
       - name: Setup Bun and all locked target dependencies
@@ -128,7 +128,7 @@ jobs:
           all-platforms: "true"
 
       - name: Build the release artifacts
-        run: bun script/release.ts --stage build
+        run: bun script/release/index.ts --stage build
 
       - name: Verify the release did not modify tracked source
         run: git diff --exit-code HEAD
@@ -172,7 +172,8 @@ jobs:
       - name: Configure the npm registry and token authentication
         uses: actions/setup-node@v6
         with:
-          node-version: "22.20.0"
+          node-version: "24"
+          check-latest: true
           package-manager-cache: false
           registry-url: https://registry.npmjs.org
 
@@ -186,7 +187,7 @@ jobs:
       - name: Publish the complete GitHub Release with automatic notes
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bun script/release.ts --stage github
+        run: bun script/release/index.ts --stage github
 
       - name: Upload FDS archives and update latest
         env:
@@ -196,11 +197,11 @@ jobs:
           MIMO_FDS_ENDPOINT: ${{ vars.MIMO_FDS_ENDPOINT }}
           MIMO_FDS_BUCKET: ${{ vars.MIMO_FDS_BUCKET }}
           MIMO_FDS_PREFIX: ${{ vars.MIMO_FDS_PREFIX }}
-        run: bun script/release.ts --stage fds
+        run: bun script/release/index.ts --stage fds
 
       # A failure here preserves GitHub/FDS. Inspect the completed packages and
       # continue manually from these artifacts; partial publication is not retried automatically.
       - name: Publish the prepared npm tarballs
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bun script/release.ts --stage npm
+        run: bun script/release/index.ts --stage npm

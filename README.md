@@ -463,14 +463,14 @@ To declare which input modalities a custom model supports (image, audio, video, 
 <details>
 <summary><strong>Developing plugins</strong></summary>
 
-Start with the [copyable Greeting plugin project](examples/plugins/greeting), which includes TypeScript, type checking, build, and watch scripts. Develop in that project and deploy its bundled JavaScript output. MiMoCode no longer installs `@mimo-ai/plugin` or local plugin dependencies into configuration directories at startup.
+Start with the [Greeting plugin tutorial and example](examples/plugins/greeting/README.md), which includes TypeScript, type checking, build, and watch scripts. Prepare dependencies and write source in that project, then deliver a plugin package containing the bundled JavaScript output.
 
 1. Copy the example outside this repository and initialize its dependencies as described in its README. The template uses published SDK dependencies; the first `bun add --dev ...` creates the plugin project's own lockfile. Use `bun ci` on subsequent checkouts.
-2. Run `bun run typecheck` and `bun run build`. The build bundles the server entry and its runtime dependencies into `dist/server.js`. Type-only imports are erased; `tsc` alone does not bundle runtime imports. `bun run dev` rebuilds when source files change.
+2. Write the plugin in `src/server.ts`. Run `bun run typecheck` to validate types and `bun run build` to bundle the server entry and its runtime dependencies into `dist/server.js`. `bun run dev` rebuilds when source files change.
 3. Run `bun pm pack --ignore-scripts`, extract the archive, and reference its package directory through `plugin` in `mimocode.json(c)`; see the example's deployment commands. For a lightweight alternative, copy only `dist/server.js` to `.mimocode/plugins/greeting.js` for automatic discovery. Choose one loading method, then restart MiMoCode in the target project.
-4. Verify from that project with `mimo debug agent build --tool greet --params '{"name":"Example"}'`. The JSON result should contain `Hello, Example!`; the tool does not call a model.
+4. Verify from that project with `mimo debug agent build --tool greet --params '{"name":"Example"}'`. The command executes the tool directly, and the JSON result should contain `Hello, Example!`.
 
-TUI plugins use separate `tui.json(c)` configuration and share the host's Solid/OpenTUI runtime. Existing loose source plugins can remain compatible with dependencies you install yourself; migrating them to a bundled entry is recommended. Existing dependency files are not automatically deleted. Explicit npm plugins are still installed on demand, and built-in features do not depend on a matching SDK release on npm. See the [plugin development, deployment, and migration guide (Chinese)](docs/plugins.md) for complete examples.
+Configure TUI plugins in `tui.json(c)` and keep Solid/OpenTUI external to use the host's shared runtime. For local source development, install dependencies where they resolve from the plugin file. To use a published npm plugin, add its package name and version to the appropriate `plugin` array.
 
 </details>
 

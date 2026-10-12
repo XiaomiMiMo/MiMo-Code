@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { Script } from "./meta.ts"
+import { Script } from "../meta.ts"
 
 const PACKAGES = [
   "@mimo-ai/cli",
@@ -132,7 +132,7 @@ async function syncToNpmmirror() {
 
   console.log(`\n  ⚠️  ${failed.length}/${PACKAGES.length} packages NOT synced:`)
   for (const pkg of failed) console.log(`     ✗ ${pkg}`)
-  console.log(`\n  ↳ Re-run \`./script/sync-registry.ts npmmirror\` to retry.`)
+  console.log(`\n  ↳ Re-run \`bun script/release/sync-registry.ts npmmirror\` to retry.`)
   return failed
 }
 

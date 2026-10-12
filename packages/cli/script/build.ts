@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 // Build packages/cli TUI binaries. --archive also creates release archives.
-// Called by script/release.ts and bun run build:local.
+// Called by script/release/index.ts and bun run build:local.
 //
-// Uploads are separate stages in script/release.ts; this script never publishes.
+// Uploads are separate stages in script/release/index.ts; this script never publishes.
 
 import { $ } from "bun"
 import fs from "fs"
@@ -283,7 +283,7 @@ for (const item of targets) {
   binaries[name] = Script.version
 }
 
-if (process.argv.includes("--archive") || Script.release) {
+if (process.argv.includes("--archive")) {
   for (const key of Object.keys(binaries)) {
     if (key.includes("linux")) {
       await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)

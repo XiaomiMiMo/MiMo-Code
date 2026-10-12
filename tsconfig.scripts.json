@@ -10,7 +10,6 @@
   "include": [
     "script/**/*.ts",
     "packages/cli/script/**/*.ts",
-    "packages/plugin/script/**/*.ts",
     "packages/sdk/script/**/*.ts"
   ],
   "exclude": [

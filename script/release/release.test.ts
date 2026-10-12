@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { chmod, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { clean, command, preflight, root, run } from "./context"
+import { clean, preflight, run } from "./context"
 import { github, githubCommand } from "./github"
 import {
   digest,
@@ -184,20 +184,6 @@ describe("stable releases", () => {
 })
 
 describe("immutable release artifacts", () => {
-  test("legacy scoped entry points fail before starting publication", async () => {
-    const results = await Promise.all(
-      [
-        "packages/cli/script/publish.ts",
-        "packages/sdk/script/publish.ts",
-        "packages/plugin/script/publish.ts",
-        "script/version.ts",
-      ].map((file) => command([process.execPath, path.join(root, file)])),
-    )
-    for (const result of results) {
-      expect(result.exitCode).toBe(1)
-      expect(result.stderr).toContain("is disabled. Use bun script/release.ts --stage")
-    }
-  })
   test("validates the complete CLI and npm set", () => {
     expect(validateManifest(manifest(), version, commit).artifacts).toHaveLength(28)
     expect(() => validateManifest(manifest(), "0.1.98", commit)).toThrow("does not match")

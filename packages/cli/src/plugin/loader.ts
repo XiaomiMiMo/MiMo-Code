@@ -132,7 +132,7 @@ export namespace PluginLoader {
         return {
           ok: false,
           error: new Error(
-            `${errorMessage(error)}\nBundle your plugin's runtime dependencies before loading it, or install them in the plugin's own directory. MiMoCode no longer installs configuration-directory dependencies automatically. See https://github.com/XiaomiMiMo/MiMo-Code/blob/main/docs/plugins.md`,
+            `${errorMessage(error)}\nBundle your plugin's runtime dependencies before loading it, or install them in the plugin's own directory. See https://github.com/XiaomiMiMo/MiMo-Code/blob/main/examples/plugins/greeting/README.md`,
             { cause: error },
           ),
         }
