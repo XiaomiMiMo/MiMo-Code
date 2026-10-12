@@ -14,11 +14,12 @@
 
 ## Style Guide
 
-Follow the surrounding code. The rules below are the only repository-wide requirements; anything else (function size, `else`, destructuring, loops vs array methods, `try`/`catch`) is left to judgement.
+Follow the surrounding code. The rules below are the only repository-wide requirements; anything else (function size, `else`, destructuring, loops vs array methods) is left to judgement.
 
 ### Types and runtimes
 
 - Avoid using the `any` type
+- Inside Effect code, express failures through the Effect error channel (`Effect.try`, `Effect.tryPromise`, `Effect.catchTag`, typed errors) rather than `try`/`catch`; plain scripts and non-Effect code may use `try`/`catch`
 - Use Bun APIs where the runtime is Bun-only, like `Bun.file()` in the TUI (`src/cli/cmd/tui/`); build-time macros are fine anywhere, as they never reach the shipped runtime
 - In core code reachable from `src/node.ts`, prefer the Node equivalent when one exists — `createHash` over `Bun.CryptoHasher`, `prepare()` over bun:sqlite's `query()` — as that code also ships through `script/build-node.ts` and must run on plain Node
 - Bun-only calls in core escape both `typecheck` and `bun test`, which run on Bun; existing usage needs no urgent removal, and APIs with no Node equivalent may stay until a runtime seam exists
