@@ -1,14 +1,36 @@
 ---
 feature: release-ci
-status: designed
+status: delivered
 updated: 2026-10-12
 branch: feat/release-ci
-commits:
+commits: f98dcd1c..b8704179
 ---
 
 # Release CI
 
 ## Report
+
+**What was built** — Pushing a `vX.Y.Z` tag on a main commit runs `.github/workflows/release.yml`: verify (tag on main, four package versions equal the tag), the existing typecheck/lint/test workflows via `workflow_call`, a macOS build of 12 archives and 15 npm tarballs, then a publish job in environment `release` that ships npm SDK/plugin → GitHub Release (generated notes, archives only) → FDS archives then `releases/latest` → npm platform packages and `@mimo-ai/cli`, followed by a non-blocking mirror sync. npm publishes through trusted publishing (OIDC) with no stored token. Every publish stage skips work that already landed, so "Re-run failed jobs" resumes a release.
+
+`script/release.ts` replaces the old release, version and publish scripts (root and per-package). `packages/cli/script/build.ts` only builds, with `--archive` for release archives; `MIMOCODE_RELEASE` is gone. The shared setup-bun action now pins Bun from `packageManager` and installs with `bun ci`. CONTRIBUTING documents the procedure and the npm trusted-publisher setup.
+
+**Verification**
+
+- `bun typecheck` (root) — PASS.
+- actionlint 1.7.12 over all workflows — PASS (also after the review fix).
+- `bun test script/release.test.ts` — PASS, 7 tests / 23 expects (version format, verify against real git fixtures, real SDK/plugin packing).
+- oxlint on the new files — 0 errors; 3 `await-thenable` warnings on `await expect(...).rejects`, the pattern used elsewhere in the repo.
+- Full `MIMOCODE_VERSION=v0.1.15 bun script/release.ts build` in a throwaway clone with HEAD tagged — PASS: 12 archives and 15 tarballs, checkout clean afterwards; sdk/plugin/cli/platform `package.json` fields match the published 0.1.15 on npm; darwin-arm64 binary is ad-hoc signed like v0.1.15 and prints `0.1.15`.
+- Independent review — spec compliance met for T1–T5, no critical findings. Adopted: `release` environment gate, CONTRIBUTING notes on manual start from the tag and one release at a time. Accepted as-is: `npm view` network errors fall through to a failing publish (retry resolves), an already-published GitHub Release is skipped without asset checks, the mirror-sync log prints the `v` prefix.
+
+Not run: a real tag-triggered release, OIDC publication, FDS upload. These need the trusted publishers configured on npmjs.com first.
+
+**Journey log**
+
+1. `bun pm pack` already rewrites `workspace:` and `catalog:` specifiers; only `exports` needs moving from `src` to `dist`, so packing stays in place with a restore in `finally`.
+2. v0.1.15 was built on macOS (ad-hoc, linker-signed darwin binaries, clean tarballs); building on `macos-latest` keeps that rather than trusting cross-signing from Linux.
+3. Bun's `$.cwd()` mutates the shared shell; tests need `new $.Shell().cwd(dir)`.
+4. Publishing SDK/plugin before the binary removes the window where a downloadable binary resolves an unpublished plugin version, without touching runtime code.
 
 ## [S1] Problem
 
@@ -81,8 +103,8 @@ A failed stage stops the job; later channels are not touched. Fix the cause (cre
 
 ## Tasks
 
-- [ ] T1: Rewrite `script/release.ts` with verify/build/github/fds/npm stages and delete the replaced scripts — acceptance: `bun script/release.ts verify` rejects a non-tag/mismatched version; old entry points are gone and nothing references them (covers: S2)
-- [ ] T2: Strip uploads from `packages/cli/script/build.ts`, add `--archive`, drop `MIMOCODE_RELEASE` — acceptance: host `--single --archive` build produces the archive and touches no remote (covers: S2)
-- [ ] T3: Pack SDK/plugin from committed sources with a regression test — acceptance: test packs both into a temp dir; tarball exports resolve to files inside the tarball and no `workspace:`/`catalog:` specifiers remain; checkout is clean afterwards (covers: S2; depends: T1)
-- [ ] T4: Add `release.yml`, `workflow_call` on check workflows, pinned/frozen setup-bun — acceptance: actionlint passes; job graph and permissions match S2 (covers: S2; depends: T1)
-- [ ] T5: Update CONTRIBUTING with the release procedure and trusted-publisher setup — acceptance: doc describes bump PR → tag push → rerun path and lists secrets (covers: S2; depends: T4)
+- [x] T1: Rewrite `script/release.ts` with verify/build/github/fds/npm stages and delete the replaced scripts — acceptance: `bun script/release.ts verify` rejects a non-tag/mismatched version; old entry points are gone and nothing references them (covers: S2)
+- [x] T2: Strip uploads from `packages/cli/script/build.ts`, add `--archive`, drop `MIMOCODE_RELEASE` — acceptance: host `--single --archive` build produces the archive and touches no remote (covers: S2)
+- [x] T3: Pack SDK/plugin from committed sources with a regression test — acceptance: test packs both into a temp dir; tarball exports resolve to files inside the tarball and no `workspace:`/`catalog:` specifiers remain; checkout is clean afterwards (covers: S2; depends: T1)
+- [x] T4: Add `release.yml`, `workflow_call` on check workflows, pinned/frozen setup-bun — acceptance: actionlint passes; job graph and permissions match S2 (covers: S2; depends: T1)
+- [x] T5: Update CONTRIBUTING with the release procedure and trusted-publisher setup — acceptance: doc describes bump PR → tag push → rerun path and lists secrets (covers: S2; depends: T4)
