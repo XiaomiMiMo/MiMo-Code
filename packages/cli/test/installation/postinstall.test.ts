@@ -13,7 +13,7 @@ function stagePackage(dir: string) {
   fs.copyFileSync(LAUNCHER_PATH, path.join(dir, "launcher.js"))
   fs.writeFileSync(
     path.join(dir, "package.json"),
-    JSON.stringify({ name: "@mimo-ai/cli", version: "9.9.9", type: "module", bin: { mimo: "./bin/mimo" } }),
+    JSON.stringify({ name: "@mimo-ai/cli", version: "9.9.9", type: "module", bin: { mimo: "./mimo.js" } }),
   )
 }
 

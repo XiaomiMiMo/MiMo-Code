@@ -291,8 +291,11 @@ export function runBinary(targetPath, args = process.argv.slice(2)) {
     console.error(result.error.message)
     process.exit(1)
   }
-  const code = typeof result.status === "number" ? result.status : 0
-  process.exit(code)
+  if (typeof result.status === "number") {
+    process.exit(result.status)
+  }
+  // Killed by a signal — propagate a non-zero code instead of looking clean.
+  process.exit(result.signal ? 1 : 0)
 }
 
 /**
@@ -305,10 +308,27 @@ export function stageWindowsRunCopy(sourcePath, version) {
   const dir = path.join(os.tmpdir(), "mimocode-bin", version || "dev")
   const runPath = path.join(dir, path.basename(sourcePath))
   try {
-    if (!fs.existsSync(runPath) || fs.statSync(runPath).size !== fs.statSync(sourcePath).size) {
+    const sourceStat = fs.statSync(sourcePath)
+    let reuse = false
+    try {
+      const destStat = fs.statSync(runPath)
+      // mtime+size: catch a replaced vendor binary of the same length.
+      reuse = destStat.size === sourceStat.size && destStat.mtimeMs >= sourceStat.mtimeMs
+    } catch {
+      reuse = false
+    }
+    if (!reuse) {
       fs.mkdirSync(dir, { recursive: true })
-      fs.copyFileSync(sourcePath, runPath)
-      fs.chmodSync(runPath, 0o755)
+      const tmp = `${runPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 8)}`
+      fs.copyFileSync(sourcePath, tmp)
+      fs.chmodSync(tmp, 0o755)
+      try {
+        fs.renameSync(tmp, runPath)
+      } catch {
+        // Concurrent winner already placed runPath.
+        fs.rmSync(tmp, { force: true })
+        if (!fs.existsSync(runPath)) throw new Error(`failed to stage ${runPath}`)
+      }
     }
     return runPath
   } catch {

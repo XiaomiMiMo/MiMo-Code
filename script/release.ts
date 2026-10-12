@@ -34,7 +34,9 @@ const tarball = (name: string, version: string) => `${name.slice(1).replace("/",
 
 const npmGroups = {
   libs: ["@mimo-ai/sdk", "@mimo-ai/plugin"],
-  cli: [...platforms.map((name) => `@mimo-ai/${name}`), "@mimo-ai/cli"],
+  // Platform binaries ship on FDS/GitHub only. npm stays limited support:
+  // just the launcher wrapper (plus the two libraries above).
+  cli: ["@mimo-ai/cli"],
 }
 
 export function stableVersion(value: string | undefined) {
@@ -127,14 +129,9 @@ export async function packLibrary(name: "sdk" | "plugin", version: string, dest:
 
 async function packCli(version: string, dest: string) {
   const cli = path.join(root, "packages/cli")
-  for (const name of platforms) {
-    const dir = path.join(cli, "dist", name)
-    await $`chmod -R 755 .`.cwd(dir)
-    await pack(dir, `@mimo-ai/${name}`, version, dest)
-  }
   const stage = path.join(out, "stage/cli")
   await mkdir(stage, { recursive: true })
-  await cp(path.join(cli, "bin"), path.join(stage, "bin"), { recursive: true })
+  await cp(path.join(cli, "mimo.js"), path.join(stage, "mimo.js"))
   await cp(path.join(cli, "launcher.js"), path.join(stage, "launcher.js"))
   await cp(path.join(cli, "postinstall.mjs"), path.join(stage, "postinstall.mjs"))
   await cp(path.join(root, "README_npm.md"), path.join(stage, "README.md"))
@@ -146,7 +143,8 @@ async function packCli(version: string, dest: string) {
         name: "@mimo-ai/cli",
         version,
         type: "module",
-        engines: { node: ">=18" },
+        // Extensionless-free ESM entry (mimo.js) still wants a modern Node for fetch/AbortSignal.timeout.
+        engines: { node: ">=20.10.0" },
         description: "MiMo Code: Where Models and Agents Co-Evolve",
         license: "MIT",
         author: "Xiaomi MiMo Team",
@@ -154,7 +152,7 @@ async function packCli(version: string, dest: string) {
         repository: { type: "git", url: "git+https://github.com/XiaomiMiMo/MiMo-Code.git" },
         bugs: { url: "https://github.com/XiaomiMiMo/MiMo-Code/issues" },
         keywords: ["ai", "cli", "code", "xiaomi", "mimo", "mimocode"],
-        bin: { mimo: "./bin/mimo" },
+        bin: { mimo: "./mimo.js" },
         scripts: { postinstall: "bun ./postinstall.mjs || node ./postinstall.mjs" },
       },
       null,

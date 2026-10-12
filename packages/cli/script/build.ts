@@ -260,30 +260,8 @@ for (const item of targets) {
   }
 
   await $`rm -rf ./dist/${name}/bin/tui`
-  await Bun.file(`dist/${name}/README.md`).write(
-    `This is the ${item.os}-${item.arch} binary for [@mimo-ai/cli](https://www.npmjs.com/package/@mimo-ai/cli). Install that package directly.\n`,
-  )
-  await Bun.file(`dist/${name}/package.json`).write(
-    JSON.stringify(
-      {
-        name: `@mimo-ai/${name}`,
-        version: Script.version,
-        description: "Platform-specific binary for @mimo-ai/cli.",
-        license: "MIT",
-        author: "Xiaomi MiMo Team",
-        homepage: "https://mimo.xiaomi.com/coder",
-        repository: {
-          type: "git",
-          url: "git+https://github.com/XiaomiMiMo/MiMo-Code.git",
-        },
-        keywords: ["ai", "coding", "agent", "cli", "mimo"],
-        os: [item.os],
-        cpu: [item.arch],
-      },
-      null,
-      2,
-    ),
-  )
+  // Platform targets are binaries + FDS/GitHub archives only. npm gets the
+  // thin @mimo-ai/cli launcher, not per-platform packages.
   binaries[name] = Script.version
 }
 

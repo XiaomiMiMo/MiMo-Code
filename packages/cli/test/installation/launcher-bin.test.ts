@@ -5,12 +5,12 @@ import path from "path"
 
 import * as launcher from "../../launcher.js"
 
-const BIN_PATH = path.join(import.meta.dirname, "../../bin/mimo")
+const BIN_PATH = path.join(import.meta.dirname, "../../mimo.js")
 const LAUNCHER_PATH = path.join(import.meta.dirname, "../../launcher.js")
 
 function stageLauncher(dir: string) {
-  fs.mkdirSync(path.join(dir, "bin"), { recursive: true })
-  fs.copyFileSync(BIN_PATH, path.join(dir, "bin", "mimo"))
+  fs.mkdirSync(dir, { recursive: true })
+  fs.copyFileSync(BIN_PATH, path.join(dir, "mimo.js"))
   fs.copyFileSync(LAUNCHER_PATH, path.join(dir, "launcher.js"))
   fs.writeFileSync(
     path.join(dir, "package.json"),
@@ -18,14 +18,14 @@ function stageLauncher(dir: string) {
       name: "@mimo-ai/cli",
       version: "9.9.9",
       type: "module",
-      bin: { mimo: "./bin/mimo" },
+      bin: { mimo: "./mimo.js" },
     }),
   )
 }
 
 function runMimo(dir: string, args: string[], env: Record<string, string> = {}) {
   // Async spawn: a Bun.serve stub in this process must stay free to answer HTTP.
-  return Bun.spawn(["node", path.join(dir, "bin", "mimo"), ...args], {
+  return Bun.spawn(["node", path.join(dir, "mimo.js"), ...args], {
     cwd: dir,
     env: { ...process.env, ...env },
     stdout: "pipe",

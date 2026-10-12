@@ -19,7 +19,7 @@
     "dev:temporary": "bun run --conditions=browser ./src/temporary.ts"
   },
   "bin": {
-    "mimo": "./bin/mimo"
+    "mimo": "./mimo.js"
   },
   "exports": {
     "./*": "./src/*.ts"

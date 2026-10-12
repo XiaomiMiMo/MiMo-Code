@@ -12,7 +12,7 @@ import {
   runBinary,
   stageWindowsRunCopy,
   vendorBinaryPath,
-} from "../launcher.js"
+} from "./launcher.js"
 
 const installHint =
   process.platform === "win32"
@@ -25,7 +25,7 @@ async function main() {
     runBinary(envPath)
   }
 
-  const root = packageRoot(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."))
+  const root = packageRoot(path.dirname(fileURLToPath(import.meta.url)))
   const target = detectTarget()
   const dest = vendorBinaryPath(root, target)
 
@@ -35,7 +35,11 @@ async function main() {
   }
 
   try {
-    const binary = await ensureBinary({ root, target })
+    const binary = await ensureBinary({
+      root,
+      target,
+      log: (message) => console.error(message),
+    })
     runBinary(stageWindowsRunCopy(binary, readVersion(root)))
   } catch (error) {
     const detail = error && error.message ? error.message : String(error)
