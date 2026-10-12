@@ -3,13 +3,13 @@
 // Best-effort FDS prefetch. Failures must not fail `npm install` — bin/mimo
 // downloads the binary on first run when vendor/ is still empty.
 
-import { createRequire } from "module"
+import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 
-const require = createRequire(import.meta.url)
+import { detectTarget, ensureBinary, packageRoot, vendorBinaryPath } from "./launcher.js"
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const launcher = require(path.join(__dirname, "launcher.cjs"))
 
 function printMigrationNotice() {
   const install =
@@ -25,16 +25,14 @@ function printMigrationNotice() {
 async function main() {
   printMigrationNotice()
 
-  if (process.env.MIMOCODE_BIN_PATH) {
-    return
-  }
+  if (process.env.MIMOCODE_BIN_PATH) return
 
   try {
-    const root = launcher.packageRoot(__dirname)
-    const target = launcher.detectTarget()
-    const dest = launcher.vendorBinaryPath(root, target)
-    if (!require("fs").existsSync(dest)) {
-      await launcher.ensureBinary({ root, target })
+    const root = packageRoot(__dirname)
+    const target = detectTarget()
+    const dest = vendorBinaryPath(root, target)
+    if (!fs.existsSync(dest)) {
+      await ensureBinary({ root, target })
     }
   } catch (error) {
     console.warn(`postinstall: skipped binary prefetch: ${error && error.message ? error.message : error}`)

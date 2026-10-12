@@ -1,43 +1,47 @@
 #!/usr/bin/env node
 
-const fs = require("fs")
-const path = require("path")
+import fs from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
 
-const launcher = require("../launcher.cjs")
+import {
+  detectTarget,
+  ensureBinary,
+  packageRoot,
+  runBinary,
+  vendorBinaryPath,
+} from "../launcher.js"
 
-function recommendNativeInstall() {
-  const install =
-    process.platform === "win32"
-      ? "irm https://mimo.xiaomi.com/install.ps1 | iex"
-      : "curl -fsSL https://mimo.xiaomi.com/install | bash"
-  return install
-}
+const installHint =
+  process.platform === "win32"
+    ? "irm https://mimo.xiaomi.com/install.ps1 | iex"
+    : "curl -fsSL https://mimo.xiaomi.com/install | bash"
 
 async function main() {
   const envPath = process.env.MIMOCODE_BIN_PATH
   if (envPath) {
-    launcher.runBinary(envPath)
+    runBinary(envPath)
     return
   }
 
-  const root = launcher.packageRoot(path.join(__dirname, ".."))
-  const target = launcher.detectTarget()
-  const dest = launcher.vendorBinaryPath(root, target)
+  const root = packageRoot(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."))
+  const target = detectTarget()
+  const dest = vendorBinaryPath(root, target)
 
   if (fs.existsSync(dest)) {
-    launcher.runBinary(dest)
+    runBinary(dest)
     return
   }
 
   try {
-    const binary = await launcher.ensureBinary({ root, target })
-    launcher.runBinary(binary)
+    const binary = await ensureBinary({ root, target })
+    runBinary(binary)
   } catch (error) {
     const detail = error && error.message ? error.message : String(error)
     console.error(`Failed to install MiMoCode binary (${target}) from FDS: ${detail}`)
     console.error("")
     console.error("  Recommended: install MiMoCode natively:")
-    console.error(`    ${recommendNativeInstall()}`)
+    console.error(`    ${installHint}`)
     console.error("")
     console.error("  Or set MIMOCODE_BIN_PATH to an existing mimo executable,")
     console.error("  or retry with network access (MIMO_FDS_BASE can point at a mirror).")
@@ -49,6 +53,6 @@ main().catch((error) => {
   console.error(error && error.message ? error.message : error)
   console.error("")
   console.error("  Recommended: install MiMoCode natively:")
-  console.error(`    ${recommendNativeInstall()}`)
+  console.error(`    ${installHint}`)
   process.exit(1)
 })

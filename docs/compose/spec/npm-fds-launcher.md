@@ -33,7 +33,7 @@ Upgrade is package replace, not tree migration: no leftover-`node_modules` fallb
 
 - Name `@mimo-ai/cli`, `bin: { "mimo": "./bin/mimo" }`, version = release version.
 - No `optionalDependencies`. Platform packages `@mimo-ai/mimocode-*` remain published for direct install only.
-- Shipped files: `bin/mimo`, `launcher.cjs`, `postinstall.mjs`.
+- Shipped files: `bin/mimo`, `launcher.js` (ESM), `postinstall.mjs`. Published package sets `"type": "module"`.
 
 ### Runtime resolution (`bin/mimo`)
 

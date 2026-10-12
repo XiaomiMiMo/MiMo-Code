@@ -1,14 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { createRequire } from "module"
 import { createHash } from "crypto"
 import path from "path"
 import fs from "fs"
 import { tmpdir } from "../fixture/fixture"
 
-const require = createRequire(import.meta.url)
-const launcher = require("../../launcher.cjs")
-
-const {
+import {
   PLATFORMS,
   detectTarget,
   archiveNameFor,
@@ -16,7 +12,8 @@ const {
   releaseUrl,
   vendorBinaryPath,
   DEFAULT_FDS_BASE,
-} = launcher
+  ensureBinary,
+} from "../../launcher.js"
 
 describe("launcher targets", () => {
   test("covers the full published matrix (12 platforms)", () => {
@@ -107,7 +104,7 @@ describe("ensureBinary", () => {
     })
     try {
       const url = `http://127.0.0.1:${server.port}/releases/v9.9.9/${target}.tar.gz`
-      const dest = await launcher.ensureBinary({
+      const dest = await ensureBinary({
         root,
         target,
         version: "9.9.9",
@@ -128,7 +125,7 @@ describe("ensureBinary", () => {
         },
       })
       try {
-        const again = await launcher.ensureBinary({
+        const again = await ensureBinary({
           root,
           target,
           version: "9.9.9",
@@ -170,7 +167,7 @@ describe("ensureBinary", () => {
       })
       try {
         const dest = path.join(root, "vendor", `mimo-${checksum.slice(0, 4)}`)
-        const run = launcher.ensureBinary({
+        const run = ensureBinary({
           root,
           target,
           version: "9.9.9",

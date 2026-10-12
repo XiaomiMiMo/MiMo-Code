@@ -3,16 +3,23 @@ import { tmpdir } from "../fixture/fixture"
 import fs from "fs"
 import path from "path"
 
+import * as launcher from "../../launcher.js"
+
 const BIN_PATH = path.join(import.meta.dirname, "../../bin/mimo")
-const LAUNCHER_PATH = path.join(import.meta.dirname, "../../launcher.cjs")
+const LAUNCHER_PATH = path.join(import.meta.dirname, "../../launcher.js")
 
 function stageLauncher(dir: string) {
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true })
   fs.copyFileSync(BIN_PATH, path.join(dir, "bin", "mimo"))
-  fs.copyFileSync(LAUNCHER_PATH, path.join(dir, "launcher.cjs"))
+  fs.copyFileSync(LAUNCHER_PATH, path.join(dir, "launcher.js"))
   fs.writeFileSync(
     path.join(dir, "package.json"),
-    JSON.stringify({ name: "@mimo-ai/cli", version: "9.9.9", bin: { mimo: "./bin/mimo" } }),
+    JSON.stringify({
+      name: "@mimo-ai/cli",
+      version: "9.9.9",
+      type: "module",
+      bin: { mimo: "./bin/mimo" },
+    }),
   )
 }
 
@@ -70,8 +77,6 @@ describe("bin/mimo launcher", () => {
     const dir = tmp.path
     stageLauncher(dir)
 
-    const require = (await import("module")).createRequire(import.meta.url)
-    const launcher = require(LAUNCHER_PATH)
     const target = launcher.detectTarget()
     const dest = launcher.vendorBinaryPath(dir, target)
     fs.mkdirSync(path.dirname(dest), { recursive: true })
@@ -98,8 +103,6 @@ describe("bin/mimo launcher", () => {
     const dir = tmp.path
     stageLauncher(dir)
 
-    const require = (await import("module")).createRequire(import.meta.url)
-    const launcher = require(LAUNCHER_PATH)
     const target = launcher.detectTarget()
     const binaryName = launcher.binaryNameFor(target)
     const archiveName = launcher.archiveNameFor(target)

@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 // FDS launcher core: detect the one platform target, fetch its binary into
 // package-local vendor/, and spawn it. Shared by bin/mimo and postinstall.mjs.
-// CommonJS so both the bin wrapper (require) and postinstall (createRequire) can load it.
 
-const childProcess = require("child_process")
-const fs = require("fs")
-const path = require("path")
-const os = require("os")
-const { Readable } = require("stream")
-const { pipeline } = require("stream/promises")
-const { createHash } = require("crypto")
+import childProcess from "child_process"
+import fs from "fs"
+import path from "path"
+import os from "os"
+import { Readable } from "stream"
+import { pipeline } from "stream/promises"
+import { createHash } from "crypto"
+import { fileURLToPath } from "url"
 
-const DEFAULT_FDS_BASE = "https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode"
+export const DEFAULT_FDS_BASE = "https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode"
 
 /** Every target published to FDS / GitHub (matches script/release.ts platforms). */
-const PLATFORMS = [
+export const PLATFORMS = [
   "mimocode-linux-arm64",
   "mimocode-linux-x64",
   "mimocode-linux-x64-baseline",
@@ -29,18 +29,16 @@ const PLATFORMS = [
   "mimocode-windows-x64-baseline",
 ]
 
-function mapPlatform(value = os.platform()) {
+export function mapPlatform(value = os.platform()) {
   if (value === "win32") return "windows"
-  if (value === "darwin" || value === "linux") return value
   return value
 }
 
-function mapArch(value = os.arch()) {
-  if (value === "x64" || value === "arm64" || value === "arm") return value
+export function mapArch(value = os.arch()) {
   return value
 }
 
-function supportsAvx2(platform = mapPlatform(), arch = mapArch()) {
+export function supportsAvx2(platform = mapPlatform(), arch = mapArch()) {
   if (arch !== "x64") return false
 
   if (platform === "linux") {
@@ -88,7 +86,7 @@ function supportsAvx2(platform = mapPlatform(), arch = mapArch()) {
   return false
 }
 
-function isMusl(platform = mapPlatform()) {
+export function isMusl(platform = mapPlatform()) {
   if (platform !== "linux") return false
   try {
     if (fs.existsSync("/etc/alpine-release")) return true
@@ -106,10 +104,9 @@ function isMusl(platform = mapPlatform()) {
 
 /**
  * Exact target name for this host — one of PLATFORMS.
- * Throws when the host is outside the published matrix.
  * `options.platform` / `options.arch` / `options.avx2` / `options.musl` override detection (tests).
  */
-function detectTarget(options = {}) {
+export function detectTarget(options = {}) {
   const platform = options.platform ?? mapPlatform()
   const arch = options.arch ?? mapArch()
   if (platform !== "linux" && platform !== "darwin" && platform !== "windows") {
@@ -132,19 +129,19 @@ function detectTarget(options = {}) {
   return target
 }
 
-function binaryNameFor(target) {
+export function binaryNameFor(target) {
   return target.includes("windows") ? "mimo.exe" : "mimo"
 }
 
-function archiveNameFor(target) {
+export function archiveNameFor(target) {
   return target.includes("linux") ? `${target}.tar.gz` : `${target}.zip`
 }
 
-function packageRoot(fromDir = __dirname) {
-  return path.resolve(fromDir)
+export function packageRoot(fromDir) {
+  return path.resolve(fromDir ?? path.dirname(fileURLToPath(import.meta.url)))
 }
 
-function readVersion(root) {
+export function readVersion(root) {
   const raw = fs.readFileSync(path.join(root, "package.json"), "utf8")
   const version = JSON.parse(raw).version
   if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
@@ -153,15 +150,15 @@ function readVersion(root) {
   return version
 }
 
-function fdsBase() {
+export function fdsBase() {
   return (process.env.MIMO_FDS_BASE || DEFAULT_FDS_BASE).replace(/\/+$/, "")
 }
 
-function releaseUrl(version, target) {
+export function releaseUrl(version, target) {
   return `${fdsBase()}/releases/v${version}/${archiveNameFor(target)}`
 }
 
-function vendorBinaryPath(root, target) {
+export function vendorBinaryPath(root, target) {
   return path.join(root, "vendor", binaryNameFor(target))
 }
 
@@ -241,7 +238,7 @@ async function extractBinary(archivePath, target, dest) {
  * Ensure the vendor binary exists under `root`. Downloads exactly one FDS
  * archive for this host when missing. Returns the absolute binary path.
  */
-async function ensureBinary(options = {}) {
+export async function ensureBinary(options = {}) {
   const root = options.root || packageRoot()
   const target = options.target || detectTarget()
   const version = options.version || readVersion(root)
@@ -270,7 +267,7 @@ async function ensureBinary(options = {}) {
   }
 }
 
-function runBinary(targetPath, args = process.argv.slice(2)) {
+export function runBinary(targetPath, args = process.argv.slice(2)) {
   const result = childProcess.spawnSync(targetPath, args, { stdio: "inherit" })
   if (result.error) {
     console.error(result.error.message)
@@ -278,23 +275,4 @@ function runBinary(targetPath, args = process.argv.slice(2)) {
   }
   const code = typeof result.status === "number" ? result.status : 0
   process.exit(code)
-}
-
-module.exports = {
-  DEFAULT_FDS_BASE,
-  PLATFORMS,
-  archiveNameFor,
-  binaryNameFor,
-  detectTarget,
-  ensureBinary,
-  fdsBase,
-  isMusl,
-  mapArch,
-  mapPlatform,
-  packageRoot,
-  readVersion,
-  releaseUrl,
-  runBinary,
-  supportsAvx2,
-  vendorBinaryPath,
 }

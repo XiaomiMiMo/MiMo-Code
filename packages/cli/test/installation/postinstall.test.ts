@@ -5,15 +5,15 @@ import path from "path"
 import os from "os"
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "../../script/postinstall.mjs")
-const LAUNCHER_PATH = path.join(import.meta.dirname, "../../launcher.cjs")
+const LAUNCHER_PATH = path.join(import.meta.dirname, "../../launcher.js")
 
 function stagePackage(dir: string) {
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true })
   fs.copyFileSync(SCRIPT_PATH, path.join(dir, "postinstall.mjs"))
-  fs.copyFileSync(LAUNCHER_PATH, path.join(dir, "launcher.cjs"))
+  fs.copyFileSync(LAUNCHER_PATH, path.join(dir, "launcher.js"))
   fs.writeFileSync(
     path.join(dir, "package.json"),
-    JSON.stringify({ name: "@mimo-ai/cli", version: "9.9.9", bin: { mimo: "./bin/mimo" } }),
+    JSON.stringify({ name: "@mimo-ai/cli", version: "9.9.9", type: "module", bin: { mimo: "./bin/mimo" } }),
   )
 }
 
