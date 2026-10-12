@@ -1,0 +1,46 @@
+direction: right
+
+User: "Người dùng"
+MiMoCode: "MiMo-Code"
+Plannotator: "Plannotator"
+IntegrationModule: "Module tích hợp Plannotator"
+Dataset: "Bộ dữ liệu phản hồi"
+
+User -> MiMoCode: "Yêu cầu tác vụ"
+
+subgraph MiMoCode {
+  MiMoPlanGeneration: "Sinh kế hoạch MiMo"
+  MiMoExecution: "Thực thi MiMo"
+  MiMoTests: "Kiểm thử MiMo"
+  MiMoGitDiff: "Sinh Git Diff"
+  MiMoRevisionLoop: "Vòng lặp sửa đổi MiMo"
+}
+
+subgraph IntegrationModule {
+  Exporter: "exporter.ts"
+  ReviewClient: "review_client.ts"
+  Importer: "importer.ts"
+  Hooks: "hooks.ts"
+}
+
+subgraph Plannotator {
+  PlannotatorPlanReview: "Đánh giá kế hoạch Plannotator"
+  PlannotatorCodeReview: "Đánh giá mã nguồn Plannotator"
+}
+
+MiMoPlanGeneration -> Exporter: "Kế hoạch MiMo"
+Exporter -> ReviewClient: "Kế hoạch đã xuất"
+ReviewClient -> PlannotatorPlanReview: "Gửi kế hoạch"
+PlannotatorPlanReview -> Importer: "Phản hồi Plannotator"
+Importer -> Hooks: "Phản hồi đã nhập"
+Hooks -> MiMoExecution: "Phê duyệt / Từ chối"
+
+MiMoExecution -> MiMoTests: "Mã đã thực thi"
+MiMoTests -> MiMoGitDiff: "Kết quả kiểm thử"
+MiMoGitDiff -> ReviewClient: "Git Diff"
+ReviewClient -> PlannotatorCodeReview: "Gửi Git Diff"
+PlannotatorCodeReview -> Importer: "Phản hồi đánh giá mã nguồn"
+Importer -> MiMoRevisionLoop: "Phản hồi đã nhập"
+MiMoRevisionLoop -> MiMoPlanGeneration: "Yêu cầu sửa đổi"
+
+Hooks -> Dataset: "Lưu phản hồi"
