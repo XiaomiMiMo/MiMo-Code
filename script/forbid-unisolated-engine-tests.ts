@@ -1,26 +1,27 @@
 /**
- * Root `bun test` guard: refuse `packages/**` tests without
- * packages/cli/test/preload.ts isolation (MIMOCODE_DB=:memory: + XDG_*).
+ * Root `bun test` policy: do not run `packages/**` tests from the repo root.
  *
- * bun test runs this preload with argv = [bun, <testfile>, ...], so inspect
- * every argv entry. Discovery is limited by bunfig [test] root = ./script;
- * this also blocks explicit `bun test ./packages/...` paths.
+ * Those suites must run from packages/cli so packages/cli/test/preload.ts
+ * loads (fixtures, Log, projectors). Even with test-isolation-env.ts setting
+ * MIMOCODE_DB=:memory:, a root run still skips that fixture preload and can
+ * produce misleading results.
+ *
+ * bun test invokes preloads with argv = [bun, <testfile>, ...].
  *
  * Legitimate entrypoints:
- *   - `bun run test` / `bun run --cwd packages/cli test` (loads packages/cli/test/preload.ts)
- *   - `bun test script/release.test.ts` (root release scripts; no engine DB)
+ *   - `bun run test` / `bun run --cwd packages/cli test`
+ *   - `cd packages/cli && bun test <file>`
+ *   - `bun test script/release.test.ts` (root release scripts only)
  */
-const engineTest = process.argv.some((a) => {
+const packagesTest = process.argv.some((a) => {
   const s = a.replace(/\\/g, "/")
-  return /\/packages\/[^/]+\/(test\/.*\.(test|spec)\.|.*\.(test|spec)\.)/.test(s)
+  return /\/packages\/[^/]+\/.*\.(test|spec)\./.test(s) || /\/packages\/[^/]+\/test\//.test(s)
 })
-const isolated = Boolean(process.env.MIMOCODE_DB)
 
-if (engineTest && !isolated) {
+if (packagesTest) {
   console.error(
     [
-      "Refusing to run packages/** tests from the repo root without isolation.",
-      "  reason: packages/cli/test/preload.ts would not load (MIMOCODE_DB / XDG_* stay on your real home).",
+      "Refusing to run packages/** tests from the repo root.",
       "  use:   bun run test",
       "      or bun run --cwd packages/cli test",
       "      or cd packages/cli && bun test <file>",

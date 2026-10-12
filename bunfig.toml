@@ -2,7 +2,8 @@
 exact = true
 
 [test]
-# Discovery root: only root-level script tests. Engine tests live under
-# packages/cli and must run via packages/cli/test/preload.ts isolation.
+# Discovery root: only root-level script tests. Engine/package suites live
+# under packages/*/test and must run from that package (see packages/cli/bunfig.toml).
 root = "./script"
-preload = ["./script/forbid-unisolated-engine-tests.ts"]
+# Order matters: isolate env first, then policy-guard packages/** paths.
+preload = ["./script/test-isolation-env.ts", "./script/forbid-unisolated-engine-tests.ts"]
