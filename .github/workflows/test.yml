@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -117,3 +118,8 @@ jobs:
         timeout-minutes: 2
         working-directory: packages/cli
         run: bun test test/mcp/stdio-exit-observe.test.ts --timeout 120000
+
+      - name: Run release script tests
+        if: matrix.shard == '4/4'
+        timeout-minutes: 3
+        run: bun test script/release.test.ts --timeout 120000

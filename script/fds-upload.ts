@@ -4,8 +4,8 @@
 // galaxy-fds-sdk's fds/auth/signature/signer.py. Pure signing logic is
 // unit-testable; HTTP PUT is the IO shell.
 //
-// Invoked by packages/cli/script/build.ts during a release build, or
-// standalone (see CLI below). The install script reads from the CDN host.
+// Invoked by script/release.ts (fds stage), or standalone (see CLI below).
+// The install script reads from the CDN host.
 //
 // Upload host (path-style, with /bucket) differs from the public download host
 // (CDN, bucket already in the subdomain).

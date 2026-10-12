@@ -1,10 +1,6 @@
 #!/usr/bin/env bun
-// Build packages/cli TUI binaries (and, when MIMOCODE_RELEASE is set,
-// upload them — GitHub Release via gh, Xiaomi FDS via ../../script/fds-upload.ts).
-// Called by script/release.ts and bun run build:local.
-//
-// Channels touched here: GitHub Release + FDS. npm is script/publish.ts.
-// Release env: see script/release.ts (GH_REPO, MIMO_FDS_AK/SK, MIMOCODE_*).
+// Build packages/cli TUI binaries. --archive also writes dist/<target>.{zip,tar.gz}
+// for script/release.ts, which owns every upload.
 
 import { $ } from "bun"
 import fs from "fs"
@@ -72,6 +68,7 @@ console.log(`Loaded ${migrations.length} migrations`)
 const singleFlag = process.argv.includes("--single")
 const baselineFlag = process.argv.includes("--baseline")
 const skipInstall = process.argv.includes("--skip-install")
+const archive = process.argv.includes("--archive")
 const plugin = createSolidTransformPlugin()
 // const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
 // Web UI temporarily disabled
@@ -290,32 +287,13 @@ for (const item of targets) {
   binaries[name] = Script.version
 }
 
-if (Script.release) {
+if (archive) {
   for (const key of Object.keys(binaries)) {
     if (key.includes("linux")) {
       await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
     } else {
       await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
     }
-  }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
-
-  // Also publish to Xiaomi FDS (fast download in mainland China; the install
-  // script reads from there). Skipped when credentials are absent so local
-  // release builds still work.
-  if (process.env.MIMO_FDS_AK && process.env.MIMO_FDS_SK) {
-    const { uploadFile } = await import("../../../script/fds-upload.ts")
-    const archives = fs.readdirSync("dist").filter((f) => f.endsWith(".zip") || f.endsWith(".tar.gz"))
-    for (const file of archives) {
-      await uploadFile(`dist/${file}`, `releases/v${Script.version}/${file}`)
-      console.log(`Uploaded to FDS: releases/v${Script.version}/${file}`)
-    }
-    const tmpLatest = "dist/_latest.txt"
-    await Bun.write(tmpLatest, Script.version)
-    await uploadFile(tmpLatest, "releases/latest", "text/plain")
-    console.log(`Uploaded to FDS: releases/latest -> ${Script.version}`)
-  } else {
-    console.log("Skipping FDS upload (MIMO_FDS_AK / MIMO_FDS_SK not set)")
   }
 }
 

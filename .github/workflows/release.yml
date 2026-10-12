@@ -1,0 +1,135 @@
+name: release
+run-name: Release ${{ github.ref_name }}
+
+# Push a vX.Y.Z tag on a main commit whose package versions already equal X.Y.Z.
+# To recover, prefer "Re-run failed jobs": every publish stage skips work that
+# already landed. A fresh manual run must be started from the tag ref.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Verify tag, main ancestry and package versions
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::error::Run this workflow from a vX.Y.Z tag, not $REF_TYPE $REF_NAME"
+            exit 1
+          fi
+          MIMOCODE_VERSION="$REF_NAME" bun script/release.ts verify
+
+  typecheck:
+    needs: verify
+    uses: ./.github/workflows/typecheck.yml
+
+  lint:
+    needs: verify
+    uses: ./.github/workflows/lint.yml
+
+  test:
+    needs: verify
+    uses: ./.github/workflows/test.yml
+
+  # macOS matches how earlier releases were produced, so darwin binaries keep the
+  # native toolchain's ad-hoc signature.
+  build:
+    needs: [typecheck, lint, test]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Build archives and npm tarballs
+        env:
+          COPYFILE_DISABLE: "1"
+          MIMOCODE_VERSION: ${{ github.ref_name }}
+        run: bun script/release.ts build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      MIMOCODE_VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; no npm token is stored.
+      - name: Install npm 11
+        run: npm install -g npm@11
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/release/
+
+      # Libraries first: a released binary may resolve @mimo-ai/plugin at its own version.
+      - name: npm — SDK and plugin
+        run: bun script/release.ts npm libs
+
+      - name: GitHub Release
+        run: bun script/release.ts github
+
+      - name: FDS archives, then releases/latest
+        env:
+          MIMO_FDS_AK: ${{ secrets.MIMO_FDS_AK }}
+          MIMO_FDS_SK: ${{ secrets.MIMO_FDS_SK }}
+          MIMO_FDS_ENDPOINT: ${{ vars.MIMO_FDS_ENDPOINT }}
+          MIMO_FDS_BUCKET: ${{ vars.MIMO_FDS_BUCKET }}
+          MIMO_FDS_PREFIX: ${{ vars.MIMO_FDS_PREFIX }}
+        run: bun script/release.ts fds
+
+      - name: npm — platform packages and CLI wrapper
+        run: bun script/release.ts npm cli
+
+      - name: Sync China npm mirrors
+        continue-on-error: true
+        run: bun script/sync-registry.ts
