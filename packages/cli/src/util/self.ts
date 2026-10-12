@@ -7,7 +7,7 @@
  * is advice the caller cannot follow.
  *
  * The reliable signal is the running process itself. Every SHIPPED path ends up
- * executing the compiled single-file binary — `bin/mimo` is only a Node shim that
+ * executing the compiled single-file binary — `mimo.js` is only a Node shim that
  * `spawnSync`s it — so `process.execPath` is already a complete, absolute,
  * PATH-independent invocation. Verified empirically: a `bun build --compile` binary
  * reports `execPath` as its own real path from any working directory, while
@@ -38,7 +38,7 @@ export function compiled() {
  * `commandLine`, since it needs no unquoting.
  */
 export function argv(...args: string[]): string[] {
-  // Honours the same override `bin/mimo` reads, so a host that pins a specific
+  // Honours the same override `mimo.js` reads, so a host that pins a specific
   // binary keeps control of which one a re-invocation reaches.
   const pinned = process.env["MIMOCODE_BIN_PATH"]
   if (pinned) return [pinned, ...args]

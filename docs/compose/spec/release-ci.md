@@ -10,6 +10,8 @@ commits: f98dcd1c..b8704179
 
 ## Report
 
+> Later: `npm-fds-launcher` retired npm platform packages — npm now publishes SDK/plugin + the `@mimo-ai/cli` launcher only; platform binaries are FDS/GitHub archives.
+
 **What was built** — Pushing a `vX.Y.Z` tag on a main commit runs `.github/workflows/release.yml`: verify (tag on main, four package versions equal the tag), the existing typecheck/lint/test workflows via `workflow_call`, a macOS build of 12 archives and 15 npm tarballs, then a publish job in environment `release` that ships npm SDK/plugin → GitHub Release (generated notes, archives only) → FDS archives then `releases/latest` → npm platform packages and `@mimo-ai/cli`, followed by a non-blocking mirror sync. npm publishes through trusted publishing (OIDC) with no stored token. Every publish stage skips work that already landed, so "Re-run failed jobs" resumes a release.
 
 `script/release.ts` replaces the old release, version and publish scripts (root and per-package). `packages/cli/script/build.ts` only builds, with `--archive` for release archives; `MIMOCODE_RELEASE` is gone. The shared setup-bun action now pins Bun from `packageManager` and installs with `bun ci`. CONTRIBUTING documents the procedure and the npm trusted-publisher setup.

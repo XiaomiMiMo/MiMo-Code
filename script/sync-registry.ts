@@ -3,6 +3,9 @@ import { Script } from "./meta.ts"
 
 const PACKAGES = [
   "@mimo-ai/cli",
+  // Legacy platform packages (no longer published; keep syncing existing versions
+  // so mirrors stay complete for old installs). New releases only update the list
+  // above.
   "@mimo-ai/mimocode-darwin-arm64",
   "@mimo-ai/mimocode-darwin-x64",
   "@mimo-ai/mimocode-darwin-x64-baseline",
