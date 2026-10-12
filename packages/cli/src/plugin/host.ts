@@ -4,7 +4,7 @@ import * as sdkTool from "@mimo-ai/plugin/tool"
 import * as sdkTui from "@mimo-ai/plugin/tui"
 import type { ConfigPlugin } from "@/config/plugin"
 import { Flag } from "@/flag/flag"
-import { Filesystem } from "@/util"
+import * as Filesystem from "@/util/filesystem"
 
 export const SDK_SPECIFIERS = ["@mimo-ai/plugin", "@mimo-ai/plugin/*"]
 
@@ -16,10 +16,16 @@ const modules: Record<string, Record<string, unknown>> = {
 
 let provided = false
 
+// Embedders may define a partial Bun global on Node (MiMo Desktop shims
+// Bun.file and Bun.write), so probe the capability rather than the global.
+function canServeSdk() {
+  return typeof Bun !== "undefined" && typeof Bun.plugin === "function"
+}
+
 // External plugins resolve the SDK to the host's own copy, so they need no
 // node_modules and share the host's zod and tool() instead of a second install.
 export function provideSdk() {
-  if (provided || typeof Bun === "undefined") return
+  if (provided || !canServeSdk()) return
   provided = true
   Bun.plugin({
     name: "mimocode-host-sdk",
@@ -34,7 +40,7 @@ export function provideSdk() {
 // Without a host SDK (the Node build) or when asked explicitly, only plugins
 // shipped in MIMOCODE_CONFIG_DIR load; user plugins never load half-working.
 export function onlyConfigDir() {
-  return typeof Bun === "undefined" || Flag.MIMOCODE_ONLY_CONFIG_DIR_PLUGINS
+  return !canServeSdk() || Flag.MIMOCODE_ONLY_CONFIG_DIR_PLUGINS
 }
 
 function inConfigDir(file: string) {

@@ -20,8 +20,8 @@ When the runtime cannot serve the SDK (the Node build used by Desktop) or `MIMOC
 - `Bun.plugin` `build.module` for a bare specifier wins over `node_modules` both under `bun run` and in `bun build --compile` binaries; no opentui-style specifier rewriting is needed.
 - `Bun.build` ignores runtime `Bun.plugin` registrations; mark the SDK `external` and let the runtime import resolve it.
 - `Filesystem.contains` fails open across Windows drives (`path.relative` returns an absolute path); its other call sites still have this.
-- Test tmpdirs default to under `packages/cli`, where resolution finds the workspace `node_modules`; host-SDK tests need `outsideGit: true`.
-- Follow-ups: drop the always-false loader `retry` argument; Desktop can delete its npm short-circuit files in `provision.ts` after bumping its engine pin.
+- Embedders shim part of `Bun` on Node (Desktop defines only `Bun.file` / `Bun.write`), so `typeof Bun` is not a runtime test; probe `Bun.plugin`. `test/plugin/host-node.test.ts` bundles `host.ts` for Node and runs it with and without such a shim.
+- Follow-ups: drop the always-false loader `retry` argument; host-SDK tests need `outsideGit: true`, since tmpdirs under `packages/cli` resolve the workspace `node_modules`.
 
 ## [S1] Problem
 
@@ -39,7 +39,7 @@ When an external plugin fails to import because a module is missing, the load er
 
 ### [S2.2] Host-provided SDK on Bun
 
-`packages/cli/src/plugin/host.ts` exports `PluginHost.provideSdk()`. On the Bun runtime it registers a `Bun.plugin` that serves `@mimo-ai/plugin`, `@mimo-ai/plugin/tool` and `@mimo-ai/plugin/tui` from the host's bundled SDK as `loader: "object"` modules. The call is idempotent. It is a no-op when `Bun` is undefined.
+`packages/cli/src/plugin/host.ts` exports `PluginHost.provideSdk()`. On the Bun runtime it registers a `Bun.plugin` that serves `@mimo-ai/plugin`, `@mimo-ai/plugin/tool` and `@mimo-ai/plugin/tui` from the host's bundled SDK as `loader: "object"` modules. The call is idempotent. It is a no-op when `Bun.plugin` is not a function.
 
 The host module wins over any `node_modules/@mimo-ai/plugin` next to the plugin, so plugins share the host's `tool()` and `zod`. Plugin authors install the package only for types.
 
@@ -47,7 +47,7 @@ The host module wins over any `node_modules/@mimo-ai/plugin` next to the plugin,
 
 ### [S2.3] Config-dir-only plugin policy
 
-`PluginHost.onlyConfigDir()` is true when the runtime cannot serve the SDK (`typeof Bun === "undefined"`) or when the new flag `MIMOCODE_ONLY_CONFIG_DIR_PLUGINS` is truthy. Under this policy the engine loads only plugins provided by `MIMOCODE_CONFIG_DIR`:
+`PluginHost.onlyConfigDir()` is true when the runtime cannot serve the SDK (`Bun.plugin` is not a function, which covers plain Node and embedders such as MiMo Desktop that define a partial `Bun` global on Node) or when the new flag `MIMOCODE_ONLY_CONFIG_DIR_PLUGINS` is truthy. Under this policy the engine loads only plugins provided by `MIMOCODE_CONFIG_DIR`:
 
 - `PluginHost.filterOrigins(origins)` keeps a plugin origin only when its `source` path lies inside `Flag.MIMOCODE_CONFIG_DIR`, after resolving symlinks on both sides; a path on another Windows drive is outside. Non-path sources (`MIMOCODE_CONFIG_CONTENT`, remote config URLs) are dropped. `PluginLoader.loadExternal` applies it, so it covers every server and TUI plugin load, including TUI file plugins (their source is `<dir>/tui.json`).
 - `PluginHost.filterDirectories(dirs)` keeps a config directory only when it lies inside `Flag.MIMOCODE_CONFIG_DIR`. It applies to file-hook discovery.
