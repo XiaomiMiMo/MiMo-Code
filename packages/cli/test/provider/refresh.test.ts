@@ -133,16 +133,7 @@ test("refresh preserves plugin model configuration before first Provider initial
       models: { example: { name: "Plugin model", limit: { context: 2000, output: 100 } } } };
   } });`)
   await Bun.write(path.join(tmp.path, "mimocode.json"), JSON.stringify({ plugin: [plugin] }))
-  await Instance.provide({ directory: tmp.path, fn: () => AppRuntime.runPromise(Effect.gen(function* () {
-    const service = yield* Config.Service
-    const wait = service.waitForDependencies
-    // This local fixture has no package dependencies; keep npm/network outside this regression.
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => Object.assign(service, { waitForDependencies: () => Effect.void })),
-      () => Plugin.Service.use(s => s.init()),
-      () => Effect.sync(() => { Object.assign(service, { waitForDependencies: wait }) }),
-    )
-  })) })
+  await Instance.provide({ directory: tmp.path, fn: () => AppRuntime.runPromise(Plugin.Service.use(s => s.init())) })
   expect(await refreshProviders()).toEqual({ state: "applied" })
   const result = await Instance.provide({ directory: tmp.path, fn: view })
   expect(result.provider.options.apiKey).toBe("plugin-key")

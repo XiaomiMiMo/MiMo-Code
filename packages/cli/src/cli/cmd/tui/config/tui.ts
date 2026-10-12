@@ -3,7 +3,7 @@ export * as TuiConfig from "./tui"
 import z from "zod"
 import { mergeDeep, unique } from "remeda"
 import { applyEdits, modify } from "jsonc-parser"
-import { Context, Effect, Fiber, Layer } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { ConfigParse } from "@/config/parse"
 import * as ConfigPaths from "@/config/paths"
 import { migrateTuiConfig } from "./tui-migrate"
@@ -15,11 +15,9 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { CurrentWorkingDirectory } from "./cwd"
 import { ConfigPlugin } from "@/config/plugin"
 import { ConfigKeybinds } from "@/config/keybinds"
-import { PluginSdkNpmVersion } from "@/installation/version"
 import { makeRuntime } from "@/effect/runtime"
 import { Filesystem, Log } from "@/util"
 import { ConfigVariable } from "@/config/variable"
-import { Npm } from "@/npm"
 
 const log = Log.create({ service: "tui.config" })
 
@@ -29,11 +27,6 @@ type Acc = {
   result: Info
 }
 
-type State = {
-  config: Info
-  deps: Array<Fiber.Fiber<void, AppFileSystem.Error>>
-}
-
 export type Info = z.output<typeof Info> & {
   // Internal resolved plugin list used by runtime loading.
   plugin_origins?: ConfigPlugin.Origin[]
@@ -41,7 +34,6 @@ export type Info = z.output<typeof Info> & {
 
 export interface Interface {
   readonly get: () => Effect.Effect<Info>
-  readonly waitForDependencies: () => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/TuiConfig") {}
@@ -120,8 +112,7 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
   }
 
   // 4. `.mimocode` directories (and MIMOCODE_CONFIG_DIR) discovered while
-  // walking up the tree. Also returned below so callers can install plugin
-  // dependencies from each location.
+  // walking up the tree.
   const dirs = unique(directories).filter((dir) => dir.endsWith(".mimocode") || dir === Flag.MIMOCODE_CONFIG_DIR)
 
   for (const dir of dirs) {
@@ -142,52 +133,22 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
   }
   acc.result.keybinds = ConfigKeybinds.Keybinds.parse(keybinds)
 
-  return {
-    config: acc.result,
-    dirs: acc.result.plugin?.length ? dirs : [],
-  }
+  return acc.result
 })
 
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const directory = yield* CurrentWorkingDirectory
-    const npm = yield* Npm.Service
-    const data = yield* loadState({ directory })
-    const deps = yield* Effect.forEach(
-      data.dirs,
-      (dir) =>
-        npm
-          .install(dir, {
-            add: [
-              {
-                name: "@mimo-ai/plugin",
-                version: PluginSdkNpmVersion,
-              },
-            ],
-          })
-          .pipe(Effect.forkScoped),
-      {
-        concurrency: "unbounded",
-      },
-    )
-
-    const get = Effect.fn("TuiConfig.get")(() => Effect.succeed(data.config))
-
-    const waitForDependencies = Effect.fn("TuiConfig.waitForDependencies")(() =>
-      Effect.forEach(deps, Fiber.join, { concurrency: "unbounded" }).pipe(Effect.ignore(), Effect.asVoid),
-    )
-    return Service.of({ get, waitForDependencies })
+    const config = yield* loadState({ directory })
+    const get = Effect.fn("TuiConfig.get")(() => Effect.succeed(config))
+    return Service.of({ get })
   }).pipe(Effect.withSpan("TuiConfig.layer")),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Npm.defaultLayer), Layer.provide(AppFileSystem.defaultLayer))
+export const defaultLayer = layer.pipe(Layer.provide(AppFileSystem.defaultLayer))
 
 const { runPromise } = makeRuntime(Service, defaultLayer)
-
-export async function waitForDependencies() {
-  await runPromise((svc) => svc.waitForDependencies())
-}
 
 export async function get() {
   return runPromise((svc) => svc.get())

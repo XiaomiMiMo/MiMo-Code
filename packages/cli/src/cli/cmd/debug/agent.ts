@@ -59,7 +59,7 @@ export const AgentCommand = cmd({
         }
         const params = parseToolParams(args.params as string | undefined)
         const ctx = await createToolContext(agent)
-        const result = await tool.execute(params, ctx)
+        const result = await AppRuntime.runPromise(tool.execute(params, ctx))
         process.stdout.write(JSON.stringify({ tool: toolID, input: params, result }, null, 2) + EOL)
         return
       }
@@ -79,7 +79,7 @@ async function getAvailableTools(agent: Agent.Info) {
       const provider = yield* Provider.Service
       const registry = yield* ToolRegistry.Service
       const model = agent.model ?? (yield* provider.defaultModel())
-      return yield* registry.tools({
+      return yield* registry.registered({
         ...model,
         agent,
       })

@@ -27,7 +27,6 @@ import { Global } from "../../src/global"
 import { ProjectID } from "../../src/project/schema"
 import { Filesystem } from "../../src/util"
 import { ConfigPlugin } from "@/config/plugin"
-import { Npm } from "@/npm"
 
 const emptyAccount = Layer.mock(Account.Service)({
   active: () => Effect.succeed(Option.none()),
@@ -47,7 +46,6 @@ const layer = Config.layer.pipe(
   Layer.provide(emptyAuth),
   Layer.provide(emptyAccount),
   Layer.provideMerge(infra),
-  Layer.provide(Npm.defaultLayer),
 )
 
 const it = testEffect(layer)
@@ -59,8 +57,6 @@ const clear = (wait = false) =>
   Effect.runPromise(Config.Service.use((svc) => svc.invalidate(wait)).pipe(Effect.scoped, Effect.provide(layer)))
 const listDirs = () =>
   Effect.runPromise(Config.Service.use((svc) => svc.directories()).pipe(Effect.scoped, Effect.provide(layer)))
-const ready = () =>
-  Effect.runPromise(Config.Service.use((svc) => svc.waitForDependencies()).pipe(Effect.scoped, Effect.provide(layer)))
 
 // Get managed config directory from environment (set in preload.ts)
 const managedConfigDir = process.env.MIMOCODE_TEST_MANAGED_CONFIG_DIR!
@@ -585,7 +581,7 @@ test("resolves env templates in account config with account token", async () => 
           expect(config.provider?.["opencode"]?.options?.apiKey).toBe("st_test_token")
         }),
       ),
-    ).pipe(Effect.scoped, Effect.provide(layer), Effect.provide(Npm.defaultLayer), Effect.runPromise)
+    ).pipe(Effect.scoped, Effect.provide(layer), Effect.runPromise)
   } finally {
     if (originalControlToken !== undefined) {
       process.env["MIMOCODE_CONSOLE_TOKEN"] = originalControlToken
@@ -1082,7 +1078,7 @@ test("gets config directories", async () => {
   })
 })
 
-test("does not try to install dependencies in read-only MIMOCODE_CONFIG_DIR", async () => {
+test("loads config from read-only MIMOCODE_CONFIG_DIR", async () => {
   if (process.platform === "win32") return
 
   await using tmp = await tmpdir<string>({
@@ -1115,7 +1111,7 @@ test("does not try to install dependencies in read-only MIMOCODE_CONFIG_DIR", as
   }
 })
 
-test("installs dependencies in writable MIMOCODE_CONFIG_DIR", async () => {
+test("creates gitignore in writable MIMOCODE_CONFIG_DIR", async () => {
   await using tmp = await tmpdir<string>({
     init: async (dir) => {
       const cfg = path.join(dir, "configdir")
@@ -1127,35 +1123,13 @@ test("installs dependencies in writable MIMOCODE_CONFIG_DIR", async () => {
   const prev = process.env.MIMOCODE_CONFIG_DIR
   process.env.MIMOCODE_CONFIG_DIR = tmp.extra
 
-  const noopNpm = Layer.mock(Npm.Service)({
-    install: () => Effect.void,
-    add: () => Effect.die("not implemented"),
-    outdated: () => Effect.succeed(false),
-    which: () => Effect.succeed(Option.none()),
-  })
-  const testLayer = Config.layer.pipe(
-    Layer.provide(testFlock),
-    Layer.provide(AppFileSystem.defaultLayer),
-    Layer.provide(Env.defaultLayer),
-    Layer.provide(emptyAuth),
-    Layer.provide(emptyAccount),
-    Layer.provideMerge(infra),
-    Layer.provide(noopNpm),
-  )
-
   try {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        await Effect.runPromise(Config.Service.use((svc) => svc.get()).pipe(Effect.scoped, Effect.provide(testLayer)))
-        await Effect.runPromise(
-          Config.Service.use((svc) => svc.waitForDependencies()).pipe(Effect.scoped, Effect.provide(testLayer)),
-        )
+        await load()
       },
     })
-
-    // TODO: this is a hack to wait for backgruounded gitignore
-    await new Promise((resolve) => setTimeout(resolve, 1000))
 
     expect(await Filesystem.exists(path.join(tmp.extra, ".gitignore"))).toBe(true)
     expect(await Filesystem.readText(path.join(tmp.extra, ".gitignore"))).toContain("package-lock.json")
@@ -1164,10 +1138,6 @@ test("installs dependencies in writable MIMOCODE_CONFIG_DIR", async () => {
     else process.env.MIMOCODE_CONFIG_DIR = prev
   }
 })
-
-// Note: deduplication and serialization of npm installs is now handled by the
-// shared Npm.Service (via EffectFlock). Those behaviors are tested in the shared
-// package's npm tests, not here.
 
 test("resolves scoped npm plugins in config", async () => {
   await using tmp = await tmpdir({
@@ -2029,7 +1999,6 @@ test("project config overrides remote well-known config", async () => {
     Layer.provide(fakeAuth),
     Layer.provide(emptyAccount),
     Layer.provideMerge(infra),
-    Layer.provide(Npm.defaultLayer),
   )
 
   try {
@@ -2087,7 +2056,6 @@ test("wellknown URL with trailing slash is normalized", async () => {
     Layer.provide(fakeAuth),
     Layer.provide(emptyAccount),
     Layer.provideMerge(infra),
-    Layer.provide(Npm.defaultLayer),
   )
 
   try {

@@ -451,6 +451,20 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
 
 要声明自定义模型支持哪些输入模态（图片、音频、视频、PDF），在 TUI 中运行 `/modalities`——多选对话框会把设置持久化到配置，无需手动编辑。
 
+<details>
+<summary><strong>如何开发插件</strong></summary>
+
+推荐从[可复制的 Greeting 插件项目](examples/plugins/greeting)开始，项目已包含 TypeScript、类型检查、构建和 watch 脚本。在该项目中开发，再部署打包后的 JavaScript。MiMoCode 启动时不再向配置目录自动安装 `@mimo-ai/plugin` 或本地插件依赖。
+
+1. 将示例复制到仓库外，按其 README 初始化依赖。模板使用公开 SDK 依赖，首次 `bun add --dev ...` 会创建插件项目自己的锁文件，后续检出时使用 `bun ci`。
+2. 执行 `bun run typecheck` 和 `bun run build`，将服务端入口及其运行时依赖打包到 `dist/server.js`。类型导入会被擦除；仅运行 `tsc` 不会打包运行时导入。开发时可用 `bun run dev` 在保存后自动重建。
+3. 执行 `bun pm pack --ignore-scripts`，将压缩包解压后，通过 `mimocode.json(c)` 的 `plugin` 引用包目录，具体部署命令见示例。轻量场景也可只复制 `dist/server.js` 到 `.mimocode/plugins/greeting.js` 自动发现。加载方式任选一种，然后在目标项目重启 MiMoCode。
+4. 在目标项目运行 `mimo debug agent build --tool greet --params '{"name":"Example"}'` 验证，返回的 JSON 应包含 `Hello, Example!`，该工具不请求模型。
+
+TUI 插件使用独立的 `tui.json(c)`，并共享宿主的 Solid/OpenTUI 运行时。旧零散源码插件可通过自行安装依赖继续兼容，推荐逐步迁移为打包产物；已有依赖文件不会自动删除。显式 npm 插件仍会按需安装，内置功能也不依赖 npm 发布同版本 SDK。完整示例与迁移步骤见[插件开发、部署与迁移指南](docs/plugins.md)。
+
+</details>
+
 ### 主要选项
 
 - Provider 和模型选择

@@ -4,7 +4,7 @@ import path from "path"
 import { pathToFileURL } from "url"
 import { tmpdir } from "../../fixture/fixture"
 import { createTuiPluginApi } from "../../fixture/tui-plugin"
-import { TuiConfig } from "../../../src/cli/cmd/tui/config/tui"
+import type { TuiConfig } from "../../../src/cli/cmd/tui/config/tui"
 
 const { TuiPluginRuntime } = await import("../../../src/cli/cmd/tui/plugin/runtime")
 
@@ -35,7 +35,6 @@ test("adds tui plugin at runtime from spec", async () => {
     plugin: [],
     plugin_origins: undefined,
   }
-  const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
   try {
@@ -57,19 +56,30 @@ test("adds tui plugin at runtime from spec", async () => {
   } finally {
     await TuiPluginRuntime.dispose()
     cwd.mockRestore()
-    wait.mockRestore()
     delete process.env.MIMOCODE_PLUGIN_META_FILE
   }
 })
 
-test("retries runtime add for file plugins after dependency wait", async () => {
+test("adds a file plugin with dependencies prepared before loading", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
-      const mod = path.join(dir, "retry-plugin")
+      const mod = path.join(dir, "example-plugin")
       const spec = pathToFileURL(mod).href
-      const marker = path.join(dir, "retry-add.txt")
+      const marker = path.join(dir, "example-add.txt")
       await fs.mkdir(mod, { recursive: true })
-      return { mod, spec, marker }
+      await Bun.write(path.join(mod, "dependency.ts"), 'export const result = "called"\n')
+      await Bun.write(
+        path.join(mod, "index.ts"),
+        `import { result } from "./dependency"
+export default {
+  id: "example.add.prepared",
+  tui: async () => {
+    await Bun.write(${JSON.stringify(marker)}, result)
+  },
+}
+`,
+      )
+      return { spec, marker }
     },
   })
 
@@ -78,18 +88,6 @@ test("retries runtime add for file plugins after dependency wait", async () => {
     plugin: [],
     plugin_origins: undefined,
   }
-  const wait = spyOn(TuiConfig, "waitForDependencies").mockImplementation(async () => {
-    await Bun.write(
-      path.join(tmp.extra.mod, "index.ts"),
-      `export default {
-  id: "demo.add.retry",
-  tui: async () => {
-    await Bun.write(${JSON.stringify(tmp.extra.marker)}, "called")
-  },
-}
-`,
-    )
-  })
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
   try {
@@ -100,12 +98,10 @@ test("retries runtime add for file plugins after dependency wait", async () => {
 
     await expect(TuiPluginRuntime.addPlugin(tmp.extra.spec)).resolves.toBe(true)
     await expect(fs.readFile(tmp.extra.marker, "utf8")).resolves.toBe("called")
-    expect(wait).toHaveBeenCalledTimes(1)
-    expect(TuiPluginRuntime.list().find((item) => item.id === "demo.add.retry")?.active).toBe(true)
+    expect(TuiPluginRuntime.list().find((item) => item.id === "example.add.prepared")?.active).toBe(true)
   } finally {
     await TuiPluginRuntime.dispose()
     cwd.mockRestore()
-    wait.mockRestore()
     delete process.env.MIMOCODE_PLUGIN_META_FILE
   }
 })

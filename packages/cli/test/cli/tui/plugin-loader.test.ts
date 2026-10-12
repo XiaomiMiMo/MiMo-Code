@@ -5,7 +5,7 @@ import { pathToFileURL } from "url"
 import { tmpdir } from "../../fixture/fixture"
 import { createTuiPluginApi } from "../../fixture/tui-plugin"
 import { Global } from "../../../src/global"
-import { TuiConfig } from "../../../src/cli/cmd/tui/config/tui"
+import type { TuiConfig } from "../../../src/cli/cmd/tui/config/tui"
 import { Filesystem } from "../../../src/util/"
 
 const { allThemes, addTheme } = await import("../../../src/cli/cmd/tui/context/theme")
@@ -323,7 +323,6 @@ export default {
     },
   })
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
-  const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
 
   try {
     expect(addTheme(tmp.extra.preloadedThemeName, { theme: { primary: "#303030" } })).toBe(true)
@@ -452,7 +451,6 @@ export default {
   } finally {
     await TuiPluginRuntime.dispose()
     cwd.mockRestore()
-    wait.mockRestore()
     if (backup === undefined) {
       await fs.rm(globalConfigPath, { force: true })
     } else {
@@ -526,7 +524,6 @@ test("continues loading when a plugin is missing config metadata", async () => {
       },
     ],
   }
-  const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
   try {
@@ -540,7 +537,6 @@ test("continues loading when a plugin is missing config metadata", async () => {
   } finally {
     await TuiPluginRuntime.dispose()
     cwd.mockRestore()
-    wait.mockRestore()
     delete process.env.MIMOCODE_PLUGIN_META_FILE
   }
 })
@@ -755,7 +751,6 @@ test("updates installed theme when plugin metadata changes", async () => {
 
   process.env.MIMOCODE_PLUGIN_META_FILE = path.join(tmp.path, "plugin-meta.json")
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
-  const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
 
   const mkApi = () =>
     createTuiPluginApi({
@@ -810,7 +805,6 @@ test("updates installed theme when plugin metadata changes", async () => {
   } finally {
     await TuiPluginRuntime.dispose()
     cwd.mockRestore()
-    wait.mockRestore()
     delete process.env.MIMOCODE_PLUGIN_META_FILE
   }
 })

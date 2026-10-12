@@ -1,0 +1,21 @@
+{
+  "name": "example-mimocode-greeting",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["dist"],
+  "main": "./dist/server.js",
+  "exports": {
+    "./server": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "bun build ./src/server.ts --target=bun --format=esm --outfile=./dist/server.js",
+    "dev": "bun build ./src/server.ts --target=bun --format=esm --outfile=./dist/server.js --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@mimo-ai/plugin": "0.1.15",
+    "@types/bun": "1.3.11",
+    "typescript": "5.8.2"
+  }
+}

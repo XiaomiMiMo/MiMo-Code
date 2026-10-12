@@ -10,6 +10,7 @@ import {
 } from "./shared"
 import { ConfigPlugin } from "@/config/plugin"
 import { InstallationVersion } from "@/installation/version"
+import { errorMessage } from "@/util/error"
 
 export namespace PluginLoader {
   // A normalized plugin declaration derived from config before any filesystem or npm work happens.
@@ -121,6 +122,21 @@ export namespace PluginLoader {
     try {
       mod = await import(row.entry)
     } catch (error) {
+      if (
+        row.source === "file" &&
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error.code === "ERR_MODULE_NOT_FOUND" || error.code === "MODULE_NOT_FOUND")
+      ) {
+        return {
+          ok: false,
+          error: new Error(
+            `${errorMessage(error)}\nBundle your plugin's runtime dependencies before loading it, or install them in the plugin's own directory. MiMoCode no longer installs configuration-directory dependencies automatically. See https://github.com/XiaomiMiMo/MiMo-Code/blob/main/docs/plugins.md`,
+            { cause: error },
+          ),
+        }
+      }
       return { ok: false, error }
     }
     if (!mod) return { ok: false, error: new Error(`Plugin ${row.spec} module is empty`) }
