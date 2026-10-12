@@ -6,6 +6,16 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Immutable commit SHA to check for a release"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   lint:
@@ -13,6 +23,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun

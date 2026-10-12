@@ -4,7 +4,7 @@
 // galaxy-fds-sdk's fds/auth/signature/signer.py. Pure signing logic is
 // unit-testable; HTTP PUT is the IO shell.
 //
-// Invoked by packages/cli/script/build.ts during a release build, or
+// Invoked by the FDS release stage, or
 // standalone (see CLI below). The install script reads from the CDN host.
 //
 // Upload host (path-style, with /bucket) differs from the public download host
@@ -117,6 +117,11 @@ export async function putObject(input: {
   })
   if (!putRes.ok) throw new Error(`FDS put failed ${putRes.status}: ${await safeText(putRes)}`)
 
+  await setPublicReadAcl(input)
+}
+
+export async function setPublicReadAcl(input: { accessKey: string; secret: string; name: string }) {
+  const url = uploadUrl(input.name)
   const aclUrl = `${url}?acl=true`
   const date2 = new Date().toUTCString()
   const aclRes = await fetch(aclUrl, {

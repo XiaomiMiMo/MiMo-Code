@@ -6,10 +6,17 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Immutable commit SHA to check for a release"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-test-${{ inputs.ref && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ inputs.ref == '' }}
 
 permissions:
   contents: read
@@ -25,6 +32,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -117,3 +126,8 @@ jobs:
         timeout-minutes: 2
         working-directory: packages/cli
         run: bun test test/mcp/stdio-exit-observe.test.ts --timeout 120000
+
+      - name: Run release script tests
+        if: matrix.shard == '4/4'
+        timeout-minutes: 3
+        run: bun test ./script/release/release.test.ts

@@ -1,19 +1,34 @@
 name: "Setup Bun"
 description: "Setup Bun, cache dependencies, and install"
+inputs:
+  all-platforms:
+    description: "Install locked optional dependencies for every release target"
+    required: false
+    default: "false"
 runs:
   using: "composite"
   steps:
     - name: Setup Bun
+      id: bun
       uses: oven-sh/setup-bun@v2
+      with:
+        bun-version-file: package.json
 
     - name: Cache Bun dependencies
       uses: actions/cache@v5
       with:
         path: ~/.bun/install/cache
-        key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+        key: ${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-${{ hashFiles('**/bun.lock') }}
         restore-keys: |
           ${{ runner.os }}-bun-
 
     - name: Install dependencies
-      run: bun install
+      env:
+        ALL_PLATFORMS: ${{ inputs.all-platforms }}
+      run: |
+        if [[ "$ALL_PLATFORMS" == "true" ]]; then
+          bun ci --os='*' --cpu='*'
+          exit 0
+        fi
+        bun ci
       shell: bash

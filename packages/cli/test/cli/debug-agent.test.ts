@@ -3,9 +3,13 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { tmpdir } from "../fixture/fixture"
 
-test.each([false, true])(
-  "executes a bundled plugin tool in debug mode (Codex toolset: %p)",
-  async (codex) => {
+test.each([
+  { codex: false, params: { name: "Example" } },
+  { codex: true, params: { name: "Example" } },
+  { codex: false, params: {} },
+])(
+  "validates and executes a bundled plugin tool in debug mode (%j)",
+  async (input) => {
     await using tmp = await tmpdir({ outsideGit: true })
     const file = path.join(tmp.path, "plugin.js")
     const build = Bun.spawn({
@@ -34,13 +38,13 @@ test.each([false, true])(
         "--tool",
         "greet",
         "--params",
-        '{"name":"Example"}',
+        JSON.stringify(input.params),
       ],
       cwd: tmp.path,
       env: {
         ...process.env,
         MIMOCODE_HOME: path.join(tmp.path, "home"),
-        MIMOCODE_CODEX_MODE: String(codex),
+        MIMOCODE_CODEX_MODE: String(input.codex),
         MIMOCODE_DISABLE_MODELS_FETCH: "1",
         MIMOCODE_DISABLE_CLAUDE_CODE: "1",
         MIMOCODE_CONFIG_CONTENT: JSON.stringify({
@@ -62,11 +66,17 @@ test.each([false, true])(
       stderr: "pipe",
     })
     try {
-      const [code, stdout] = await Promise.all([
+      const [code, stdout, stderr] = await Promise.all([
         proc.exited,
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
       ])
+      if (!("name" in input.params)) {
+        expect(code).not.toBe(0)
+        expect(stderr).toContain("name")
+        expect(stdout).not.toContain("Hello,")
+        return
+      }
       expect(code).toBe(0)
       expect(JSON.parse(stdout)).toMatchObject({
         tool: "greet",

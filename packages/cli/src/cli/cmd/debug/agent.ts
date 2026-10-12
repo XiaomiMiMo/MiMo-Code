@@ -57,7 +57,7 @@ export const AgentCommand = cmd({
           process.stderr.write(`Tool ${toolID} is disabled for agent ${agentName}` + EOL)
           await Log.exit(1)
         }
-        const params = parseToolParams(args.params as string | undefined)
+        const params = await tool.parameters.parseAsync(parseToolParams(args.params as string | undefined))
         const ctx = await createToolContext(agent)
         const result = await AppRuntime.runPromise(tool.execute(params, ctx))
         process.stdout.write(JSON.stringify({ tool: toolID, input: params, result }, null, 2) + EOL)

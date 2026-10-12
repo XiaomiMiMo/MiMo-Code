@@ -1,0 +1,215 @@
+name: release
+run-name: Release ${{ inputs.tag || github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing stable tag on main (vMAJOR.MINOR.PATCH); publish GitHub → FDS → npm"
+        required: true
+        type: string
+  # Enable automatic releases later by uncommenting this trigger.
+  # push:
+  #   tags: ["v*.*.*"]
+
+# Finish or recover each stable release before starting the next version.
+# GitHub concurrency has one replaceable pending slot, not a durable queue.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  resolve:
+    if: github.event_name != 'push' || !github.event.deleted
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - name: Fetch main and all tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate and resolve the existing stable tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Expected an existing vMAJOR.MINOR.PATCH tag without leading zeros or suffixes."
+            exit 1
+          fi
+          sha=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
+          if ! git merge-base --is-ancestor "$sha" refs/remotes/origin/main; then
+            echo "::error::The release tag must point to a commit in main's history."
+            exit 1
+          fi
+          # The first release tag must include the new workflow and stage scripts.
+          # The dispatch branch selects CI; every source checkout below uses this SHA.
+          git cat-file -e "$sha:.github/workflows/release.yml"
+          git cat-file -e "$sha:script/release.ts"
+          printf 'tag=%s\nsha=%s\nversion=%s\n' "$RELEASE_TAG" "$sha" "${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+  credentials:
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      # Only check presence here; each publishing step receives its own credentials.
+      - name: Require publishing secrets before any public release
+        env:
+          MIMO_FDS_AK: ${{ secrets.MIMO_FDS_AK }}
+          MIMO_FDS_SK: ${{ secrets.MIMO_FDS_SK }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for secret in MIMO_FDS_AK MIMO_FDS_SK NPM_TOKEN; do
+            if [[ -z "${!secret}" ]]; then
+              echo "::error::Missing required repository secret: $secret"
+              exit 1
+            fi
+          done
+
+  typecheck:
+    needs: resolve
+    uses: ./.github/workflows/typecheck.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  lint:
+    needs: resolve
+    uses: ./.github/workflows/lint.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  test:
+    needs: resolve
+    uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  build:
+    needs: [resolve, credentials, typecheck, lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      artifact-id: ${{ steps.artifact.outputs.artifact-id }}
+    env:
+      GH_REPO: ${{ github.repository }}
+      MIMOCODE_VERSION: ${{ needs.resolve.outputs.version }}
+      MIMOCODE_CHANNEL: latest
+    steps:
+      - name: Checkout the release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node and npm for reproducible tarballs
+        uses: actions/setup-node@v6
+        with:
+          # This Node distribution includes npm 10.9.3.
+          node-version: "22.20.0"
+          package-manager-cache: false
+
+      - name: Setup Bun and all locked target dependencies
+        uses: ./.github/actions/setup-bun
+        with:
+          all-platforms: "true"
+
+      - name: Build or recover the immutable release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun script/release.ts --stage build
+
+      - name: Verify the release did not modify tracked source
+        run: git diff --exit-code HEAD
+
+      - name: Save the exact artifacts for all publishing stages
+        id: artifact
+        uses: actions/upload-artifact@v7
+        with:
+          # A full rerun creates a new artifact; failed-job reruns retain this ID.
+          name: release-${{ needs.resolve.outputs.tag }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Hold one lock across all channels so different tags cannot race latest.
+    concurrency:
+      group: mimocode-release-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      MIMOCODE_VERSION: ${{ needs.resolve.outputs.version }}
+      MIMOCODE_CHANNEL: latest
+    steps:
+      - name: Checkout the release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Configure the npm registry and token authentication
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.20.0"
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Download the verified build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: dist/release/
+          merge-multiple: true
+
+      - name: Publish the complete GitHub Release with automatic notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun script/release.ts --stage github
+
+      - name: Verify FDS version objects and then advance latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MIMO_FDS_AK: ${{ secrets.MIMO_FDS_AK }}
+          MIMO_FDS_SK: ${{ secrets.MIMO_FDS_SK }}
+          # Empty optional variables use the release script's public defaults.
+          MIMO_FDS_ENDPOINT: ${{ vars.MIMO_FDS_ENDPOINT }}
+          MIMO_FDS_BUCKET: ${{ vars.MIMO_FDS_BUCKET }}
+          MIMO_FDS_PREFIX: ${{ vars.MIMO_FDS_PREFIX }}
+          MIMO_FDS_BASE: ${{ vars.MIMO_FDS_BASE }}
+        run: bun script/release.ts --stage fds
+
+      # A failure here preserves the completed GitHub and FDS release. Rerun the
+      # failed job for the same tag; the script verifies existing package integrity.
+      - name: Publish the prepared npm tarballs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          MIMO_FDS_ENDPOINT: ${{ vars.MIMO_FDS_ENDPOINT }}
+          MIMO_FDS_BUCKET: ${{ vars.MIMO_FDS_BUCKET }}
+          MIMO_FDS_PREFIX: ${{ vars.MIMO_FDS_PREFIX }}
+          MIMO_FDS_BASE: ${{ vars.MIMO_FDS_BASE }}
+        run: bun script/release.ts --stage npm

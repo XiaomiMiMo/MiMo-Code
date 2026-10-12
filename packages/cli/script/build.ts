@@ -1,10 +1,8 @@
 #!/usr/bin/env bun
-// Build packages/cli TUI binaries (and, when MIMOCODE_RELEASE is set,
-// upload them — GitHub Release via gh, Xiaomi FDS via ../../script/fds-upload.ts).
+// Build packages/cli TUI binaries. --archive also creates release archives.
 // Called by script/release.ts and bun run build:local.
 //
-// Channels touched here: GitHub Release + FDS. npm is script/publish.ts.
-// Release env: see script/release.ts (GH_REPO, MIMO_FDS_AK/SK, MIMOCODE_*).
+// Uploads are separate stages in script/release.ts; this script never publishes.
 
 import { $ } from "bun"
 import fs from "fs"
@@ -35,7 +33,6 @@ if (pinned && Bun.version !== pinned) {
 await import("./generate.ts")
 
 import { Script } from "../../../script/meta.ts"
-import pkg from "../package.json"
 
 const BINARY_PREFIX = "mimocode"
 
@@ -190,11 +187,7 @@ await $`rm -rf dist`
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
-  // process.execPath, not `bun`: a bare `bun` resolves through the PATH described
-  // above. --no-save keeps this build step from rewriting package.json / bun.lock
-  // (e.g. re-pointing every lockfile entry at the locally configured registry).
-  await $`${process.execPath} install --no-save --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
-  await $`${process.execPath} install --no-save --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
+  await $`${process.execPath} ci --os="*" --cpu="*"`.cwd(path.resolve(dir, "../.."))
 }
 for (const item of targets) {
   const name = [
@@ -290,32 +283,13 @@ for (const item of targets) {
   binaries[name] = Script.version
 }
 
-if (Script.release) {
+if (process.argv.includes("--archive") || Script.release) {
   for (const key of Object.keys(binaries)) {
     if (key.includes("linux")) {
       await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
     } else {
       await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
     }
-  }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
-
-  // Also publish to Xiaomi FDS (fast download in mainland China; the install
-  // script reads from there). Skipped when credentials are absent so local
-  // release builds still work.
-  if (process.env.MIMO_FDS_AK && process.env.MIMO_FDS_SK) {
-    const { uploadFile } = await import("../../../script/fds-upload.ts")
-    const archives = fs.readdirSync("dist").filter((f) => f.endsWith(".zip") || f.endsWith(".tar.gz"))
-    for (const file of archives) {
-      await uploadFile(`dist/${file}`, `releases/v${Script.version}/${file}`)
-      console.log(`Uploaded to FDS: releases/v${Script.version}/${file}`)
-    }
-    const tmpLatest = "dist/_latest.txt"
-    await Bun.write(tmpLatest, Script.version)
-    await uploadFile(tmpLatest, "releases/latest", "text/plain")
-    console.log(`Uploaded to FDS: releases/latest -> ${Script.version}`)
-  } else {
-    console.log("Skipping FDS upload (MIMO_FDS_AK / MIMO_FDS_SK not set)")
   }
 }
 

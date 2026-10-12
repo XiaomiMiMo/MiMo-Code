@@ -14,7 +14,7 @@ commits:
 
 **SDK 手动生成、版本更新 PR 的现行操作完全不变。** 本方案只把 PR 合入之后的 GitHub Release → FDS → npm 发布接入 tag 触发的 CI，并解除 MiMoCode 启动对同版本 plugin npm 包的隐式依赖。npm 排在 FDS 后面，尚未发布或发布失败时，已发布的 MiMoCode 仍须能正常使用内置功能。
 
-本次交付包含发版分析文档，以及用户随后明确要求的运行时修改：删除 Config/TUI 的自动依赖准备链，并补充插件分发与迁移指引。CI、SDK 人工操作和 npm CLI 弃用发布仍只记录方案，不在本次实施。
+本次交付包含发版 CI 与脚本、发版流程文档、Config/TUI 自动依赖准备链的删除，以及可运行的插件开发项目。用户要求 CI 写好但本次不启动发布：手动触发可用，稳定 tag 自动触发段保持注释。SDK 人工步骤不变；npm CLI 的约 v0.2.0 占位包仍是后续计划。
 
 ## [S2] Design
 
@@ -25,7 +25,7 @@ commits:
 - `mimoapi` 的所有文档和脚本均为历史资料。本次参考其环境注入、凭据分工及历史说明，不沿用它的脚本、路径、私有 plugin、overlay 或内部仓打 tag 步骤。最后一次发版之后已经有过一次面向开源可审计的大调整。
 - Desktop 是独立的下游，按自己的 engine pin 随包编译。本次未找到其自动替换引擎的调用链，不新增 `desktop` channel，不安排 Desktop 修改。
 
-### 主仓当前具备什么
+### 修改前的主仓能力（分析基线）
 
 | 项目         | 当前主仓事实                                                                                         | 对 CI 接入的意义                                                 |
 | ------------ | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
@@ -42,7 +42,7 @@ commits:
 
 ## [S3] Out of Scope
 
-- 本次不修改 CI 或 Desktop，不生成 SDK、不更新产品版本、不推送 tag、不上传或发布包；运行时仅修改 S6 的自动依赖准备及相关错误引导。
+- 本次不启动 CI 发布、不修改 Desktop、不生成 SDK、不更新产品版本、不推送 tag、不上传或发布包；运行时仅修改 S6 的自动依赖准备及插件开发/调试路径。
 - SDK 的人工生成流程保持原样；CI 不代替维护者生成或提交 SDK。
 - 不执行 npm registry 的 deprecate 操作；本方案中明确标记 CLI 入口的弃用方向和阶段。
 - 不引入 `desktop` channel，不把未复现的用户反馈定性为更新 bug。
@@ -65,11 +65,21 @@ flowchart TD
 
 SDK、版本 PR、合入方式均沿用现行操作。维护者确认 PR 已合入及该提交检查通过后，才在该合入提交上打 tag；不能误用分支上的合入前提交，也不能在发版过程中补版本提交。例子 `v0.1.99` 仅表示稳定版本 tag 格式。
 
-接入新 workflow 后，维护者推送 tag 即完成发布触发，不再手动运行三段上传脚本。首版流程限定稳定版本逐个发布：上一稳定版本 run 完成、或其失败已处理之后，才发下一个 tag；暂不支持多个版本同时竞争 latest。
+本次 workflow 提供 `workflow_dispatch`，输入已存在的稳定版本 tag。`push.tags: ['v*.*.*']` 自动触发段写好但注释；维护者决定启用并合入后，推送 tag 才自动发版。自动触发关闭期间，通过 Actions 手动选择 tag 发布，不需要手动运行三段上传脚本。首版逐个发布：上一稳定版本 run 完成、或其失败已处理之后，再触发下一个版本。
+
+### 首次使用
+
+1. 将本次 workflow 和分阶段发布脚本合入 main；旧版本 tag 若不含这些文件，不能交给新 workflow 发布。
+2. 配置下文列出的三个 repository secret，并确认 FDS 可选 variables 与安装器实际读取地址一致。
+3. 沿用现行人工 SDK 生成、版本更新 PR 和合入步骤，在合入提交上创建并推送正式版 tag。
+4. 在 **Actions → release → Run workflow** 选择 main，填写已有 tag。等价命令为 `gh workflow run release.yml --ref main -f tag=v0.1.99`（示例版本；本次未执行）。
+5. 后续决定启用自动发布时，再取消 `release.yml` 中 `push`/`tags` 段的注释并合入。开启前，推 tag 本身不会触发发布。
+
+脚本统一入口为 `bun script/release.ts --stage build|github|fds|npm`，版本来自 `MIMOCODE_VERSION`，channel 固定 `latest`。`dist/release/` 保存 manifest、CLI 压缩包、npm tarball 和模型快照；各阶段使用同一产物。`--dry-run` 只做预检/已有产物校验，不表示已完成真实构建或上传。维护者需要本地调用时，也必须 checkout 已存在的 tag 提交，使用相同环境和凭据；正常发版推荐通过 workflow。
 
 ### 触发与预检
 
-1. workflow 订阅 `push.tags: ['v*.*.*']`。这是 glob，job 仍须严格验证 `vMAJOR.MINOR.PATCH`，排除预发布后缀、额外字段和前导零。删除 tag 的事件不能发布。
+1. `workflow_dispatch` 和注释中的 `push.tags: ['v*.*.*']` 共用校验；glob 不代表 semver 合法。job 严格验证 `vMAJOR.MINOR.PATCH`，排除预发布后缀、额外字段和前导零。用户已确认首版只支持正式版。删除 tag 的事件不能发布。
 2. 完整获取 tag 和 main 历史，解引用 tag 到 commit，checkout 该 SHA。确认 SHA 属于 `origin/main`，所有后续阶段固定使用它，不能重新 checkout 当时最新的 main。
 3. tag 去掉 `v` 后必须等于 `packages/cli`、`packages/sdk`、`packages/plugin` 的版本；`packages/shared` 及 `bun.lock` workspace 版本按现行统一版本规则一致。根 package.json 没有版本，不新增。禁止 `MIMOCODE_BUMP`、`MIMOCODE_SKIP_VERSION_CHECK` 绕过检查。
 4. tag 不会自动触发现有仅监听 main 的三个 workflow。发布 job 必须依赖针对该 SHA 的 typecheck、lint、现有分片测试及其隔离测试，或严格核对这些指定检查在该 SHA 的成功结果；不能仅依据 PR 合入前的一次绿灯。
@@ -89,7 +99,7 @@ GitHub Release 转正式、FDS 更新 latest 都可以发生在 npm 完成之前
 
 `build.ts` 还会获取 models.dev 数据。一次发版只获取一次快照，记录其来源和摘要并供所有目标复用；不能让重试时变化的在线数据悄悄改变同版本产物。这个构建输入与人工 SDK 生成无关。
 
-主仓当前把压缩打包也放在 `Script.release` 分支，不能仅删除环境变量就假定已经得到纯构建流程。后续实现应分开构建/压缩与外部上传，保留资产命名。`MIMOCODE_RELEASE` 当前按字符串 truthiness 解释，设置为 `0` 也是真；纯构建不能依赖这种写法关闭上传。
+CLI 构建通过显式 `--archive` 生成压缩包，本身不再上传；发布阶段使用 `--skip-install --archive`，保留原有资产命名。兼容的 `MIMOCODE_RELEASE=1`/`true` 也只请求压缩，`0` 不启用。旧的包级 publish 脚本和 draft-only version 入口给出迁移提示并退出，避免一个看似只发布 SDK 的命令意外发布整组包；统一使用根 release 分阶段入口。
 
 ### Release notes
 
@@ -101,19 +111,21 @@ GitHub Release 转正式、FDS 更新 latest 都可以发生在 npm 完成之前
 
 ### 凭据与环境注入
 
-| 用途     | 新 CI 契约                                                                                                                                                                    |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GitHub   | 发布 job 使用 `contents: write`，`GH_TOKEN` 来自该 run 的 `github.token`，`GH_REPO` 来自固定目标仓库；检查所需额外读取权限仅给相应 job                                        |
-| FDS      | 沿用主仓 `MIMO_FDS_AK` / `MIMO_FDS_SK`，只在上传 job 注入；凭据需有对象写入及设置公开读 ACL 的权限，缺失直接失败                                                              |
-| FDS 布局 | 可配置 `MIMO_FDS_ENDPOINT` / `MIMO_FDS_BUCKET` / `MIMO_FDS_PREFIX`；上传地址与安装器的读取地址需指向同一布局，上传域名不等于下载域名                                          |
-| npm      | 首选按 npm 当前支持要求配置 trusted publishing/OIDC 并固定 Node/npm；如使用 token，必须通过 npmrc/认证 action 将 secret 接到 registry，单独设置 `NPM_TOKEN` 不代表 npm 已登录 |
-| 版本     | CI 从已校验 tag 注入 `MIMOCODE_VERSION`、`MIMOCODE_CHANNEL=latest`；不能依赖 detached HEAD 的分支推断                                                                         |
+| 用途     | 新 CI 契约                                                                                                                                                                        |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub   | 发布 job 使用 `contents: write`，`GH_TOKEN` 来自该 run 的 `github.token`，`GH_REPO` 来自固定目标仓库；检查所需额外读取权限仅给相应 job                                            |
+| FDS      | 沿用主仓 `MIMO_FDS_AK` / `MIMO_FDS_SK`，只在上传 job 注入；凭据需有对象写入及设置公开读 ACL 的权限，缺失直接失败                                                                  |
+| FDS 布局 | 可配置 `MIMO_FDS_ENDPOINT` / `MIMO_FDS_BUCKET` / `MIMO_FDS_PREFIX`；上传地址与安装器的读取地址需指向同一布局，上传域名不等于下载域名                                              |
+| npm      | 本次使用 repository secret `NPM_TOKEN`；workflow 用 setup-node 配置 registry/npmrc，映射为发布步骤的 `NODE_AUTH_TOKEN`。token 须支持无人值守发布且有目标包写权限；不额外要求 OIDC |
+| 版本     | CI 从已校验 tag 注入 `MIMOCODE_VERSION`、`MIMOCODE_CHANNEL=latest`；不能依赖 detached HEAD 的分支推断                                                                             |
 
-发布不需要开发者机器的 `.env`、私人 npmrc 或内部仓权限。凭据只授权发布阶段，构建输入全部来自公开源码和声明的依赖。接入前验证 runner 的 GitHub、FDS 和 npm 网络可达性及上传权限；这是发布环境准备，不改变 SDK 人工操作。
+发布不需要开发者机器的 `.env`、私人 npmrc 或内部仓权限。维护者在仓库的 **Settings → Secrets and variables → Actions** 配置三个 secret：`MIMO_FDS_AK`、`MIMO_FDS_SK`、`NPM_TOKEN`。`GH_TOKEN` 来自 Actions 自动 token，无需另建同名 secret。FDS endpoint/bucket/prefix/base 是可选 repository variables，未提供时用脚本默认值。版本、channel、仓库和 commit 由 workflow 计算，不能作为手填 secret。
+
+发布前先检查这三个 secret 非空，缺配置时不创建 GitHub Release。存在不代表凭据权限有效；首次手动启动仍需确认 runner 的 GitHub、FDS、npm 网络可达性和写权限。当前 0.1.x npm token 权限需覆盖 SDK、plugin、CLI wrapper 和平台包；退出 CLI 过渡期后再收紧白名单。此环境准备不改变 SDK 人工操作。
 
 ### 失败和续跑
 
-- 同一 tag 不允许并发发布，`cancel-in-progress: false` 避免取消正在上传的 run。跨版本遵循上述逐个发布规则；不能把 GitHub 全局 concurrency 的单个 pending 槽当成保证不丢任务的发布队列。
+- 同一 tag 的 workflow 不并发；整个 GitHub → FDS → npm 发布 job 还共用跨版本互斥，避免多个版本同时更新 latest。`cancel-in-progress: false` 保留正在发布的 job。GitHub concurrency 只有一个 pending 槽，并非可靠任务队列；首版逐个触发，若额外 pending run 被后来的请求替换而取消，维护者需重新手动触发它。
 - 每个阶段独立记录完成状态。预检或构建失败不产生发布；GitHub 失败不进入 FDS；FDS 失败不更新 latest、不进入 npm；npm 失败不回滚已成功的二进制渠道。
 - 在 GitHub 保存构建清单、CLI 压缩包和 npm tarball，重跑优先下载这些已保存产物。资产存在时校验内容；不能直接用当前 `--clobber` 覆盖已公开版本，也不能在不同源码上复用 tag。
 - npm 已有相同 `name@version` 时比较 `dist.integrity` 与待发布 tarball，相同才跳过，不同则停止。查询认证失败、网络错误不能当成“尚未发布”；`npm view` 任意非零即尝试发布的现有判断需要收紧。
@@ -179,7 +191,7 @@ Config.loadInstanceState（普通配置目录，非 modelsOnly）
 
 迁移说明放在 `docs/plugins.md`，中英文 README 增加开发插件的 details，默认推荐打包式分发。提供 `examples/plugins/greeting` 开发项目，包含公开 SDK 开发依赖、类型检查、build、watch 和部署说明；用户在自己的项目初始化锁文件，后续用 frozen 安装。
 
-用 `mimo debug agent build --tool greet --params '{"name":"Example"}'` 直接验证注册工具，结果为 `Hello, Example!`。调试入口使用完整的已注册工具集合，保留 model/agent/permission 过滤但不应用 GPT 顶层工具压缩，并通过 AppRuntime 执行工具的 Effect，而不是序列化 Effect 对象。这个修正服务于实际可运行的插件开发路径。
+用 `mimo debug agent build --tool greet --params '{"name":"Example"}'` 直接验证注册工具，结果为 `Hello, Example!`。调试入口使用完整的已注册工具集合，保留 model/agent/permission 过滤但不应用 GPT 顶层工具压缩，先按工具 schema 解析参数，再通过 AppRuntime 执行 Effect。错误参数必须在执行前失败，不能返回 `Hello, undefined!`。
 
 缺少运行依赖的本地插件保留原始模块错误，并给出“自行准备依赖或打包后加载”的可操作提示；不对所有用户增加启动弹窗。已有自包含插件、内置插件及显式 npm 插件安装方式不变。
 
@@ -199,7 +211,7 @@ Config.loadInstanceState（普通配置目录，非 modelsOnly）
 
 ## [S8] 后续实现顺序与验收
 
-本节区分本次运行时实现与后续 CI 工程验收；完成情况以 Report 为准。
+本次交付覆盖运行时修改和 CI 代码；真实 GitHub/FDS/npm 发布由维护者之后手动启动。完成情况以 Report 为准，不能把本地测试写成已上线发布。
 
 | 顺序      | 工作                                   | 验收条件                                                                                                                                                         |
 | --------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -209,7 +221,9 @@ Config.loadInstanceState（普通配置目录，非 modelsOnly）
 | 4         | 验证延迟与续跑                         | 故意让该版本 SDK/plugin 在 npm 不存在或 registry 不可达，从已构建 FDS 压缩包启动，内置功能正常且不尝试获取该 SDK；再恢复 npm 完成续跑，无覆盖和 latest 回退      |
 | 5         | 公告 npm CLI 迁移                      | README、Release notes 和 registry deprecation 文案一致；在目标约 v0.2.0 的准备 PR 确认占位策略，tarball 无 CLI 内容，SDK/plugin 发布持续可用                     |
 
-插件验收使用真实构建产物和隔离配置目录，不能靠测试中的 noop Npm mock 得出“不联网”。覆盖类型导入、打包的 `tool`/Zod、缺依赖的本地工具，以及 TUI slot 渲染、响应式更新和 cleanup。默认内置 provider 可使用本地测试服务，避免把模型服务网络失败误判成插件问题。npm 失败恢复至少覆盖 SDK 已发/plugin 未发、已有版本内容不同、认证失败和镜像延迟。
+本次插件验收使用真实服务端插件构建产物和隔离配置目录，覆盖打包的 `tool`/Zod、缺依赖提示和参数校验；配置层在不提供 Npm 服务的情况下运行，不能靠 noop Npm mock 得出“不联网”。TUI 复用已有加载、安装、生命周期测试；没有交付新的 JSX 构建器或声称已做编译后 Solid 界面验收。未来提供 JSX 插件开发项目时，再验证实际 slot 渲染、响应式更新和 cleanup。默认内置 provider 可使用本地测试服务，避免把模型服务网络失败误判成插件问题。
+
+CI 本次验收包括 workflow 语法、触发/权限/依赖关系、tag 与 manifest 校验、npm 已发布内容冲突及不回退 latest 的脚本测试；不调用真实写入 API。首次启用后再完成全平台构建、FDS 公开读取和真实 registry 续跑演练。
 
 ## 参考
 
@@ -223,6 +237,8 @@ Config.loadInstanceState（普通配置目录，非 modelsOnly）
 - [ ] T2: 明确 npm CLI 弃用 — acceptance: 约 v0.2.0 占位包、迁移前置条件与 SDK/plugin 保留范围可审查 (covers: S5)
 - [ ] T3: 分析 npm JS 调用及内置功能边界 — acceptance: 说明 Arborist 调用原因、已内置能力、去除 bootstrap 的范围，以及 npm 尚未发布时的运行验收 (covers: S6,S8)
 - [ ] T4: 核查 Desktop 反馈 — acceptance: 提供下游真实构建/调用证据，未发现自动触发则不新增 channel、不设修复任务 (covers: S7)
-- [ ] T5: 校验并独立审查交付 — acceptance: 相关测试、类型检查、文档和差异检查通过，独立审查覆盖事实、行为和约定，Report 记录证据 (covers: S2; depends: T1,T2,T3,T4,T6,T7)
+- [ ] T5: 校验并独立审查交付 — acceptance: 相关测试、类型检查、文档和差异检查通过，独立审查覆盖事实、行为和约定，Report 记录证据 (covers: S2; depends: T1,T2,T3,T4,T6,T7,T8,T9)
 - [ ] T6: 删除 Config/TUI 自动安装及等待链 — acceptance: 无需 Npm 安装服务即可加载两类配置，不生成或恢复 SDK 依赖，删除死版本选择器，保留显式 npm 加载 (covers: S6,S8; depends: T3)
 - [ ] T7: 添加回归验证和可运行插件开发项目 — acceptance: 自包含插件可加载，现有清单保留，缺依赖提示正确；中英文 README details 可发现开发/构建/部署说明；普通及 Codex 工具模式均能通过 debug 命令实际执行示例 (covers: S6,S8; depends: T3)
+- [ ] T8: 实现分阶段发布脚本 — acceptance: build/github/fds/npm 消费同一份有摘要的产物清单，build 不改版本或生成 SDK，重试验证已存在内容，latest 不回退，单测不调用真实发布 API (covers: S4,S5,S8; depends: T1)
+- [ ] T9: 实现发布 workflow 与 secret 接口 — acceptance: 手动输入已有正式 tag；自动 tag 段保持注释；校验/测试固定 tag SHA；发布前检查三个 secret，GitHub/FDS/npm 顺序执行且共用发布互斥；静态校验通过 (covers: S4,S8; depends: T1,T8)

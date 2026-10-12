@@ -27,7 +27,7 @@ const CHANNEL = await (async () => {
   if (env.MIMOCODE_CHANNEL) return env.MIMOCODE_CHANNEL
   if (env.MIMOCODE_BUMP) return "latest"
   if (env.MIMOCODE_VERSION && !env.MIMOCODE_VERSION.startsWith("0.0.0-")) return "latest"
-  return await $`git branch --show-current`.text().then((x) => x.trim()) || "latest"
+  return (await $`git branch --show-current`.text().then((x) => x.trim())) || "latest"
 })()
 const IS_PREVIEW = CHANNEL !== "latest"
 
@@ -69,6 +69,6 @@ export const Script = {
     return IS_PREVIEW
   },
   get release(): boolean {
-    return !!env.MIMOCODE_RELEASE
+    return env.MIMOCODE_RELEASE === "1" || env.MIMOCODE_RELEASE === "true"
   },
 }
