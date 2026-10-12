@@ -1,14 +1,27 @@
 ---
 feature: plugin-host-sdk
-status: in-progress
+status: delivered
 updated: 2026-10-12
 branch: feat/plugin-host-sdk
-commits:
+commits: 4a5e2140..de9d65c5
 ---
 
 # Plugin Host SDK
 
 ## Report
+
+**What was built** — Config and TUI config loading no longer npm-install `@mimo-ai/plugin` into config directories, and plugin loading no longer waits on those installs (`PluginSdkNpmVersion`, `waitForDependencies` and the loader's `wait` retry are gone). On Bun, `PluginHost.provideSdk()` (`packages/cli/src/plugin/host.ts`) registers `@mimo-ai/plugin`, `/tool` and `/tui` as host-provided virtual modules at the start of `PluginLoader.loadExternal` and before file hooks load; the host copy wins over any plugin-local `node_modules`, and the file-hook `Bun.build` marks the SDK external so hooks share it too.
+
+When the runtime cannot serve the SDK (the Node build used by Desktop) or `MIMOCODE_ONLY_CONFIG_DIR_PLUGINS` is set, only plugins whose source lies inside `MIMOCODE_CONFIG_DIR` load, and file hooks are discovered only there. Desktop's own plugin keeps loading; user plugins from other config directories do not load at all.
+
+**Verification** — From `packages/cli`: `bun typecheck` PASS; root `bun typecheck` PASS; `bun test test/plugin test/config/plugin-dependencies.test.ts test/config/config.test.ts test/cli/tui --timeout 30000` PASS (557 pass, 0 fail); `bun test test/provider/refresh.test.ts` PASS (6/6). `test/plugin/host-sdk.test.ts` was red-checked against disabled `provideSdk`, a forced-off policy, and a missing `Bun.build` external. oxlint on changed files: 0 errors. Compiled binary (`bun script/build.ts --single`): a project plugin importing `tool` with no `node_modules` registered its tool; with the flag set it did not load. Independent review found one critical (cross-drive containment failing open on Windows), fixed in `de9d65c5` and re-reviewed clean.
+
+**Journey log** —
+- `Bun.plugin` `build.module` for a bare specifier wins over `node_modules` both under `bun run` and in `bun build --compile` binaries; no opentui-style specifier rewriting is needed.
+- `Bun.build` ignores runtime `Bun.plugin` registrations; mark the SDK `external` and let the runtime import resolve it.
+- `Filesystem.contains` fails open across Windows drives (`path.relative` returns an absolute path); its other call sites still have this.
+- Test tmpdirs default to under `packages/cli`, where resolution finds the workspace `node_modules`; host-SDK tests need `outsideGit: true`.
+- Follow-ups: drop the always-false loader `retry` argument; Desktop can delete its npm short-circuit files in `provision.ts` after bumping its engine pin.
 
 ## [S1] Problem
 
@@ -36,7 +49,7 @@ The host module wins over any `node_modules/@mimo-ai/plugin` next to the plugin,
 
 `PluginHost.onlyConfigDir()` is true when the runtime cannot serve the SDK (`typeof Bun === "undefined"`) or when the new flag `MIMOCODE_ONLY_CONFIG_DIR_PLUGINS` is truthy. Under this policy the engine loads only plugins provided by `MIMOCODE_CONFIG_DIR`:
 
-- `PluginHost.filterOrigins(origins)` keeps a plugin origin only when its `source` path lies inside `Flag.MIMOCODE_CONFIG_DIR`. Non-path sources (`MIMOCODE_CONFIG_CONTENT`, remote config URLs) are dropped. `PluginLoader.loadExternal` applies it, so it covers every server and TUI plugin load, including TUI file plugins (their source is `<dir>/tui.json`).
+- `PluginHost.filterOrigins(origins)` keeps a plugin origin only when its `source` path lies inside `Flag.MIMOCODE_CONFIG_DIR`, after resolving symlinks on both sides; a path on another Windows drive is outside. Non-path sources (`MIMOCODE_CONFIG_CONTENT`, remote config URLs) are dropped. `PluginLoader.loadExternal` applies it, so it covers every server and TUI plugin load, including TUI file plugins (their source is `<dir>/tui.json`).
 - `PluginHost.filterDirectories(dirs)` keeps a config directory only when it lies inside `Flag.MIMOCODE_CONFIG_DIR`. It applies to file-hook discovery.
 - When the policy is active and `MIMOCODE_CONFIG_DIR` is unset, no external plugins, file hooks or TUI file plugins load.
 - Each filter logs the number of skipped items.
@@ -63,6 +76,6 @@ On the Node build, Desktop's own plugin is declared in `MIMOCODE_CONFIG_DIR/mimo
 
 ## Tasks
 
-- [ ] T1: Remove startup SDK installs, dependency waits and `PluginSdkNpmVersion`; add the missing-module hint — acceptance: `plugin-dependencies` tests pass and no config-dir npm install remains in `config.ts` or `tui.ts` (covers: S2.1)
-- [ ] T2: Add `PluginHost.provideSdk()` and call it before server and TUI external plugin loads; mark the SDK external in the file-hook bundle — acceptance: host-SDK tests in S2.4 pass (covers: S2.2, S2.4; depends: T1)
-- [ ] T3: Add `MIMOCODE_ONLY_CONFIG_DIR_PLUGINS`, `PluginHost.onlyConfigDir()`, `filterOrigins`, `filterDirectories`, and apply them in `PluginLoader.loadExternal` and file-hook discovery — acceptance: policy tests in S2.4 pass (covers: S2.3, S2.4; depends: T2)
+- [x] T1: Remove startup SDK installs, dependency waits and `PluginSdkNpmVersion`; add the missing-module hint — acceptance: `plugin-dependencies` tests pass and no config-dir npm install remains in `config.ts` or `tui.ts` (covers: S2.1)
+- [x] T2: Add `PluginHost.provideSdk()` and call it before server and TUI external plugin loads; mark the SDK external in the file-hook bundle — acceptance: host-SDK tests in S2.4 pass (covers: S2.2, S2.4; depends: T1)
+- [x] T3: Add `MIMOCODE_ONLY_CONFIG_DIR_PLUGINS`, `PluginHost.onlyConfigDir()`, `filterOrigins`, `filterDirectories`, and apply them in `PluginLoader.loadExternal` and file-hook discovery — acceptance: policy tests in S2.4 pass (covers: S2.3, S2.4; depends: T2)
