@@ -114,6 +114,21 @@ The initial workflow supports only `vMAJOR.MINOR.PATCH` stable versions. Prerele
 - Compile committed SDK sources with TypeScript; **do not invoke the SDK build script that regenerates them**. Do not change versions, lockfiles, or create commits. Check that tracked source remains clean after building.
 - Save one models.dev snapshot for all targets in a build. Record the version, SHA, file inventory, and local digests in `dist/release/manifest.json`, and hand these to the publishing job with the archives, npm tarballs, and snapshot. The manifest checks that jobs use the correct complete build output; it is not a remote recovery protocol.
 
+### Verified version choices
+
+Actual dependency and tool versions were checked against their registry or upstream tags. Example package versions such as `1.0.0` and release fixtures such as `0.1.99` are synthetic examples, not dependency recommendations.
+
+| Component      | Choice and evidence                                                                                                                                                                                                                          |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bun runtime    | `1.3.14`, already pinned by the repository's packageManager; the upstream `bun-v1.3.14` release exists and is stable                                                                                                                         |
+| Bun types      | Align the root catalog and standalone example to `@types/bun@1.3.14`; npm metadata declares its exact dependency on `bun-types@1.3.14`. The lockfile records those registry integrity values. Workspace consumers retain `catalog:` bindings |
+| TypeScript     | `5.8.2`, the repository's existing compiler version, verified on npm. `@types/bun@1.3.14` declares a TypeScript baseline of `5.3`; the example is checked with the repository compiler                                                       |
+| Plugin SDK     | `@mimo-ai/plugin@0.1.15`, matching the repository package and the published npm version; its `PluginModule` and tool exports were inspected                                                                                                  |
+| CI Node        | Node 24 LTS with current patch resolution; the official release schedule identifies 24 as LTS at verification time. Node is not used to pin Bun's compilation runtime                                                                        |
+| GitHub Actions | Verified upstream major tags: `actions/checkout@v6`, `actions/setup-node@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`, `actions/cache@v5`, and `oven-sh/setup-bun@v2`                                                   |
+
+When upgrading Bun, update the runtime pin, root type catalog, and example's type dependency together, refresh the targeted lock entries, and verify with `bun ci` and typechecking. This change leaves the runtime at `1.3.14` and updates only its type packages from `1.3.11`.
+
 ### Four script stages
 
 The maintainer entry point is `bun script/release/index.ts --stage build|github|fds|npm`; the root `bun run release` package command invokes the same module. `MIMOCODE_VERSION` supplies the version, and the channel is fixed to `latest`. `--dry-run` performs preflight or existing-artifact validation only; it does not mean a build or upload has completed.
@@ -272,3 +287,4 @@ CI acceptance covers workflow syntax, triggers/permissions/dependencies, tag and
 - [x] T8: Implement staged release scripts — acceptance: build/github/fds/npm consume one local artifact inventory; build does not change versions or generate SDK sources; GitHub generates the description; the existing 15 npm packages follow FDS; failures stop clearly; tests invoke no real publication API (covers: S4,S5,S8; depends: T1)
 - [x] T9: Implement the workflow and secret interface — acceptance: manual dispatch accepts an existing stable tag; the automatic tag block remains commented; checks/builds use the fixed SHA; three secrets are checked before publication; GitHub/FDS/npm run sequentially under one publication lock; static validation passes (covers: S4,S8; depends: T1,T8)
 - [ ] T10: Apply toolchain and documentation review feedback — acceptance: release jobs follow Node 24 LTS patches while Bun remains repository-pinned; obsolete forwarding/error-only scripts are removed and maintainer entry points live under script/release; English/Chinese action-oriented tutorials live with the tested example; all current callers and links resolve (covers: S4,S6,S8)
+- [ ] T11: Verify version provenance and align Bun types — acceptance: published metadata confirms the selected dependency versions; runtime, root catalog, lockfile, and example use Bun/types 1.3.14 with catalog bindings retained; frozen installation and workspace/example typechecking pass; release validation uses supported event context (covers: S4,S6,S8)

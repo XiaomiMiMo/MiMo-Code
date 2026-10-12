@@ -27,7 +27,6 @@ defaults:
 
 jobs:
   resolve:
-    if: github.event_name != 'push' || !github.event.deleted
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}

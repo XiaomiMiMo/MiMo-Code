@@ -28,7 +28,7 @@ cd /tmp/example/plugin-dev
 The template's `package.json` uses public npm dependencies. Initialize **the copied plugin project's** own lockfile with:
 
 ```bash
-bun add --dev @mimo-ai/plugin@0.1.15 @types/bun@1.3.11 typescript@5.8.2
+bun add --dev @mimo-ai/plugin@0.1.15 @types/bun@1.3.14 typescript@5.8.2
 ```
 
 Commit the plugin project's dependency declarations together with the generated `bun.lock`. On subsequent checkouts, use `bun ci` to restore the locked dependencies. Choose the SDK version based on API compatibility with your plugin. To validate this example directly in the MiMoCode repository, use the dependencies installed by `bun ci` at the repository root, then run the example's scripts in its directory.

@@ -28,7 +28,7 @@ cd /tmp/example/plugin-dev
 模板的 `package.json` 使用公开 npm 依赖。在**复制出的插件项目**中运行以下命令，初始化该项目自己的锁文件：
 
 ```bash
-bun add --dev @mimo-ai/plugin@0.1.15 @types/bun@1.3.11 typescript@5.8.2
+bun add --dev @mimo-ai/plugin@0.1.15 @types/bun@1.3.14 typescript@5.8.2
 ```
 
 将插件项目的依赖声明和生成的 `bun.lock` 一起提交。后续检出该项目时用 `bun ci` 恢复锁定的依赖。根据插件所需的 API 兼容性选择 SDK 版本。直接在 MiMoCode 仓库中验证此示例时，使用仓库根目录的 `bun ci` 安装结果，再进入示例目录运行脚本。
