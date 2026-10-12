@@ -1,18 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { chmod, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { clean, command, preflight, root, run } from "./context"
-import { notesBaseline } from "./github"
+import { github, githubCommand } from "./github"
 import {
-  advanceLatest,
-  assetAction,
-  compareVersions,
   digest,
   platforms,
   publicationOrder,
-  registryValue,
-  sameBuild,
   stableVersion,
   tagVersion,
   validateManifest,
@@ -21,7 +16,7 @@ import {
   type Artifact,
   type Manifest,
 } from "./manifest"
-import { verifyIntegrity } from "./npm"
+import { npm, npmCommands } from "./npm"
 import { transformExports } from "./pack"
 
 const bytes = new TextEncoder().encode("example release artifact")
@@ -32,6 +27,12 @@ const environment = {
   MIMOCODE_CHANNEL: process.env.MIMOCODE_CHANNEL,
   MIMOCODE_BUMP: process.env.MIMOCODE_BUMP,
   MIMOCODE_SKIP_VERSION_CHECK: process.env.MIMOCODE_SKIP_VERSION_CHECK,
+  GH_REPO: process.env.GH_REPO,
+  GH_TOKEN: process.env.GH_TOKEN,
+  NODE_AUTH_TOKEN: process.env.NODE_AUTH_TOKEN,
+  PATH: process.env.PATH,
+  RELEASE_TEST_LOG: process.env.RELEASE_TEST_LOG,
+  RELEASE_TEST_FAIL: process.env.RELEASE_TEST_FAIL,
 }
 
 afterEach(async () => {
@@ -133,16 +134,6 @@ describe("stable releases", () => {
     expect(() => tagVersion("vv1.2.3")).toThrow()
   })
 
-  test("compares numeric segments and never downgrades latest", () => {
-    expect(compareVersions("0.10.0", "0.9.99")).toBe(1)
-    expect(compareVersions("9007199254740993.0.0", "9007199254740992.0.0")).toBe(1)
-    expect(advanceLatest(undefined, version)).toBe(true)
-    expect(advanceLatest("0.1.98", version)).toBe(true)
-    expect(advanceLatest(version, version)).toBe(false)
-    expect(advanceLatest("0.2.0", version)).toBe(false)
-    expect(() => advanceLatest("next", version)).toThrow()
-  })
-
   test.each([false, true])("validates existing remote tags (annotated=%s)", async (annotated) => {
     const fixture = await repository({ annotated })
     expect(await preflight(version, fixture.cwd)).toEqual({
@@ -193,20 +184,6 @@ describe("stable releases", () => {
 })
 
 describe("immutable release artifacts", () => {
-  test("preserves the generated comparison baseline when a draft has no manifest yet", () => {
-    expect(
-      notesBaseline(
-        "Example PR list\n**Full Changelog**: https://github.com/example/repo/compare/v0.1.98...v0.1.99",
-        "example/repo",
-        "v0.1.99",
-      ),
-    ).toBe("v0.1.98")
-    expect(notesBaseline("Example first release", "example/repo", "v0.1.99")).toBeNull()
-    expect(
-      notesBaseline("https://github.com/example/repo/compare/v0.1.97...v0.1.98", "example/repo", "v0.1.99"),
-    ).toBeNull()
-  })
-
   test("legacy scoped entry points fail before starting publication", async () => {
     const results = await Promise.all(
       [
@@ -246,19 +223,6 @@ describe("immutable release artifacts", () => {
     expect(order.at(-1)).toBe("@mimo-ai/cli")
   })
 
-  test("accepts notes enrichment and rejects build changes", () => {
-    const saved = manifest()
-    sameBuild(saved, { ...saved, notes: { baseline: "v0.1.98", body: "Example PR list" } })
-    expect(() => sameBuild(saved, { ...saved, bun: "1.3.15" })).toThrow("different build")
-  })
-
-  test("replaces conflicts only in unpublished drafts", () => {
-    const saved = artifact("example.zip", "archive")
-    expect(assetAction(saved, bytes, false)).toBe("reuse")
-    expect(assetAction(saved, new TextEncoder().encode("changed"), true)).toBe("replace")
-    expect(() => assetAction(saved, new TextEncoder().encode("changed"), false)).toThrow("Published artifact")
-  })
-
   test("checks real local files and npm integrity", async () => {
     const folder = await directory()
     const saved = manifest()
@@ -268,22 +232,7 @@ describe("immutable release artifacts", () => {
     await expect(verifyFiles(folder, saved)).rejects.toThrow("content conflict")
     const packed = artifact("example.tgz", "npm", "@mimo-ai/sdk")
     verifyBytes(packed, bytes)
-    verifyIntegrity(packed, packed.integrity)
-    expect(() => verifyIntegrity(packed, "sha512-different")).toThrow("different integrity")
-  })
-
-  test("only E404 allows publishing an absent npm version", () => {
-    expect(
-      registryValue({ exitCode: 1, stdout: JSON.stringify({ error: { code: "E404" } }), stderr: "" }),
-    ).toBeUndefined()
-    expect(registryValue({ exitCode: 0, stdout: '"sha512-example"', stderr: "" })).toBe("sha512-example")
-    for (const code of ["E401", "E403", "ETIMEDOUT", "ECONNRESET"]) {
-      expect(() => registryValue({ exitCode: 1, stdout: JSON.stringify({ error: { code } }), stderr: "" })).toThrow(
-        "lookup failed",
-      )
-    }
-    expect(() => registryValue({ exitCode: 0, stdout: "", stderr: "" })).toThrow("no metadata")
-    expect(() => registryValue({ exitCode: 1, stdout: "not json", stderr: "" })).toThrow()
+    expect(() => verifyBytes({ ...packed, integrity: "sha512-different" }, bytes)).toThrow("integrity conflict")
   })
 
   test("maps committed TypeScript exports to compiled declarations and JavaScript", () => {
@@ -291,5 +240,86 @@ describe("immutable release artifacts", () => {
       ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
       "./nested": { node: { types: "./dist/nested.d.ts", import: "./dist/nested.js" } },
     })
+  })
+})
+
+async function publisher(name: "gh" | "npm") {
+  const cwd = await directory()
+  const file = path.join(cwd, name)
+  await Bun.write(
+    file,
+    `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs"
+const args = process.argv.slice(2)
+appendFileSync(process.env.RELEASE_TEST_LOG, JSON.stringify(args) + "\\n")
+if (process.env.RELEASE_TEST_FAIL && args.some((arg) => arg.includes(process.env.RELEASE_TEST_FAIL))) {
+  console.error("example publication conflict")
+  process.exit(1)
+}
+`,
+  )
+  await chmod(file, 0o755)
+  process.env.PATH = `${cwd}${path.delimiter}${environment.PATH ?? ""}`
+  process.env.RELEASE_TEST_LOG = path.join(cwd, "commands.jsonl")
+  delete process.env.RELEASE_TEST_FAIL
+  process.env.GH_REPO = "example/repo"
+  process.env.GH_TOKEN = "example-token"
+  process.env.NODE_AUTH_TOKEN = "example-token"
+  return async () =>
+    (await Bun.file(path.join(cwd, "commands.jsonl")).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[])
+}
+
+describe("normal publication commands", () => {
+  test("creates an existing-tag GitHub release with generated notes and every artifact", async () => {
+    const commands = await publisher("gh")
+    const saved = manifest()
+    const expected = { version, tag: saved.tag, commit }
+    await github(expected, saved)
+    const recorded = await commands()
+    expect(recorded).toEqual([githubCommand(expected, saved, "example/repo").slice(1)])
+    expect(recorded[0].slice(0, 8)).toEqual([
+      "release",
+      "create",
+      "v0.1.99",
+      "--verify-tag",
+      "--generate-notes",
+      "--title",
+      "v0.1.99",
+      "--repo",
+    ])
+    expect(recorded[0].slice(9).map((file) => path.basename(file))).toEqual([
+      "manifest.json",
+      ...saved.artifacts.map((item) => item.file),
+    ])
+    expect(recorded[0]).not.toContain("--clobber")
+  })
+
+  test("reports an existing release conflict without attempting automatic repair", async () => {
+    const commands = await publisher("gh")
+    process.env.RELEASE_TEST_FAIL = "create"
+    await expect(github({ version, tag: `v${version}`, commit }, manifest())).rejects.toThrow("publication conflict")
+    expect(await commands()).toHaveLength(1)
+  })
+
+  test("publishes the 15 prepacked npm packages sequentially", async () => {
+    const commands = await publisher("npm")
+    const saved = manifest()
+    await npm(saved)
+    const recorded = await commands()
+    expect(recorded).toEqual(npmCommands(saved).map((args) => args.slice(1)))
+    expect(recorded.map((args) => path.basename(args[1]))).toEqual(
+      ["sdk", "plugin", ...platforms, "cli"].map((name) => `${name}.tgz`),
+    )
+    expect(recorded.every((args) => args.includes("--ignore-scripts") && args.includes("latest"))).toBe(true)
+  })
+
+  test("stops npm publication on the first error", async () => {
+    const commands = await publisher("npm")
+    process.env.RELEASE_TEST_FAIL = "plugin.tgz"
+    await expect(npm(manifest())).rejects.toThrow("publication conflict")
+    expect((await commands()).map((args) => path.basename(args[1]))).toEqual(["sdk.tgz", "plugin.tgz"])
   })
 })

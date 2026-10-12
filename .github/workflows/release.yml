@@ -127,9 +127,7 @@ jobs:
         with:
           all-platforms: "true"
 
-      - name: Build or recover the immutable release artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Build the release artifacts
         run: bun script/release.ts --stage build
 
       - name: Verify the release did not modify tracked source
@@ -190,26 +188,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bun script/release.ts --stage github
 
-      - name: Verify FDS version objects and then advance latest
+      - name: Upload FDS archives and update latest
         env:
-          GH_TOKEN: ${{ github.token }}
           MIMO_FDS_AK: ${{ secrets.MIMO_FDS_AK }}
           MIMO_FDS_SK: ${{ secrets.MIMO_FDS_SK }}
           # Empty optional variables use the release script's public defaults.
           MIMO_FDS_ENDPOINT: ${{ vars.MIMO_FDS_ENDPOINT }}
           MIMO_FDS_BUCKET: ${{ vars.MIMO_FDS_BUCKET }}
           MIMO_FDS_PREFIX: ${{ vars.MIMO_FDS_PREFIX }}
-          MIMO_FDS_BASE: ${{ vars.MIMO_FDS_BASE }}
         run: bun script/release.ts --stage fds
 
-      # A failure here preserves the completed GitHub and FDS release. Rerun the
-      # failed job for the same tag; the script verifies existing package integrity.
+      # A failure here preserves GitHub/FDS. Inspect the completed packages and
+      # continue manually from these artifacts; partial publication is not retried automatically.
       - name: Publish the prepared npm tarballs
         env:
-          GH_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          MIMO_FDS_ENDPOINT: ${{ vars.MIMO_FDS_ENDPOINT }}
-          MIMO_FDS_BUCKET: ${{ vars.MIMO_FDS_BUCKET }}
-          MIMO_FDS_PREFIX: ${{ vars.MIMO_FDS_PREFIX }}
-          MIMO_FDS_BASE: ${{ vars.MIMO_FDS_BASE }}
         run: bun script/release.ts --stage npm

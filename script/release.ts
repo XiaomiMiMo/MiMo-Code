@@ -32,14 +32,17 @@ export async function release(options: { stage?: string; version?: string; dryRu
     console.log(`Read-only validation passed for ${expected.tag} (${expected.commit})`)
     return
   }
-  required("GH_REPO")
   if (!stage) {
+    required("GH_REPO")
     required("GH_TOKEN")
     required("MIMO_FDS_AK")
     required("MIMO_FDS_SK")
     required("NODE_AUTH_TOKEN")
   }
-  if (!stage || stage === "build") await build(expected)
+  if (!stage || stage === "build") {
+    console.log("=== Release stage: build ===")
+    await build(expected)
+  }
   if (stage === "build") return
   const manifest = validateManifest(
     await Bun.file(path.join(directory, "manifest.json")).json(),
@@ -47,9 +50,18 @@ export async function release(options: { stage?: string; version?: string; dryRu
     expected.commit,
   )
   await verifyFiles(directory, manifest)
-  if (!stage || stage === "github") await github(expected, manifest)
-  if (!stage || stage === "fds") await fds(expected, manifest)
-  if (!stage || stage === "npm") await npm(expected, manifest)
+  if (!stage || stage === "github") {
+    console.log("=== Release stage: github ===")
+    await github(expected, manifest)
+  }
+  if (!stage || stage === "fds") {
+    console.log("=== Release stage: fds ===")
+    await fds(expected, manifest)
+  }
+  if (!stage || stage === "npm") {
+    console.log("=== Release stage: npm ===")
+    await npm(manifest)
+  }
 }
 
 if (import.meta.main) {

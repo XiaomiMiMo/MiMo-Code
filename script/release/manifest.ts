@@ -33,7 +33,6 @@ export type Manifest = {
   bun: string
   models: { source: string; sha256: string }
   artifacts: Artifact[]
-  notes?: { baseline: string | null; body: string }
 }
 
 export function stableVersion(value: string) {
@@ -46,18 +45,6 @@ export function stableVersion(value: string) {
 export function tagVersion(tag: string) {
   if (!tag.startsWith("v")) throw new Error(`Expected a vMAJOR.MINOR.PATCH tag, received ${tag}`)
   return stableVersion(tag.slice(1))
-}
-
-export function compareVersions(a: string, b: string) {
-  const left = stableVersion(a).split(".").map(BigInt)
-  const right = stableVersion(b).split(".").map(BigInt)
-  const index = left.findIndex((value, i) => value !== right[i])
-  return index < 0 ? 0 : left[index] > right[index] ? 1 : -1
-}
-
-export function advanceLatest(current: string | undefined, version: string) {
-  stableVersion(version)
-  return !current || compareVersions(current, version) < 0
 }
 
 export function digest(bytes: Uint8Array, algorithm: "sha256" | "sha512" = "sha256") {
@@ -128,12 +115,6 @@ export function validateManifest(value: unknown, version: string, commit: string
     throw new Error("Release manifest must include all 12 archives, 15 npm tarballs and the models snapshot")
   }
   publicationOrder(manifest.artifacts)
-  if (manifest.notes) {
-    if (typeof manifest.notes.body !== "string" || !manifest.notes.body.trim()) throw new Error("Empty release notes")
-    if (manifest.notes.baseline && compareVersions(tagVersion(manifest.notes.baseline), version) >= 0) {
-      throw new Error("Release notes baseline must be an earlier stable version")
-    }
-  }
   return manifest
 }
 
@@ -142,30 +123,4 @@ export async function verifyFiles(directory: string, manifest: Manifest) {
   for (const artifact of manifest.artifacts) {
     verifyBytes(artifact, await Bun.file(path.join(directory, artifact.file)).bytes())
   }
-}
-
-export function matchingBuild(a: Manifest, b: Manifest) {
-  const build = (value: Manifest) => JSON.stringify({ ...value, notes: undefined })
-  return build(a) === build(b)
-}
-
-export function sameBuild(a: Manifest, b: Manifest) {
-  if (!matchingBuild(a, b)) throw new Error("Existing release manifest has different build inputs or artifacts")
-}
-
-export function assetAction(artifact: Artifact, bytes: Uint8Array, draft: boolean) {
-  if (bytes.byteLength === artifact.size && digest(bytes) === artifact.sha256) return "reuse"
-  if (draft) return "replace"
-  throw new Error(`Published artifact content conflict: ${artifact.file}`)
-}
-
-export function registryValue(result: { exitCode: number; stdout: string; stderr: string }): unknown {
-  const value = result.stdout.trim() ? JSON.parse(result.stdout) : undefined
-  if (result.exitCode === 0) {
-    if (value == null) throw new Error("npm registry returned no metadata for an existing package")
-    return value
-  }
-  const error = value as { error?: { code?: string } } | undefined
-  if (error?.error?.code === "E404") return undefined
-  throw new Error("npm registry lookup failed; only E404 means a version is absent")
 }

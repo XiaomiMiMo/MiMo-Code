@@ -1,32 +1,16 @@
 import { cp, mkdir, rm } from "node:fs/promises"
 import path from "node:path"
 import { clean, directory, root, run, type Release } from "./context"
-import { digest, platforms, validateManifest, verifyFiles, type Artifact, type Manifest } from "./manifest"
+import { digest, platforms, validateManifest, type Artifact, type Manifest } from "./manifest"
 import { packCLI, packLibrary } from "./pack"
-import { restoreRelease } from "./github"
 
 export async function build(release: Release) {
-  const recovery = await restoreRelease(release)
-  if (recovery.reused) return
-  if (await Bun.file(path.join(directory, "manifest.json")).exists()) {
-    await verifyFiles(
-      directory,
-      validateManifest(await Bun.file(path.join(directory, "manifest.json")).json(), release.version, release.commit),
-    )
-    console.log("Reusing verified local release artifacts")
-    return
-  }
   await rm(directory, { recursive: true, force: true })
   await mkdir(directory, { recursive: true })
-  const source =
-    recovery.source ?? `${(process.env.MIMOCODE_MODELS_URL || "https://models.dev").replace(/\/$/, "")}/api.json`
-  const snapshot =
-    recovery.snapshot ??
-    (await (async () => {
-      const response = await fetch(source, { signal: AbortSignal.timeout(30_000) })
-      if (!response.ok) throw new Error(`models snapshot request failed: HTTP ${response.status}`)
-      return new Uint8Array(await response.arrayBuffer())
-    })())
+  const source = `${(process.env.MIMOCODE_MODELS_URL || "https://models.dev").replace(/\/$/, "")}/api.json`
+  const response = await fetch(source, { signal: AbortSignal.timeout(30_000) })
+  if (!response.ok) throw new Error(`models snapshot request failed: HTTP ${response.status}`)
+  const snapshot = new Uint8Array(await response.arrayBuffer())
   await Bun.write(path.join(directory, "models.json"), snapshot)
   await run([process.execPath, "run", "packages/cli/script/build.ts", "--skip-install", "--archive"], root, {
     ...process.env,
