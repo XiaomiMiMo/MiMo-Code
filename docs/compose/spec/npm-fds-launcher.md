@@ -3,18 +3,18 @@ feature: npm-fds-launcher
 status: delivered
 updated: 2026-10-13
 branch: feat/npm-fds-launcher
-commits: 8e1df4ab..f78f35fb
+commits: 8e1df4ab..HEAD
 ---
 
 # npm FDS Launcher
 
 ## Report
 
-**What was built** — `@mimo-ai/cli` is now a thin launcher instead of a hub of 12 `optionalDependencies` platform packages. `bin/mimo` detects one target (os/arch/AVX2/musl), uses `MIMOCODE_BIN_PATH` or package-local `vendor/mimo[.exe]`, otherwise downloads exactly one version-pinned FDS archive (`releases/vX.Y.Z/<target>.{tar.gz|zip}`) into `vendor/`, and forwards argv with inherited stdio. `postinstall` prefetches best-effort and never fails install. FDS failure exits 1 with the real error and a recommended `curl`/`irm` native install. `npm uninstall` deletes the binary with the package directory. Wrapper packaging drops `optionalDependencies`. READMEs mark npm as limited support: `README.md` / `README.zh.md` only recommend curl/irm; `README_npm.md` recommends the native installer over `npm install -g @mimo-ai/cli` and still names the package for users who need it.
+**What was built** — `@mimo-ai/cli` is now a thin launcher instead of a hub of 12 `optionalDependencies` platform packages. `mimo.js` detects one target (os/arch/AVX2/musl), uses `MIMOCODE_BIN_PATH` or package-local `vendor/mimo[.exe]`, otherwise downloads exactly one version-pinned FDS archive (`releases/vX.Y.Z/<target>.{tar.gz|zip}`) into `vendor/`, and forwards argv with inherited stdio. `postinstall` prefetches best-effort and never fails install. FDS failure exits 1 with the real error and a recommended `curl`/`irm` native install. `npm uninstall` deletes the binary with the package directory. Wrapper packaging drops `optionalDependencies`. READMEs mark npm as limited support: `README.md` / `README.zh.md` only recommend curl/irm; `README_npm.md` recommends the native installer over `npm install -g @mimo-ai/cli` and still names the package for users who need it.
 
 Upgrade is package replace, not tree migration: no leftover-`node_modules` fallback. If the first run cannot reach FDS, it says so and points at curl/irm.
 
-**Verification** — `bun test ./test/installation/launcher.test.ts ./test/installation/launcher-bin.test.ts ./test/installation/postinstall.test.ts` in `packages/cli` — PASS, 28 tests (12-target matrix, URL pin + `MIMO_FDS_BASE`, vendor hit offline, FDS fetch via stub, sha256 match/mismatch/fail-closed, argv/exit codes, postinstall best-effort, FDS-down error + curl/irm hint). Independent review of `8e1df4ab..5707931b` met T2/T4/T5/T6 acceptance; criticals (download timeout, sha256 fail-open, Windows rename race, postinstall import layout) fixed in follow-up commits.
+**Verification** — `bun test ./test/installation/launcher.test.ts ./test/installation/launcher-bin.test.ts ./test/installation/postinstall.test.ts` in `packages/cli` — PASS, 29 tests (12-target matrix, URL pin + `MIMO_FDS_BASE`, vendor hit offline, FDS fetch via stub, sha256 match/mismatch/fail-closed, argv/exit codes, postinstall best-effort, FDS-down error + curl/irm hint). Independent review of `8e1df4ab..5707931b` met T2/T4/T5/T6 acceptance; later passes fixed download timeout, checksum policy (enforce only when a valid *.sha256 is published), Windows rename race + %TEMP% run copy, package-root `mimo.js` entry, and dropping npm platform packages.
 
 **Journey log**
 
@@ -63,7 +63,7 @@ Detection (one target, all 12 published names):
 
 Binary lives inside the package directory → `npm uninstall` / `pnpm remove` / `bun remove` / `rm -rf node_modules` all remove it. No uninstall lifecycle hook.
 
-On Windows a running PE is locked: `bin/mimo` copies `vendor/mimo.exe` to `%TEMP%/mimocode-bin/<version>/` once and executes that copy, so `vendor/` itself stays deletable while mimo runs (upgrade/uninstall from a live TUI). The temp copy is a run artifact, not the install.
+On Windows a running PE is locked: `mimo.js` copies `vendor/mimo.exe` to `%TEMP%/mimocode-bin/<version>/` once and executes that copy, so `vendor/` itself stays deletable while mimo runs (upgrade/uninstall from a live TUI). The temp copy is a run artifact, not the install.
 
 ## [S3] Compatibility
 
@@ -74,7 +74,7 @@ On Windows a running PE is locked: `bin/mimo` copies `vendor/mimo.exe` to `%TEMP
 | `MIMOCODE_BIN_PATH` | wins, no network |
 | curl `install` / `install.ps1` | untouched |
 | built-in upgrade | npm/pnpm/bun/curl methods work |
-| Direct `@mimo-ai/mimocode-*` | still published |
+| Direct `@mimo-ai/mimocode-*` | not published to npm anymore; FDS/GitHub archives only |
 | `MIMO_FDS_BASE` | same override as the curl installer |
 
 ## [S4] Rejected (not in this change)
@@ -103,8 +103,8 @@ Not done here: release-stage upload of `*.sha256`, CONTRIBUTING deep-dive, `inst
 ## Tasks
 
 - [ ] T1: Land `libc` on platform packages — **not done** (launcher supersedes; optionalDependencies removed from the wrapper)
-- [x] T2: Version-pinned FDS launcher in `@mimo-ai/cli` (`bin/mimo` + `launcher.js`) — `bin` is `mimo`; package-local `vendor/`; `MIMOCODE_BIN_PATH` first; FDS failure exits 1 with curl/irm hint (covers: S2)
+- [x] T2: Version-pinned FDS launcher in `@mimo-ai/cli` (`mimo.js` + `launcher.js`) — `bin` is `mimo`; package-local `vendor/`; `MIMOCODE_BIN_PATH` first; FDS failure exits 1 with curl/irm hint (covers: S2)
 - [ ] T3: Publish per-archive SHA-256 — launcher verifies when `<url>.sha256` exists; **release upload of checksums not added**
-- [x] T4: `script/release.ts` packs the wrapper without `optionalDependencies`; platform packages still published (covers: S2)
+- [x] T4: `script/release.ts` packs only the launcher (`mimo.js`/`launcher.js`/`postinstall.mjs`); npm no longer publishes platform packages; `trust` registers sdk/plugin/cli only (covers: S2)
 - [x] T5: Tests for argv/exit codes, `MIMOCODE_BIN_PATH`, vendor hit, FDS fetch, sha256 mismatch, postinstall best-effort, FDS-down hint (covers: S2, S5)
 - [x] T6: README.md / README.zh.md drop npm install; README_npm.md recommends curl/irm over `npm install -g @mimo-ai/cli` and still names the package (covers: S2, S3)

@@ -114,7 +114,7 @@ Releases run only in CI (`.github/workflows/release.yml`):
 
 1. Land a PR that sets the same `X.Y.Z` in `packages/{cli,sdk,plugin,shared}/package.json` and includes any regenerated SDK.
 2. Tag that main commit and push the tag: `git tag vX.Y.Z <sha> && git push origin vX.Y.Z`.
-3. CI verifies the tag, reruns the checks, builds on macOS, then publishes npm `@mimo-ai/sdk` and `@mimo-ai/plugin`, the GitHub Release (generated notes), FDS archives and `releases/latest`, and finally the npm platform packages and `@mimo-ai/cli`.
+3. CI verifies the tag, reruns the checks, builds on macOS, then publishes npm `@mimo-ai/sdk` and `@mimo-ai/plugin`, the GitHub Release (generated notes), FDS archives and `releases/latest`, and finally the npm launcher `@mimo-ai/cli` (platform binaries ship only on FDS/GitHub).
 
 Release one version at a time: runs share one concurrency group, and GitHub keeps only one pending run in it. If a publish step fails, fix the cause and use **Re-run failed jobs**; steps that already landed are skipped. If the original run is gone, start the workflow manually with **Use workflow from** set to the tag. Never retag a version that has published anything — ship a new patch instead.
 

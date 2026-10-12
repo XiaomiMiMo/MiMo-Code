@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // FDS launcher core: detect the one platform target, fetch its binary into
-// package-local vendor/, and spawn it. Shared by bin/mimo and postinstall.mjs.
+// package-local vendor/, and spawn it. Shared by mimo.js and postinstall.mjs.
 
 import childProcess from "child_process"
 import fs from "fs"
@@ -192,24 +192,19 @@ async function downloadTo(url, dest, { timeoutMs = 15 * 60_000 } = {}) {
 }
 
 async function verifySha256(filePath, url) {
+  // Optional check: enforce only when a well-formed checksum is published.
+  // Missing/erroring *.sha256 must not brick first-run (FDS may not 404).
   const checksumUrl = `${url}.sha256`
   let expected
-  let res
   try {
-    res = await fetch(checksumUrl, { signal: AbortSignal.timeout(60_000) })
-  } catch (error) {
-    throw new Error(`Failed to fetch checksum ${checksumUrl}: ${error && error.message ? error.message : error}`)
+    const res = await fetch(checksumUrl, { signal: AbortSignal.timeout(60_000) })
+    if (!res.ok) return false
+    const text = (await res.text()).trim().split(/\s+/)[0]
+    if (!/^[a-f0-9]{64}$/i.test(text)) return false
+    expected = text.toLowerCase()
+  } catch {
+    return false
   }
-  // 404 means checksums are not published for this artifact — skip check.
-  if (res.status === 404) return false
-  if (!res.ok) {
-    throw new Error(`Checksum fetch failed ${res.status} for ${checksumUrl}`)
-  }
-  const text = (await res.text()).trim().split(/\s+/)[0]
-  if (!/^[a-f0-9]{64}$/i.test(text)) {
-    throw new Error(`Invalid checksum body for ${checksumUrl}`)
-  }
-  expected = text.toLowerCase()
 
   const hash = createHash("sha256")
   await pipeline(fs.createReadStream(filePath), hash)

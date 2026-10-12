@@ -198,7 +198,7 @@ describe("ensureBinary", () => {
     }
   })
 
-  test("fails closed when the checksum endpoint errors (not 404)", async () => {
+  test("skips checksum when the endpoint is missing or unhealthy (does not brick install)", async () => {
     await using tmp = await tmpdir()
     const root = tmp.path
     const target = "mimocode-linux-x64"
@@ -208,27 +208,28 @@ describe("ensureBinary", () => {
     const archivePath = path.join(root, "a.tar.gz")
     Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, "mimo"])
 
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const url = new URL(req.url)
-        if (url.pathname.endsWith(".sha256")) return new Response("oops", { status: 500 })
-        return new Response(Bun.file(archivePath))
-      },
-    })
-    try {
-      await expect(
-        ensureBinary({
+    for (const status of [404, 403, 500] as const) {
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url)
+          if (url.pathname.endsWith(".sha256")) return new Response("missing", { status })
+          return new Response(Bun.file(archivePath))
+        },
+      })
+      try {
+        const dest = path.join(root, "vendor", `mimo-${status}`)
+        await ensureBinary({
           root,
           target,
           version: "9.9.9",
-          dest: path.join(root, "vendor", "mimo"),
+          dest,
           url: `http://127.0.0.1:${server.port}/releases/v9.9.9/${target}.tar.gz`,
-        }),
-      ).rejects.toThrow(/Checksum fetch failed/)
-      expect(fs.existsSync(path.join(root, "vendor", "mimo"))).toBe(false)
-    } finally {
-      server.stop()
+        })
+        expect(fs.existsSync(dest)).toBe(true)
+      } finally {
+        server.stop()
+      }
     }
   })
 })

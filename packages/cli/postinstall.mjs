@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Best-effort FDS prefetch. Failures must not fail `npm install` — bin/mimo
+// Best-effort FDS prefetch. Failures must not fail `npm install` — mimo.js
 // downloads the binary on first run when vendor/ is still empty.
 
 import fs from "fs"
