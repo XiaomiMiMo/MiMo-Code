@@ -40,7 +40,9 @@ export function onlyConfigDir() {
 function inConfigDir(file: string) {
   const root = Flag.MIMOCODE_CONFIG_DIR
   if (!root || !path.isAbsolute(file)) return false
-  return Filesystem.contains(path.resolve(root), path.resolve(file))
+  const rel = path.relative(Filesystem.resolve(root), Filesystem.resolve(file))
+  // Across Windows drives path.relative returns an absolute path, not "..".
+  return !path.isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${path.sep}`)
 }
 
 export function filterOrigins(origins: ConfigPlugin.Origin[]) {

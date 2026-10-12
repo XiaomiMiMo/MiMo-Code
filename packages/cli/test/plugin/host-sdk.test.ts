@@ -10,6 +10,7 @@ process.env.MIMOCODE_DISABLE_DEFAULT_PLUGINS = "1"
 
 const { Plugin } = await import("../../src/plugin/index")
 const { Instance } = await import("../../src/project/instance")
+const { PluginHost } = await import("../../src/plugin/host")
 
 afterAll(() => {
   if (disableDefault === undefined) delete process.env.MIMOCODE_DISABLE_DEFAULT_PLUGINS
@@ -78,6 +79,20 @@ describe("plugin host SDK", () => {
     const result = await withEnv({}, () => load(tmp.path))
     expect(result.tools).toContain("example_tool")
     expect(await Bun.file(path.join(tmp.path, ".mimocode", "node_modules")).exists()).toBe(false)
+  })
+
+  test("serves the @mimo-ai/plugin/tool subpath", async () => {
+    await using tmp = await tmpdir({
+      outsideGit: true,
+      init: (dir) =>
+        Bun.write(
+          path.join(dir, ".mimocode", "plugins", "example.ts"),
+          toolPlugin("subpath_tool").replace('"@mimo-ai/plugin"', '"@mimo-ai/plugin/tool"'),
+        ),
+    })
+
+    const result = await withEnv({}, () => load(tmp.path))
+    expect(result.tools).toContain("subpath_tool")
   })
 
   test("prefers the host SDK over a plugin-local node_modules copy", async () => {
@@ -173,5 +188,35 @@ describe("config-dir-only plugin policy", () => {
     const result = await withEnv({ MIMOCODE_ONLY_CONFIG_DIR_PLUGINS: "1" }, () => load(tmp.extra.project))
     expect(result.tools).not.toContain("project_tool")
     expect(result.system).not.toContain("project-hook")
+  })
+})
+
+describe("PluginHost.filterOrigins", () => {
+  test("keeps only path sources inside MIMOCODE_CONFIG_DIR, resolving symlinks", async () => {
+    await using tmp = await tmpdir({
+      outsideGit: true,
+      init: async (dir) => {
+        const host = path.join(dir, "host-config")
+        await fs.mkdir(host, { recursive: true })
+        await fs.mkdir(path.join(dir, "host-config-other"), { recursive: true })
+        await fs.symlink(host, path.join(dir, "host-link"))
+        return { host }
+      },
+    })
+    const origin = (source: string) => ({ spec: "file:///tmp/example/plugin.ts", source, scope: "local" as const })
+    const inside = origin(path.join(tmp.extra.host, "mimocode.json"))
+    const kept = await withEnv(
+      { MIMOCODE_ONLY_CONFIG_DIR_PLUGINS: "1", MIMOCODE_CONFIG_DIR: path.join(tmp.path, "host-link") },
+      async () =>
+        PluginHost.filterOrigins([
+          inside,
+          origin(tmp.extra.host),
+          origin(path.join(tmp.path, "host-config-other", "mimocode.json")),
+          origin(path.join(tmp.path, "project", ".mimocode")),
+          origin("MIMOCODE_CONFIG_CONTENT"),
+          origin("https://example.com/api/config"),
+        ]),
+    )
+    expect(kept).toEqual([inside, origin(tmp.extra.host)])
   })
 })
