@@ -3,7 +3,7 @@ feature: npm-fds-launcher
 status: delivered
 updated: 2026-10-13
 branch: feat/npm-fds-launcher
-commits: 8e1df4ab..HEAD
+commits: 8e1df4ab..8884c6fd
 ---
 
 # npm FDS Launcher
@@ -14,7 +14,7 @@ commits: 8e1df4ab..HEAD
 
 Upgrade is package replace, not tree migration: no leftover-`node_modules` fallback. If the first run cannot reach FDS, it says so and points at curl/irm.
 
-**Verification** — `bun test ./test/installation/launcher.test.ts ./test/installation/launcher-bin.test.ts ./test/installation/postinstall.test.ts` in `packages/cli` — PASS, 29 tests (12-target matrix, URL pin + `MIMO_FDS_BASE`, vendor hit offline, FDS fetch via stub, sha256 match/mismatch/fail-closed, argv/exit codes, postinstall best-effort, FDS-down error + curl/irm hint). Independent review of `8e1df4ab..5707931b` met T2/T4/T5/T6 acceptance; later passes fixed download timeout, checksum policy (enforce only when a valid *.sha256 is published), Windows rename race + %TEMP% run copy, package-root `mimo.js` entry, and dropping npm platform packages.
+**Verification** — `bun run typecheck` — PASS. `bun test ./test/installation/launcher.test.ts ./test/installation/launcher-bin.test.ts ./test/installation/postinstall.test.ts` in `packages/cli` — PASS, 29 tests (12-target matrix, URL pin + `MIMO_FDS_BASE`, vendor hit offline, FDS fetch via stub, sha256 match/mismatch/skip-when-absent, argv/exit codes, postinstall best-effort, FDS-down error + curl/irm hint). Local E2E: packed `@mimo-ai/cli@0.1.15` tgz (7.3 kB) → `npm install` on macOS arm64 → postinstall pulled `releases/v0.1.15/mimocode-darwin-arm64.zip` from production FDS into `vendor/mimo` → `mimo.js --version` printed `0.1.15`; second run reused vendor. Production FDS probe: missing objects and unpublished `*.sha256` return 404. Independent review: go after spec/checksum/comment fixes (`a90a1057`) and typecheck fix (`8884c6fd`).
 
 **Journey log**
 
@@ -94,7 +94,7 @@ On Windows a running PE is locked: `mimo.js` copies `vendor/mimo.exe` to `%TEMP%
 | `--ignore-scripts` | first run downloads |
 | Windows AV on extracted PE | extract as `mimo.exe` |
 
-Not done here: release-stage upload of `*.sha256`, CONTRIBUTING deep-dive, `installation.method` regression test for the vendor child.
+Follow-up (not blocking this change): release-stage upload of `*.sha256` (T3).
 
 ## [S6] Out of Scope
 
@@ -102,9 +102,9 @@ Not done here: release-stage upload of `*.sha256`, CONTRIBUTING deep-dive, `inst
 
 ## Tasks
 
-- [ ] T1: Land `libc` on platform packages — **not done** (launcher supersedes; optionalDependencies removed from the wrapper)
+- [ ] T1: Land `libc` on platform packages — **abandoned** (launcher supersedes; wrapper has no optionalDependencies)
 - [x] T2: Version-pinned FDS launcher in `@mimo-ai/cli` (`mimo.js` + `launcher.js`) — `bin` is `mimo`; package-local `vendor/`; `MIMOCODE_BIN_PATH` first; FDS failure exits 1 with curl/irm hint (covers: S2)
-- [ ] T3: Publish per-archive SHA-256 — launcher verifies when `<url>.sha256` exists; **release upload of checksums not added**
+- [ ] T3: Publish per-archive SHA-256 from the FDS release stage — launcher already verifies when `<url>.sha256` is published (**follow-up**)
 - [x] T4: `script/release.ts` packs only the launcher (`mimo.js`/`launcher.js`/`postinstall.mjs`); npm no longer publishes platform packages; `trust` registers sdk/plugin/cli only (covers: S2)
-- [x] T5: Tests for argv/exit codes, `MIMOCODE_BIN_PATH`, vendor hit, FDS fetch, sha256 mismatch, postinstall best-effort, FDS-down hint (covers: S2, S5)
+- [x] T5: Tests for argv/exit codes, `MIMOCODE_BIN_PATH`, vendor hit, FDS fetch, sha256 match/mismatch/skip-when-absent, postinstall best-effort, FDS-down hint (covers: S2, S5)
 - [x] T6: README.md / README.zh.md drop npm install; README_npm.md recommends curl/irm over `npm install -g @mimo-ai/cli` and still names the package (covers: S2, S3)
