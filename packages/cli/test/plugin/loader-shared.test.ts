@@ -1049,94 +1049,8 @@ export default {
     ).toThrow("outside plugin directory")
   })
 
-  test("retries failed file plugins once after wait and keeps order", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const a = path.join(dir, "a")
-        const b = path.join(dir, "b")
-        const aSpec = pathToFileURL(a).href
-        const bSpec = pathToFileURL(b).href
-        await fs.mkdir(a, { recursive: true })
-        await fs.mkdir(b, { recursive: true })
-        return { a, b, aSpec, bSpec }
-      },
-    })
-
-    let wait = 0
-    const calls: Array<[string, boolean]> = []
-
-    const loaded = await PluginLoader.loadExternal({
-      items: [tmp.extra.aSpec, tmp.extra.bSpec].map((spec) => ({
-        spec,
-        scope: "local" as const,
-        source: tmp.path,
-      })),
-      kind: "tui",
-      wait: async () => {
-        wait += 1
-        await Bun.write(path.join(tmp.extra.a, "index.ts"), "export default {}\n")
-        await Bun.write(path.join(tmp.extra.b, "index.ts"), "export default {}\n")
-      },
-      report: {
-        start(candidate, retry) {
-          calls.push([candidate.plan.spec, retry])
-        },
-      },
-    })
-
-    expect(wait).toBe(1)
-    expect(calls).toEqual([
-      [tmp.extra.aSpec, false],
-      [tmp.extra.bSpec, false],
-      [tmp.extra.aSpec, true],
-      [tmp.extra.bSpec, true],
-    ])
-    expect(loaded.map((item) => item.spec)).toEqual([tmp.extra.aSpec, tmp.extra.bSpec])
-  })
-
-  test("retries file plugins when finish returns undefined", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const file = path.join(dir, "plugin.ts")
-        const spec = pathToFileURL(file).href
-        await Bun.write(file, "export default {}\n")
-        return { spec }
-      },
-    })
-
-    let wait = 0
-    let count = 0
-
-    const loaded = await PluginLoader.loadExternal({
-      items: [
-        {
-          spec: tmp.extra.spec,
-          scope: "local" as const,
-          source: tmp.path,
-        },
-      ],
-      kind: "tui",
-      wait: async () => {
-        wait += 1
-      },
-      finish: async (load, _item, retry) => {
-        count += 1
-        if (!retry) return
-        return {
-          retry,
-          spec: load.spec,
-        }
-      },
-    })
-
-    expect(wait).toBe(1)
-    expect(count).toBe(2)
-    expect(loaded).toEqual([{ retry: true, spec: tmp.extra.spec }])
-  })
-
-  test("does not wait or retry npm plugin failures", async () => {
+  test("reports npm plugin install failures once", async () => {
     const install = spyOn(Npm, "add").mockRejectedValue(new Error("boom"))
-    let wait = 0
     const errors: Array<[string, boolean]> = []
 
     try {
@@ -1149,9 +1063,6 @@ export default {
           },
         ],
         kind: "tui",
-        wait: async () => {
-          wait += 1
-        },
         report: {
           error(_candidate, retry, stage) {
             errors.push([stage, retry])
@@ -1160,7 +1071,6 @@ export default {
       })
 
       expect(loaded).toEqual([])
-      expect(wait).toBe(0)
       expect(errors).toEqual([["install", false]])
     } finally {
       install.mockRestore()

@@ -35,6 +35,7 @@ import { EffectBridge } from "@/effect"
 import { InstanceState } from "@/effect"
 import { errorMessage } from "@/util/error"
 import { PluginLoader } from "./loader"
+import { PluginHost } from "./host"
 import { parsePluginSpecifier, readPluginId, readV1Plugin, resolvePluginId } from "./shared"
 import { registerAdaptor } from "@/control-plane/adaptors"
 import type { WorkspaceAdaptor } from "@/control-plane/types"
@@ -288,8 +289,6 @@ export const layer = Layer.effect(
         if (Flag.MIMOCODE_PURE && cfg.plugin_origins?.length) {
           log.info("skipping external plugins in pure mode", { count: cfg.plugin_origins.length })
         }
-        if (plugins.length) yield* config.waitForDependencies()
-
         const loaded = yield* Effect.promise(() =>
           PluginLoader.loadExternal({
             items: plugins,
@@ -391,9 +390,14 @@ export const layer = Layer.effect(
         const files: Record<string, number> = {}
         yield* config.get()
         // Exclude home-level file hooks from both initial discovery and reloads.
-        const dirs = (yield* config.directories()).filter(
+        const candidates = (yield* config.directories()).filter(
           (dir) => path.resolve(dir) !== path.resolve(Global.Path.home, ".mimocode"),
         )
+        const dirs = PluginHost.filterDirectories(candidates)
+        if (dirs.length < candidates.length) {
+          log.info("skipping file hook directories outside MIMOCODE_CONFIG_DIR", { count: candidates.length - dirs.length })
+        }
+        PluginHost.provideSdk()
 
         for (const dir of dirs) {
           const matches = Glob.scanSync(FILE_HOOK_GLOB, { cwd: dir, absolute: true, dot: true, symlink: true })
@@ -414,6 +418,7 @@ export const layer = Layer.effect(
                   entrypoints: [match],
                   target: "bun",
                   format: "esm",
+                  external: PluginHost.SDK_SPECIFIERS,
                 })
                 if (!result.success) throw new Error(result.logs.map(String).join("\n"))
                 const blob = result.outputs[0]

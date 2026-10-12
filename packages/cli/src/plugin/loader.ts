@@ -2,14 +2,18 @@ import {
   checkPluginCompatibility,
   createPluginEntry,
   isDeprecatedPlugin,
-  pluginSource,
   resolvePluginTarget,
   type PluginKind,
   type PluginPackage,
   type PluginSource,
 } from "./shared"
 import { ConfigPlugin } from "@/config/plugin"
+import { PluginHost } from "./host"
 import { InstallationVersion } from "@/installation/version"
+import { errorMessage } from "@/util/error"
+import { Log } from "@/util"
+
+const log = Log.create({ service: "plugin.loader" })
 
 export namespace PluginLoader {
   // A normalized plugin declaration derived from config before any filesystem or npm work happens.
@@ -121,6 +125,21 @@ export namespace PluginLoader {
     try {
       mod = await import(row.entry)
     } catch (error) {
+      if (
+        row.source === "file" &&
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error.code === "ERR_MODULE_NOT_FOUND" || error.code === "MODULE_NOT_FOUND")
+      ) {
+        return {
+          ok: false,
+          error: new Error(
+            `${errorMessage(error)}\nBundle your plugin's runtime dependencies before loading it, or install them in the plugin's own directory.`,
+            { cause: error },
+          ),
+        }
+      }
       return { ok: false, error }
     }
     if (!mod) return { ok: false, error: new Error(`Plugin ${row.spec} module is empty`) }
@@ -175,39 +194,24 @@ export namespace PluginLoader {
   type Input<R> = {
     items: ConfigPlugin.Origin[]
     kind: PluginKind
-    wait?: () => Promise<void>
     finish?: (load: Loaded, origin: ConfigPlugin.Origin, retry: boolean) => Promise<R | undefined>
     missing?: (value: Missing, origin: ConfigPlugin.Origin, retry: boolean) => Promise<R | undefined>
     report?: Report
   }
 
   // Resolve and load all configured plugins in parallel.
-  //
-  // If `wait` is provided, file-based plugins that initially failed are retried once after the
-  // caller finishes preparing dependencies. This supports local plugins that depend on an install
-  // step happening elsewhere before their entrypoint becomes loadable.
   export async function loadExternal<R = Loaded>(input: Input<R>): Promise<R[]> {
-    const candidates = input.items.map((origin) => ({ origin, plan: plan(origin.spec) }))
+    PluginHost.provideSdk()
+    const items = PluginHost.filterOrigins(input.items)
+    if (items.length < input.items.length) {
+      log.info("skipping plugins outside MIMOCODE_CONFIG_DIR", { kind: input.kind, count: input.items.length - items.length })
+    }
+    const candidates = items.map((origin) => ({ origin, plan: plan(origin.spec) }))
     const list: Array<Promise<R | undefined>> = []
     for (const candidate of candidates) {
       list.push(attempt(candidate, input.kind, false, input.finish, input.missing, input.report))
     }
     const out = await Promise.all(list)
-    if (input.wait) {
-      let deps: Promise<void> | undefined
-      for (let i = 0; i < candidates.length; i++) {
-        if (out[i] !== undefined) continue
-
-        // Only local file plugins are retried. npm plugins already attempted installation during
-        // the first pass, while file plugins may need the caller's dependency preparation to finish.
-        const candidate = candidates[i]
-        if (!candidate || pluginSource(candidate.plan.spec) !== "file") continue
-        deps ??= input.wait()
-        await deps
-        out[i] = await attempt(candidate, input.kind, true, input.finish, input.missing, input.report)
-      }
-    }
-
     // Drop skipped/failed entries while preserving the successful result order.
     const ready: R[] = []
     for (const item of out) if (item !== undefined) ready.push(item)

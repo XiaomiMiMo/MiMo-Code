@@ -463,6 +463,12 @@ export const Flag = {
   get MIMOCODE_PURE() {
     return truthy("MIMOCODE_PURE")
   },
+  // Loads only external plugins, file hooks and TUI plugins provided by
+  // MIMOCODE_CONFIG_DIR. Always on for the Node build, which cannot serve the
+  // plugin SDK to user code.
+  get MIMOCODE_ONLY_CONFIG_DIR_PLUGINS() {
+    return truthy("MIMOCODE_ONLY_CONFIG_DIR_PLUGINS")
+  },
   get MIMOCODE_PLUGIN_META_FILE() {
     return process.env["MIMOCODE_PLUGIN_META_FILE"]
   },

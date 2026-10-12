@@ -12,7 +12,7 @@ import {
 } from "@mimo-ai/plugin/tui"
 import path from "path"
 import { fileURLToPath, pathToFileURL } from "url"
-import { TuiConfig } from "@/cli/cmd/tui/config/tui"
+import type { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { Log } from "@/util"
 import { errorData, errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
@@ -590,15 +590,10 @@ function applyInitialPluginEnabledState(state: RuntimeState, config: TuiConfig.I
   }
 }
 
-async function resolveExternalPlugins(list: ConfigPlugin.Origin[], wait: () => Promise<void>) {
+async function resolveExternalPlugins(list: ConfigPlugin.Origin[]) {
   return PluginLoader.loadExternal({
     items: list,
     kind: "tui",
-    wait: async () => {
-      await wait().catch((error) => {
-        log.warn("failed waiting for tui plugin dependencies", { error })
-      })
-    },
     finish: async (loaded, origin, retry) => {
       const mod = await Promise.resolve()
         .then(() => readV1Plugin(loaded.mod as Record<string, unknown>, loaded.spec, "tui") as TuiPluginModule)
@@ -793,7 +788,7 @@ async function addPluginBySpec(state: RuntimeState | undefined, raw: string) {
   }
   const ready = await Instance.provide({
     directory: state.directory,
-    fn: () => resolveExternalPlugins([cfg], () => TuiConfig.waitForDependencies()),
+    fn: () => resolveExternalPlugins([cfg]),
   }).catch((error) => {
     fail("failed to add tui plugin", { path: next, error })
     return [] as PluginLoad[]
@@ -1014,7 +1009,7 @@ async function load(input: { api: Api; config: TuiConfig.Info }) {
           })
         }
 
-        const ready = await resolveExternalPlugins(records, () => TuiConfig.waitForDependencies())
+        const ready = await resolveExternalPlugins(records)
         await addExternalPluginEntries(next, ready)
 
         // File-based TUI plugins from .mimocode/tui/*.{ts,tsx}
@@ -1034,7 +1029,7 @@ async function load(input: { api: Api; config: TuiConfig.Info }) {
           }
         }
         if (fileTuiOrigins.length) {
-          const fileReady = await resolveExternalPlugins(fileTuiOrigins, () => Promise.resolve())
+          const fileReady = await resolveExternalPlugins(fileTuiOrigins)
           await addExternalPluginEntries(next, fileReady)
         }
 
