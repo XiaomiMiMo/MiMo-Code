@@ -71,7 +71,7 @@ flowchart LR
 
 ### npm publication
 
-- Trusted Publishing (OIDC) only: no `NPM_TOKEN` secret. Each of the 15 packages must have a trusted publisher configured on npmjs.com for repository `XiaomiMiMo/MiMo-Code`, workflow `release.yml`, environment `release`. npm CLI ≥ 11.5.1 is required; the job installs `npm@11` and the script asserts the version.
+- Trusted Publishing (OIDC) only: no `NPM_TOKEN` secret. Each of the 15 packages must have a trusted publisher configured on npmjs.com for repository `XiaomiMiMo/MiMo-Code`, workflow `release.yml`, environment `release`; `bun script/release.ts trust` registers it for every published package with `npm trust github` (npm ≥ 11.19, run once by an owner in a 2FA login session — tokens cannot change package settings). npm CLI ≥ 11.5.1 is required; the job installs `npm@11` and the script asserts the version.
 - Every tarball publishes with `--access public --tag latest`. A package whose exact version already exists on the registry is skipped, which makes reruns safe.
 - Pack rules: `bun pm pack` resolves `workspace:*` / `catalog:`; the script temporarily rewrites SDK/plugin `exports` from `./src/*.ts` to `./dist/*.{js,d.ts}`, copies `README_npm.md` and `LICENSE`, and restores the original files afterwards. After packing, the tarball's `package.json` must have the expected name/version, no `workspace:`/`catalog:` specifiers, and every export target present in the tarball.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Release stages run by .github/workflows/release.yml for a pushed vX.Y.Z tag.
 // Usage: MIMOCODE_VERSION=vX.Y.Z bun script/release.ts <verify|build|github|fds|npm libs|npm cli>
+//        bun script/release.ts trust   (one-time npm trusted publisher setup)
 //
 // build writes dist/release/{archives,npm}; the publishing stages only read it.
 // Publishing stages are idempotent so "Re-run failed jobs" resumes a release.
@@ -88,7 +89,9 @@ async function pack(dir: string, name: string, version: string, dest: string) {
   const file = path.join(dest, tarball(name, version))
   const pkg = JSON.parse(await $`tar -xOzf ${file} package/package.json`.quiet().text())
   if (pkg.name !== name || pkg.version !== version) throw new Error(`Unexpected tarball metadata in ${file}`)
-  if (/"(workspace|catalog):/.test(JSON.stringify([pkg.dependencies, pkg.optionalDependencies, pkg.peerDependencies]))) {
+  if (
+    /"(workspace|catalog):/.test(JSON.stringify([pkg.dependencies, pkg.optionalDependencies, pkg.peerDependencies]))
+  ) {
     throw new Error(`Unresolved workspace/catalog dependency in ${file}`)
   }
   const entries = new Set((await $`tar -tzf ${file}`.quiet().text()).split("\n"))
@@ -220,17 +223,48 @@ async function npm(version: string, group: keyof typeof npmGroups) {
   }
 }
 
+// One-time maintainer setup, run locally after `npm login` (2FA session, not a token):
+// registers release.yml as the trusted publisher of every package this script publishes.
+async function trust() {
+  const npm = ["npx", "-y", "npm@^11.19.0"]
+  for (const name of [...npmGroups.libs, ...npmGroups.cli]) {
+    const existing = await $`${npm} trust list ${name}`.nothrow().quiet()
+    if (existing.exitCode === 0 && existing.text().includes("release.yml")) {
+      console.log(`${name}: trusted publisher already configured`)
+      continue
+    }
+    const child = Bun.spawn(
+      [
+        ...npm,
+        "trust",
+        "github",
+        name,
+        "--file",
+        "release.yml",
+        "--repo",
+        "XiaomiMiMo/MiMo-Code",
+        "--env",
+        "release",
+        "--yes",
+      ],
+      { stdio: ["inherit", "inherit", "inherit"] },
+    )
+    if ((await child.exited) !== 0) throw new Error(`Failed to configure the trusted publisher for ${name}`)
+  }
+}
+
 if (import.meta.main) {
-  const version = stableVersion(process.env.MIMOCODE_VERSION?.replace(/^v/, ""))
+  const version = () => stableVersion(process.env.MIMOCODE_VERSION?.replace(/^v/, ""))
   const stages: Record<string, () => Promise<void>> = {
-    verify: () => verify(version),
-    build: () => build(version),
-    github: () => github(version),
-    fds: () => fds(version),
-    "npm libs": () => npm(version, "libs"),
-    "npm cli": () => npm(version, "cli"),
+    verify: () => verify(version()),
+    build: () => build(version()),
+    github: () => github(version()),
+    fds: () => fds(version()),
+    "npm libs": () => npm(version(), "libs"),
+    "npm cli": () => npm(version(), "cli"),
+    trust,
   }
   const stage = stages[process.argv.slice(2).join(" ")]
-  if (!stage) throw new Error("Usage: bun script/release.ts <verify|build|github|fds|npm libs|npm cli>")
+  if (!stage) throw new Error("Usage: bun script/release.ts <verify|build|github|fds|npm libs|npm cli|trust>")
   await stage()
 }

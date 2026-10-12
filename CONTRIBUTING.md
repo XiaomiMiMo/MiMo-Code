@@ -118,7 +118,7 @@ Releases run only in CI (`.github/workflows/release.yml`):
 
 Release one version at a time: runs share one concurrency group, and GitHub keeps only one pending run in it. If a publish step fails, fix the cause and use **Re-run failed jobs**; steps that already landed are skipped. If the original run is gone, start the workflow manually with **Use workflow from** set to the tag. Never retag a version that has published anything — ship a new patch instead.
 
-Repository setup: secrets `MIMO_FDS_AK` / `MIMO_FDS_SK` (optional variables `MIMO_FDS_ENDPOINT`, `MIMO_FDS_BUCKET`, `MIMO_FDS_PREFIX`). npm uses trusted publishing, so there is no npm token; every published `@mimo-ai/*` package needs a trusted publisher on npmjs.com for repository `XiaomiMiMo/MiMo-Code`, workflow `release.yml`, environment `release`.
+Repository setup: secrets `MIMO_FDS_AK` / `MIMO_FDS_SK` (optional variables `MIMO_FDS_ENDPOINT`, `MIMO_FDS_BUCKET`, `MIMO_FDS_PREFIX`). npm uses trusted publishing, so there is no npm token. Register `release.yml` as the trusted publisher of every published `@mimo-ai/*` package once: run `npm login` as a package owner (a 2FA session; tokens cannot change package settings), then `bun script/release.ts trust`. It skips packages that are already configured.
 
 ### Setting up a debugger
 
