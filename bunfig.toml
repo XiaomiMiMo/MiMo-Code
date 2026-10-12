@@ -2,4 +2,7 @@
 exact = true
 
 [test]
-root = "./do-not-run-tests-from-root"
+# Discovery root: only root-level script tests. Engine tests live under
+# packages/cli and must run via packages/cli/test/preload.ts isolation.
+root = "./script"
+preload = ["./script/forbid-unisolated-engine-tests.ts"]
