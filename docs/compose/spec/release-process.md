@@ -1,9 +1,9 @@
 ---
 feature: release-process
-status: in-progress
+status: delivered
 updated: 2026-10-12
 branch: codex/release-process
-commits:
+commits: f98dcd1c..a189d3da
 ---
 
 # Release Process and Distribution Boundaries
@@ -12,21 +12,23 @@ commits:
 
 **What was built** — The release workflow accepts an existing stable tag through manual dispatch; the automatic tag trigger remains commented out. After validating the fixed commit and manually prepared versions, CI runs the existing checks, compiles committed sources, and publishes to GitHub Releases (with an automatically generated PR list), FDS, and npm in that order. The current npm scope remains 15 packages: SDK, plugin, 12 platform packages, and the CLI wrapper. S5 describes the future migration to two packages. No release workflow, tag creation, or remote publication was initiated during this delivery.
 
-Config/TUI no longer install configuration-directory dependencies automatically, so built-in functionality does not wait for a matching plugin SDK version on npm. Explicitly configured npm plugins remain supported. A bundled-plugin development project, bilingual README details, and migration guidance are included. The debug command executes the example in both normal and Codex tool modes and rejects invalid arguments. Manual SDK generation is unchanged. Desktop was not modified, and no new channel was added.
+Config/TUI no longer install configuration-directory dependencies automatically, so built-in functionality does not wait for a matching plugin SDK version on npm. Explicitly configured npm plugins remain supported. The tested bundled-plugin example contains the full English and Chinese how-to tutorials, linked from the root README details. The debug command executes the example in both normal and Codex tool modes and rejects invalid arguments. Manual SDK generation is unchanged. Maintainer release tooling is consolidated under `script/release/`, and obsolete forwarding/error-only entry points are removed. Release jobs use Node 24 LTS patch updates; the Bun runtime and type packages are aligned at `1.3.14`. Desktop was not modified, and no new channel was added.
 
 **Verification** — All commands and checks below completed, and their results were inspected:
 
-- Repository root: `bun ci` — PASS; dependencies installed from the existing lockfile without changing it.
+- Repository root: `bun ci` — PASS after the requested type alignment. The deliberate lock update is limited to the Bun type catalog and the `@types/bun` / `bun-types` package records; frozen installation preserved that prepared lockfile.
 - Repository root: `bun typecheck` — PASS across all workspaces and release scripts.
-- `bun test script/release/release.test.ts` — PASS, 19 tests and 53 assertions. Local Git/CLI fixtures cover stable tags, version preparation, the complete 15-package set, GitHub commands, publication order, and stopping on failure. No real publication occurred.
+- `bun test script/release/release.test.ts` — PASS, 18 tests and 45 assertions; the test for removed error-only wrappers was removed with those wrappers. Local Git/CLI fixtures cover stable tags, version preparation, the complete 15-package set, GitHub commands, publication order, and stopping on failure. No real publication occurred.
 - In `packages/cli`: `bun test test/cli/debug-agent.test.ts test/config/plugin-dependencies.test.ts test/plugin/bundled.test.ts --timeout 30000` — PASS, 9 tests and 40 assertions.
 - In `packages/cli`: `bun test test/config/config.test.ts test/config/tui.test.ts test/config/plugin-dependencies.test.ts test/plugin/bundled.test.ts test/plugin/loader-shared.test.ts test/cli/debug-agent.test.ts test/cli/tui/plugin-*.test.ts --timeout 30000` — PASS, 171 tests and 4 platform-specific skips. The later debug-argument validation change was reverified by the preceding command; the other runtime code did not change afterward.
 - In `packages/cli`, isolated: `bun test test/provider/refresh.test.ts --timeout 30000` — PASS, 6 tests and 28 assertions.
-- Example project: `bun run typecheck && bun run build && bun pm pack --ignore-scripts --dry-run` — PASS. The package contains package.json, README, and dist/server.js with its runtime dependencies bundled. Real SDK/plugin compile-and-pack checks also passed without running SDK code generation.
+- Example project: `bun run typecheck && bun run build && bun pm pack --ignore-scripts --dry-run` — PASS. The package contains package.json, README.md, README.zh.md, and dist/server.js with its runtime dependencies bundled. Real SDK/plugin compile-and-pack checks also passed without running SDK code generation.
 - Host build: `bun packages/cli/script/build.ts --single --skip-install --archive` — PASS with a local models fixture and the test identity `0.0.0-unpublished`, producing a macOS arm64 binary and archive. The actual binary loaded the extracted example package in an isolated directory; `debug agent build --tool greet --params '{"name":"Example"}'` returned `Hello, Example!` without creating node_modules. The CLI subprocess tests above cover the final argument-validation behavior.
 - actionlint 1.7.11 — PASS for all workflows and for a validation-only input with the tag trigger uncommented. Prettier, relative documentation links, spec references, and `git diff --check` — PASS.
 - Explicit absolute-path `oxlint --no-ignore --disable-nested-config -c` over all changed TS/JS files — PASS, 108 warnings and 0 errors. PRE-EXISTING `WORKTREE-LINT`: plain `bun lint` ignores paths under `.worktrees`; an explicit configuration and absolute paths avoid this environment issue.
-- Independent review of `f98dcd1c..a33d7a62` — PASS, with no remaining blockers for spec compliance, correctness, or codebase consistency.
+- Follow-up verification: `bun test test/plugin/bundled.test.ts test/cli/debug-agent.test.ts --timeout 30000` in `packages/cli` — PASS, 6 tests and 23 assertions. Moved maintainer entry points reject invalid input before publication; current caller/link checks and bilingual code-block parity pass.
+- Version audit: registry metadata confirms the selected type/compiler/SDK versions, official upstream tags confirm the Action versions and Bun release, and the Node release schedule confirms the LTS choice. Installed `@types/bun` and its `bun-types` dependency both resolve to `1.3.14`.
+- Cumulative independent reviews through `a189d3da` — PASS, with no remaining blockers for spec compliance, correctness, or codebase consistency.
 
 The full 12-platform build and real GitHub/FDS/npm publication were not run. At the user's request, those checks remain for the maintainer's decision to start release CI.
 
@@ -36,6 +38,7 @@ The full 12-platform build and real GitHub/FDS/npm publication were not run. At 
 2. Automatic installation existed to prepare dependencies for loose plugin source files. Required host functionality was already bundled, so the change removes that bootstrap and provides a bundled development path.
 3. Running the example exposed a debug command that did not execute its Effect and hid custom tools. Independent review also identified missing argument validation. Regression tests cover all three issues.
 4. The release path was kept appropriate for infrequent releases: straightforward sequencing and clear errors, with partial publication handled by a maintainer rather than a general remote recovery protocol.
+5. Keep Bun runtime/type pins coordinated, distinguish them from CI Node/npm tooling, and maintain user-facing instructions beside the tested example.
 
 ## [S1] Problem
 
@@ -286,5 +289,5 @@ CI acceptance covers workflow syntax, triggers/permissions/dependencies, tag and
 - [x] T7: Add regression coverage and a runnable plugin development project — acceptance: self-contained plugins load, existing manifests remain, missing-dependency guidance is accurate, bilingual README details link development/build/deployment instructions, and the debug command executes the example in normal and Codex tool modes (covers: S6,S8; depends: T3)
 - [x] T8: Implement staged release scripts — acceptance: build/github/fds/npm consume one local artifact inventory; build does not change versions or generate SDK sources; GitHub generates the description; the existing 15 npm packages follow FDS; failures stop clearly; tests invoke no real publication API (covers: S4,S5,S8; depends: T1)
 - [x] T9: Implement the workflow and secret interface — acceptance: manual dispatch accepts an existing stable tag; the automatic tag block remains commented; checks/builds use the fixed SHA; three secrets are checked before publication; GitHub/FDS/npm run sequentially under one publication lock; static validation passes (covers: S4,S8; depends: T1,T8)
-- [ ] T10: Apply toolchain and documentation review feedback — acceptance: release jobs follow Node 24 LTS patches while Bun remains repository-pinned; obsolete forwarding/error-only scripts are removed and maintainer entry points live under script/release; English/Chinese action-oriented tutorials live with the tested example; all current callers and links resolve (covers: S4,S6,S8)
-- [ ] T11: Verify version provenance and align Bun types — acceptance: published metadata confirms the selected dependency versions; runtime, root catalog, lockfile, and example use Bun/types 1.3.14 with catalog bindings retained; frozen installation and workspace/example typechecking pass; release validation uses supported event context (covers: S4,S6,S8)
+- [x] T10: Apply toolchain and documentation review feedback — acceptance: release jobs follow Node 24 LTS patches while Bun remains repository-pinned; obsolete forwarding/error-only scripts are removed and maintainer entry points live under script/release; English/Chinese action-oriented tutorials live with the tested example; all current callers and links resolve (covers: S4,S6,S8)
+- [x] T11: Verify version provenance and align Bun types — acceptance: published metadata confirms the selected dependency versions; runtime, root catalog, lockfile, and example use Bun/types 1.3.14 with catalog bindings retained; frozen installation and workspace/example typechecking pass; release validation uses supported event context (covers: S4,S6,S8)
