@@ -10,6 +10,12 @@ import type { Agent } from "@/agent/agent"
 import { MessageV2 } from "./message-v2"
 import * as SessionRetry from "./retry"
 import { createTextNgramMonitor, isTextNgramRepeat, textNgramRepeat } from "./prompt/text-ngram-detection"
+import {
+  createDegenerateGenerationMonitor,
+  degenerateSignal,
+  isDegenerateSignal,
+  type DegenerateFinding,
+} from "./prompt/degenerate-generation"
 import type { Permission } from "@/permission"
 import { Log } from "@/util"
 
@@ -121,10 +127,14 @@ export function toSchemaOnlyTools(tools: Record<string, AITool>): Record<string,
  */
 // Exported for integration tests (drives the real candidate path with a mock
 // llm.stream). Not part of the public surface — call sites use runMaxStep.
-export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<Candidate | null | "text-repeat"> => {
+export const runCandidate = (
+  input: MaxStepInput,
+  index: number,
+): Effect.Effect<Candidate | null | "text-repeat" | { degenerate: DegenerateFinding }> => {
   let aborted = false
   return Effect.gen(function* () {
     const monitor = createTextNgramMonitor()
+    const degenerateMonitor = createDegenerateGenerationMonitor()
     // Fresh accumulator per attempt: the retry below re-runs this whole block,
     // so partial reasoning/text/toolCalls from a failed attempt must not carry
     // over into the retry.
@@ -164,11 +174,19 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
         case "reasoning-delta":
           candidate.reasoning += event.text
           if (monitor.append(event.text)) return Effect.fail(textNgramRepeat())
+          {
+            const finding = degenerateMonitor.appendText(event.text)
+            if (finding) return Effect.fail(degenerateSignal(finding))
+          }
           if (event.providerMetadata) candidate.reasoningMetadata = event.providerMetadata
           break
         case "text-delta":
           candidate.text += event.text
           if (monitor.append(event.text)) return Effect.fail(textNgramRepeat())
+          {
+            const finding = degenerateMonitor.appendText(event.text)
+            if (finding) return Effect.fail(degenerateSignal(finding))
+          }
           if (event.providerMetadata) candidate.textMetadata = event.providerMetadata
           break
         case "tool-call":
@@ -213,6 +231,7 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
     ),
     Effect.retry(retryPolicy(input, "max-candidate", () => aborted)),
     Effect.catchIf(isTextNgramRepeat, () => Effect.succeed("text-repeat" as const)),
+    Effect.catchIf(isDegenerateSignal, (signal) => Effect.succeed({ degenerate: signal.finding })),
     Effect.catch((e) =>
       Effect.sync(() => {
         log.warn("candidate failed", { index, error: e instanceof Error ? e.message : String(e) })
@@ -359,8 +378,15 @@ export const runMaxStep = (input: MaxStepInput): Effect.Effect<SessionProcessor.
       Array.from({ length: n }, (_, i) => runCandidate(input, i)),
       { concurrency: n },
     )
+    const degenerate = results.find(
+      (result): result is { degenerate: DegenerateFinding } =>
+        typeof result === "object" && result !== null && "degenerate" in result,
+    )
+    if (degenerate) return degenerate
     if (results.some((result) => result === "text-repeat")) return "text-repeat"
-    const survivors = results.filter((c): c is Candidate => c !== null && c !== "text-repeat")
+    const survivors = results.filter(
+      (c): c is Candidate => c !== null && c !== "text-repeat" && !("degenerate" in c),
+    )
 
     if (survivors.length === 0) {
       log.warn("all candidates failed, falling back to single process")

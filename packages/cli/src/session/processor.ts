@@ -26,6 +26,11 @@ import { isRecoverableError } from "@/tool/recoverable"
 import { getToolResultAttachments, getToolResultMetadata } from "@/tool/result-error"
 import { Log } from "@/util"
 import { isRecord } from "@/util/record"
+import {
+  createDegenerateGenerationMonitor,
+  type DegenerateFinding,
+  type DegenerateGenerationMonitor,
+} from "./prompt/degenerate-generation"
 import { createTextNgramMonitor, type TextNgramMonitor } from "./prompt/text-ngram-detection"
 import { Flag } from "@/flag/flag"
 import { monitor as tryBestMonitor, type TryBestIncident } from "./try-best-detector"
@@ -67,7 +72,12 @@ function describeTryBest(incident: TryBestIncident) {
   return `${incident.evidence.count} consecutive ${incident.evidence.action ?? "same-kind"} actions made no observable progress.`
 }
 
-export type Result = "overflow" | "stop" | "continue" | "text-repeat"
+export type Result =
+  | "overflow"
+  | "stop"
+  | "continue"
+  | "text-repeat"
+  | { degenerate: DegenerateFinding }
 
 export type Event = LLM.Event
 
@@ -217,6 +227,8 @@ interface ProcessorContext extends Input {
   stepPartIds: PartID[]
   textNgramMonitor: TextNgramMonitor | undefined
   textNgramRepeat: boolean
+  degenerateMonitor: DegenerateGenerationMonitor | undefined
+  degenerateFinding: DegenerateFinding | undefined
   textPartPersisted: boolean
   retrySafe: boolean
 }
@@ -276,6 +288,8 @@ export const layer: Layer.Layer<
         stepPartIds: [],
         textNgramMonitor: undefined,
         textNgramRepeat: false,
+        degenerateMonitor: undefined,
+        degenerateFinding: undefined,
         textPartPersisted: false,
         retrySafe: true,
       }
@@ -448,6 +462,11 @@ export const layer: Layer.Layer<
         if (ctx.textNgramMonitor.append(text)) ctx.textNgramRepeat = true
       }
 
+      const checkDegenerateText = (text: string) => {
+        if (ctx.degenerateFinding || !ctx.degenerateMonitor) return
+        ctx.degenerateFinding = ctx.degenerateMonitor.appendText(text)
+      }
+
       const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
         switch (value.type) {
           case "start":
@@ -477,6 +496,7 @@ export const layer: Layer.Layer<
             if (!(value.id in ctx.reasoningMap)) return
             ctx.reasoningMap[value.id].text += value.text
             checkTextNgram(value.text)
+            checkDegenerateText(value.text)
             if (value.providerMetadata) ctx.reasoningMap[value.id].metadata = value.providerMetadata
             yield* session.updatePartDelta({
               sessionID: ctx.reasoningMap[value.id].sessionID,
@@ -710,6 +730,7 @@ export const layer: Layer.Layer<
             }
             ctx.currentText.text += value.text
             checkTextNgram(value.text)
+            checkDegenerateText(value.text)
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             yield* session.updatePartDelta({
               sessionID: ctx.currentText.sessionID,
@@ -870,11 +891,15 @@ export const layer: Layer.Layer<
             ctx.retrySafe = true
             ctx.textNgramRepeat = false
             ctx.textNgramMonitor = createTextNgramMonitor()
+            ctx.degenerateFinding = undefined
+            ctx.degenerateMonitor = createDegenerateGenerationMonitor()
             const stream = llm.stream({ ...streamInput, assistantMessageID: ctx.assistantMessage.id })
 
             yield* stream.pipe(
               Stream.tap(handleEvent),
-              Stream.takeUntil(() => ctx.needsOverflowHandling || ctx.textNgramRepeat || ctx.blocked),
+              Stream.takeUntil(
+                () => ctx.needsOverflowHandling || ctx.textNgramRepeat || ctx.degenerateFinding !== undefined || ctx.blocked,
+              ),
               Stream.runDrain,
             )
           }).pipe(
@@ -1029,6 +1054,7 @@ export const layer: Layer.Layer<
 
           if (ctx.needsOverflowHandling) return "overflow"
           if (ctx.textNgramRepeat) return "text-repeat"
+          if (ctx.degenerateFinding) return { degenerate: ctx.degenerateFinding }
           if (ctx.blocked || ctx.assistantMessage.error) return "stop"
           return "continue"
         })

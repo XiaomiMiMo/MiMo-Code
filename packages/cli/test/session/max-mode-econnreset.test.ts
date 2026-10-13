@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import * as Stream from "effect/Stream"
-import { runCandidate, judge, type Candidate, type MaxStepInput } from "../../src/session/max-mode"
+import { runCandidate, judge, runMaxStep, type Candidate, type MaxStepInput } from "../../src/session/max-mode"
 import type { LLM } from "../../src/session/llm"
 
-function expectCandidate(value: Candidate | null | "text-repeat"): Candidate {
-  if (!value || value === "text-repeat") throw new Error(`expected candidate, got ${String(value)}`)
+function expectCandidate(
+  value: Candidate | null | "text-repeat" | { degenerate: unknown },
+): Candidate {
+  if (!value || value === "text-repeat" || "degenerate" in value)
+    throw new Error(`expected candidate, got ${String(value)}`)
   return value
 }
 
@@ -252,5 +255,48 @@ describe("max-mode defect handling (SSE timeout surfaces as Cause.die)", () => {
 
     expect(exit._tag).toBe("Success")
     if (exit._tag === "Success") expect(exit.value.pick).toBe(0)
+  })
+})
+
+describe("max-mode degenerate guard (runMaxStep)", () => {
+  test("runMaxStep replays a healthy winner (survivors path intact)", async () => {
+    const { llm } = mockLLM({
+      failTimes: 0,
+      makeError: () => httpBadRequest(),
+      goodEvents: [
+        { type: "text-delta", text: "healthy answer" } as LLM.Event,
+        { type: "finish-step", finishReason: "stop" } as LLM.Event,
+      ],
+    })
+    const replayCalls: unknown[] = []
+    const input = baseInput(llm)
+    input.candidates = 1
+    input.handle = {
+      replay: (replayInput: unknown) => {
+        replayCalls.push(replayInput)
+        return Effect.succeed("continue" as const)
+      },
+    } as any
+    const result = await Effect.runPromise(runMaxStep(input))
+    expect(replayCalls.length).toBe(1)
+    expect(result).toBe("continue")
+  })
+
+  test("runMaxStep propagates a degenerate finding from candidate streams", async () => {
+    const degenerateText = ["alpha beta", "gamma delta"].map((s) => s + "\n").join("").repeat(4)
+    const { llm } = mockLLM({
+      failTimes: 0,
+      makeError: () => httpBadRequest(),
+      goodEvents: [
+        { type: "text-delta", text: degenerateText } as LLM.Event,
+        { type: "finish-step", finishReason: "stop" } as LLM.Event,
+      ],
+    })
+    const input = baseInput(llm)
+    input.candidates = 1
+    input.handle = { replay: () => Effect.succeed("continue" as const) } as any
+    const result = await Effect.runPromise(runMaxStep(input))
+    expect(typeof result).toBe("object")
+    expect(result !== null && typeof result === "object" && "degenerate" in result).toBe(true)
   })
 })
