@@ -473,6 +473,8 @@ interface State {
   status: Record<string, Status>
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
+  /** Config that produced the stored client: reconnect needs it even when the entry never reached cfgSvc (runtime `add`). */
+  configs: Record<string, ConfigMCP.Info>
 }
 
 export interface Interface {
@@ -827,6 +829,7 @@ export const layer = Layer.effect(
           status: {},
           clients: {},
           defs: {},
+          configs: {},
         }
 
         yield* Effect.forEach(
@@ -859,6 +862,7 @@ export const layer = Layer.effect(
                   mcp.timeout,
                   hostEffectiveSampling(mcp, fromHost),
                   { fromHost, hostRevision },
+                  mcp,
                 )
                 return
               }
@@ -966,6 +970,7 @@ export const layer = Layer.effect(
             if (result.mcpClient) {
               s.clients[name] = result.mcpClient
               s.defs[name] = result.defs!
+              if (mcp) s.configs[name] = mcp
               watch(s, name, result.mcpClient, bridge, mcp?.timeout, hostEffectiveSampling(mcp, name in host))
             }
           }
@@ -988,6 +993,7 @@ export const layer = Layer.effect(
       timeout?: number,
       sampling?: ConfigMCP.Info["sampling"],
       opts?: { fromHost?: boolean; hostRevision?: string },
+      mcp?: ConfigMCP.Info,
     ) {
       const admit = () => {
         const hostNow = HostMcp.get()[name]
@@ -1022,6 +1028,7 @@ export const layer = Layer.effect(
       s.status[name] = { status: "connected" }
       s.clients[name] = client
       s.defs[name] = listed
+      if (mcp) s.configs[name] = mcp
       delete s.hostRetryAt[name]
       watch(s, name, client, bridge, timeout, sampling)
       if (previous && previous !== client) {
@@ -1099,7 +1106,7 @@ export const layer = Layer.effect(
       return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout, sampling ?? mcp.sampling, {
         ...opts,
         hostRevision,
-      })
+      }, mcp)
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCP.Info) {
@@ -1141,15 +1148,50 @@ export const layer = Layer.effect(
       const s = yield* InstanceState.get(state)
       yield* closeClient(s, name)
       delete s.clients[name]
+      delete s.configs[name]
       // Explicit disconnect supersedes any host-refresh cooldown; do not auto-revive.
       delete s.hostRetryAt[name]
       s.status[name] = { status: "disabled" }
+    })
+
+    // A released handle (`closing` set by retire()/close() and never cleared)
+    // throws "MCP connection has been released" from retain() for the rest of
+    // the process, so any registry entry that still hands one out bricks the
+    // server until the user reconnects manually (issue #2595). Reconnect once —
+    // the same operation that manual reconnect performs — under the refresh
+    // permit, and evict the entry when reconnecting is impossible so the next
+    // call reports the server as unreachable instead of throwing forever.
+    const reconnectReleased = Effect.fn("MCP.reconnectReleased")(function* (s: State) {
+      const released = Object.keys(s.clients).filter((name) => s.clients[name]?.isClosing)
+      if (released.length === 0) return
+      yield* s.refresh.withPermits(1)(
+        Effect.gen(function* () {
+          for (const name of released) {
+            if (!s.clients[name]?.isClosing) continue
+            const mcp = s.configs[name]
+            if (mcp) {
+              // Host-owned names must re-admit against the live host config:
+              // a disabled or stale-revision entry is rejected and evicted
+              // below, leaving the rebuild to refreshHost.
+              const hostOwned = HostMcp.get()[name] != null
+              yield* createAndStore(
+                name,
+                mcp,
+                hostEffectiveSampling(mcp, hostOwned),
+                { fromHost: hostOwned, hostRevision: hostOwned ? HostMcp.revisionOf(name) : undefined },
+              ).pipe(Effect.ignore)
+            }
+            if (s.clients[name]?.isClosing) delete s.clients[name]
+          }
+        }),
+      )
     })
 
     const tools = Effect.fn("MCP.tools")(function* (context?: TurnContext) {
       const result: Record<string, Tool> = {}
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
+      yield* reconnectReleased(s)
 
       const cfg = yield* cfgSvc.get()
       const config = { ...cfg.mcp, ...HostMcp.get() }
@@ -1213,12 +1255,14 @@ export const layer = Layer.effect(
     const prompts = Effect.fn("MCP.prompts")(function* () {
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
+      yield* reconnectReleased(s)
       return yield* collectFromConnected(s, (c) => c.listPrompts().then((r) => r.prompts), "prompts")
     })
 
     const resources = Effect.fn("MCP.resources")(function* () {
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
+      yield* reconnectReleased(s)
       return yield* collectFromConnected(s, (c) => c.listResources().then((r) => r.resources), "resources")
     })
 
@@ -1230,6 +1274,7 @@ export const layer = Layer.effect(
     ) {
       const s = yield* InstanceState.get(state)
       yield* refreshHost(s)
+      yield* reconnectReleased(s)
       const client = s.clients[clientName]
       if (!client) {
         log.warn(`client not found for ${label}`, { clientName })

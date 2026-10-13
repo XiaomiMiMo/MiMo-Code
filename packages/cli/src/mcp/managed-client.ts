@@ -9,6 +9,11 @@ export class ManagedClient extends Client {
   private closed?: Promise<void>
   private cleanup?: () => Promise<void>
 
+  /** True once this handle committed to closing: retain() will always throw. */
+  get isClosing() {
+    return this.closing
+  }
+
   retain() {
     if (this.closing) throw new Error("MCP connection has been released")
     this.users++
