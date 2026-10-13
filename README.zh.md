@@ -18,9 +18,9 @@ MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行�
 
 ---
 
-<p align="center"><strong>MiMo 桌面端内测邀请</strong>：<a href="https://mimo.xiaomimimo.com/desktop/invite/">立即申请国内邀测</a></p>
+<p align="center"><strong>MiMo 桌面端</strong>：<a href="https://mimo.xiaomimimo.com/desktop/invite/">立即下载国内版</a></p>
 
-## Xiaomi MiMo Desktop 开放邀测
+## Xiaomi MiMo Desktop
 
 <p align="center"><img src="assets/readme/mimo-desktop-cn.jpg" alt="Xiaomi MiMo Desktop 中文界面：会话与研究报告预览" width="900"></p>
 
@@ -32,7 +32,7 @@ Xiaomi MiMo Desktop 面向真实工作场景打造，一个会话即可完成办
 - **浏览器操控**：自主打开网页、检索和提取信息、填写表单，生成网页后自动检查关键交互。
 - **电脑操控（仅限海外版）**：读屏并操作键鼠，跨应用执行；Record & Replay 录制一次后，可用自然语言复用。
 
-通过邀测审核后，可限时限量体验新一代小米模型 **MiMo-X-Pro-Preview** 和 **MiMo-X-Flash-Preview**。
+搭载新一代小米模型 **MiMo-V2.6-Pro** 和 **MiMo-V2.6-Flash**。
 
 支持接入各家主流 LLM 厂商 API。
 
@@ -300,7 +300,7 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 <details>
 <summary><strong>非 MiMo 渠道语音输入（OpenRouter、内部 API 等）</strong></summary>
 
-语音输入可通过 `voice` 配置字段路由到其他 OpenAI 兼容 provider。ASR 模型（`mimo-v2.5-asr`）仅在 MiMo 平台可用；语音控制模式（`mimo-v2.5`）可通过 OpenRouter 等中转平台使用。
+语音输入可通过 `voice` 配置字段路由到其他 OpenAI 兼容 provider。ASR 模型（`mimo-v2.5-asr`）仅在 MiMo 平台可用；语音控制模式（`mimo-v2.6-flash`）可通过 OpenRouter 等中转平台使用。
 
 **OpenRouter（仅语音控制）：**
 
@@ -308,7 +308,7 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 ```jsonc
 {
   "voice": {
-    "control_model": "openrouter/xiaomi/mimo-v2.5"
+    "control_model": "openrouter/xiaomi/mimo-v2.6-flash"
   }
 }
 ```
@@ -324,13 +324,13 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
       },
       "models": {
         "xiaomi/mimo-v2.5-asr": { "name": "MiMo-V2.5-ASR" },
-        "xiaomi/mimo-v2.5": { "name": "MiMo-V2.5" }
+        "xiaomi/mimo-v2.6-flash": { "name": "MiMo-V2.6-Flash" }
       }
     }
   },
   "voice": {
     "asr_model": "internal/xiaomi/mimo-v2.5-asr",
-    "control_model": "internal/xiaomi/mimo-v2.5"
+    "control_model": "internal/xiaomi/mimo-v2.6-flash"
   }
 }
 ```

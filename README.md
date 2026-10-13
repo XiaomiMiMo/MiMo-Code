@@ -18,9 +18,9 @@
 
 MiMoCode is a terminal-native AI coding assistant. It can read and write code, run commands, manage Git, and use a persistent memory system to keep a deep understanding of your project across sessions while continuously improving itself.
 
-<p align="center"><strong>MiMo Desktop Beta Invitation</strong>: <a href="https://mimo-ai.xiaomimimo.com/desktop/invite/">Apply for the international beta</a></p>
+<p align="center"><strong>MiMo Desktop</strong>: <a href="https://mimo-ai.xiaomimimo.com/desktop/invite/">Download the international edition</a></p>
 
-## Xiaomi MiMo Desktop Beta
+## Xiaomi MiMo Desktop
 
 <p align="center"><img src="assets/readme/mimo-desktop-en.jpg" alt="Xiaomi MiMo Desktop English interface: starting a new task" width="900"></p>
 
@@ -32,7 +32,7 @@ Xiaomi MiMo Desktop is built for real-world work: one conversation can handle of
 - **Browser control**: opens webpages, retrieves information, fills forms, and checks key interactions after generating webpages.
 - **Computer control (international version only)**: reads the screen and operates mouse and keyboard across apps; Record & Replay lets you reuse recorded workflows with natural language.
 
-After beta approval, users can access limited-time, limited-quantity trials of the new **MiMo-X-Pro-Preview** and **MiMo-X-Flash-Preview** models.
+Powered by the new **MiMo-V2.6-Pro** and **MiMo-V2.6-Flash** models.
 
 MiMoCode supports connecting to any mainstream LLM provider API.
 
@@ -309,7 +309,7 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 <details>
 <summary><strong>Non-MiMo voice providers (OpenRouter, internal API, etc.)</strong></summary>
 
-Voice input can route through other OpenAI-compatible providers via the `voice` config field. The ASR model (`mimo-v2.5-asr`) is only available on MiMo's platform; voice control mode (`mimo-v2.5`) is available on OpenRouter and compatible relay platforms.
+Voice input can route through other OpenAI-compatible providers via the `voice` config field. The ASR model (`mimo-v2.5-asr`) is only available on MiMo's platform; voice control mode (`mimo-v2.6-flash`) is available on OpenRouter and compatible relay platforms.
 
 **OpenRouter (voice control only):**
 
@@ -317,7 +317,7 @@ Use `/connect` to sign in to OpenRouter, then add to your config:
 ```jsonc
 {
   "voice": {
-    "control_model": "openrouter/xiaomi/mimo-v2.5"
+    "control_model": "openrouter/xiaomi/mimo-v2.6-flash"
   }
 }
 ```
@@ -333,13 +333,13 @@ Use `/connect` to sign in to OpenRouter, then add to your config:
       },
       "models": {
         "xiaomi/mimo-v2.5-asr": { "name": "MiMo-V2.5-ASR" },
-        "xiaomi/mimo-v2.5": { "name": "MiMo-V2.5" }
+        "xiaomi/mimo-v2.6-flash": { "name": "MiMo-V2.6-Flash" }
       }
     }
   },
   "voice": {
     "asr_model": "internal/xiaomi/mimo-v2.5-asr",
-    "control_model": "internal/xiaomi/mimo-v2.5"
+    "control_model": "internal/xiaomi/mimo-v2.6-flash"
   }
 }
 ```
