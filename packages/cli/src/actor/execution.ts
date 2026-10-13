@@ -5,6 +5,7 @@ import { InstanceState } from "@/effect"
 
 export interface Execution {
   readonly sessionID: SessionID
+  readonly directory: string
   readonly actorID: string
   readonly done: Deferred.Deferred<void>
   fiber?: Fiber.Fiber<unknown, unknown>
@@ -22,6 +23,7 @@ export interface Interface {
   readonly reserve: (sessionID: SessionID, actorID: string, directory?: string) => Effect.Effect<Execution>
   readonly acquire: (sessionID: SessionID, actorID: string) => Effect.Effect<Execution>
   readonly current: (sessionID: SessionID, actorID: string) => Effect.Effect<Execution | undefined>
+  readonly list: (sessionID: SessionID) => Effect.Effect<Execution[]>
   readonly attach: (execution: Execution) => Effect.Effect<void>
   readonly fork: (
     execution: Execution,
@@ -48,7 +50,7 @@ export const layer = Layer.effect(
         const id = key(sessionID, actorID)
         if (active.has(id)) throw new Error(`Actor execution already active: ${id}`)
         const releaseInstance = Instance.claim(dir)
-        const execution: Execution = { sessionID, actorID, done, cancelled: false, releaseInstance }
+        const execution: Execution = { sessionID, actorID, directory: dir, done, cancelled: false, releaseInstance }
         active.set(id, execution)
         return execution
       })
@@ -77,7 +79,7 @@ export const layer = Layer.effect(
                 const id = key(sessionID, actorID)
                 const existing = active.get(id)
                 if (existing) return { owned: false, execution: existing }
-                const execution: Execution = { sessionID, actorID, done: Deferred.makeUnsafe<void>(), cancelled: false, releaseInstance }
+                const execution: Execution = { sessionID, actorID, directory, done: Deferred.makeUnsafe<void>(), cancelled: false, releaseInstance }
                 active.set(id, execution)
                 transferred = true
                 return { owned: true, execution }
@@ -88,6 +90,10 @@ export const layer = Layer.effect(
           }).pipe(Effect.ensuring(Effect.sync(() => { if (!transferred) releaseInstance() })))
         }),
       current,
+      list: (sessionID) => Effect.gen(function* () {
+        const directory = yield* InstanceState.directory
+        return [...active.values()].filter((execution) => execution.sessionID === sessionID && execution.directory === directory)
+      }),
       attach: (execution) =>
         Effect.withFiber((fiber) =>
           Effect.sync(() => {

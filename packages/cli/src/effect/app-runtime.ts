@@ -25,6 +25,7 @@ import { Todo } from "@/session/todo"
 import { Session } from "@/session"
 import { SessionStatus } from "@/session/status"
 import { SessionRunState } from "@/session/run-state"
+import { SessionRequests } from "@/session/requests"
 import { Goal } from "@/session/goal"
 import { SessionProcessor } from "@/session/processor"
 import { SessionCompaction } from "@/session/compaction"
@@ -89,6 +90,7 @@ export const AppLayer = Layer.suspend(() =>
     Session.defaultLayer,
     SessionStatus.defaultLayer,
     SessionRunState.defaultLayer,
+    SessionRequests.defaultLayer,
     Goal.defaultLayer,
     SessionProcessor.defaultLayer,
     SessionCompaction.defaultLayer,

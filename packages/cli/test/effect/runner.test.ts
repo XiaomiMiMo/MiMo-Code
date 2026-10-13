@@ -4,6 +4,28 @@ import { Runner } from "../../src/effect"
 import { it } from "../lib/effect"
 
 describe("Runner", () => {
+  // [TP-RUN-R13-06] Freeze admission with the cancellation snapshot, not when the interrupt is eventually awaited.
+  it.live("cancel snapshot fences later pending work and repeated cancellation cannot kill successor", Effect.gen(function* () {
+    const scope = yield* Scope.Scope
+    const runner = Runner.make<string>(scope)
+    yield* runner.start(Effect.never)
+    const stop = yield* runner.captureCancel
+    expect(runner.state._tag).toBe("Cancelling")
+    const entered = yield* Deferred.make<void>()
+    const successor = yield* runner.ensureRunning(Effect.gen(function* () {
+      yield* Deferred.succeed(entered, undefined)
+      return yield* Effect.never
+    })).pipe(Effect.forkChild)
+    yield* Effect.yieldNow
+    expect(yield* Deferred.isDone(entered)).toBe(false)
+    yield* stop
+    yield* Deferred.await(entered)
+    yield* stop
+    expect(runner.busy).toBe(true)
+    expect(successor.pollUnsafe()).toBeUndefined()
+    yield* runner.cancel
+    yield* Fiber.await(successor)
+  }))
   it.live("start reports busy as a failure instead of a defect", Effect.gen(function* () {
     const s = yield* Scope.Scope
     const runner = Runner.make<string>(s)

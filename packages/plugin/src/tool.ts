@@ -1,7 +1,19 @@
 import { z } from "zod"
 import { Effect } from "effect"
 
+export type RequestExecution = {
+  readonly executionRef: {
+    readonly runtimeID: string
+    readonly sessionID: string
+    readonly agentID: string
+    readonly executionID: string
+  }
+  readonly requestIDs: readonly string[]
+  readonly userMessageID: string
+}
+
 export type ToolContext = {
+  readonly requestExecution?: RequestExecution
   sessionID: string
   messageID: string
   agent: string

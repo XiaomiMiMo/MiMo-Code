@@ -1,4 +1,5 @@
-import { Hono } from "hono"
+import { Hono, type Context } from "hono"
+import { SessionRequests } from "@/session/requests"
 import { stream } from "hono/streaming"
 import { describeRoute, validator, resolver } from "hono-openapi"
 import { SessionID, MessageID, PartID } from "@/session/schema"
@@ -39,6 +40,15 @@ import { NotFoundError } from "@/storage"
 
 const log = Log.create({ service: "server" })
 
+async function requestResult(c: Context, work: Parameters<typeof runRequest>[2], status: 200 | 202 = 202) {
+  try {
+    return c.json(await runRequest("SessionRoutes.request", c, work), status)
+  } catch (error) {
+    if (error instanceof SessionRequests.RequestError) return c.json({ name: "RequestError", data: { message: error.message } }, error.status)
+    throw error
+  }
+}
+
 // Cadence of the keep-alive whitespace written on the POST /:sessionID/message
 // stream while a turn is in flight. Matches the 10s SSE heartbeat in
 // event.ts/global.ts. Read per-request (not memoized) so it can be tuned at
@@ -77,6 +87,12 @@ export const resolveCurrentAgent = (sessionID: SessionID, defaultAgent: string) 
 
 export const SessionRoutes = lazy(() =>
   new Hono()
+    .get("/:sessionID/request", validator("param", z.object({ sessionID: SessionID.zod })),
+      validator("query", z.object({ runtimeID: z.string().optional() })),
+      (c) => requestResult(c, SessionRequests.Service.use((svc) => svc.list(c.req.valid("param").sessionID, c.req.valid("query").runtimeID)), 200))
+    .get("/:sessionID/request/:requestID", validator("param", z.object({ sessionID: SessionID.zod, requestID: z.string() })),
+      validator("query", z.object({ runtimeID: z.string().optional() })),
+      (c) => requestResult(c, SessionRequests.Service.use((svc) => svc.get(c.req.valid("param").sessionID, c.req.valid("param").requestID, c.req.valid("query").runtimeID)), 200))
     .get(
       "/",
       describeRoute({
@@ -520,12 +536,17 @@ export const SessionRoutes = lazy(() =>
           sessionID: SessionID.zod,
         }),
       ),
-      async (c) =>
-        jsonRequest("SessionRoutes.abort", c, function* () {
+      validator("json", SessionRequests.Tracking.optional()),
+      async (c) => {
+        const body = c.req.valid("json")
+        const sessionID = c.req.valid("param").sessionID
+        if (body?.requestID || body?.runtimeID) return requestResult(c, SessionRequests.Service.use((requests) => requests.submit({ ...body, sessionID, kind: "abort", payload: {} }, Effect.void, SessionPrompt.Service.use((svc) => svc.captureCancel(sessionID)))))
+        return jsonRequest("SessionRoutes.abort", c, function* () {
           const svc = yield* SessionPrompt.Service
-          yield* svc.cancel(c.req.valid("param").sessionID)
+          yield* svc.cancel(sessionID)
           return true
-        }),
+        })
+      },
     )
     .post(
       "/:sessionID/share",
@@ -1089,7 +1110,7 @@ export const SessionRoutes = lazy(() =>
             svc.recovery({ sessionID: params.sessionID, agentID: query.agentID }).pipe(
               Effect.flatMap((candidates) =>
                 candidates.some(
-                  (candidate) => candidate.kind === "assistant" && candidate.assistantMessageID === params.assistantMessageID,
+                  (candidate) => candidate.kind === "assistant" ? candidate.assistantMessageID === params.assistantMessageID : candidate.emptyAssistantMessageID === params.assistantMessageID,
                 )
                   ? Effect.void
                   : Effect.fail(
@@ -1160,7 +1181,10 @@ export const SessionRoutes = lazy(() =>
       // Body is optional: empty/{} = resume latest recovery candidate.
       // userMessageID still accepted for explicit trailing-user targeting (TUI / cascade).
       validator("json", z.object({
+        ...SessionRequests.Tracking.shape,
         userMessageID: MessageID.zod.optional(),
+        assistantMessageID: MessageID.zod.optional(),
+        emptyAssistantMessageID: MessageID.zod.optional(),
       }).optional()),
       async (c) => {
         const params = c.req.valid("param")
@@ -1168,6 +1192,17 @@ export const SessionRoutes = lazy(() =>
         const body = c.req.valid("json")
         if (!!query.modelProviderID !== !!query.modelID) {
           return c.json({ data: { name: "InvalidRequest", data: { message: "modelProviderID and modelID must be provided together" } } }, 400)
+        }
+        if (body?.requestID || body?.runtimeID) {
+          const input = {
+            sessionID: params.sessionID, userMessageID: body.userMessageID, assistantMessageID: body.assistantMessageID,
+            emptyAssistantMessageID: body.emptyAssistantMessageID, agentID: query.agentID ?? "main", task_id: query.task_id,
+            titleLocale: query.titleLocale,
+            ...(query.modelProviderID && query.modelID ? { model: { providerID: query.modelProviderID, modelID: query.modelID } } : {}),
+          }
+          return requestResult(c, SessionRequests.Service.use((requests) => requests.submit({ ...body, sessionID: params.sessionID, kind: "resume", agentID: input.agentID, payload: input }, SessionPrompt.Service.use((svc) => (!input.userMessageID && !input.assistantMessageID) || (input.userMessageID && input.assistantMessageID) || (input.emptyAssistantMessageID && !input.userMessageID)
+            ? Effect.fail(new NotFoundError({ message: "Resume requires one explicit recovery target" }))
+            : input.agentID === "main" ? svc.resumeMainCascading(input) : svc.resumeBackground(input)))))
         }
         await runRequest(
           "SessionRoutes.resumeUser.assertNotBusy",
@@ -1184,7 +1219,7 @@ export const SessionRoutes = lazy(() =>
               svc.recovery({ sessionID: params.sessionID, agentID: query.agentID }).pipe(
                 Effect.flatMap((candidates) =>
                   candidates.some(
-                    (candidate) => candidate.kind === "parent-user" && candidate.userMessageID === body.userMessageID,
+                    (candidate) => candidate.kind === "parent-user" && candidate.userMessageID === body.userMessageID && candidate.emptyAssistantMessageID === body.emptyAssistantMessageID,
                   )
                     ? Effect.void
                     : Effect.fail(
@@ -1206,7 +1241,9 @@ export const SessionRoutes = lazy(() =>
             (query.agentID === undefined || query.agentID === "main")
               ? svc.resumeMainCascading({
                   sessionID: params.sessionID,
-                  ...(body?.userMessageID ? { userMessageID: body.userMessageID } : {}),
+                  userMessageID: body?.userMessageID,
+                  emptyAssistantMessageID: body?.emptyAssistantMessageID,
+                  assistantMessageID: body?.assistantMessageID,
                   agentID: query.agentID,
                   task_id: query.task_id,
                   titleLocale: query.titleLocale,
@@ -1214,7 +1251,9 @@ export const SessionRoutes = lazy(() =>
                 })
               : svc.resumeBackground({
                   sessionID: params.sessionID,
-                  ...(body?.userMessageID ? { userMessageID: body.userMessageID } : {}),
+                  userMessageID: body?.userMessageID,
+                  emptyAssistantMessageID: body?.emptyAssistantMessageID,
+                  assistantMessageID: body?.assistantMessageID,
                   agentID: query.agentID,
                   task_id: query.task_id,
                   titleLocale: query.titleLocale,
@@ -1366,10 +1405,11 @@ export const SessionRoutes = lazy(() =>
           sessionID: SessionID.zod,
         }),
       ),
-      validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
+      validator("json", SessionPrompt.PromptInput.omit({ sessionID: true }).extend({ ...SessionRequests.Tracking.shape, commandKind: z.enum(["send", "steer"]).optional() })),
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
-        const body = c.req.valid("json")
+        const { requestID, runtimeID, commandKind, ...body } = c.req.valid("json")
+        if (requestID || runtimeID) return requestResult(c, SessionRequests.Service.use((requests) => requests.submit({ requestID, runtimeID, sessionID, kind: commandKind ?? "send", agentID: body.agentID, payload: body }, SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })))))
         const releaseInstance = Instance.claim(Instance.directory)
         void runRequest(
           "SessionRoutes.prompt_async",
@@ -1415,14 +1455,18 @@ export const SessionRoutes = lazy(() =>
           sessionID: SessionID.zod,
         }),
       ),
-      validator("json", SessionPrompt.CommandInput.omit({ sessionID: true })),
-      async (c) =>
-        jsonRequest("SessionRoutes.command", c, function* () {
+      validator("json", SessionPrompt.CommandInput.omit({ sessionID: true }).extend(SessionRequests.Tracking.shape)),
+      async (c) => {
+        const { requestID, runtimeID, ...body } = c.req.valid("json")
+        const sessionID = c.req.valid("param").sessionID
+        if (requestID || runtimeID) return requestResult(c, SessionRequests.Service.use((requests) => requests.submit({ requestID, runtimeID, sessionID, kind: "command", payload: body }, SessionPrompt.Service.use((svc) => svc.command({ ...body, sessionID })))))
+        return jsonRequest("SessionRoutes.command", c, function* () {
           const sessionID = c.req.valid("param").sessionID
           const body = c.req.valid("json")
           const svc = yield* SessionPrompt.Service
           return yield* svc.command({ ...body, sessionID })
-        }),
+        })
+      },
     )
     .post(
       "/:sessionID/predict",

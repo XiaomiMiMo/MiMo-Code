@@ -1,4 +1,5 @@
 import z from "zod"
+import type { RequestExecution } from "@mimo-ai/plugin/tool"
 import { Effect } from "effect"
 import type { MessageV2 } from "../session/message-v2"
 import type { Permission } from "../permission"
@@ -15,6 +16,7 @@ export interface Metadata {
 export type DynamicDescription = (agent: Agent.Info) => Effect.Effect<string>
 
 export type Context<M extends Metadata = Metadata> = {
+  readonly requestExecution?: RequestExecution
   sessionID: SessionID
   messageID: MessageID
   agent: string

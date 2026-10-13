@@ -4,6 +4,7 @@ import { Runner } from "@/effect"
 import { Effect, Layer, Scope, Context } from "effect"
 import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
+import { SessionRequests } from "./requests"
 import { SessionID } from "./schema"
 import { SessionStatus } from "./status"
 import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan-tool-idle-hook"
@@ -19,6 +20,7 @@ export interface Interface {
     work: Effect.Effect<MessageV2.WithParts>,
   ) => Effect.Effect<{ readonly runId: number; readonly interruptOwned: Effect.Effect<void> }, Session.BusyError>
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
+  readonly captureCancel: (sessionID: SessionID) => Effect.Effect<Effect.Effect<void>>
   readonly cancelActor: (sessionID: SessionID, agentID: string) => Effect.Effect<void>
   readonly ensureRunning: (
     sessionID: SessionID,
@@ -53,6 +55,7 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const status = yield* SessionStatus.Service
+    const requests = yield* SessionRequests.Service
     const elog = EffectLogger.create({ service: "SessionRunState" })
 
     const state = yield* InstanceState.make(
@@ -88,7 +91,15 @@ export const layer = Layer.effect(
       if (existing) return existing
       const isMain = agentID === "main"
       const directory = yield* InstanceState.directory
+      const observations = new Map<number, Effect.Success<ReturnType<typeof requests.start>>>()
       const next = Runner.make<MessageV2.WithParts, never, Session.BusyError>(data.scope, {
+        onExecutionStart: (id) => Effect.gen(function* () { observations.set(id, yield* requests.start(sessionID, agentID)) }),
+        mapWork: (work, id) => work.pipe(Effect.provideService(SessionRequests.Running, observations.get(id))),
+        onExecutionExit: (id, exit) => Effect.gen(function* () {
+          const execution = observations.get(id)
+          if (execution) yield* requests.finish(execution, exit)
+          observations.delete(id)
+        }),
         onRunStart: Effect.sync(() => Instance.claim(directory)),
         onShellStart: Effect.sync(() => Instance.claim(directory)),
         label: `${sessionID}:${agentID}`,
@@ -212,7 +223,8 @@ export const layer = Layer.effect(
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, agentID, onInterrupt)).ensureRunning(withOrphanSweep(sessionID, agentID, work))
+      const request = yield* SessionRequests.Current
+      return yield* (yield* runner(sessionID, agentID, onInterrupt)).ensureRunning(withOrphanSweep(sessionID, agentID, work), request ? Effect.interrupt : undefined)
     })
 
     const ensureExclusive = Effect.fn("SessionRunState.ensureExclusive")(function* (
@@ -232,10 +244,19 @@ export const layer = Layer.effect(
       return yield* (yield* runner(sessionID, "main", onInterrupt)).startShell(work)
     })
 
-    return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, ensureExclusive, start, startOwned, startShell })
+    const captureCancel = (sessionID: SessionID) => Effect.gen(function* () {
+      const data = yield* InstanceState.get(state)
+      const targets = yield* Effect.forEach([...(data.runners.get(sessionID)?.values() ?? [])], (runner) => runner.captureCancel)
+      return Effect.gen(function* () {
+        yield* Effect.forEach(targets, (cancel) => cancel, { concurrency: "unbounded", discard: true })
+        if ([...(data.runners.get(sessionID)?.values() ?? [])].some((runner) => runner.busy)) return
+        yield* status.set(sessionID, { type: "idle" })
+      })
+    })
+    return Service.of({ assertNotBusy, cancel, captureCancel, cancelActor, ensureRunning, ensureExclusive, start, startOwned, startShell })
   }),
-)
+).pipe(Layer.provide(SessionRequests.defaultLayer))
 
-export const defaultLayer = layer.pipe(Layer.provide(SessionStatus.defaultLayer))
+export const defaultLayer = layer.pipe(Layer.provide([SessionStatus.defaultLayer, SessionRequests.defaultLayer]))
 
 export * as SessionRunState from "./run-state"
