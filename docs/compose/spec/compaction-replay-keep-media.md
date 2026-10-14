@@ -10,9 +10,9 @@ commits: e27e87de81..eba028f270
 
 ## Report
 
-**What was built** — After provider-overflow compaction, the replayed last user message now copies every non-`compaction` part verbatim, including media `file` parts. The replayed image keeps its `mime`, `filename`, `url` (data URL) and `source`, so Desktop can render and preview it and the next model turn sends the image to the provider as `image_url` content. The summarization request still strips media under overflow.
+**What was built** — After provider-overflow compaction, the replayed last user message now copies every non-`compaction` part verbatim, including media `file` parts. The replayed image keeps its `mime`, `filename`, `url` (data URL) and `source`, so the client can render and preview it and the next model turn sends the image to the provider as `image_url` content. The summarization request still strips media under overflow.
 
-**Verification** — From `packages/cli`: `bun test test/session/prompt-effect.test.ts test/session/message-v2.test.ts --timeout 30000` passed (173 pass, 3 skip, 0 fail); `bun test test/session/prompt-effect.test.ts --timeout 30000 -t "keeps replayed media"` passed (17 assertions); `bun run typecheck` and `git diff --check` passed. The regression test drives the follow-up turn with an image-capable test model and asserts the HTTP request contains the real PNG as `image_url` and no `[Attached image/png` text; with the old placeholder substitution restored, the placeholder, `source` and wire-image assertions fail. Desktop end-to-end: a desktop build pinned to this branch ran `mimo-dev/mimo-v2.6-flash` through a local proxy that answered the first image-bearing request with a standard context-length error; the engine ran overflow compaction, the replayed message kept the same image `file` part (same data URL and `source.path`), Desktop rendered its thumbnail, the follow-up request carried the image, and the model described the image content. Independent review found no critical or major issues.
+**Verification** — From `packages/cli`: `bun test test/session/prompt-effect.test.ts test/session/message-v2.test.ts --timeout 30000` passed (173 pass, 3 skip, 0 fail); `bun test test/session/prompt-effect.test.ts --timeout 30000 -t "keeps replayed media"` passed (17 assertions); `bun run typecheck` and `git diff --check` passed. The regression test drives the follow-up turn with an image-capable test model and asserts the HTTP request contains the real PNG as `image_url` and no `[Attached image/png` text; with the old placeholder substitution restored, the placeholder, `source` and wire-image assertions fail. Client end-to-end: a client build pinned to this branch ran `mimo-dev/mimo-v2.6-flash` through a local proxy that answered the first image-bearing request with a standard context-length error; the engine ran overflow compaction, the replayed message kept the same image `file` part (same data URL and `source.path`), the client rendered its thumbnail, the follow-up request carried the image, and the model described the image content. Independent review found no critical or major issues.
 
 **Journey log**
 
@@ -20,7 +20,7 @@ commits: e27e87de81..eba028f270
 - Asserting on raw `sessions.messages` cannot detect replay regressions because it still contains the pre-boundary original.
 - Images on send go through `prepareImage`; test fixtures must be decodable PNG/JPEG bytes, and the test model must declare image input or `ProviderTransform` replaces the image before the wire.
 - A small context window (`compaction.max_context` or `MIMOCODE_COMPACTION_TRIGGER_RATIO`) only triggers threshold compaction, which never replays; reproducing replay requires the provider to reject the request as a context overflow.
-- Desktop requests contain the literal `image_url` inside a tool description; detect real images on the wire with `"image_url":{"url":"data:image/`.
+- Provider requests can contain the literal `image_url` inside a tool description; detect real images on the wire with `"image_url":{"url":"data:image/`.
 
 ## [S1] Problem
 
@@ -28,7 +28,7 @@ When the provider rejects a request as a context overflow, `SessionCompaction.pr
 
 While copying the parts of the replayed message, the engine replaces every media `file` part (`MessageV2.isMedia`: images, PDF) with a text part `[Attached <mime>: <filename>]`. The replacement is written to the database. The original image content — a `data:` URL in `url`, plus `source.path` pointing at the local attachment file — is no longer referenced by the replayed message. As a result:
 
-- Desktop renders the replayed message with the placeholder text instead of an image thumbnail, and the image cannot be previewed.
+- The client renders the replayed message with the placeholder text instead of an image thumbnail, and the image cannot be previewed.
 - The model never sees the image again, while the copied provenance envelope (`# Files mentioned by the user …`) still tells it to look at the attached image.
 
 ## [S2] Design
@@ -48,7 +48,7 @@ The replayed message is an ordinary user message after the compaction boundary. 
 
 ## [S3] Out of Scope
 
-- Desktop rendering changes; Desktop already renders persisted image `file` parts.
+- Client rendering changes; message renderers already render persisted image `file` parts.
 - The non-replay continue message and its overflow wording.
 - Repairing messages already persisted with the placeholder text.
 
