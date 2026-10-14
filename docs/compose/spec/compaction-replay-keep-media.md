@@ -3,22 +3,24 @@ feature: compaction-replay-keep-media
 status: delivered
 updated: 2026-10-14
 branch: fix/compaction-replay-keep-media
-commits: e27e87de81..4806f1e9a1
+commits: e27e87de81..eba028f270
 ---
 
 # Compaction Replay Keeps Media
 
 ## Report
 
-**What was built** — After provider-overflow compaction, the replayed last user message now copies every non-`compaction` part verbatim, including media `file` parts. The replayed image keeps its `mime`, `filename`, `url` (data URL) and `source`, so Desktop can render and preview it and the next model turn receives the image through the normal `toModelMessages` path. The summarization request still strips media under overflow.
+**What was built** — After provider-overflow compaction, the replayed last user message now copies every non-`compaction` part verbatim, including media `file` parts. The replayed image keeps its `mime`, `filename`, `url` (data URL) and `source`, so Desktop can render and preview it and the next model turn sends the image to the provider as `image_url` content. The summarization request still strips media under overflow.
 
-**Verification** — From `packages/cli`: `bun test test/session/prompt-effect.test.ts test/session/message-v2.test.ts --timeout 30000` passed (173 pass, 3 skip, 0 fail); after the `source` assertion was added, `bun test test/session/prompt-effect.test.ts --timeout 30000` passed (110 pass, 3 skip, 0 fail). `bun run typecheck` passed. `git diff --check` passed. With the old placeholder substitution restored, the regression test failed on the placeholder text, the missing `source`, and the missing image data in the model-visible history. Independent review found no critical or major issues.
+**Verification** — From `packages/cli`: `bun test test/session/prompt-effect.test.ts test/session/message-v2.test.ts --timeout 30000` passed (173 pass, 3 skip, 0 fail); `bun test test/session/prompt-effect.test.ts --timeout 30000 -t "keeps replayed media"` passed (17 assertions); `bun run typecheck` and `git diff --check` passed. The regression test drives the follow-up turn with an image-capable test model and asserts the HTTP request contains the real PNG as `image_url` and no `[Attached image/png` text; with the old placeholder substitution restored, the placeholder, `source` and wire-image assertions fail. Desktop end-to-end: a desktop build pinned to this branch ran `mimo-dev/mimo-v2.6-flash` through a local proxy that answered the first image-bearing request with a standard context-length error; the engine ran overflow compaction, the replayed message kept the same image `file` part (same data URL and `source.path`), Desktop rendered its thumbnail, the follow-up request carried the image, and the model described the image content. Independent review found no critical or major issues.
 
 **Journey log**
 
 - Overflow replay only fires when earlier user content remains after the replayed message is removed from the summarization input; a single-message session skips replay, so the test needs an earlier user message.
-- Asserting on raw `sessions.messages` cannot detect replay regressions because it still contains the pre-boundary original; use `MessageV2.filterCompactedEffect` to get the model-visible history.
-- The test model has no image capability, so `ProviderTransform` replaces media on the wire; assert image retention at `MessageV2.toModelMessagesEffect`.
+- Asserting on raw `sessions.messages` cannot detect replay regressions because it still contains the pre-boundary original.
+- Images on send go through `prepareImage`; test fixtures must be decodable PNG/JPEG bytes, and the test model must declare image input or `ProviderTransform` replaces the image before the wire.
+- A small context window (`compaction.max_context` or `MIMOCODE_COMPACTION_TRIGGER_RATIO`) only triggers threshold compaction, which never replays; reproducing replay requires the provider to reject the request as a context overflow.
+- Desktop requests contain the literal `image_url` inside a tool description; detect real images on the wire with `"image_url":{"url":"data:image/`.
 
 ## [S1] Problem
 
