@@ -440,7 +440,7 @@ export function userImageAttachmentEnvelope(
   images: ReadonlyArray<{
     filename?: string | null
     mime?: string | null
-    source?: { type: string; path?: string } | null
+    source?: { type: string; path?: string; text?: { value?: string | null } | null } | null
   }>,
 ): string {
   if (!images.length) return ""
@@ -451,7 +451,13 @@ export function userImageAttachmentEnvelope(
         filepath && path.isAbsolute(filepath)
           ? `Local path: ${JSON.stringify(filepath)}`
           : "No local file path provided; view the attached image directly."
-      return `- ${item.filename ?? "image"} (${item.mime ?? "image"})\n  ${location}`
+      // Only TUI paste markers (`[Image N]` / `[PDF N]`) link an envelope entry to a
+      // token in the message text; other `source.text` values (e.g. `@file` chips)
+      // already name the attachment in the prompt.
+      const marker = item.source?.text?.value?.trim()
+      const label = `${item.filename ?? "image"} (${item.mime ?? "image"})`
+      const entry = marker && /^\[(?:Image|PDF) \d+\]$/.test(marker) ? `${marker} ${label}` : label
+      return `- ${entry}\n  ${location}`
     })
     .join("\n")
   return (

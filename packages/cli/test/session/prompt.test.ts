@@ -717,6 +717,63 @@ describe("session.prompt user image attachment envelope", () => {
     expect(text).toContain("Do not infer a local path from the filename")
   })
 
+  test("image envelope includes the prompt marker when source.text.value is set", () => {
+    const text = userImageAttachmentEnvelope([
+      {
+        filename: "sidebar.png",
+        mime: "image/png",
+        source: {
+          type: "file",
+          path: path.resolve("/tmp/example/sidebar.png"),
+          text: { value: "[Image 1]" },
+        },
+      },
+      {
+        filename: "diagram.pdf",
+        mime: "application/pdf",
+        source: {
+          type: "file",
+          path: path.resolve("/tmp/example/diagram.pdf"),
+          text: { value: "[PDF 1]" },
+        },
+      },
+    ])
+    expect(text).toContain("- [Image 1] sidebar.png (image/png)")
+    expect(text).toContain("- [PDF 1] diagram.pdf (application/pdf)")
+  })
+
+  test("image envelope keeps the entry shape when source.text is absent", () => {
+    const withSourceNoText = userImageAttachmentEnvelope([
+      {
+        filename: "team.png",
+        mime: "image/png",
+        source: { type: "file", path: path.resolve("/tmp/example/team.png") },
+      },
+    ])
+    expect(withSourceNoText).toContain("- team.png (image/png)")
+    expect(withSourceNoText).not.toContain("[Image")
+    expect(withSourceNoText).not.toContain("[PDF")
+
+    const noSource = userImageAttachmentEnvelope([{ filename: "team.png", mime: "image/png" }])
+    expect(noSource).toContain("- team.png (image/png)")
+    expect(noSource).not.toContain("[Image")
+
+    const fileChip = userImageAttachmentEnvelope([
+      {
+        filename: "team.png",
+        mime: "image/png",
+        source: {
+          type: "file",
+          path: path.resolve("/tmp/example/team.png"),
+          text: { value: "@team.png" },
+        },
+      },
+    ])
+    expect(fileChip).toContain("- team.png (image/png)")
+    expect(fileChip).not.toContain("- @team.png")
+    expect(fileChip).not.toContain("[Image")
+  })
+
   test("[TP-R3-07] isUserAttachmentImagePart excludes MCP resource / synthetic; accepts file:// and data:", () => {
     expect(isUserAttachmentImagePart({ type: "file", mime: "image/png" })).toBe(true)
     expect(isUserAttachmentImagePart({ type: "file", mime: "IMAGE/PNG" })).toBe(true)
