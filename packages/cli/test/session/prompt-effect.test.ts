@@ -1965,6 +1965,11 @@ it.live("provider-overflow compaction uses its configured model and keeps replay
       const sessions = yield* Session.Service
       const compaction = yield* SessionCompaction.Service
       const chat = yield* sessions.create({ title: "Overflow compaction" })
+      const imageSource = {
+        type: "file" as const,
+        path: "/tmp/example/large.png",
+        text: { value: "", start: 0, end: 0 },
+      }
       // Overflow replay only fires when earlier user content remains after the
       // replayed message is taken out of the summarization history.
       yield* prompt.prompt({
@@ -1981,7 +1986,13 @@ it.live("provider-overflow compaction uses its configured model and keeps replay
         noReply: true,
         parts: [
           { type: "text", text: "inspect this image" },
-          { type: "file", mime: "image/png", url: "data:image/png;base64,QUFBQQ==", filename: "large.png" },
+          {
+            type: "file",
+            mime: "image/png",
+            url: "data:image/png;base64,QUFBQQ==",
+            filename: "large.png",
+            source: imageSource,
+          },
         ],
       })
       yield* compaction.create({
@@ -2012,12 +2023,20 @@ it.live("provider-overflow compaction uses its configured model and keeps replay
       }
       expect(JSON.stringify(request)).not.toContain("QUFBQQ==")
 
-      // The replayed user message must keep the media file part verbatim.
+      // The prompt path persists `source`; the replayed user message must keep
+      // the media file part (including source) verbatim.
       const after = yield* sessions.messages({ sessionID: chat.id })
-      const replayed = after.filter((message) => message.info.role === "user").at(-1)!
+      const userMessages = after.filter((message) => message.info.role === "user")
+      const originalFile = userMessages
+        .find((message) => message.info.id !== userMessages.at(-1)!.info.id && message.parts.some((part) => part.type === "file"))!
+        .parts.find((part) => part.type === "file")
+      expect(originalFile?.type).toBe("file")
+      if (originalFile?.type === "file") expect(originalFile.source).toEqual(imageSource)
+      const replayed = userMessages.at(-1)!
       expect(replayed.parts.some((part) => part.type === "text" && part.text.includes("[Attached image/png"))).toBe(false)
       const replayedFile = replayed.parts.find((part) => part.type === "file")
       expect(replayedFile?.type).toBe("file")
+      expect(replayedFile?.source).toEqual(imageSource)
       if (replayedFile?.type === "file") {
         expect(replayedFile.mime).toBe("image/png")
         expect(replayedFile.filename).toBe("large.png")
