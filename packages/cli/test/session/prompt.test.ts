@@ -1204,6 +1204,71 @@ describe("session.prompt special characters", () => {
 })
 
 describe("session.prompt regression", () => {
+  test("attachment-only message keeps caller system when parts are synthetic", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: { agent: { build: { model: "openai/gpt-5.2" } } },
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "pack.zip"), "PK\x03\x04")
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const system = "readNote: open /tmp/example/doc.pdf first"
+            const zipUrl = pathToFileURL(path.join(tmp.path, "pack.zip")).href
+            const missing = path.join(tmp.path, "note.txt")
+
+            // text/plain attachment expands to synthetic read text only.
+            const allSynthetic = yield* sessions.create({})
+            const syntheticMsg = yield* prompt.prompt({
+              sessionID: allSynthetic.id,
+              agent: "build",
+              noReply: true,
+              system,
+              parts: [
+                {
+                  type: "file",
+                  mime: "text/plain",
+                  url: pathToFileURL(missing).href,
+                  filename: "note.txt",
+                },
+              ],
+            })
+            if (syntheticMsg.info.role !== "user") throw new Error("expected user message")
+            const syntheticInfo = syntheticMsg.info
+            expect(syntheticInfo.system).toBe(system)
+            const storedSynthetic = MessageV2.get({ sessionID: allSynthetic.id, messageID: syntheticMsg.info.id })
+            expect(storedSynthetic.info.role === "user" && storedSynthetic.info.system).toBe(system)
+            // Synthetic-only traffic must not pin the session prompt.
+            expect((yield* sessions.get(allSynthetic.id)).prompt).toBeUndefined()
+
+            const mixed = yield* sessions.create({})
+            const mixedMsg = yield* prompt.prompt({
+              sessionID: mixed.id,
+              agent: "build",
+              noReply: true,
+              system,
+              parts: [
+                { type: "text", text: "", synthetic: true },
+                { type: "file", mime: "application/zip", url: zipUrl, filename: "pack.zip" },
+              ],
+            })
+            if (mixedMsg.info.role !== "user") throw new Error("expected user message")
+            const mixedInfo = mixedMsg.info
+            expect(mixedInfo.system).toBe(system)
+
+            yield* sessions.remove(allSynthetic.id)
+            yield* sessions.remove(mixed.id)
+          }),
+        ),
+    })
+  })
+
   test("does not loop empty assistant turns for a simple reply", async () => {
     let calls = 0
     const server = Bun.serve({

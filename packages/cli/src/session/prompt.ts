@@ -3221,7 +3221,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       })
       const message: MessageV2.User = {
         ...info,
-        system: prompt.system,
+        // Attachment-only prompts can be all-synthetic and skip the resolvePrompt
+        // fallback (so they do not pin session.prompt). Still keep the caller
+        // system on the message so attachment notes are not dropped.
+        system: prompt.system ?? input.system,
         systemMode: prompt.systemMode,
         harness: prompt.harness,
       }
