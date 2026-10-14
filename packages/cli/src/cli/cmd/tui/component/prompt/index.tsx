@@ -1434,7 +1434,7 @@ export function Prompt(props: PromptProps) {
     if (content.mime.startsWith("image/")) {
       if (activeModelSupportsImage()) {
         await pasteAttachment({
-          filename: "clipboard",
+          filename: Clipboard.pasteFileName(content.mime),
           mime: content.mime,
           content: content.data,
         })
@@ -1478,7 +1478,7 @@ export function Prompt(props: PromptProps) {
       url: `data:${file.mime};base64,${file.content}`,
       source: {
         type: "file",
-        path: file.filepath ?? file.filename ?? "",
+        path: file.filepath ?? "",
         text: {
           start: extmarkStart,
           end: extmarkEnd,
