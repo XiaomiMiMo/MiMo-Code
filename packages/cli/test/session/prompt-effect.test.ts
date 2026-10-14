@@ -1989,7 +1989,7 @@ it.live("provider-overflow compaction uses its configured model and keeps replay
           {
             type: "file",
             mime: "image/png",
-            url: "data:image/png;base64,QUFBQQ==",
+            url: mcpErrorImageURL,
             filename: "large.png",
             source: imageSource,
           },
@@ -2021,7 +2021,7 @@ it.live("provider-overflow compaction uses its configured model and keeps replay
         expect(JSON.stringify(request.messages[0])).not.toContain("You have been working on the task described above")
         expect(JSON.stringify(request.messages.at(-1))).toContain("1. Task Overview")
       }
-      expect(JSON.stringify(request)).not.toContain("QUFBQQ==")
+      expect(JSON.stringify(request)).not.toContain(mcpErrorImage)
 
       // The prompt path persists `source`; the replayed user message must keep
       // the media file part (including source) verbatim.
@@ -2040,26 +2040,31 @@ it.live("provider-overflow compaction uses its configured model and keeps replay
       if (replayedFile?.type === "file") {
         expect(replayedFile.mime).toBe("image/png")
         expect(replayedFile.filename).toBe("large.png")
-        expect(replayedFile.url).toBe("data:image/png;base64,QUFBQQ==")
+        expect(replayedFile.url).toBe(mcpErrorImageURL)
       }
 
-      // Model-visible history after the compaction boundary (same derivation as
-      // the prompt loop) converts the replayed media into model file content.
-      // The test model has no image capability, so the wire request would
-      // replace it further down in ProviderTransform.
-      const providers = yield* ProviderSvc.Service
-      const model = yield* providers.getModel(ref.providerID, ref.modelID)
-      const language = yield* providers.getLanguage(model)
-      const visible = yield* MessageV2.filterCompactedEffect(chat.id, { agentID: "main" })
-      const modelMessages = yield* MessageV2.toModelMessagesEffect(visible, model, {
-        languageProvider: language.provider,
+      // The next model turn for the replayed message sends the image on the wire.
+      yield* llm.text("continued")
+      yield* prompt.loop({ sessionID: chat.id })
+      const followUp = (yield* llm.inputs).at(-1)!
+      const followUpSerialized = JSON.stringify(followUp)
+      expect(followUpSerialized).toContain(mcpErrorImage)
+      expect(followUpSerialized).not.toContain("[Attached image/png")
+      expect(followUp).toMatchObject({
+        messages: expect.arrayContaining([
+          {
+            role: "user",
+            content: expect.arrayContaining([
+              expect.objectContaining({ type: "image_url", image_url: { url: mcpErrorImageURL } }),
+            ]),
+          },
+        ]),
       })
-      expect(JSON.stringify(modelMessages)).toContain("QUFBQQ==")
     }),
     {
       git: true,
       config: (url) => ({
-        ...providerCfg(url),
+        ...mediaProviderCfg(url),
         agent: { compaction: { model: "test/gpt-5-test" } },
       }),
     },
