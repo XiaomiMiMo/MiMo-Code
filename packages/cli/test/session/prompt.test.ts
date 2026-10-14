@@ -725,7 +725,7 @@ describe("session.prompt user image attachment envelope", () => {
         source: {
           type: "file",
           path: path.resolve("/tmp/example/sidebar.png"),
-          text: { value: "[Image 1]" },
+          text: { value: "[Image: sidebar.png]" },
         },
       },
       {
@@ -734,16 +734,16 @@ describe("session.prompt user image attachment envelope", () => {
         source: {
           type: "file",
           path: path.resolve("/tmp/example/diagram.pdf"),
-          text: { value: "[PDF 1]" },
+          text: { value: "[PDF: diagram.pdf]" },
         },
       },
     ])
     expect(text).toContain("- sidebar.png (image/png)")
     expect(text).toContain("- diagram.pdf (application/pdf)")
-    expect(text).not.toContain("[Image 1] sidebar.png")
-    expect(text).not.toContain("[PDF 1] diagram.pdf")
-    expect(text).toContain("per-message positional aliases")
-    expect(text).toContain("use the file name or local path")
+    expect(text).not.toContain("- [Image")
+    expect(text).not.toContain("- [PDF")
+    expect(text).toContain("identify the listed attachment with the same file name")
+    expect(text).toContain("use that name or the local path")
   })
 
   test("image envelope keeps the entry shape when source.text is absent", () => {
