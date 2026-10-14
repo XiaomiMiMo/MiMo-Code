@@ -1958,13 +1958,22 @@ it.live("uses the frozen system and appends the compaction prompt to the existin
   ),
 )
 
-it.live("provider-overflow compaction uses its configured model and strips media", () =>
+it.live("provider-overflow compaction uses its configured model and keeps replayed media", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {
       const prompt = yield* SessionPrompt.Service
       const sessions = yield* Session.Service
       const compaction = yield* SessionCompaction.Service
       const chat = yield* sessions.create({ title: "Overflow compaction" })
+      // Overflow replay only fires when earlier user content remains after the
+      // replayed message is taken out of the summarization history.
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        noReply: true,
+        parts: [{ type: "text", text: "earlier context" }],
+      })
       yield* prompt.prompt({
         sessionID: chat.id,
         agent: "build",
@@ -1997,11 +2006,36 @@ it.live("provider-overflow compaction uses its configured model and strips media
       const request = (yield* llm.inputs)[0]
       expect(request.model).toBe(mcpRef.modelID)
       expect(request.messages).toBeArray()
-      if (!Array.isArray(request.messages)) return
-      expect(JSON.stringify(request.messages[0])).not.toContain("You have been working on the task described above")
-      expect(JSON.stringify(request.messages.at(-1))).toContain("1. Task Overview")
-      expect(JSON.stringify(request)).toContain("[Attached image/png: large.png]")
+      if (Array.isArray(request.messages)) {
+        expect(JSON.stringify(request.messages[0])).not.toContain("You have been working on the task described above")
+        expect(JSON.stringify(request.messages.at(-1))).toContain("1. Task Overview")
+      }
       expect(JSON.stringify(request)).not.toContain("QUFBQQ==")
+
+      // The replayed user message must keep the media file part verbatim.
+      const after = yield* sessions.messages({ sessionID: chat.id })
+      const replayed = after.filter((message) => message.info.role === "user").at(-1)!
+      expect(replayed.parts.some((part) => part.type === "text" && part.text.includes("[Attached image/png"))).toBe(false)
+      const replayedFile = replayed.parts.find((part) => part.type === "file")
+      expect(replayedFile?.type).toBe("file")
+      if (replayedFile?.type === "file") {
+        expect(replayedFile.mime).toBe("image/png")
+        expect(replayedFile.filename).toBe("large.png")
+        expect(replayedFile.url).toBe("data:image/png;base64,QUFBQQ==")
+      }
+
+      // Model-visible history after the compaction boundary (same derivation as
+      // the prompt loop) converts the replayed media into model file content.
+      // The test model has no image capability, so the wire request would
+      // replace it further down in ProviderTransform.
+      const providers = yield* ProviderSvc.Service
+      const model = yield* providers.getModel(ref.providerID, ref.modelID)
+      const language = yield* providers.getLanguage(model)
+      const visible = yield* MessageV2.filterCompactedEffect(chat.id, { agentID: "main" })
+      const modelMessages = yield* MessageV2.toModelMessagesEffect(visible, model, {
+        languageProvider: language.provider,
+      })
+      expect(JSON.stringify(modelMessages)).toContain("QUFBQQ==")
     }),
     {
       git: true,
