@@ -1,14 +1,24 @@
 ---
 feature: compaction-replay-keep-media
-status: designed
+status: delivered
 updated: 2026-10-14
 branch: fix/compaction-replay-keep-media
-commits:
+commits: e27e87de81..4806f1e9a1
 ---
 
 # Compaction Replay Keeps Media
 
 ## Report
+
+**What was built** — After provider-overflow compaction, the replayed last user message now copies every non-`compaction` part verbatim, including media `file` parts. The replayed image keeps its `mime`, `filename`, `url` (data URL) and `source`, so Desktop can render and preview it and the next model turn receives the image through the normal `toModelMessages` path. The summarization request still strips media under overflow.
+
+**Verification** — From `packages/cli`: `bun test test/session/prompt-effect.test.ts test/session/message-v2.test.ts --timeout 30000` passed (173 pass, 3 skip, 0 fail); after the `source` assertion was added, `bun test test/session/prompt-effect.test.ts --timeout 30000` passed (110 pass, 3 skip, 0 fail). `bun run typecheck` passed. `git diff --check` passed. With the old placeholder substitution restored, the regression test failed on the placeholder text, the missing `source`, and the missing image data in the model-visible history. Independent review found no critical or major issues.
+
+**Journey log**
+
+- Overflow replay only fires when earlier user content remains after the replayed message is removed from the summarization input; a single-message session skips replay, so the test needs an earlier user message.
+- Asserting on raw `sessions.messages` cannot detect replay regressions because it still contains the pre-boundary original; use `MessageV2.filterCompactedEffect` to get the model-visible history.
+- The test model has no image capability, so `ProviderTransform` replaces media on the wire; assert image retention at `MessageV2.toModelMessagesEffect`.
 
 ## [S1] Problem
 
@@ -42,5 +52,5 @@ The replayed message is an ordinary user message after the compaction boundary. 
 
 ## Tasks
 
-- [ ] T1: Copy media `file` parts verbatim in the overflow replay — acceptance: after provider-overflow compaction with a replayed user message containing an `image/png` `file` part, the persisted replayed message contains a `file` part with the same `mime`, `filename`, `url` and `source` as the original, and contains no `[Attached image/png: …]` text part (covers: S2.1)
-- [ ] T2: Regression test for replayed media sent to the model — acceptance: in the provider-overflow compaction test, the summarization request does not contain the image data while the follow-up model request built from the replayed message contains the image data; the existing assertion on `[Attached image/png: large.png]` is replaced accordingly (covers: S2.2, S2.3; depends: T1)
+- [x] T1: Copy media `file` parts verbatim in the overflow replay — acceptance: after provider-overflow compaction with a replayed user message containing an `image/png` `file` part, the persisted replayed message contains a `file` part with the same `mime`, `filename`, `url` and `source` as the original, and contains no `[Attached image/png: …]` text part (covers: S2.1)
+- [x] T2: Regression test for replayed media sent to the model — acceptance: in the provider-overflow compaction test, the summarization request does not contain the image data while the follow-up model request built from the replayed message contains the image data; the existing assertion on `[Attached image/png: large.png]` is replaced accordingly (covers: S2.2, S2.3; depends: T1)
