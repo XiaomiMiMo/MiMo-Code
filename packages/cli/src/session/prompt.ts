@@ -435,22 +435,44 @@ export function sanitizeGeneratedTitle(value: string) {
   return line
 }
 
+/**
+ * Absolute local path for an attachment: an explicit absolute `source.path`
+ * first (TUI pastes spill to disk and carry the path there while `url` stays a
+ * `data:` URL), then a `file:` URL. Otherwise no local path.
+ */
+function envelopeLocalPath(item: {
+  url?: string | null
+  source?: { type: string; path?: string } | null
+}): string | undefined {
+  const sourcePath = item.source?.type === "file" ? item.source.path : undefined
+  if (sourcePath && path.isAbsolute(sourcePath)) return sourcePath
+  if (item.url?.startsWith("file:")) {
+    try {
+      const resolved = fileURLToPath(item.url)
+      if (path.isAbsolute(resolved)) return resolved
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
 /** Provenance envelope for user-provided image attachments. Empty when none. */
 export function userImageAttachmentEnvelope(
   images: ReadonlyArray<{
     filename?: string | null
     mime?: string | null
+    url?: string | null
     source?: { type: string; path?: string; text?: { value?: string | null } | null } | null
   }>,
 ): string {
   if (!images.length) return ""
   const list = images
     .map((item) => {
-      const filepath = item.source?.type === "file" ? item.source.path : undefined
-      const location =
-        filepath && path.isAbsolute(filepath)
-          ? `Local path: ${JSON.stringify(filepath)}`
-          : "No local file path provided; view the attached image directly."
+      const filepath = envelopeLocalPath(item)
+      const location = filepath
+        ? `Local path: ${JSON.stringify(filepath)}`
+        : "No local file path provided; view the attached image directly."
       return `- ${item.filename ?? "image"} (${item.mime ?? "image"})\n  ${location}`
     })
     .join("\n")
@@ -3174,9 +3196,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // Insert immediately before the first non-synthetic, non-ignored user content so client
       // system-reminders / ignored text cannot sit between "## My request:" and the user's text.
       // Predicate excludes MCP resource sources and synthetic parts (isUserAttachmentImagePart).
-      const userImages = parts.filter((part): part is Extract<MessageV2.Part, { type: "file" }> =>
-        isUserAttachmentImagePart(part),
-      )
+      const userImages = parts
+        .filter((part): part is Extract<MessageV2.Part, { type: "file" }> => isUserAttachmentImagePart(part))
+        .map((part) => ({ filename: part.filename, mime: part.mime, url: part.url, source: part.source }))
       const envelope = userImageAttachmentEnvelope(userImages)
       if (envelope) {
         const firstUserContent = parts.findIndex(isEnvelopeAnchorPart)

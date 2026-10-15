@@ -717,6 +717,38 @@ describe("session.prompt user image attachment envelope", () => {
     expect(text).toContain("Do not infer a local path from the filename")
   })
 
+  test("image envelope derives the local path from a file url when source is absent", () => {
+    const text = userImageAttachmentEnvelope([
+      { filename: "team.png", mime: "image/png", url: "file:///tmp/example/team.png" },
+    ])
+    expect(text).toContain("- team.png (image/png)")
+    expect(text).toContain('Local path: "/tmp/example/team.png"')
+    expect(text).not.toContain("No local file path provided")
+  })
+
+  test("image envelope keeps the fallback for a data url without a local path", () => {
+    const text = userImageAttachmentEnvelope([
+      { filename: "team.png", mime: "image/png", url: "data:image/png;base64,AA==" },
+    ])
+    expect(text).toContain("- team.png (image/png)")
+    expect(text).toContain("No local file path provided; view the attached image directly.")
+    expect(text).not.toContain("Local path:")
+  })
+
+  test("image envelope prefers an absolute source.path over the file url", () => {
+    const text = userImageAttachmentEnvelope([
+      {
+        filename: "team.png",
+        mime: "image/png",
+        url: "file:///tmp/example/other.png",
+        source: { type: "file", path: "/tmp/example/team.png" },
+      },
+    ])
+    expect(text).toContain('Local path: "/tmp/example/team.png"')
+    expect(text).not.toContain("other.png")
+    expect(text).not.toContain("No local file path provided")
+  })
+
   test("image envelope lists filename and mime without paste-marker prefixes", () => {
     const text = userImageAttachmentEnvelope([
       {
