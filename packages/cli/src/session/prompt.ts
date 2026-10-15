@@ -151,6 +151,7 @@ import { InstanceState } from "@/effect"
 import { PARALLEL_READONLY_TOOLS } from "@/tool/gate"
 import * as ToolSettlement from "@/tool/settlement"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
+import { planExitPromptEnabled } from "@/tool/plan"
 import { SessionRunState } from "./run-state"
 import { ResumeTestHooks } from "./resume-test-hooks"
 import { Goal } from "./goal"
@@ -1590,12 +1591,16 @@ Keep planning proportional to task complexity: for simple combinations, two or t
         // injecting past step 1 would stack duplicate reminders.
         if (input.messages.at(-1) !== userMessage) return input.messages
         const plan = Session.plan(input.session)
+        const exitPrompt = planExitPromptEnabled(cfg)
+        const text = exitPrompt
+          ? `<system-reminder>Plan mode is still active (read-only; only writable file: ${plan}). Do NOT implement. End your turn with Question tool or PlanExit.</system-reminder>`
+          : `<system-reminder>Plan mode is still active (read-only; only writable file: ${plan}). Do NOT implement. End your turn with a short plan summary, Question (only when unsure of the initial prompt or when plan direction is a genuine pro/con fork), or PlanExit (records readiness only — no dialog). Do not ask whether to switch to build or refine the plan.</system-reminder>`
         const part = yield* sessions.updatePart({
           id: PartID.ascending(),
           messageID: userMessage.info.id,
           sessionID: userMessage.info.sessionID,
           type: "text",
-          text: `<system-reminder>Plan mode is still active (read-only; only writable file: ${plan}). Do NOT implement. End your turn with Question tool or PlanExit.</system-reminder>`,
+          text,
           synthetic: true,
         })
         userMessage.parts.push(part)
@@ -1685,11 +1690,16 @@ Goal: Write your final plan to the plan file (the only file you can edit).
 - Include the paths of critical files to be modified
 - Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
 
-### Phase 5: Call PlanExit tool
+${planExitPromptEnabled(cfg) ? `### Phase 5: Call PlanExit tool
 At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call PlanExit to indicate to the user that you are done planning.
 This is critical - your turn should only end with either asking the user a question or calling PlanExit. Do not stop unless it's for these 2 reasons.
 
-**Important:** Use Question tool to clarify requirements/approach, use PlanExit to request plan approval. Do NOT use Question tool to ask "Is this plan okay?" - that's what PlanExit does.
+**Important:** Use Question tool to clarify requirements/approach, use PlanExit to request plan approval. Do NOT use Question tool to ask "Is this plan okay?" - that's what PlanExit does.` : `### Phase 5: Finish the plan
+When the plan file is complete and you have no open questions:
+- Write a short summary of the plan path (and what it contains) and stop so the user can read it.
+- Do NOT ask "switch to build mode or refine the plan?" — the user reviews and switches with Tab when ready.
+- PlanExit is optional: with \`plan.exit_prompt\` disabled it only records that the plan is ready (no dialog). Prefer a plain plan summary.
+- Use Question only when unsure about the initial prompt, or when plan direction is a genuine fork with real pros and cons on both sides. Never use Question as a closing "is this plan okay?" prompt.`}
 
 NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
 </system-reminder>`,
