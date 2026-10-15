@@ -422,6 +422,10 @@ export function Prompt(props: PromptProps) {
   const shell = createMemo(() => props.placeholders?.shell ?? [])
   const [auto, setAuto] = createSignal<AutocompleteRef>()
   const [ghost, setGhost] = createSignal("")
+  // The prediction is cached for the whole idle stretch but only DISPLAYED
+  // while the buffer is empty, so typing hides it and erasing back to empty
+  // shows the same suggestion again without another session.predict call.
+  const inputEmpty = () => store.prompt.input === ""
   const hasRightContent = createMemo(() => Boolean(props.right))
 
   function promptModelWarning() {
@@ -468,8 +472,9 @@ export function Prompt(props: PromptProps) {
   })
 
   // After the agent finishes a turn, predict the user's likely next prompt and
-  // show it as ghost text in the empty input (accept with Tab). Only fires on
-  // an idle transition while the input is empty so it never clobbers typing.
+  // show it as ghost text in the empty input (accept with Tab). Fires on every
+  // idle transition; the result is cached and only rendered while the input
+  // stays empty, so it never clobbers typing.
   let ghostRequest = 0
   async function fetchGhost(sessionID: string) {
     if (props.showPlaceholder === false) return
@@ -479,13 +484,15 @@ export function Prompt(props: PromptProps) {
     const text = res?.data?.prediction?.trim()
     if (!text) return
     // Drop the result if anything that defined its context changed while the
-    // request was in flight: superseded by a newer fetch, session switched, a
-    // new run started, the conversation advanced, or the user began typing.
+    // request was in flight: superseded by a newer fetch, session switched,
+    // a new run started, or the conversation advanced. Typing does NOT drop
+    // it: the cache stays valid and simply stays hidden until the buffer is
+    // empty again.
     if (token !== ghostRequest) return
     if (props.sessionID !== sessionID) return
     if (status().type !== "idle") return
     if (lastUserMessage()?.id !== userMessageID) return
-    if (!input || input.isDestroyed || input.plainText !== "") return
+    if (!input || input.isDestroyed) return
     setGhost(text)
   }
   createEffect(
@@ -501,20 +508,20 @@ export function Prompt(props: PromptProps) {
         }
         if (prev === "idle") return
         const sessionID = props.sessionID
-        if (!sessionID || !input || input.isDestroyed || input.plainText !== "") return
+        if (!sessionID || !input || input.isDestroyed) return
         if (!lastUserMessage()) return
         fetchGhost(sessionID)
       },
     ),
   )
-  // While a ghost suggestion is showing, suspend global command keybinds so Tab
-  // reaches the textarea's onKeyDown (where we accept it) instead of being
-  // consumed by the agent-cycle keybind. Global keyboard handlers run before
-  // renderable handlers, so without this the suggestion can never be accepted.
-  // The cleanup resumes keybinds on any dismissal (typing, accept, submit,
-  // session change, status leaving idle).
+  // While a VISIBLE ghost suggestion is showing, suspend global command
+  // keybinds so Tab reaches the textarea's onKeyDown (where we accept it)
+  // instead of being consumed by the agent-cycle keybind. Global keyboard
+  // handlers run before renderable handlers, so without this the suggestion
+  // can never be accepted. Suspends only while the buffer is empty — typing
+  // (which hides the suggestion) restores the keybinds.
   createEffect(() => {
-    if (!ghost()) return
+    if (!ghost() || !inputEmpty()) return
     command.keybinds(false)
     onCleanup(() => command.keybinds(true))
   })
@@ -1521,7 +1528,7 @@ export function Prompt(props: PromptProps) {
 
   const placeholderText = createMemo(() => {
     if (props.showPlaceholder === false) return undefined
-    if (store.mode === "normal" && ghost()) return t("tui.prompt.ghost", { prediction: ghost() })
+    if (store.mode === "normal" && ghost() && inputEmpty()) return t("tui.prompt.ghost", { prediction: ghost() })
     if (store.mode === "shell") {
       if (!shell().length) return undefined
       return t("tui.prompt.placeholder.shell", { example: shell()[store.placeholder % shell().length] })
@@ -1608,7 +1615,6 @@ export function Prompt(props: PromptProps) {
               maxHeight={6}
               onContentChange={() => {
                 const value = input.plainText
-                if (value !== "" && ghost()) setGhost("")
                 setStore("prompt", "input", value)
                 autocomplete.onInput(value)
                 syncExtmarksWithPromptParts()
