@@ -224,6 +224,17 @@ const InfoSchema = Schema.Struct({
   layout: Schema.optional(ConfigLayout.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
   permission: Schema.optional(PermissionRef),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+  plan: Schema.optional(
+    Schema.Struct({
+      exit_prompt: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Ask for approval with a Yes/No dialog when plan_exit is called (default: true). " +
+          "Set false so plan_exit only reports that the plan is ready — no switch/refine prompt. " +
+          "The user reads the plan and switches to build with Tab. " +
+          "Phase 5 and the plan-mode reminder then allow ending the turn with a plan summary instead of forcing Question or PlanExit.",
+      }),
+    }),
+  ).annotate({ description: "Plan mode behavior." }),
   enterprise: Schema.optional(
     Schema.Struct({
       url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }),

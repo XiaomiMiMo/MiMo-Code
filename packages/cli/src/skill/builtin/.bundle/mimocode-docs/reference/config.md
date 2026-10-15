@@ -108,6 +108,11 @@ Prefer a markdown file (`.mimocode/agent/<name>.md`, body = system prompt) for d
 | `instructions` | Extra instruction files/globs to include |
 | `permission` | Permission rules incl. `external_directory` allowlist |
 
+### Plan mode
+| Key | Purpose |
+|-----|---------|
+| `plan.exit_prompt` | Default `true`: `plan_exit` opens a Yes/No “switch to build / refine?” dialog. Set `false` so `plan_exit` only reports the plan is ready (no dialog), Phase 5 allows ending with a plan summary, and the user switches with `Tab`. |
+
 ### Context management
 
 As context fills, MiMoCode auto-checkpoints (a background writer distills the conversation into `checkpoint.md`) and, near the limit, **rebuilds**: it inserts a boundary at the last successful checkpoint so earlier messages collapse to the checkpoint summary while recent messages are kept verbatim. If a checkpoint writer is still running when a rebuild is needed, the rebuild waits for it (with a visible "Preparing conversation context…" status) — briefly when a usable checkpoint already exists, longer for the very first one — then proceeds; if no checkpoint can be produced it falls back to lossy compaction. You can trigger a rebuild yourself any time with the `/rebuild` slash command.
