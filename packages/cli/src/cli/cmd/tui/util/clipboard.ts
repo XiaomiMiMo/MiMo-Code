@@ -39,7 +39,7 @@ export interface Content {
 /** Unique paste attachment name; shared by spillImage and in-memory clipboard pastes. */
 export function pasteFileName(mime: string): string {
   const ext = mime === "image/png" ? "png" : mime === "image/jpeg" ? "jpg" : "bin"
-  return `opencode-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+  return `mimo-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
 }
 
 export async function spillImage(content: { data: string; mime: string }): Promise<string> {

@@ -22,7 +22,7 @@ commits: e27e87de81..eba028f270
 - A small context window (`compaction.max_context` or `MIMOCODE_COMPACTION_TRIGGER_RATIO`) only triggers threshold compaction, which never replays; reproducing replay requires the provider to reject the request as a context overflow.
 - Provider requests can contain the literal `image_url` inside a tool description; detect real images on the wire with `"image_url":{"url":"data:image/`.
 - Attachment identity that must survive compaction is the file name and local path already listed in the provenance envelope. Paste markers (`[Image: <file name>]` / `[PDF: <file name>]`) carry the attachment's own file name, so the marker text itself is a durable key across compaction, handoff, or restarts; the envelope lists `- filename (mime)` plus path and tells the model to match a marker by that name.
-- Clipboard pastes without a disk spill used to share the part name `clipboard`, so two pasted images collided in the envelope. Paste-time unique names (`opencode-paste-…`) give each attachment a distinct file name even when no local path exists.
+- Clipboard pastes without a disk spill used to share the part name `clipboard`, so two pasted images collided in the envelope. Paste-time unique names (`mimo-paste-…`) give each attachment a distinct file name even when no local path exists.
 
 ## [S1] Problem
 
