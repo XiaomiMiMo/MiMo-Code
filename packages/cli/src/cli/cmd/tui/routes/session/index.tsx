@@ -84,7 +84,7 @@ import { parseActorNotification, parseAgentInboxPart } from "@/inbox/render"
 import { ActorNotificationWarnings } from "./actor-notification-warnings"
 import { AgentInboxMessages } from "./agent-inbox-messages"
 import { UserMessageBubble } from "./user-message-bubble"
-import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
+import { filetype, normalizePath } from "../../util/tool-path"
 import parsers from "../../../../../../parsers-config.ts"
 import * as Clipboard from "../../util/clipboard"
 import { Toast, useToast } from "../../ui/toast"
@@ -3191,7 +3191,7 @@ function Bash(props: ToolProps<typeof BashTool>) {
 
   const workdirDisplay = createMemo(() => {
     const workdir = props.input.workdir
-    if (!workdir || workdir === ".") return undefined
+    if (typeof workdir !== "string" || !workdir || workdir === ".") return undefined
 
     const base = sync.path.directory
     if (!base) return undefined
@@ -3766,20 +3766,6 @@ function Diagnostics(props: { diagnostics?: Record<string, Record<string, any>[]
   )
 }
 
-function normalizePath(input?: string) {
-  if (!input) return ""
-
-  const cwd = process.cwd()
-  const absolute = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const relative = path.relative(cwd, absolute)
-
-  if (!relative) return "."
-  if (!relative.startsWith("..")) return relative
-
-  // outside cwd - use absolute
-  return absolute
-}
-
 function input(input: Record<string, any>, omit?: string[]): string {
   const primitives = Object.entries(input).filter(([key, value]) => {
     if (omit?.includes(key)) return false
@@ -3787,12 +3773,4 @@ function input(input: Record<string, any>, omit?: string[]): string {
   })
   if (primitives.length === 0) return ""
   return `[${primitives.map(([key, value]) => `${key}=${value}`).join(", ")}]`
-}
-
-function filetype(input?: string) {
-  if (!input) return "none"
-  const ext = path.extname(input)
-  const language = LANGUAGE_EXTENSIONS[ext]
-  if (["typescriptreact", "javascriptreact", "javascript"].includes(language)) return "typescript"
-  return language
 }

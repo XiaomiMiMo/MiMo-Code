@@ -26,6 +26,7 @@ import { ActorTool } from "../../tool/actor"
 import { SkillTool } from "../../tool/skill"
 import { BashTool } from "../../tool/bash"
 import { Locale } from "../../util"
+import { normalizeRunPath as normalizePath } from "./tui/util/tool-path"
 import { AppRuntime } from "@/effect/app-runtime"
 import { createCompletionTracker, type CompletionTracker } from "./run-completion"
 
@@ -209,12 +210,6 @@ function bash(info: ToolProps<typeof BashTool>) {
     },
     output,
   )
-}
-
-function normalizePath(input?: string) {
-  if (!input) return ""
-  if (path.isAbsolute(input)) return path.relative(process.cwd(), input) || "."
-  return input
 }
 
 export const RunCommand = cmd({
