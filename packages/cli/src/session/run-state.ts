@@ -1,15 +1,22 @@
 import { EffectLogger, InstanceState } from "@/effect"
 import { Instance } from "@/project/instance"
 import { Runner } from "@/effect"
-import { Effect, Layer, Scope, Context } from "effect"
+import { Effect, Fiber, Layer, Scope, Context } from "effect"
 import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID } from "./schema"
 import { SessionStatus } from "./status"
 import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan-tool-idle-hook"
+import { Database } from "@/storage"
+import { ExecutionOwnership } from "./execution-ownership"
 
 export interface Interface {
   readonly assertNotBusy: (sessionID: SessionID, agentID?: string) => Effect.Effect<void, Session.BusyError>
+  readonly sessionExecutionSnapshot: (sessionID: SessionID) => Effect.Effect<{ readonly isIdle: () => boolean }>
+  readonly executionSnapshot: (sessionID: SessionID, agentID: string) => Effect.Effect<{
+    readonly fiber: Fiber.Fiber<MessageV2.WithParts> | undefined
+    readonly isCurrent: () => boolean
+  }>
   readonly start: (sessionID: SessionID, agentID: string, onInterrupt: Effect.Effect<MessageV2.WithParts>, work: Effect.Effect<MessageV2.WithParts>, admit?: Effect.Effect<void>) => Effect.Effect<void, Session.BusyError>
   /** [C001] Start and return cancel bound to this run id only. */
   readonly startOwned: (
@@ -116,6 +123,34 @@ export const layer = Layer.effect(
       return next
     })
 
+    const ownedRunner = Effect.fn("SessionRunState.ownedRunner")(function* (
+      sessionID: SessionID,
+      agentID: string,
+      onInterrupt: Effect.Effect<MessageV2.WithParts>,
+    ) {
+      const identity = yield* ExecutionOwnership.captureIdentity
+      const check = Effect.sync(() => Database.use((db) => ExecutionOwnership.assertOwnership(db, sessionID, identity)))
+      yield* check
+      const active = yield* runner(sessionID, agentID, onInterrupt)
+      return { active, check, guard: (work: Effect.Effect<MessageV2.WithParts>) => check.pipe(Effect.andThen(work)) }
+    })
+
+    const sessionExecutionSnapshot = Effect.fn("SessionRunState.sessionExecutionSnapshot")(function* (sessionID: SessionID) {
+      const data = yield* InstanceState.get(state)
+      return { isIdle: () => ![...(data.runners.get(sessionID)?.values() ?? [])].some((entry) => entry.busy) }
+    })
+
+    const executionSnapshot = Effect.fn("SessionRunState.executionSnapshot")(function* (sessionID: SessionID, agentID: string) {
+      const data = yield* InstanceState.get(state)
+      const current = () => {
+        const entry = data.runners.get(sessionID)?.get(agentID)?.state
+        if (!entry || entry._tag === "Idle") return undefined
+        return entry._tag === "Shell" ? entry.shell.fiber : entry.run.fiber
+      }
+      const fiber = current()
+      return { fiber, isCurrent: () => current() === fiber }
+    })
+
     const assertNotBusy = Effect.fn("SessionRunState.assertNotBusy")(function* (sessionID: SessionID, agentID = "main") {
       const data = yield* InstanceState.get(state)
       const existing = data.runners.get(sessionID)?.get(agentID)
@@ -154,8 +189,8 @@ export const layer = Layer.effect(
       work: Effect.Effect<MessageV2.WithParts>,
       admit?: Effect.Effect<void>,
     ) {
-      const active = yield* runner(sessionID, agentID, onInterrupt)
-      yield* active.start((admit ?? Effect.void).pipe(Effect.andThen(withOrphanSweep(sessionID, agentID, work))))
+      const { active, check, guard } = yield* ownedRunner(sessionID, agentID, onInterrupt)
+      yield* active.start(guard((admit ?? Effect.void).pipe(Effect.andThen(withOrphanSweep(sessionID, agentID, work)))), check)
       return
     })
 
@@ -166,9 +201,8 @@ export const layer = Layer.effect(
       work: Effect.Effect<MessageV2.WithParts>,
       admit?: Effect.Effect<void>,
     ) {
-      const active = yield* runner(sessionID, agentID, onInterrupt)
-      // An unadmitted run owns no history to settle, even on cancellation.
-      return yield* active.startOwned((admit ?? Effect.void).pipe(Effect.andThen(withOrphanSweep(sessionID, agentID, work))))
+      const { active, check, guard } = yield* ownedRunner(sessionID, agentID, onInterrupt)
+      return yield* active.startOwned(guard((admit ?? Effect.void).pipe(Effect.andThen(withOrphanSweep(sessionID, agentID, work)))), check)
     })
 
     // Process-group kill: session abort cancels EVERY runner under this session
@@ -223,7 +257,8 @@ export const layer = Layer.effect(
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, agentID, onInterrupt)).ensureRunning(withOrphanSweep(sessionID, agentID, work))
+      const { active, check, guard } = yield* ownedRunner(sessionID, agentID, onInterrupt)
+      return yield* active.ensureRunning(guard(withOrphanSweep(sessionID, agentID, work)), check)
     })
 
     const ensureExclusive = Effect.fn("SessionRunState.ensureExclusive")(function* (
@@ -232,7 +267,8 @@ export const layer = Layer.effect(
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, agentID, onInterrupt)).ensureExclusive(work)
+      const { active, check, guard } = yield* ownedRunner(sessionID, agentID, onInterrupt)
+      return yield* active.ensureExclusive(guard(work), check)
     })
 
     const startShell = Effect.fn("SessionRunState.startShell")(function* (
@@ -240,10 +276,11 @@ export const layer = Layer.effect(
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
       work: Effect.Effect<MessageV2.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, "main", onInterrupt)).startShell(work)
+      const { active, check, guard } = yield* ownedRunner(sessionID, "main", onInterrupt)
+      return yield* active.startShell(guard(work), check)
     })
 
-    return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, ensureExclusive, start, startOwned, startShell })
+    return Service.of({ assertNotBusy, executionSnapshot, sessionExecutionSnapshot, cancel, cancelActor, ensureRunning, ensureExclusive, start, startOwned, startShell })
   }),
 )
 

@@ -1,4 +1,5 @@
 import { HostModelTransport } from "../provider/host-transport"
+import { bindScopedRef } from "../effect/scoped-ref"
 import path from "path"
 import os from "os"
 import z from "zod"
@@ -21,9 +22,13 @@ import { Log } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent, resolveStoredAgent } from "../agent/agent"
-import { decideAskRouting, hasActorTool } from "@/agent/config"
+import { decideAskRouting, hasActorTool, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { makeTerminalNotifier } from "@/actor/notification"
+import { inboxControllerRef, schedulerRef, type Lane } from "@/inbox"
+import { MAX_CLAIM_PER_STEP, type Receipt } from "@/inbox/schema"
 import { ActorExecution } from "@/actor/execution"
+import { DEFAULT_LIVENESS_STALL_MS } from "@/actor/schema"
+import { DEFAULT_TIMEOUT_MS, WAIT_TIMEOUT_HINT } from "@/actor/waiter"
 import { parseReturnHeader } from "@/actor/return-header"
 import { runTurn } from "@/actor/turn"
 import { Provider } from "../provider"
@@ -48,7 +53,11 @@ import { usable, isOverflow as overflowCheck } from "./overflow"
 import { Config } from "@/config"
 import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import { Global } from "@/global"
-import { NotFoundError, Database, eq } from "@/storage"
+import { NotFoundError, Database, eq, and, inArray, isNull } from "@/storage"
+import { InboxTable } from "@/inbox/inbox.sql"
+import * as QueueSync from "@/inbox/sync"
+import { ReceiptUpdated } from "@/inbox/events"
+import { ExecutionOwnership } from "./execution-ownership"
 import { SessionTable } from "./session.sql"
 import { Bus } from "../bus"
 import { Question } from "../question"
@@ -132,12 +141,15 @@ import {
 } from "./trajectory"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { spawnRef } from "@/actor/spawn-ref"
+import { workflowRef } from "@/workflow/runtime-ref"
 import { Inbox } from "@/inbox"
-import { sessionPromptRef, defaultModelRef } from "@/inbox/inbox-ref"
+import { defaultModelRef } from "@/inbox/inbox-ref"
+import { resolveDrainSeed } from "@/inbox/inbox"
 import { orphanToolIdleSweepRef, assistantMessageIdsSnapshotRef } from "./orphan-tool-idle-hook"
 import { Tool } from "@/tool"
 import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
+import { CronBridge, defaultLayer as CronBridgeDefaultLayer } from "./cron-bridge"
 import { LLM } from "./llm"
 import { MaxMode } from "./max-mode"
 import { Shell } from "@/shell/shell"
@@ -581,8 +593,9 @@ function isExtensionPath(filePath: string): boolean {
 const elog = EffectLogger.create({ service: "session.prompt" })
 
 export interface Interface {
-  readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
+  readonly cancel: (sessionID: SessionID) => Effect.Effect<number>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts>
+  readonly promptAsync: (input: PromptInput) => Effect.Effect<{ message: MessageV2.WithParts; receiptId?: string }>
   readonly recovery: (input: { sessionID: SessionID; agentID?: string; allowBusy?: boolean }) => Effect.Effect<RecoveryCandidate[]>
   readonly resume: (input: ResumeTurnInput) => Effect.Effect<MessageV2.WithParts, InstanceType<typeof NotFoundError> | Session.BusyError>
   readonly resumeBackground: (input: ResumeTurnInput) => Effect.Effect<void, InstanceType<typeof NotFoundError> | Session.BusyError>
@@ -646,6 +659,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const bus = yield* Bus.Service
     const status = yield* SessionStatus.Service
+    const cronBridge = yield* CronBridge
     const sessions = yield* Session.Service
     const agents = yield* Agent.Service
     const provider = yield* Provider.Service
@@ -789,21 +803,18 @@ export const layer = Layer.effect(
     // interrupt main AND cascade-cancel every same-session actor/subagent so stop
     // is not limited to the main fiber while children keep running.
     //
-    // Quiet abort is bound to EACH execution (execution.groupAbort), not a
-    // session-level switch: a new main turn must not re-arm wake for a cancelled
-    // execution's late terminal notify, and resume must not inherit quiet.
-    //
-    // Order: mark every known non-main execution BEFORE any interrupt can fire
-    // terminal handlers, then cancel runners, then Actor.cancel({wake:false}).
-    //
     // Registry status is NOT a pre-filter: an idle registry row can still hold an
     // ActorExecution. Actor.cancel checks the execution registry first.
-    const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
+    const cancelWork = Effect.fn("SessionPrompt.cancelWork")(function* (sessionID: SessionID) {
       yield* elog.info("cancel", { sessionID })
       // Invalidate any delayed uncommitted-hint follow-up still waiting to claim.
       cancelPendingHints(sessionID)
       // Invalidate remaining cascade items that have not yet acquired ActorExecution.
       cascadeEpochBySession.set(sessionID, (cascadeEpochBySession.get(sessionID) ?? 0) + 1)
+      // C-01/cancel-epoch: bump persisted epoch and drop queued receipts FIRST so
+      // a kick cannot start pre-abort work after runners go Idle.
+      const tqCancel = inboxControllerRef.current
+      const epoch = tqCancel ? yield* tqCancel.abortSession(sessionID) : 0
       const actors = yield* actorRegistry.listBySession(sessionID)
       const nonMain = actors.filter((actor) => actor.actorID !== "main")
       // Phase 1 — mark executions before interrupt (terminal handlers read this flag).
@@ -816,16 +827,18 @@ export const layer = Layer.effect(
           }).pipe(Effect.ignore),
         { concurrency: "unbounded", discard: true },
       )
+      // Isolated workflow children have their own session identities and are not in nonMain.
+      if (workflowRef.current) yield* workflowRef.current.cancelSession(sessionID)
       // Phase 2 — interrupt runners.
       yield* state.cancel(sessionID)
-      // Phase 3 — cascade Actor.cancel; wake:false for any registry-only terminal.
+      // 终止同会话子 actor；终止通知由停止操作收尾统一结算。
       yield* Effect.forEach(
         nonMain,
         (actor) =>
           Effect.gen(function* () {
             const svc = spawnRef.current
             if (svc) {
-              yield* svc.cancel(sessionID, actor.actorID, "graceful", { wake: false })
+              yield* svc.cancel(sessionID, actor.actorID, "graceful")
               return
             }
             const execution = yield* executions.current(sessionID, actor.actorID)
@@ -852,18 +865,17 @@ export const layer = Layer.effect(
               actorID: actor.actorID,
               source: "pending",
               status: "cancelled",
-              wake: false,
             })
           }).pipe(Effect.ignore),
         { concurrency: "unbounded", discard: true },
       )
-      // R14 terminal inline: quiet abort still persists cancelled notifications
-      // (wake:false skips auto-fork only). Drain parent main inbox NOW so those
-      // rows become synthetic <actor-notification> message parts on the parent
-      // session — client live and history both read that part for the terminal pill.
-      // drain does NOT start an LLM turn.
-      yield* inbox.drain(sessionID, "main").pipe(Effect.ignore)
+      // Abort means idle: force-clear session status so a racing kick/settle
+      // cannot leave `busy` after process-group kill (C-01 quiet abort).
+      yield* status.set(sessionID, { type: "idle" }).pipe(Effect.catch(() => Effect.void))
+      return epoch
     })
+    const cancel = Effect.fn("SessionPrompt.cancel")((sessionID: SessionID) =>
+      inboxControllerRef.current?.withStop(sessionID, cancelWork(sessionID)) ?? cancelWork(sessionID))
 
     // Shared rebuild-from-checkpoint step used by BOTH the automatic overflow
     // path in runLoop and the manual `/rebuild` command, so the two can never
@@ -2310,6 +2322,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sessionID: SessionID
       session: Session.Info
       msgs: MessageV2.WithParts[]
+      onDelivery: (messageID: MessageID) => Effect.Effect<void>
     }) {
       const { task, model, lastUser, sessionID, session, msgs } = input
       const ctx = yield* InstanceState.context
@@ -2332,6 +2345,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         providerID: taskModel.providerID,
         time: { created: Date.now() },
       })
+      yield* input.onDelivery(assistantMessage.id)
       const taskArgs = {
         operation: {
           action: "run" as const,
@@ -2745,6 +2759,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (Option.isSome(match) && match.value.info.role === "user") return match.value.info.model
       return yield* provider.defaultModel()
     })
+
+    const acceptsIntoInbox = (input: PromptInput) => input.noReply !== true
 
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
       const agentName = input.agent || (yield* agents.defaultAgent())
@@ -3235,7 +3251,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           ? { fallback: { system: input.system, systemMode: input.systemMode, harness: input.harness } }
           : {}),
       })
-      const message: MessageV2.User = {
+      let message: MessageV2.User = {
         ...info,
         // Attachment-only prompts can be all-synthetic and skip the resolvePrompt
         // fallback (so they do not pin session.prompt). Still keep the caller
@@ -3293,8 +3309,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         })
       })
 
-      yield* sessions.updateMessage(message)
-      for (const part of parts) yield* sessions.updatePart(part)
+      // Accepted prompts persist through Inbox.accept (same transaction as
+      // the inbox record + input_revision bump). Everything else saves here.
+      if (!(inboxControllerRef.current && acceptsIntoInbox(input))) {
+        yield* sessions.updateMessage(message)
+        for (const part of parts) yield* sessions.updatePart(part)
+      }
 
       return { info: message, parts }
     }, Effect.scoped)
@@ -3427,7 +3447,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     // Wired via module ref: SessionRunState main-work ensuring invokes the
     // sweep (ownedMessageIds snapshot). SessionStatus.commit does NOT sweep.
     // Wire the idle-edge sweep. Identity-guarded clear so a rebuilt layer does
-    // not wipe a newer registration (same pattern as sessionPromptRef).
+    // not wipe a newer registration.
     const idleSweep = (sid: SessionID, opts?: { before?: number; ownedMessageIds?: ReadonlySet<string> }) =>
       sweepOrphanToolParts(sid, opts)
     orphanToolIdleSweepRef.current = idleSweep
@@ -3445,7 +3465,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }),
     )
 
-    const prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.prompt")(
+    const preparePrompt = Effect.fn("SessionPrompt.preparePrompt")(
       function* (input: PromptInput) {
         const session = yield* sessions.get(input.sessionID)
         if (
@@ -3476,8 +3496,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
         const eligibleTitle = input.source !== "hook" && input.source !== "spawn" && !input.provenance && session.titleSource === "fallback" && session.titleRevision === 0 && !session.parentID && (input.agentID ?? "main") === "main"
         const previous = eligibleTitle ? yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" }) : []
+        const tqBoot = inboxControllerRef.current
+        if (tqBoot && (input.agentID ?? "main") === "main") {
+          yield* tqBoot.reconcileOnBoot(input.sessionID)
+        }
         const message = yield* createUserMessage(input)
         yield* sessions.touch(input.sessionID)
+        const tq = inboxControllerRef.current
+        let promptReceiptId: string | undefined
+        if (message.parts.length > 0 && tq && acceptsIntoInbox(input)) {
+          const receipt = yield* tq.accept({
+            lane: { sessionID: input.sessionID, agentID: input.agentID ?? "main" },
+            message: message.info as MessageV2.User,
+            parts: message.parts,
+            type: input.source ?? "prompt",
+            // Stable per-message key so a second accept (HTTP route) cannot
+            // insert a second live receipt for the same user message.
+            idempotencyKey: message.info.id,
+          })
+          promptReceiptId = receipt.id
+        }
         const permissions: Permission.Ruleset = []
         for (const [t, enabled] of Object.entries(input.tools ?? {})) {
           permissions.push({ permission: t, action: enabled ? "allow" : "deny", pattern: "*" })
@@ -3491,12 +3529,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         if (titleMessage?.info.role === "user") {
           yield* title({ session, agent: titleMessage.info.agent, model: titleMessage.info.model, titleLocale: input.titleLocale, history: [titleMessage] }).pipe(Effect.catchCause(cause => elog.warn("title initialization failed", { error: Cause.squash(cause) })))
         }
-        if (input.noReply === true) return message
-        // Short-circuit: when the message was dropped for being empty-content
-        // (hasSubstantiveContent returned false → parts: []), skip the model
-        // turn entirely. Running loop() here would produce a spurious assistant
-        // response with no user turn.
-        if (message.parts.length === 0) return message
+        return { message, receiptId: promptReceiptId }
+      },
+    )
+
+    const executePrompt = (input: PromptInput, prepared: { message: MessageV2.WithParts; receiptId?: string }) =>
+      Effect.gen(function* () {
+        if (input.noReply === true || prepared.message.parts.length === 0) return prepared.message
+        if (prepared.receiptId) {
+          yield* laneKick({ sessionID: input.sessionID, agentID: input.agentID ?? "main" }, input)
+          return yield* lastAssistant(input.sessionID, input.agentID)
+        }
         return yield* loop({
           sessionID: input.sessionID,
           agentID: input.agentID ?? "main",
@@ -3505,10 +3548,31 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // Trusted user-facing protocol: client, TUI, HTTP, or command omitting source → user.
           // Internal callers must pass explicit non-user source (spawn/hook).
           source: input.source ?? "user",
-          deferInbox: (input.source ?? "user") === "hook" && input.agentID !== undefined && input.agentID !== "main",
         })
-      },
-    )
+      })
+
+    const prompt: Interface["prompt"] = Effect.fn("SessionPrompt.prompt")(function* (input) {
+      const prepared = yield* preparePrompt(input)
+      return yield* executePrompt(input, prepared)
+    })
+
+    const promptAsync: Interface["promptAsync"] = Effect.fn("SessionPrompt.promptAsync")(function* (input) {
+      const prepared = yield* preparePrompt(input)
+      if (input.noReply !== true && prepared.message.parts.length > 0) {
+        yield* executePrompt(input, prepared).pipe(
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) return Effect.void
+            const error = Cause.squash(cause)
+            return bus.publish(Session.Event.Error, {
+              sessionID: input.sessionID,
+              error: new NamedError.Unknown({ message: error instanceof Error ? error.message : String(error) }).toObject(),
+            })
+          }),
+          Effect.forkIn(scope),
+        )
+      }
+      return prepared
+    })
 
     const lastAssistant = Effect.fnUntraced(function* (sessionID: SessionID, agentID?: string) {
       if (agentID !== undefined) {
@@ -3593,7 +3657,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }
 
     const recovery = Effect.fn("SessionPrompt.recovery")(function* (input: { sessionID: SessionID; agentID?: string; allowBusy?: boolean }) {
-      if (!input.allowBusy && (yield* status.get(input.sessionID)).type !== "idle") return []
+      if (!input.allowBusy) {
+        if ((yield* status.get(input.sessionID)).type !== "idle") return []
+        // Runner acquisition precedes the runLoop's busy publication.
+        if (Exit.isFailure(yield* state.assertNotBusy(input.sessionID, input.agentID).pipe(Effect.exit))) return []
+      }
       const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const candidates: RecoveryCandidate[] = []
       for (const [index, msg] of msgs.entries()) {
@@ -3626,12 +3694,34 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return candidates
     })
 
+    type ClaimOwner = { runId: number; receipts: Receipt[]; frontier?: MessageID }
+    type PreparedLoop = { work: Effect.Effect<MessageV2.WithParts>; claimOwner?: ClaimOwner }
+    const settleClaims = (lane: Lane, owner: ClaimOwner, exit: Exit.Exit<MessageV2.WithParts, unknown>) =>
+      Effect.gen(function* () {
+        const controller = inboxControllerRef.current
+        if (!controller || owner.receipts.length === 0) return
+        const rows = Database.use((db) => db.select().from(InboxTable).where(and(
+          inArray(InboxTable.id, owner.receipts.map((receipt) => receipt.id)),
+          eq(InboxTable.state, "claimed"), eq(InboxTable.run_id, owner.runId),
+        )).all())
+        if (rows.length === 0) return
+        const interrupted = Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)
+        const finalError = Exit.isSuccess(exit) && exit.value.info.role === "assistant" ? exit.value.info.error : undefined
+        const error = Exit.isFailure(exit) ? Cause.pretty(exit.cause) : finalError ? String(finalError) : undefined
+        yield* controller.ack(lane, owner.frontier, rows.map((row) => ({
+          receiptId: row.id,
+          outcome: Exit.isFailure(exit)
+            ? row.consumed ? interrupted ? "interrupted" as const : "assistant_error" as const : "never_ran" as const
+            : finalError ? "assistant_error" as const : "success" as const,
+          error: interrupted ? undefined : error,
+        })), owner.runId)
+      })
+
     const runLoop: (
       sessionID: SessionID,
       agentID?: string,
       task_id?: string,
       titleLocale?: string,
-      deferInbox?: boolean,
       resumeFrom?: string,
       modelOverride?: { providerID: string; modelID: string },
       /** user-resume: force a new turn from the parent user; step-0 skips classify of old siblings. */
@@ -3648,20 +3738,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
        * Trailing-user resume sets this; empty-shell user-resume allows completed siblings.
        */
       strictParentTail?: boolean,
+      /**
+       * Inbox claim frontier (C-01). Mid-turn pickup of a newer user requires
+       * extendClaim before treating `id > claimFrontier` as part of this run.
+       */
+      claimFrontier?: MessageID,
+      claimOwner?: ClaimOwner,
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (
         sessionID: SessionID,
         agentID?: string,
         task_id?: string,
         titleLocale?: string,
-        deferInbox = false,
         resumeFrom?: string,
         modelOverride?: { providerID: string; modelID: string },
         userRedispatch = false,
         turnSource?: "user" | "spawn" | "hook",
         parentUserID?: MessageID,
         strictParentTail = false,
+        claimFrontier?: MessageID,
+        claimOwner?: ClaimOwner,
       ) {
+        claimOwner ??= { runId: Date.now(), receipts: [], frontier: claimFrontier }
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
         let structured: unknown | undefined
@@ -3976,7 +4074,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     // Diagnostic counter only — does not cap re-hint. Product: later dirty
                     // USER turns may inject again; hook/spawn never re-enter.
                     recordHintOutcome(sessionID, { dirty: true, injected: true, consecutiveHints })
-                    const result = yield* runLoop(sessionID, resolvedAgentID, undefined, undefined, false, undefined, undefined, false, "hook")
+                    const result = yield* runLoop(sessionID, resolvedAgentID, undefined, undefined, undefined, undefined, false, "hook")
                     return result
                   }).pipe(Effect.catch(() => Effect.succeed(undefined as never)))
                   yield* state
@@ -4414,7 +4512,190 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           })
         })
 
+        // Partial completion notifications must not renew the remaining children's wait window.
+        let subagentWait: { deadline: number; inputRevision: number } | undefined
+        let subagentWaitUser: MessageV2.User | undefined
+        const clearSubagentWaitStatus = Effect.fn("SessionPrompt.clearSubagentWaitStatus")(function* () {
+          const current = yield* status.get(sessionID)
+          if (current.type === "busy" && current.wait)
+            yield* status.set(sessionID, { type: "busy", message: current.message })
+        })
+        const waitForSubagents = Effect.fn("SessionPrompt.waitForSubagents")(function* (
+          afterRevision: number,
+          lastUser: MessageV2.User,
+        ) {
+          if (resolvedAgentID !== "main") return false
+          if (subagentWait?.inputRevision !== afterRevision) subagentWait = undefined
+          const lane = { sessionID, agentID: resolvedAgentID }
+          for (;;) {
+            const waits: Effect.Effect<unknown>[] = []
+            const active = new Map<string, () => boolean>()
+            const stalled: string[] = []
+            const actors = yield* actorRegistry.listBySession(sessionID)
+            for (const actor of actors) {
+              if (actor.mode !== "subagent" || SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent)) continue
+              const execution = yield* executions.current(sessionID, actor.actorID)
+              const exited = execution?.fiber?.pollUnsafe()
+              if (execution && !exited) {
+                // Observing a fiber must not cancel it when steer wins the race.
+                waits.push(execution.fiber ? Fiber.await(execution.fiber) : Deferred.await(execution.done))
+                active.set(actor.actorID, () =>
+                  executions.currentUnsafe(sessionID, actor.actorID) === execution &&
+                  (!execution.fiber || execution.fiber.pollUnsafe() === undefined),
+                )
+                if (Date.now() - (actor.lastActivityTime ?? actor.time.created) >= DEFAULT_LIVENESS_STALL_MS)
+                  stalled.push(actor.actorID)
+                continue
+              }
+              const error = exited && Exit.isFailure(exited)
+                ? Cause.pretty(exited.cause)
+                : "Subagent execution ended without a terminal outcome; no active execution remains."
+              const settled = yield* Effect.gen(function* () {
+                const runner = yield* state.executionSnapshot(sessionID, actor.actorID)
+                if (runner.fiber && !runner.fiber.pollUnsafe()) {
+                  waits.push(Fiber.await(runner.fiber))
+                  active.set(actor.actorID, () =>
+                    runner.isCurrent() && !!runner.fiber && runner.fiber.pollUnsafe() === undefined,
+                  )
+                  if (Date.now() - (actor.lastActivityTime ?? actor.time.created) >= DEFAULT_LIVENESS_STALL_MS)
+                    stalled.push(actor.actorID)
+                  return "waiting" as const
+                }
+                return yield* actorRegistry.failOrphan(
+                  sessionID, actor.actorID, error,
+                  () => executions.currentUnsafe(sessionID, actor.actorID) === execution && runner.isCurrent(),
+                )
+              }).pipe(Effect.ensuring(execution ? executions.release(execution) : Effect.void))
+              if (execution) waits.push(Effect.yieldNow)
+              if (settled === "retry") {
+                waits.push(Effect.sleep("1 second"))
+                continue
+              }
+              if (settled === "terminal" || settled === "waiting") continue
+              yield* notifyTerminal({
+                sessionID, actorID: actor.actorID, parentActorID: "main", source: "continuation", status: "failed", error,
+              })
+            }
+            if (waits.length === 0) subagentWait = undefined
+            if (active.size > 0)
+              subagentWait ??= { deadline: Date.now() + DEFAULT_TIMEOUT_MS, inputRevision: afterRevision }
+            const tq = inboxControllerRef.current
+            if (tq && (yield* tq.observeInput(lane, -1)) > afterRevision) {
+              subagentWait = undefined
+              yield* clearSubagentWaitStatus()
+              return true
+            }
+            if (waits.length === 0) {
+              yield* clearSubagentWaitStatus()
+              return false
+            }
+            const remaining = subagentWait ? subagentWait.deadline - Date.now() : DEFAULT_TIMEOUT_MS
+            if (remaining <= 0 && active.size > 0) {
+              if (tq && (yield* tq.observeInput(lane, -1)) > afterRevision) {
+                subagentWait = undefined
+                yield* clearSubagentWaitStatus()
+                return true
+              }
+              // Reconcile children that exited or were replaced during the inbox/input checks first.
+              if ([...active.values()].some((isActive) => !isActive())) continue
+              // A newer synthetic user makes the old final stale without admitting another runner.
+              const msg = yield* sessions.updateMessage({
+                id: MessageID.ascending(),
+                role: "user" as const,
+                sessionID,
+                agentID: resolvedAgentID,
+                agent: lastUser.agent,
+                model: lastUser.model,
+                tools: lastUser.tools,
+                format: lastUser.format,
+                time: { created: Date.now() },
+              })
+              yield* sessions.updatePart({
+                id: PartID.ascending(),
+                messageID: msg.id,
+                sessionID,
+                type: "text",
+                synthetic: true,
+                text: [
+                  "<system-reminder>",
+                  `Automatic subagent wait timed out. Still-active actor IDs: ${[...active.keys()].join(", ")}.`,
+                  WAIT_TIMEOUT_HINT,
+                  "</system-reminder>",
+                ].join("\n"),
+              } satisfies MessageV2.TextPart)
+              subagentWait = undefined
+              yield* clearSubagentWaitStatus()
+              return true
+            }
+            yield* status.set(sessionID, {
+              type: "busy",
+              message: stalled.length
+                ? `Waiting for subagents; no recent activity: ${stalled.join(", ")}`
+                : `Waiting for ${waits.length} subagent(s)`,
+              wait: {
+                kind: "subagents",
+                actorIDs: [...active.keys()],
+                stalled: [...stalled],
+                deadline: subagentWait?.deadline ?? Date.now() + DEFAULT_TIMEOUT_MS,
+              },
+            })
+            if (tq) waits.push(tq.observeInput(lane, afterRevision))
+            // Periodically refresh liveness display; silence alone is not proof of death.
+            waits.push(Effect.sleep(remaining > 0 ? Math.min(30_000, remaining) : 30_000))
+            yield* Effect.raceAllFirst(waits)
+          }
+        })
+
+        let unprocessedPrompt = (claimOwner?.receipts.length ?? 0) > 0
+        const deliveredPrompts = new Set<MessageID>()
+        const recordDelivery = Effect.fn("SessionPrompt.recordDelivery")(function* (
+          messageID: MessageID,
+          msgs: MessageV2.WithParts[],
+        ) {
+          if (claimOwner) {
+            const pending = claimOwner.receipts.filter((receipt) => {
+              return !deliveredPrompts.has(receipt.inputMessageID) &&
+                msgs.some((msg) => msg.info.id === receipt.inputMessageID)
+            })
+            if (pending.length > 0) {
+              const identity = yield* ExecutionOwnership.captureIdentity
+              const anchored = yield* Effect.sync(() => Database.transaction((db) => {
+                ExecutionOwnership.assertOwnership(db, sessionID, identity)
+                const receipts = db.update(InboxTable).set({
+                  delivery_message_id: messageID,
+                  consumed: true,
+                }).where(and(
+                  inArray(InboxTable.id, pending.map((receipt) => receipt.id)),
+                  eq(InboxTable.state, "claimed"),
+                  eq(InboxTable.run_id, claimOwner.runId),
+                  eq(InboxTable.epoch, pending[0].epoch),
+                  isNull(InboxTable.delivery_message_id),
+                )).returning().all()
+                QueueSync.record({ sessionID, receipts })
+                return receipts
+              }))
+              for (const row of anchored) {
+                yield* bus.publish(ReceiptUpdated, {
+                  sessionID: row.receiver_session_id,
+                  receiptId: row.id,
+                  agentID: row.receiver_actor_id,
+                  state: row.state,
+                  inputMessageID: String(row.input_message_id),
+                  deliveryMessageID: messageID,
+                  epoch: row.epoch,
+                })
+              }
+              for (const receipt of pending) {
+                deliveredPrompts.add(receipt.inputMessageID)
+              }
+            }
+          }
+          unprocessedPrompt = false
+        })
         while (true) {
+          const inputRevision = inboxControllerRef.current
+            ? yield* inboxControllerRef.current.observeInput({ sessionID, agentID: resolvedAgentID }, -1)
+            : 0
           // Per-iteration: a streak crop on this turn must suppress a duplicate
           // text-loop recovery user, but must not block a later re-crop if the
           // model loops again after recovery.
@@ -4426,9 +4707,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const current = yield* status.get(sessionID)
             if (current.type !== "retry") yield* status.set(sessionID, { type: "busy" })
           }
-          if (!deferInbox) yield* inbox.drain(sessionID, agentID ?? "main").pipe(Effect.ignore)
           yield* slog.info("loop", { step })
-          // [C003/C004] Test seam: stop after inbox drain, before step-0 parent lock.
+          // [C003/C004] 在步骤零的父消息检查前暂停。
           const beforeStep0 = step === 0 ? ResumeTestHooks.beforeStep0ParentCheck : undefined
           if (beforeStep0) yield* beforeStep0()
 
@@ -4438,18 +4718,58 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // design would see the parent's full conversation here and drift
           // off-task. agentID === "main" => main agent slice (agent_id = 'main'
           // in DB), agentID === "explore-1" => only explore-1's slice.
+          if (inboxControllerRef.current) {
+            const controller = inboxControllerRef.current
+            const lane = { sessionID, agentID: resolvedAgentID }
+            const extended = claimOwner.receipts.length === 0
+              ? yield* controller.claimNext(lane, claimOwner.runId)
+              : yield* controller.extendClaim(lane, claimOwner.runId, claimOwner.receipts[0]?.epoch,
+                step === 0 ? MAX_CLAIM_PER_STEP - claimOwner.receipts.length : MAX_CLAIM_PER_STEP)
+            if (extended) {
+              claimOwner.receipts.push(...extended.receipts)
+              unprocessedPrompt ||= extended.receipts.length > 0
+              if (extended.claimFrontier && (!claimFrontier || extended.claimFrontier > claimFrontier))
+                claimFrontier = extended.claimFrontier
+              claimOwner.frontier = claimFrontier
+            }
+          }
           let msgs = yield* MessageV2.filterCompactedEffect(sessionID, {
             contextFrom: session.contextFrom,
             contextWatermark: session.contextWatermark,
             agentID: agentID ?? "main",
           })
+          if (claimOwner) {
+            const receipts = yield* Effect.sync(() => Database.use((db) => db.select().from(InboxTable).where(and(
+              eq(InboxTable.receiver_session_id, sessionID),
+              eq(InboxTable.receiver_actor_id, resolvedAgentID),
+            )).all()))
+            const owned = new Set(claimOwner.receipts.map((receipt) => receipt.id))
+            msgs = yield* Effect.sync(() => MessageV2.renderedOrder(msgs, receipts, sessionID, owned,
+              (messageID) => MessageV2.get({ sessionID, messageID })))
+            const pending = claimOwner.receipts.flatMap((receipt) =>
+              !deliveredPrompts.has(receipt.inputMessageID)
+                ? [receipt.inputMessageID] : [],
+            )
+            const compacting = msgs.findLast((msg) => msg.info.role === "user")?.parts.some((part) =>
+              part.type === "compaction" && !part.projection,
+            )
+            // An unfinished boundary must run before pending prompts enter their first model step.
+            if (pending.length > 0 && !compacting) {
+              const inputs = yield* Effect.sync(() => pending.map((messageID) =>
+                msgs.find((msg) => msg.info.id === messageID) ?? MessageV2.get({ sessionID, messageID }),
+              ))
+              msgs = msgs.filter((msg) => !pending.includes(msg.info.id))
+              msgs.push(...inputs)
+              unprocessedPrompt = true
+            }
+          }
 
           let lastUser: MessageV2.User | undefined
           let lastAssistant: MessageV2.Assistant | undefined
           let lastFinished: MessageV2.Assistant | undefined
           let tasks: MessageV2.SubtaskPart[] = []
           // [R003] user-resume first step: bind parent to the planned user; do not adopt newer lastUser.
-          // After inbox drain, the locked parent must still be the last user — a later user would
+          // The locked parent must still be the last user — a later user would
           // enter the model context while parent stays old. Later assistants are allowed only when
           // plan did not require strict tail (empty-shell siblings); trailing-user is strict.
           const lockParentOnStep0 = step === 0 && parentUserID !== undefined
@@ -4490,6 +4810,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
           if (!lastUser) {
             throw new Error("No user message found in stream. This should never happen.")
+          }
+          if (resolvedAgentID === "main" && (subagentWaitUser || unprocessedPrompt)) {
+            const previous = subagentWaitUser
+            subagentWaitUser = undefined
+            const resumed = msgs.findLast((msg) => msg.info.role === "user")
+            if (resumed?.parts.length && resumed.parts.every((part) => part.type === "text" && part.synthetic)) {
+              // Admission, not ordering relative to a synthetic message, selects the request's format.
+              const requestUser = msgs.findLast((msg) =>
+                msg.info.role === "user" && msg.parts.some((part) => part.type !== "text" || !part.synthetic),
+              )
+              const format = requestUser?.info.role === "user"
+                ? requestUser.info.format
+                : previous ? previous.format : lastUser.format
+              if (lastUser.format !== format) {
+                lastUser.format = format
+                yield* sessions.updateMessage(lastUser)
+              }
+            }
           }
 
           lastUser = {
@@ -4541,7 +4879,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
           // user-resume: skip existing-assistant classify only on step 0 (old sibling);
           // later steps classify the assistant this run created, or the loop would call the model forever.
-          const skipExistingClassify = userRedispatch && step === 0
+          // A delayed admission may predate the last assistant without having entered its model snapshot.
+          const skipExistingClassify = (userRedispatch && step === 0) || unprocessedPrompt
           if (
             !skipExistingClassify &&
             lastAssistant?.finish === "length" &&
@@ -4582,6 +4921,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (classification.type === "final" && classification.degraded)
               yield* slog.warn("degraded final on abnormal finish", { finish: lastAssistant.finish })
             if (classification.type !== "continue") {
+              if (yield* waitForSubagents(inputRevision, lastUser)) {
+                subagentWaitUser = lastUser
+                continue
+              }
               if (yield* goalGate(lastUser)) continue
               yield* slog.info("exiting loop", { classification: classification.type })
               break
@@ -4601,7 +4944,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // the session layer out of the app-runtime module-init cycle
             // (prompt → app-runtime → AppLayer → SessionPrompt). Only loaded when a
             // trigger actually fires. Detached fire-and-forget on the full runtime.
-            const needAppRuntime = dreamTrigger || distillTrigger || Flag.MIMOCODE_EXPERIMENTAL_CRON
+            const needAppRuntime = dreamTrigger || distillTrigger
             if (needAppRuntime) {
               const { AppRuntime } = yield* Effect.promise(() => import("@/effect/app-runtime"))
               if (dreamTrigger) {
@@ -4626,20 +4969,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ),
                 ).catch((err) => log.error("auto-distill prompt failed", { error: String(err) }))
               }
-              // T18-bridge mount: fire CronBridge.start(sessionID, workspaceRoot)
-              // once per new top-level session boot. The bridge itself no-ops when
-              // MIMOCODE_EXPERIMENTAL_CRON is unset; the outer gate just skips the
-              // resolve cost in the common case. Mirrors auto-dream's detached
-              // dynamic-import pattern so prompt.ts stays out of the app-runtime
-              // module-init cycle. Bridge.start is idempotent via its `started`
-              // guard, and its Layer finalizer handles teardown on scope close.
-              if (Flag.MIMOCODE_EXPERIMENTAL_CRON) {
-                const workspaceRoot = (yield* InstanceState.context).worktree
-                const { CronBridge } = yield* Effect.promise(() => import("@/session/cron-bridge"))
-                AppRuntime.runPromise(
-                  CronBridge.use((b) => b.start(sessionID, workspaceRoot)),
-                ).catch((err) => log.error("cron-bridge start failed", { sessionID, error: String(err) }))
-              }
+            }
+            if (Flag.MIMOCODE_EXPERIMENTAL_CRON) {
+              const workspaceRoot = (yield* InstanceState.context).worktree
+              yield* cronBridge.start(
+                sessionID,
+                workspaceRoot,
+                (input) => injectScheduledPrompt(input).pipe(Effect.provideService(Service, impl)),
+              ).pipe(Effect.catchCause((cause) => Effect.sync(() =>
+                log.error("cron-bridge start failed", { sessionID, error: Cause.pretty(cause) }),
+              )))
             }
           }
 
@@ -4651,7 +4990,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const task = tasks.pop()
 
           if (task?.type === "subtask") {
-            yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+            yield* handleSubtask({
+              task, model, lastUser, sessionID, session, msgs,
+              onDelivery: (messageID) => recordDelivery(messageID, msgs),
+            })
             continue
           }
 
@@ -5453,6 +5795,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                    })
                   : handle.process(processArgs)
 
+                yield* recordDelivery(handle.message.id, msgs)
                 const result = yield* stepEffect.pipe(
                   Effect.onExit((exit) =>
                     plugin
@@ -5695,6 +6038,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
 
           if (outcome === "break") {
+            if (structured !== undefined && !handle.message.error && (yield* waitForSubagents(inputRevision, lastUser))) {
+              subagentWaitUser = lastUser
+              structured = undefined
+              continue
+            }
             if (yield* goalGate(lastUser)) continue
             break
           }
@@ -5725,127 +6073,127 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           Option.isSome(lastUserForMetrics) ? lastUserForMetrics.value.info.agent : final.info.agent,
         )
         return final
-        }).pipe(Effect.onExit(firePostSession), Effect.ensuring(MCP.releaseTurnClients(mcpContext)), Effect.orDie)
+        }).pipe(
+          Effect.onExit(firePostSession),
+          Effect.onExit((exit) => settleClaims({ sessionID, agentID: resolvedAgentID }, claimOwner, exit)),
+          Effect.ensuring(MCP.releaseTurnClients(mcpContext)),
+          Effect.orDie,
+        )
       },
     )
 
-    const loop: (input: z.infer<typeof LoopInput>) => Effect.Effect<MessageV2.WithParts> = Effect.fn(
-      "SessionPrompt.loop",
-    )(function* (input: z.infer<typeof LoopInput>) {
+    const executeLoop = Effect.fn("SessionPrompt.executeLoop")(function* (
+      input: z.infer<typeof LoopInput>,
+      prepare: Effect.Effect<PreparedLoop | undefined>,
+    ) {
       const agentID = input.agentID ?? "main"
-      const work = runLoop(
-        input.sessionID,
-        agentID,
-        input.task_id,
-        input.titleLocale,
-        input.deferInbox,
-        undefined,
-        undefined,
-        undefined,
-        input.source,
-      )
       if (!input.notifyParentOnComplete || agentID === "main") {
+        const work = Effect.acquireUseRelease(
+          prepare,
+          (prepared) => prepared?.work ?? lastAssistant(input.sessionID, agentID),
+          (prepared, exit) => prepared?.claimOwner
+            ? settleClaims({ sessionID: input.sessionID, agentID }, prepared.claimOwner, exit) : Effect.void,
+        )
         return yield* state.ensureRunning(input.sessionID, agentID, lastAssistant(input.sessionID, agentID), work)
       }
       return yield* Effect.acquireUseRelease(
         executions.acquire(input.sessionID, agentID),
         (execution) => Effect.gen(function* () {
           yield* executions.attach(execution)
-          // Cancelled before drain: skip consuming messages for a turn that won't
-          // run. Still falls through to runTurn so onExit sends the cancelled
-          // notification (continued interrupts immediately).
-          // isCancelled is re-checked inside drain just before commit, so a
-          // cancel that lands mid-drain leaves Inbox rows durable instead of
-          // writing a synthetic user message for a turn that will not run.
-          // Re-check cancelled after an empty drain: Actor.cancel's execution
-          // path does not notify — only runTurn.onExit does.
-          if (execution.cancelled) {
-            // no-op; continued below handles interrupt + notification
-          } else if (
-            input.inboxWake &&
-            (yield* inbox.drain(input.sessionID, agentID, () => execution.cancelled)) === 0
-          ) {
-            if (!execution.cancelled) return yield* lastAssistant(input.sessionID, agentID)
-          }
-          // Capture the last assistant delivery even when the turn dies with a
-          // settled error, so settle can persist a partial result the way spawn
-          // does via lastResult. Without this, a failed continuation leaves
-          // result_message_id null after the running transition cleared it.
-          let lastFinal: MessageV2.WithParts | undefined
-          const continued = Effect.gen(function* () {
-            if (execution.cancelled) return yield* Effect.interrupt
-            const final = yield* state.ensureRunning(input.sessionID, agentID, lastAssistant(input.sessionID, agentID), work)
-            lastFinal = final
-            if (final.info.role === "assistant" && final.info.error) {
-              return yield* Effect.die(new Error(sessionErrorText(final.info.error)))
-            }
-            return final
-          }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
-            ? state.cancelActor(input.sessionID, agentID)
-            : Effect.void))
-          return yield* runTurn(
-            input.sessionID,
-            agentID,
-            continued,
-            // Persist actorResult on the final assistant message so a subsequent
-            // failure wait can find this cycle's delivery via result_message_id.
-            // Without this, registry.updateStatus clears the column on the
-            // running transition and never writes a new one. Mirrors spawn.ts:
-            // success uses the exit value; failure falls back to lastFinal.
-            (exit) =>
-              Effect.gen(function* () {
-                if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return undefined
-                const final = Exit.isSuccess(exit) ? exit.value : lastFinal
-                if (!final || final.info.role !== "assistant") return undefined
-                const text = assistantFinalText(final.info, final.parts)
-                const structured = final.info.structured
-                if (text === undefined && structured === undefined) return undefined
-                const parsed = parseReturnHeader(text)
-                yield* sessions.updateMessage({
-                  ...final.info,
-                  actorResult: {
-                    finalText: text,
-                    structured,
-                    ...(parsed.status ? { reportedStatus: parsed.status } : {}),
-                    ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
-                  },
-                })
-                return final.info.id
-              }),
-          ).pipe(
-            Effect.provideService(ActorRegistry.Service, actorRegistry),
-            Effect.onExit((exit) => Effect.gen(function* () {
-              const final = Exit.isSuccess(exit) ? exit.value : lastFinal
-              const text = final?.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
-              const parsed = parseReturnHeader(text)
-              const status = Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed"
-              // Quiet is bound to THIS execution: a later main turn must not
-              // re-arm wake for a cancelled continuation's terminal notify.
-              const quiet = Boolean(execution.groupAbort)
-              yield* notifyTerminal({
-                sessionID: input.sessionID,
-                actorID: agentID,
-                source: "continuation",
-                status,
-                ...(quiet ? { wake: false as const } : {}),
-                ...(status === "completed" ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary } : {}),
-                ...(Exit.isFailure(exit) && status === "failed" ? {
-                  error: Cause.pretty(exit.cause),
-                  ...(text !== undefined ? { result: text } : {}),
-                  ...(parsed.status ? { reportedStatus: parsed.status } : {}),
-                  ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
-                } : {}),
-              })
-            })),
+          return yield* Effect.acquireUseRelease(
+            prepare,
+            (prepared) => Effect.gen(function* () {
+              if (!prepared) return yield* lastAssistant(input.sessionID, agentID)
+              // 错误退出仍保留本次 assistant 交付，供 actorResult 与终止通知读取。
+              let lastFinal: MessageV2.WithParts | undefined
+              const continued = Effect.gen(function* () {
+                if (execution.cancelled) return yield* Effect.interrupt
+                const final = yield* state.ensureRunning(input.sessionID, agentID, lastAssistant(input.sessionID, agentID), prepared.work)
+                lastFinal = final
+                if (final.info.role === "assistant" && final.info.error) {
+                  return yield* Effect.die(new Error(sessionErrorText(final.info.error)))
+                }
+                return final
+              }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
+                ? state.cancelActor(input.sessionID, agentID)
+                : Effect.void))
+              return yield* runTurn(
+                input.sessionID,
+                agentID,
+                continued,
+                (exit) => Effect.gen(function* () {
+                  if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return undefined
+                  const final = Exit.isSuccess(exit) ? exit.value : lastFinal
+                  if (!final || final.info.role !== "assistant") return undefined
+                  const text = assistantFinalText(final.info, final.parts)
+                  const structured = final.info.structured
+                  if (text === undefined && structured === undefined) return undefined
+                  const parsed = parseReturnHeader(text)
+                  yield* sessions.updateMessage({
+                    ...final.info,
+                    actorResult: {
+                      finalText: text,
+                      structured,
+                      ...(parsed.status ? { reportedStatus: parsed.status } : {}),
+                      ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
+                    },
+                  })
+                  return final.info.id
+                }),
+              ).pipe(
+                Effect.provideService(ActorRegistry.Service, actorRegistry),
+                Effect.onExit((exit) => Effect.gen(function* () {
+                  const final = Exit.isSuccess(exit) ? exit.value : lastFinal
+                  const text = final?.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
+                  const parsed = parseReturnHeader(text)
+                  const status = Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed"
+                  yield* notifyTerminal({
+                    sessionID: input.sessionID,
+                    actorID: agentID,
+                    source: "continuation",
+                    status,
+                    ...(status === "completed" ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary } : {}),
+                    ...(Exit.isFailure(exit) && status === "failed" ? {
+                      error: Cause.pretty(exit.cause),
+                      ...(text !== undefined ? { result: text } : {}),
+                      ...(parsed.status ? { reportedStatus: parsed.status } : {}),
+                      ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
+                    } : {}),
+                  })
+                })),
+              )
+            }),
+            (prepared, exit) => prepared?.claimOwner
+              ? settleClaims({ sessionID: input.sessionID, agentID }, prepared.claimOwner, exit) : Effect.void,
           )
         }).pipe(Effect.uninterruptible),
         (execution) => executions.release(execution),
       )
     })
 
+    const loop: Interface["loop"] = (input) => executeLoop(input, Effect.succeed({ work: runLoop(
+      input.sessionID, input.agentID, input.task_id, input.titleLocale,
+      undefined, undefined, undefined, input.source,
+    ) }))
+
+    const leaseGuard = Effect.fn("SessionPrompt.leaseGuard")(function* (sessionID: SessionID) {
+      const generation = cascadeEpochBySession.get(sessionID) ?? 0
+      const queue = inboxControllerRef.current
+      const epoch = queue ? yield* queue.getEpoch(sessionID) : undefined
+      return Effect.gen(function* () {
+        if ((cascadeEpochBySession.get(sessionID) ?? 0) !== generation) return yield* Effect.interrupt
+        if (queue && (yield* queue.getEpoch(sessionID)) !== epoch) return yield* Effect.interrupt
+      })
+    })
+
     const shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError> = Effect.fn("SessionPrompt.shell")(
       function* (input: ShellInput) {
-        return yield* state.startShell(input.sessionID, lastAssistant(input.sessionID), shellImpl(input))
+        const guard = yield* leaseGuard(input.sessionID)
+        return yield* state.startShell(
+          input.sessionID,
+          lastAssistant(input.sessionID),
+          guard.pipe(Effect.andThen(shellImpl(input))),
+        )
       },
     )
 
@@ -6271,9 +6619,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       model?: ResumeTurnInput["model"]
       plan: Exclude<ResumePlan, { action: "reject" }>
       attempt?: HostModelTransport.ExecutionAttempt
+      guard: Effect.Effect<void>
       mode: "ensure" | "start"
       waitForAdmission?: boolean
     }) {
+      yield* input.guard
       // [C002] `*` is a message-read selector (every slice), not an execution owner.
       // Resume must lock the concrete slice Runner that will own the new assistant.
       if (input.agentID === "*") {
@@ -6388,7 +6738,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         ),
       )
 
-      const work = Effect.gen(function* () {
+      const work = input.guard.pipe(Effect.andThen(Effect.gen(function* () {
         if (activation) yield* Effect.promise(activation.beforeWork)
         const afterAdmission = ResumeTestHooks.afterAdmissionBeforeCleanup
         if (afterAdmission) yield* afterAdmission()
@@ -6404,7 +6754,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           input.agentID,
           input.task_id,
           input.titleLocale,
-          false,
           undefined,
           input.model,
           true,
@@ -6415,7 +6764,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }).pipe(
         Effect.provideService(HostModelTransport.ExecutionScope, execution),
         Effect.onExit((exit) => Deferred.succeed(outcome, exit).pipe(Effect.asVoid)),
-      )
+      )))
+
 
       // [R003] Exclusive admission: never join an unrelated run (ensureRunning would).
       // ensure mode waits for work result (sync resume()); start mode forks (HTTP 202 after handshake).
@@ -6468,10 +6818,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
+      const guard = yield* leaseGuard(input.sessionID)
       yield* state.assertNotBusy(input.sessionID, input.agentID)
       // Single recovery() read (R003): no-ID callers take candidates.at(-1);
       // explicit IDs look it up in the same snapshot. Avoids double-read TOCTOU.
-      const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
+      const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID, allowBusy: true })
       const candidate = input.userMessageID || input.assistantMessageID
         ? candidates.find((item) =>
             input.userMessageID
@@ -6522,6 +6873,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         model: input.model,
         plan,
         attempt: input.attempt,
+        guard,
         mode: "ensure",
       })
       if (launched === undefined) {
@@ -6537,6 +6889,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const resumeBackground = Effect.fn("SessionPrompt.resumeBackground")(function* (input: ResumeTurnInput) {
+      const guard = yield* leaseGuard(input.sessionID)
       // Single recovery() read (R003): no-ID callers take candidates.at(-1);
       // explicit IDs look it up in the same snapshot. Avoids double-read TOCTOU.
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID, allowBusy: true })
@@ -6588,6 +6941,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         model: input.model,
         plan,
         attempt: input.attempt,
+        guard,
         mode: "start",
         waitForAdmission: input.waitForAdmission,
       })
@@ -6601,6 +6955,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
      * main Resume; only the per-agent Runner admission applies.
      */
     const resumeActorBackground = Effect.fn("SessionPrompt.resumeActorBackground")(function* (input: ResumeTurnInput) {
+      const guard = yield* leaseGuard(input.sessionID)
       const agentID = input.agentID ?? "main"
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID, allowBusy: true })
       const candidate = candidates.find(
@@ -6659,6 +7014,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               model: input.model,
               plan,
               attempt: input.attempt,
+              guard,
               // Join the Runner so runTurn can settle registry + notify on exit.
               mode: "ensure",
             }).pipe(
@@ -6711,13 +7067,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     : Cause.hasInterruptsOnly(exit.cause)
                       ? "cancelled"
                       : "failed"
-                  const quiet = Boolean(execution.groupAbort)
                   yield* notifyTerminal({
                     sessionID: input.sessionID,
                     actorID: agentID,
                     source: "continuation",
                     status,
-                    ...(quiet ? { wake: false as const } : {}),
                     ...(status === "completed"
                       ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary }
                       : {}),
@@ -6761,6 +7115,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         if (actor.mode === "peer") continue
         if ((cascadeEpochBySession.get(sessionID) ?? 0) !== epoch) {
           outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "cascade-cancelled" })
+          continue
+        }
+        if (actor.lastOutcome === "cancelled") {
+          outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "cancelled" })
           continue
         }
         // Ownership: only registry-idle rows are unclaimed. running/pending stay
@@ -6847,6 +7205,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const impl = Service.of({
       cancel,
       prompt,
+      promptAsync,
       recovery,
       resume,
       resumeBackground,
@@ -6861,19 +7220,34 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sweepOrphanToolParts,
       predict,
     })
-    sessionPromptRef.current = { loop: impl.loop }
-    // Expose the project default-model resolver to Inbox.drain's option-2
-    // fallback (seed a synthetic message for a turnCount-0 standing peer whose
-    // slice has no model-bearing message yet). Reads Provider, which is already
-    // in scope here — Inbox.layer stays free of a Provider dependency.
+    // C-02/C-06: Controller.accept → kick starts a lease when idle; onIdle also
+    // re-kicks leftover accepted receipts (lost-wake replacement for pending-attach).
+    const laneKick: (lane: Lane, prompt?: PromptInput) => Effect.Effect<void> = (lane, prompt) =>
+      Effect.gen(function* () {
+        const accepted = yield* (inboxControllerRef.current?.listAccepted(lane) ?? Effect.succeed([]))
+        if (accepted.length === 0) return
+        if (!(yield* resolveDrainSeed(sessions, actorRegistry, lane.sessionID, lane.agentID))) return
+        const source = prompt ? prompt.source ?? "user"
+          : accepted[0].type === "spawn" || accepted[0].type === "hook" ? accepted[0].type : "user"
+        yield* executeLoop({
+          sessionID: lane.sessionID,
+          agentID: lane.agentID,
+          notifyParentOnComplete: lane.agentID !== "main" && source !== "spawn" && source !== "hook",
+          source,
+        }, Effect.gen(function* () {
+          const controller = inboxControllerRef.current
+          if (!controller) return undefined
+          const runId = Date.now()
+          const claim = yield* controller.claimNext(lane, runId, accepted[0].epoch)
+          if (!claim) return undefined
+          const claimOwner: ClaimOwner = { runId, receipts: claim.receipts, frontier: claim.claimFrontier }
+          return { claimOwner, work: runLoop(lane.sessionID, lane.agentID, prompt?.task_id, prompt?.titleLocale,
+            undefined, undefined, undefined, source, undefined, false, claim.claimFrontier, claimOwner) }
+        })).pipe(Effect.asVoid)
+      })
+    yield* bindScopedRef(schedulerRef, { kick: laneKick })
     const defaultModelResolver = { defaultModel: () => provider.defaultModel() }
-    defaultModelRef.current = defaultModelResolver
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        if (sessionPromptRef.current?.loop === impl.loop) sessionPromptRef.current = undefined
-        if (defaultModelRef.current === defaultModelResolver) defaultModelRef.current = undefined
-      }),
-    )
+    yield* bindScopedRef(defaultModelRef, defaultModelResolver)
     return impl
   }),
 ).pipe(Layer.provide(ActorExecution.layer))
@@ -6883,6 +7257,7 @@ export const appLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(SessionRunState.defaultLayer),
     Layer.provide(SessionStatus.defaultLayer),
+    Layer.provide(CronBridgeDefaultLayer),
     Layer.provide(SessionPrune.defaultLayer),
     Layer.provide(SessionCheckpoint.defaultLayer),
     Layer.provide(SessionCompaction.defaultLayer),
@@ -7030,13 +7405,8 @@ export const LoopInput = z.object({
   task_id: z.string().optional(),
   titleLocale: z.string().optional(),
   source: z.enum(["user", "spawn", "hook"]).optional(),
-  // Set by the inbox wake path so a persistent background peer that finishes a
-  // woken turn notifies its parent (mirroring forkWork.notify, which only wraps
-  // the FIRST/spawn turn). Left false on spawn/user-driven loops to avoid
-  // double-notifying the spawn turn that forkWork already covers.
+  // 续执行完成后通知父 actor；初始 spawn 由外层生命周期负责通知。
   notifyParentOnComplete: z.boolean().optional(),
-  inboxWake: z.boolean().optional(),
-  deferInbox: z.boolean().optional(),
 })
 
 export const ShellInput = z.object({

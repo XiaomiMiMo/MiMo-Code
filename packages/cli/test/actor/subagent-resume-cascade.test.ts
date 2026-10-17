@@ -140,6 +140,40 @@ describe("cascadeSubagentResume", () => {
               }) as Parameters<typeof sessions.updateMessage>[0],
             )
 
+            // A stopped child still has an incomplete assistant, but main Resume must not restart it.
+            yield* reg.register({
+              sessionID: session.id,
+              actorID: "explore-cancelled",
+              mode: "subagent",
+              agent: "explore",
+              description: "stopped child",
+              contextMode: "none",
+              background: true,
+              lifecycle: "ephemeral",
+            })
+            yield* reg.updateStatus(session.id, "explore-cancelled", {
+              status: "idle",
+              lastOutcome: "cancelled",
+            })
+            const cancelledUser = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: session.id,
+              agentID: "explore-cancelled",
+              agent: "explore",
+              model: modelRef,
+              time: { created: Date.now() },
+            })
+            yield* sessions.updateMessage(
+              incompleteAssistant({
+                sessionID: session.id,
+                parentID: cancelledUser.id,
+                created: Date.now(),
+                cwd: tmp.path,
+                agentID: "explore-cancelled",
+              }) as Parameters<typeof sessions.updateMessage>[0],
+            )
+
             // clean idle success → skip no-recovery-candidate
             yield* reg.register({
               sessionID: session.id,
@@ -158,9 +192,12 @@ describe("cascadeSubagentResume", () => {
 
             const pre = yield* prompt.recovery({ sessionID: session.id, agentID: "explore-1", allowBusy: true })
             expect(pre.length).toBeGreaterThan(0)
+            const cancelledPre = yield* prompt.recovery({ sessionID: session.id, agentID: "explore-cancelled", allowBusy: true })
+            expect(cancelledPre).toHaveLength(1)
 
             const outcomes = yield* prompt.cascadeSubagentResume(session.id)
-            return { outcomes, e1PreCount: pre.length }
+            const cancelledAfter = yield* reg.get(session.id, "explore-cancelled")
+            return { outcomes, e1PreCount: pre.length, cancelledAfter }
           }),
         ),
     })
@@ -172,6 +209,9 @@ describe("cascadeSubagentResume", () => {
     // running is never auto-takeover (ownership stays with claimed row)
     expect(byId["explore-orphan-run"]?.status).toBe("skipped")
     expect(byId["explore-orphan-run"]?.reason).toBe("live")
+    expect(byId["explore-cancelled"]).toEqual({ actorID: "explore-cancelled", status: "skipped", reason: "cancelled" })
+    expect(result.cancelledAfter?.lastOutcome).toBe("cancelled")
+    expect(result.cancelledAfter?.turnCount).toBe(0)
     expect(byId["explore-1"]).toBeDefined()
     expect(["resumed", "failed"]).toContain(byId["explore-1"]?.status)
     expect(byId["main"]).toBeUndefined()

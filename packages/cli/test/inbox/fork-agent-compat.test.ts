@@ -1,17 +1,3 @@
-/**
- * Fork-agent inbox compat test — Plan 4 / Task 5
- *
- * Key invariant (from docs/superpowers/specs/2026-05-26-fork-agent-prefix-cache-design.md):
- *   When a fork agent (contextMode="full") receives an inbox message, the
- *   `inheritedMessages` snapshot captured at spawn time must NOT be invalidated.
- *   Drain writes only to the fork's own agentID slice (beyond the watermark);
- *   the inherited prefix is untouched.
- *
- * Acceptance tier: structural (tier 2) + slice-routing (tier 3).
- *   - Tier 2: getForkContext() before and after drain — inheritedMessages identical.
- *   - Tier 3: drained synthetic message lands in fork's slice, NOT main's slice.
- */
-
 import { NodeFileSystem } from "@effect/platform-node"
 import { FetchHttpClient } from "effect/unstable/http"
 import { afterEach, describe, expect } from "bun:test"
@@ -37,6 +23,7 @@ import { SessionSummary } from "../../src/session/summary"
 import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionPrompt } from "../../src/session/prompt"
+import { defaultLayer as CronBridgeDefaultLayer } from "../../src/session/cron-bridge"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
@@ -175,6 +162,7 @@ function makeLayer() {
   const proc = SessionProcessor.layer.pipe(Layer.provide(summary), Layer.provideMerge(deps))
   const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
+    Layer.provide(CronBridgeDefaultLayer),
     Layer.provide(Goal.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(summary),
@@ -246,7 +234,7 @@ function providerCfg(url: string) {
 }
 
 describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
-  it.live("tier 2+3: inheritedMessages snapshot unchanged after inbox drain, synthetic msg in fork slice only", () =>
+  it.live("inbox admission preserves inheritedMessages and writes only to the fork slice", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
@@ -262,27 +250,9 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
         // Seed two synthetic "inherited" messages in the forkContext — these
         // represent the parent's conversation history that a fork agent would
         // inherit at spawn time.
-        const inheritedMessages: MessageV2.Info[] = [
-          {
-            id: MessageID.ascending(),
-            sessionID: parent.id,
-            role: "user" as const,
-            time: { created: Date.now() },
-            agent: "test",
-            model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
-            tools: {},
-            mode: "",
-          } as unknown as MessageV2.Info,
-          {
-            id: MessageID.ascending(),
-            sessionID: parent.id,
-            role: "assistant" as const,
-            time: { created: Date.now() },
-            agent: "test",
-            model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
-            tools: {},
-            mode: "",
-          } as unknown as MessageV2.Info,
+        const inheritedMessages: Actor.ForkContext["inheritedMessages"] = [
+          { role: "user", content: "inherited user prompt" },
+          { role: "assistant", content: "inherited assistant response" },
         ]
 
         const watermarkID = MessageID.ascending()
@@ -290,7 +260,7 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
         const fakeForkCtx: Actor.ForkContext = {
           system: ["inherited-system-prompt"],
           tools: {},
-          inheritedMessages: inheritedMessages as unknown as import("ai").ModelMessage[],
+          inheritedMessages,
           parentPermission: [],
           watermarkMsgID: watermarkID,
           model: ref,
@@ -320,39 +290,38 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
         expect(forkCtxBefore?.system).toEqual(["inherited-system-prompt"])
         expect(forkCtxBefore?.inheritedMessages).toHaveLength(2)
 
-        // Seed a real message in the fork's slice so drain's lastReal predicate
-        // can resolve. Drain requires a prior real assistant/user turn in the
-        // fork's agentID slice before it will write the synthetic user message.
-        yield* session.updateMessage({
+        const user = yield* session.updateMessage({
           id: MessageID.ascending(),
-          role: "user" as const,
+          role: "user",
           sessionID: parent.id,
           agentID: forkActorID,
           time: { created: Date.now() },
           agent: "explore",
           model: ref,
-        } as unknown as MessageV2.Info)
-        // Seed a matching assistant turn so the "model" field is available to drain.
+        })
         yield* session.updateMessage({
           id: MessageID.ascending(),
-          role: "assistant" as const,
+          role: "assistant",
           sessionID: parent.id,
           agentID: forkActorID,
           time: { created: Date.now() },
           agent: "explore",
-          model: ref,
-        } as unknown as MessageV2.Info)
+          parentID: user.id,
+          providerID: ref.providerID,
+          modelID: ref.modelID,
+          mode: "explore",
+          path: { cwd: "/", root: "/" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        })
 
         // Send an inbox message to the fork actor.
-        yield* inbox.send({
+        yield* inbox.accept({
           receiverSessionID: parent.id,
           receiverActorID: forkActorID,
           content: "inbox-message-for-fork",
         })
 
-        // Tier 3 — slice routing: drain it manually.
-        const drained = yield* inbox.drain(parent.id, forkActorID)
-        expect(drained).toBe(1)
 
         // Tier 2 — structural: forkContext must still have the exact same
         // inheritedMessages snapshot. Drain must not touch forkContexts.
@@ -378,7 +347,6 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
           .join("")
         expect(syntheticText).toContain("inbox-message-for-fork")
 
-        // Main slice must NOT contain any synthetic parts (drain never wrote there).
         expect(mainSynthetic.length).toBe(0)
 
         // Cleanup: cancel the hanging fork fiber.

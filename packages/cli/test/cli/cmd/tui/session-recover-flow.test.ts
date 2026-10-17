@@ -88,14 +88,15 @@ describe("runSessionRecover (TUI /recover entry)", () => {
     expect(calls.active).toEqual([])
   })
 
-  test("busy/retry status short-circuits to busy toast path", async () => {
-    const { calls, base } = deps({ status: { type: "busy" } })
-    expect(await runSessionRecover(base)).toEqual({ type: "busy" })
-    const { calls: c2, base: b2 } = deps({ status: { type: "retry" } })
-    expect(await runSessionRecover(b2)).toEqual({ type: "busy" })
-    expect(calls.resumeUser).toEqual([])
-    expect(c2.resumeUser).toEqual([])
-  })
+  for (const type of ["busy", "retry"]) {
+    test(`${type} status does not replace authoritative resume admission`, async () => {
+      const { calls, base } = deps({ status: { type } })
+      expect(await runSessionRecover(base)).toEqual({ type: "started", kind: "parent-user", id: "msg_u2" })
+      expect(calls.resumeUser).toEqual(["msg_u2"])
+      expect(calls.resumeAssistant).toEqual([])
+      expect(calls.active).toEqual(["msg_u2"])
+    })
+  }
 
   test("real SDK 404 JSON reject maps to human message, no active badge", async () => {
     const { calls, base } = deps({
@@ -114,7 +115,8 @@ describe("runSessionRecover (TUI /recover entry)", () => {
   })
 
   test("real SDK 409 BusyError JSON maps to busy variant", async () => {
-    const { base } = deps({
+    const { calls, base } = deps({
+      status: { type: "busy" },
       resumeUser: async () => {
         throw sdkBusy
       },
@@ -125,6 +127,7 @@ describe("runSessionRecover (TUI /recover entry)", () => {
       expect(out.variant).toBe("busy")
       expect(out.message).toBe("Session is busy")
     }
+    expect(calls.active).toEqual([])
   })
 
   test("recoverErrorMessage maps structured SDK shapes", () => {

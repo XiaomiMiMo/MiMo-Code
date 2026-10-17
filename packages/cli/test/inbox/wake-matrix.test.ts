@@ -31,7 +31,7 @@ async function withInbox(
   })
 }
 
-describe("Inbox.send wake matrix (Plan 2 / Task 7)", () => {
+describe("Inbox.accept receiver admission", () => {
   // Case 1: Missing receiver row → InboxReceiverNotFound (ESRCH)
   test("send to unregistered actor fails with InboxReceiverNotFound", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -41,7 +41,7 @@ describe("Inbox.send wake matrix (Plan 2 / Task 7)", () => {
       const result = await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox
-            .send({
+            .accept({
               receiverSessionID: session.id,
               receiverActorID: "nonexistent-actor",
               content: "should fail",
@@ -95,7 +95,7 @@ describe("Inbox.send wake matrix (Plan 2 / Task 7)", () => {
       // send should still succeed — B3 axiom: no ESRCH for idle/cancelled
       const result = await rt.runPromise(
         Inbox.Service.use((inbox) =>
-          inbox.send({
+          inbox.accept({
             receiverSessionID: session.id,
             receiverActorID: "cancelled-actor",
             content: "wake after cancel",
@@ -118,7 +118,7 @@ describe("Inbox.send wake matrix (Plan 2 / Task 7)", () => {
       const result = (await rt.runPromise(
         Inbox.Service.use((inbox) =>
           inbox
-            .send({
+            .accept({
               receiverSessionID: session.id,
               receiverActorID: "ghost",
               content: "lost",

@@ -1,6 +1,9 @@
 import { ActorExecution } from "../../src/actor/execution"
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Deferred, Effect, Exit, Fiber, Layer, Scheduler } from "effect"
+import { ActorRegistryTable } from "../../src/actor/actor.sql"
+import { SessionRunState } from "../../src/session/run-state"
+import { Database, and, eq } from "../../src/storage"
 import { Bus } from "../../src/bus"
 import { Session as SessionNs } from "../../src/session"
 import { SessionID, MessageID, PartID } from "../../src/session/schema"
@@ -25,6 +28,7 @@ const env = Layer.mergeAll(
   CrossSpawnSpawner.defaultLayer,
   Bus.layer,
   ActorRegistry.defaultLayer,
+  SessionRunState.defaultLayer,
   ActorWaiter.layer.pipe(
     Layer.provide(ActorRegistry.defaultLayer),
     Layer.provide(Bus.layer),
@@ -77,6 +81,356 @@ const seedAssistantText = (sessionID: SessionID, actorID: string, text: string) 
       text,
     })
   })
+
+const statusFixture = Effect.gen(function* () {
+  const sessions = yield* SessionNs.Service
+  const registry = yield* ActorRegistry.Service
+  const waiter = yield* ActorWaiter.Service
+  const executions = yield* ActorExecution.Service
+  const session = yield* sessions.create({ title: "execution projection" })
+  const entry = yield* registry.register({
+    sessionID: session.id,
+    actorID: "child",
+    mode: "subagent",
+    agent: "general",
+    description: "controlled child",
+    contextMode: "none",
+    background: true,
+    lifecycle: "ephemeral",
+  })
+  return { sessions, registry, waiter, executions, entry }
+})
+
+const terminalDelivery = (sessionID: SessionID, lastOutcome: "success" | "failure" | "cancelled") =>
+  Effect.gen(function* () {
+    const sessions = yield* SessionNs.Service
+    const registry = yield* ActorRegistry.Service
+    yield* seedAssistantText(sessionID, "child", "PREVIOUS-RESULT")
+    const message = (yield* sessions.messages({ sessionID, agentID: "child" })).findLast(
+      (message) => message.info.role === "assistant",
+    )!
+    if (message.info.role !== "assistant") throw new Error("missing assistant")
+    yield* sessions.updateMessage({ ...message.info, actorResult: { finalText: "PREVIOUS-RESULT" } })
+    yield* registry.updateStatus(sessionID, "child", {
+      status: "idle",
+      lastOutcome,
+      lastError: lastOutcome === "failure" ? "PREVIOUS-ERROR" : undefined,
+      resultMessageID: message.info.id,
+    })
+    return (yield* registry.get(sessionID, "child"))!
+  })
+
+const expectNoTerminal = (entry: Effect.Success<ReturnType<ActorWaiter.Interface["status"]>>) => {
+  expect(entry.lastOutcome).toBeUndefined()
+  expect(entry.lastError).toBeUndefined()
+  expect(entry.resultMessageID).toBeUndefined()
+  expect(entry.time.completed).toBeUndefined()
+}
+
+const expectNoDelivery = (snapshot: ActorWaiter.WaitResult) => {
+  expect(snapshot.lastOutcome).toBeUndefined()
+  expect(snapshot.error).toBeUndefined()
+  expect(snapshot.result).toBeUndefined()
+  expect(snapshot.structured).toBeUndefined()
+  expect(snapshot.time?.completed).toBeUndefined()
+}
+
+describe("ActorWaiter.status — actual execution and fresh registry projection", () => {
+  it.live(
+    "a reservation before attach and its live fiber are active",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { entry, waiter, executions } = yield* statusFixture
+        const execution = yield* Effect.acquireRelease(
+          executions.reserve(entry.sessionID, entry.actorID),
+          executions.release,
+        )
+        expect(execution.fiber).toBeUndefined()
+        expect(yield* Deferred.isDone(execution.done)).toBe(false)
+        const reserved = yield* waiter.status(entry)
+        expect(reserved.status).toBe("running")
+        expect(reserved.executionActive).toBe(true)
+        expect(reserved.executionState).toBe("running")
+        const finish = yield* Deferred.make<void>()
+        const fiber = yield* executions.fork(
+          execution,
+          Deferred.await(finish).pipe(Effect.interruptible),
+          yield* Effect.scope,
+        )
+        expect(fiber.pollUnsafe()).toBeUndefined()
+        const active = yield* waiter.status(entry)
+        expect(active.executionActive).toBe(true)
+        expect(active.executionState).toBe("running")
+        yield* Deferred.succeed(finish, undefined)
+        yield* Fiber.join(fiber)
+      }),
+    ),
+  )
+
+  for (const outcome of ["success", "failure", "cancelled"] as const) {
+    it.live(
+      `an exited ${outcome} fiber is inactive even before ActorExecution.release`,
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const { entry, waiter, executions } = yield* statusFixture
+          const execution = yield* Effect.acquireRelease(
+            executions.reserve(entry.sessionID, entry.actorID),
+            executions.release,
+          )
+          const work =
+            outcome === "failure"
+              ? Effect.die("execution crashed")
+              : outcome === "cancelled"
+                ? Effect.interrupt
+                : Effect.void
+          const fiber = yield* executions.fork(execution, work, yield* Effect.scope)
+          yield* Fiber.await(fiber)
+          expect(fiber.pollUnsafe()).toBeDefined()
+          expect(yield* executions.current(entry.sessionID, entry.actorID)).toBe(execution)
+          expect(yield* Deferred.isDone(execution.done)).toBe(false)
+          const current = yield* waiter.status(entry)
+          expect(current.status).toBe("idle")
+          expect(current.executionActive).toBe(false)
+          expect(current.executionState).toBe("stopped")
+          expectNoTerminal(current)
+        }),
+      ),
+    )
+  }
+
+  it.live(
+    "a real live legacy Runner is active without an ActorExecution",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { entry, waiter, executions } = yield* statusFixture
+        const runs = yield* SessionRunState.Service
+        yield* Effect.addFinalizer(() => runs.cancelActor(entry.sessionID, entry.actorID))
+        yield* runs.start(entry.sessionID, entry.actorID, Effect.never, Effect.never)
+        const legacy = yield* runs.executionSnapshot(entry.sessionID, entry.actorID)
+        expect(legacy.fiber).toBeDefined()
+        expect(legacy.fiber?.pollUnsafe()).toBeUndefined()
+        expect(yield* executions.current(entry.sessionID, entry.actorID)).toBeUndefined()
+        const current = yield* waiter.status(entry)
+        expect(current.status).toBe("running")
+        expect(current.executionActive).toBe(true)
+        expect(current.executionState).toBe("running")
+      }),
+    ),
+  )
+
+  it.live(
+    "a legacy Runner interrupted before work starts is inactive despite its stale busy ledger",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { entry, waiter, executions } = yield* statusFixture
+        const runs = yield* SessionRunState.Service
+        let started = false
+        const fiber = yield* Effect.gen(function* () {
+          yield* runs.start(
+            entry.sessionID,
+            entry.actorID,
+            Effect.never,
+            Effect.sync(() => {
+              started = true
+            }).pipe(Effect.andThen(Effect.never)),
+          )
+          const legacy = yield* runs.executionSnapshot(entry.sessionID, entry.actorID)
+          if (!legacy.fiber) throw new Error("legacy runner did not start")
+          legacy.fiber.interruptUnsafe()
+          return legacy.fiber
+        }).pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true))
+        expect(Exit.isFailure(yield* Fiber.await(fiber))).toBe(true)
+        expect(started).toBe(false)
+        expect(Exit.isFailure(yield* runs.assertNotBusy(entry.sessionID, entry.actorID).pipe(Effect.exit))).toBe(true)
+        expect(yield* executions.current(entry.sessionID, entry.actorID)).toBeUndefined()
+        const current = yield* waiter.status(entry)
+        expect(current.executionActive).toBe(false)
+        expect(current.executionState).toBe("stopped")
+        expectNoTerminal(current)
+      }),
+    ),
+  )
+
+  for (const status of ["pending", "running"] as const) {
+    for (const outcome of ["success", "failure", "cancelled"] as const) {
+      it.live(
+        `raw ${status} without execution does not reuse previous ${outcome} metadata or delivery`,
+        provideTmpdirInstance(() =>
+          Effect.gen(function* () {
+            const { entry, waiter, registry } = yield* statusFixture
+            const previous = yield* terminalDelivery(entry.sessionID, outcome)
+            Database.use((db) =>
+              db
+                .update(ActorRegistryTable)
+                .set({ status })
+                .where(
+                  and(
+                    eq(ActorRegistryTable.session_id, entry.sessionID),
+                    eq(ActorRegistryTable.actor_id, entry.actorID),
+                  ),
+                )
+                .run(),
+            )
+            const raw = (yield* registry.get(entry.sessionID, entry.actorID))!
+            expect(raw.lastOutcome).toBe(outcome)
+            expect(raw.resultMessageID).toBe(previous.resultMessageID)
+            expect(raw.time.completed).toBeDefined()
+            const current = yield* waiter.status(raw)
+            expect(current.status).toBe("idle")
+            expect(current.executionActive).toBe(false)
+            expect(current.executionState).toBe("stopped")
+            expectNoTerminal(current)
+            const snapshot = yield* waiter.wait({ sessionID: entry.sessionID, actor_id: entry.actorID, timeout_ms: 20 })
+            expect(snapshot.executionActive).toBe(false)
+            expect(snapshot.executionState).toBe("stopped")
+            expectNoDelivery(snapshot)
+            expect(yield* registry.get(entry.sessionID, entry.actorID)).toEqual(raw)
+          }),
+        ),
+      )
+    }
+  }
+
+  for (const outcome of ["success", "failure", "cancelled"] as const) {
+    it.live(
+      `current idle ${outcome} retains its trusted terminal metadata`,
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const { entry, waiter } = yield* statusFixture
+          const terminal = yield* terminalDelivery(entry.sessionID, outcome)
+          const current = yield* waiter.status(terminal)
+          expect(current).toEqual({
+            ...terminal,
+            executionActive: false,
+            executionState: outcome === "success" ? "completed" : outcome === "failure" ? "failed" : "cancelled",
+          })
+          const snapshot = yield* waiter.wait({ sessionID: entry.sessionID, actor_id: entry.actorID })
+          expect(snapshot.lastOutcome).toBe(outcome)
+          expect(snapshot.time?.completed).toBe(terminal.time.completed)
+          expect(snapshot.error).toBe(terminal.lastError)
+          expect(snapshot.result).toBe(outcome === "cancelled" ? undefined : "PREVIOUS-RESULT")
+        }),
+      ),
+    )
+  }
+
+  it.live(
+    "an old running snapshot cannot hide a newly committed success",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { entry, waiter, registry, executions } = yield* statusFixture
+        yield* registry.updateStatus(entry.sessionID, entry.actorID, { status: "running" })
+        const old = (yield* registry.get(entry.sessionID, entry.actorID))!
+        const execution = yield* Effect.acquireRelease(
+          executions.reserve(entry.sessionID, entry.actorID),
+          executions.release,
+        )
+        const fiber = yield* executions.fork(execution, Effect.void, yield* Effect.scope)
+        yield* Fiber.join(fiber)
+        const terminal = yield* terminalDelivery(entry.sessionID, "success")
+        yield* executions.release(execution)
+        const current = yield* waiter.status(old)
+        expect(current).toEqual({ ...terminal, executionActive: false, executionState: "completed" })
+        expect(yield* registry.get(entry.sessionID, entry.actorID)).toEqual(terminal)
+      }),
+    ),
+  )
+
+  for (const live of [false, true]) {
+    it.live(
+      `an old success snapshot sees a resumed running row ${live ? "with" : "without"} a live execution`,
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const { entry, waiter, registry, executions } = yield* statusFixture
+          const old = yield* terminalDelivery(entry.sessionID, "success")
+          yield* registry.updateStatus(entry.sessionID, entry.actorID, { status: "running" })
+          yield* registry.updateTurn(entry.sessionID, entry.actorID)
+          if (live) {
+            const execution = yield* Effect.acquireRelease(
+              executions.reserve(entry.sessionID, entry.actorID),
+              executions.release,
+            )
+            const fiber = yield* executions.fork(
+              execution,
+              Effect.never.pipe(Effect.interruptible),
+              yield* Effect.scope,
+            )
+            expect(fiber.pollUnsafe()).toBeUndefined()
+          }
+          const current = yield* waiter.status(old)
+          expect(current.executionActive).toBe(live)
+          expect(current.executionState).toBe(live ? "running" : "stopped")
+          expect(current.turnCount).toBe(old.turnCount + 1)
+          expectNoTerminal(current)
+        }),
+      ),
+    )
+  }
+
+  for (const initial of ["running", "idle"] as const) {
+    it.live(
+      `wait starting from ${initial} does not complete while the terminal execution is still finishing`,
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const { entry, waiter, registry, executions, sessions } = yield* statusFixture
+          yield* registry.updateStatus(entry.sessionID, entry.actorID, { status: "running" })
+          const execution = yield* Effect.acquireRelease(
+            executions.reserve(entry.sessionID, entry.actorID),
+            executions.release,
+          )
+          const finish = yield* Deferred.make<void>()
+          const terminal = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const fiber = yield* executions.fork(
+            execution,
+            Effect.gen(function* () {
+              yield* Deferred.await(finish)
+              yield* terminalDelivery(entry.sessionID, "success")
+              yield* Deferred.succeed(terminal, undefined)
+              yield* Deferred.await(release)
+            }).pipe(
+              Effect.provideService(SessionNs.Service, sessions),
+              Effect.provideService(ActorRegistry.Service, registry),
+              Effect.interruptible,
+              Effect.ensuring(executions.release(execution)),
+            ),
+            yield* Effect.scope,
+          )
+          if (initial === "idle") {
+            yield* Deferred.succeed(finish, undefined)
+            yield* Deferred.await(terminal)
+          }
+          const waiting = yield* waiter
+            .wait({ sessionID: entry.sessionID, actor_id: entry.actorID, timeout_ms: 100 })
+            .pipe(Effect.forkChild)
+          if (initial === "running") {
+            yield* Effect.sleep("20 millis")
+            yield* Deferred.succeed(finish, undefined)
+            yield* Deferred.await(terminal)
+          }
+          const snapshot = yield* Fiber.join(waiting)
+          expect(fiber.pollUnsafe()).toBeUndefined()
+          expect(yield* Deferred.isDone(execution.done)).toBe(false)
+          expect(snapshot.status).toBe("timeout")
+          expect(snapshot.executionActive).toBe(true)
+          expect(snapshot.executionState).toBe("running")
+          expectNoDelivery(snapshot)
+          const finishing = yield* waiter
+            .wait({ sessionID: entry.sessionID, actor_id: entry.actorID, timeout_ms: 2000 })
+            .pipe(Effect.forkChild)
+          yield* Effect.sleep("10 millis")
+          expect(finishing.pollUnsafe()).toBeUndefined()
+          yield* Deferred.succeed(release, undefined)
+          yield* Fiber.join(fiber)
+          const completed = yield* Fiber.join(finishing).pipe(Effect.timeout("500 millis"))
+          expect(completed.status).toBe("idle")
+          expect(completed.executionState).toBe("completed")
+          expect(completed.result).toBe("PREVIOUS-RESULT")
+        }),
+      ),
+    )
+  }
+})
 
 describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
   it.live(
@@ -282,54 +636,42 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
           yield* registry.register({
             sessionID: parent.id,
             actorID: "child",
-            mode: "subagent",
+            mode: "peer",
             agent: "general",
             description: "child",
             contextMode: "none",
             background: true,
-            lifecycle: "ephemeral",
+            lifecycle: "persistent",
           })
-          yield* registry.updateStatus(parent.id, "child", { status: "running" })
-          let reads = 0
-          const waiter = yield* Effect.gen(function* () {
-            const executions = yield* ActorExecution.Service
-            yield* executions.reserve(parent.id, "child")
-            return yield* ActorWaiter.Service
+          yield* registry.updateStatus(parent.id, "child", { status: "idle", lastOutcome: "success" })
+          const subscribed = yield* Deferred.make<void>()
+          const result = yield* Effect.gen(function* () {
+            const waiter = yield* ActorWaiter.Service
+            yield* Effect.forkChild(
+              Effect.gen(function* () {
+                yield* Deferred.await(subscribed)
+                yield* Effect.sleep("5 millis")
+                yield* registry.updateStatus(parent.id, "child", {
+                  status: "idle",
+                  lastOutcome,
+                  lastError: lastOutcome === "failure" ? "boom" : undefined,
+                })
+              }),
+            )
+            return yield* waiter.wait({ sessionID: parent.id, actor_id: "child", timeout_ms: 30 })
           }).pipe(
             Effect.provide(Layer.fresh(ActorWaiter.layer)),
-            Effect.provideService(
-              ActorRegistry.Service,
-              ActorRegistry.Service.of({
-                ...registry,
-                get: (sid, aid) =>
-                  Effect.gen(function* () {
-                    const entry = yield* registry.get(sid, aid)
-                    reads++
-                    // Simulate a commit after the subscription recheck has read its
-                    // snapshot. The bus callback in this test deliberately gets no event.
-                    if (reads === 2)
-                      yield* registry.updateStatus(sid, aid, {
-                        status: "idle",
-                        lastOutcome,
-                        lastError: lastOutcome === "failure" ? "boom" : undefined,
-                      })
-                    return entry
-                  }),
-              }),
-            ),
             Effect.provideService(
               Bus.Service,
               Bus.Service.of({
                 ...(yield* Bus.Service),
-                subscribeCallback: () => Effect.succeed(() => {}),
+                subscribeCallback: () => Deferred.succeed(subscribed, undefined).pipe(Effect.as(() => {})),
               }),
             ),
           )
-          const result = yield* waiter.wait({ sessionID: parent.id, actor_id: "child", timeout_ms: 10 })
           expect(result.lastOutcome).toBe(lastOutcome)
           expect(result.status).toBe("idle")
           expect(result.error).toBe(lastOutcome === "failure" ? "boom" : undefined)
-          expect(reads).toBe(3)
         }),
       ),
     )
@@ -379,7 +721,8 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
           const executions = yield* ActorExecution.Service
           const execution = yield* executions.reserve(parent.id, "explore-2")
 
-          yield* Effect.forkChild(
+          yield* executions.fork(
+            execution,
             Effect.gen(function* () {
               yield* Effect.sleep("50 millis")
               yield* seedAssistantText(parent.id, "explore-2", "result from slow path")
@@ -388,7 +731,12 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
                 lastOutcome,
                 lastError: lastOutcome === "failure" ? "execution failed" : undefined,
               })
-            }),
+            }).pipe(
+              Effect.provideService(SessionNs.Service, sessions),
+              Effect.interruptible,
+              Effect.ensuring(executions.release(execution)),
+            ),
+            yield* Effect.scope,
           )
 
           const snap = yield* waiter.wait({ sessionID: parent.id, actor_id: "explore-2", timeout_ms: 2000 })

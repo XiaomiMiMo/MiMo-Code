@@ -22,18 +22,6 @@ import { ToolRegistry } from "../../src/tool"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
-// Reachability probe for the body-less `actor_notification` inbox row — the
-// suspected producer of `messages.<N>: user messages must have non-empty content`.
-//
-// test/inbox/empty-notification-part.test.ts proves what happens ONCE such a row
-// exists (renderInboxRow → drain → a `text: ""` part). It calls Inbox.send
-// directly, so it does NOT establish that any caller can supply an empty body.
-// This file closes that gap at the only entry point that takes both `content`
-// and `type` from the model: the `actor` tool's `send` action.
-//
-// The JSON-schema route is covered below: parameters.parse rejects an empty
-// body before execute can write any inbox row. An empty `actor_notification`
-// body is unreachable through the tool.
 
 afterEach(async () => {
   await Instance.disposeAll()

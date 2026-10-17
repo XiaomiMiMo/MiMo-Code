@@ -125,8 +125,10 @@ describe("WorkflowRuntime agent() retry", () => {
           const runtime = yield* WorkflowRuntime.Service
           const session = yield* Session.Service
           const bus = yield* Bus.Service
-          const failed: string[] = []
-          yield* bus.subscribeCallback(WorkflowAgentFailed, (e) => failed.push(e.properties.reason))
+          const failed: { reason: string; errorMessage?: string }[] = []
+          yield* bus.subscribeCallback(WorkflowAgentFailed, (e) =>
+            failed.push({ reason: e.properties.reason, errorMessage: e.properties.errorMessage }),
+          )
           const parent = yield* session.create({
             title: "wf retry isolated",
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
@@ -140,9 +142,9 @@ describe("WorkflowRuntime agent() retry", () => {
           const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
           const outcome = yield* runtime.wait({ runID })
           expect(outcome.status).toBe("completed")
-          expect((outcome as { result: unknown }).result).not.toBeNull()
           yield* Effect.sleep("100 millis")
-          expect(failed).toEqual(["spawn-reject"]) // one failed attempt, retry succeeded
+          expect(failed).toEqual([{ reason: "spawn-reject", errorMessage: "test-forced spawn-reject" }])
+          expect((outcome as { result: unknown }).result).toBe("done")
           const result = (outcome as { result: { _worktree?: { directory?: string } } }).result
           const wtDir = result?._worktree?.directory
           if (wtDir) yield* (yield* Worktree.Service).remove({ directory: wtDir }).pipe(Effect.ignore)

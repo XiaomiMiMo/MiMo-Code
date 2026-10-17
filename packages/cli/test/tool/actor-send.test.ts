@@ -9,7 +9,8 @@ import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { Database, and, eq } from "../../src/storage"
-import { MessageID, type SessionID } from "../../src/session/schema"
+import { MessageID, SessionID } from "../../src/session/schema"
+import { MessageV2 } from "../../src/session/message-v2"
 import { ActorTool } from "../../src/tool/actor"
 import { ActorRegistry } from "../../src/actor/registry"
 import { TaskRegistry } from "../../src/task/registry"
@@ -96,7 +97,7 @@ describe("actor tool — send action", () => {
         )
 
         // Tool result: success shape
-        const parsed = JSON.parse(result.output) as { inboxID: string }
+        const parsed = JSON.parse(result.output) as { inboxID: string; inputMessageID: string }
         expect(parsed.inboxID).toBeTruthy()
         expect(result.title).toBe(`Sent to ${actorID}`)
 
@@ -112,12 +113,16 @@ describe("actor tool — send action", () => {
         )
         expect(rows).toHaveLength(1)
         expect(rows[0].id).toBe(parsed.inboxID)
+        expect(String(rows[0].input_message_id)).toBe(parsed.inputMessageID)
+        expect(rows[0].content).toBeNull()
+        const message = MessageV2.get({ sessionID: chat.id, messageID: rows[0].input_message_id! })
+        expect(message.parts).toEqual([expect.objectContaining({ type: "text", synthetic: true, text: expect.stringContaining("hello actor") })])
       }),
     ),
   )
 
   it.live(
-    "send to missing actor returns structured error without throwing",
+    "cross-session send to missing receiver returns structured error without throwing",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -130,6 +135,7 @@ describe("actor tool — send action", () => {
             operation: {
               action: "send",
               to_actor_id: "does-not-exist",
+              to_session_id: SessionID.descending(),
               content: "hello nobody",
             },
           },
@@ -179,7 +185,7 @@ describe("actor tool — send action", () => {
           ctxFor(chat.id),
         )
 
-        const parsed = JSON.parse(result.output) as { inboxID: string }
+        const parsed = JSON.parse(result.output) as { inboxID: string; inputMessageID: string }
         expect(parsed.inboxID).toBeTruthy()
 
         // Row is on the current session (chat.id), not some other session

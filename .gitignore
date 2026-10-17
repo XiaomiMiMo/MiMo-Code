@@ -59,3 +59,5 @@ Thumbs.db
 
 # others
 codex/
+# local progress notes for agent worktrees
+/.scratch/

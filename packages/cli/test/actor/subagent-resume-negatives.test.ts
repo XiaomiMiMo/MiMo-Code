@@ -178,7 +178,7 @@ describe("subagent resume recovery negatives", () => {
               let notifA = false
               let notifB = false
               for (let i = 0; i < 20 && !(notifA && notifB); i++) {
-                yield* inbox.drain(session.id, "main").pipe(Effect.catch(() => Effect.succeed(0)))
+                yield* Effect.yieldNow
                 const mainMsgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
                 notifA = mainMsgs.some((m) =>
                   m.parts.some((p) => p.type === "text" && (p.text ?? "").includes("custom-a")),
@@ -198,7 +198,7 @@ describe("subagent resume recovery negatives", () => {
               const aFinal = aMsg?.info.role === "assistant" ? aMsg.info.actorResult?.finalText : undefined
               const bFinal = bMsg?.info.role === "assistant" ? bMsg.info.actorResult?.finalText : undefined
               // Parse parent notifications as completed with Result.
-              yield* inbox.drain(session.id, "main").pipe(Effect.catch(() => Effect.succeed(0)))
+              yield* Effect.yieldNow
               const mainForParse = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
               const parsed = mainForParse.flatMap((m) =>
                 m.parts.flatMap((p) => {
@@ -268,8 +268,7 @@ describe("subagent resume recovery negatives", () => {
               const reg = yield* ActorRegistry.Service
               const inbox = yield* Inbox.Service
               const session = yield* sessions.create({ title: "missing fork send" })
-              // Main slice needs a model-bearing message so inbox.drain can seed
-              // the parent notification into a user turn (same as production).
+              // main 切片通过自己的历史消息取得通知所用的模型。
               const mainUser = yield* sessions.updateMessage({
                 id: MessageID.ascending(),
                 role: "user" as const,
@@ -317,34 +316,29 @@ describe("subagent resume recovery negatives", () => {
                 type: "text" as const,
                 text: "full-seed",
               })
-              // Durable follow-up, then join the same wake path production uses
-              // (loop + inboxWake). Forked inbox.wake timing is not CI-stable.
-              yield* inbox.send({
+              yield* inbox.accept({
                 receiverSessionID: session.id,
                 receiverActorID: "custom-full",
                 senderSessionID: session.id,
                 senderActorID: "main",
                 content: "follow-up",
-                wake: false,
               })
               yield* prompt
                 .loop({
                   sessionID: session.id,
                   agentID: "custom-full",
                   notifyParentOnComplete: true,
-                  inboxWake: true,
                 })
                 .pipe(
                   Effect.timeout("20 seconds"),
                   Effect.catchCause(() => Effect.void),
                 )
-              const inboxSvc = yield* Inbox.Service
               let notifyFailed = false
               let fakeCompleted = false
               let fullErr = ""
               let fullOutcome = ""
               for (let i = 0; i < 80; i++) {
-                yield* inboxSvc.drain(session.id, "main").pipe(Effect.catch(() => Effect.succeed(0)))
+                yield* Effect.yieldNow
                 const msgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
                 const parsed = msgs.flatMap((m) =>
                   m.parts.flatMap((p) => {
@@ -654,8 +648,7 @@ describe("subagent resume recovery negatives", () => {
               const prompt = yield* SessionPrompt.Service
               const reg = yield* ActorRegistry.Service
               const session = yield* sessions.create({ title: "missing fork resume" })
-              // Main slice needs a model-bearing message so inbox.drain can seed
-              // the parent notification into a user turn (same as production).
+              // main 切片通过自己的历史消息取得通知所用的模型。
               const mainUser = yield* sessions.updateMessage({
                 id: MessageID.ascending(),
                 role: "user" as const,
@@ -708,13 +701,12 @@ describe("subagent resume recovery negatives", () => {
               const outcomes = yield* prompt.cascadeSubagentResume(session.id).pipe(
                 Effect.catchCause(() => Effect.succeed([] as { actorID: string; status: string; reason?: string }[])),
               )
-              const inboxSvc = yield* Inbox.Service
               let notifyFailed = false
               let fakeCompleted = false
               let fullFail = false
               let fullErr = ""
               for (let i = 0; i < 120; i++) {
-                yield* inboxSvc.drain(session.id, "main").pipe(Effect.catch(() => Effect.succeed(0)))
+                yield* Effect.yieldNow
                 const msgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
                 const parsed = msgs.flatMap((m) =>
                   m.parts.flatMap((p) => {

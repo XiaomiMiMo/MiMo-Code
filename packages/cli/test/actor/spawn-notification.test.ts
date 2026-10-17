@@ -26,6 +26,7 @@ import { SessionSummary } from "../../src/session/summary"
 import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionPrompt } from "../../src/session/prompt"
+import { defaultLayer as CronBridgeDefaultLayer } from "../../src/session/cron-bridge"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
@@ -164,6 +165,7 @@ function makeLayer() {
   const proc = SessionProcessor.layer.pipe(Layer.provide(summary), Layer.provideMerge(deps))
   const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
+    Layer.provide(CronBridgeDefaultLayer),
     Layer.provide(Goal.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(summary),
@@ -295,10 +297,10 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
 
         expect(rows.length).toBe(1)
         expect(rows[0].type).toBe("actor_notification")
-        const content = rows[0].content as { text?: string }
-        expect(content.text).toContain("<actor-notification>")
-        expect(content.text).toContain("background build task")
-        expect(content.text).toContain("completed")
+        const text = MessageV2.get({ sessionID: rows[0].receiver_session_id, messageID: rows[0].input_message_id! }).parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n")
+        expect(text).toContain("<actor-notification>")
+        expect(text).toContain("background build task")
+        expect(text).toContain("completed")
       }),
       { git: true, config: providerCfg },
     ),
@@ -337,7 +339,7 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
             db
               .select()
               .from(InboxTable)
-              .where(eq(InboxTable.receiver_session_id, parent.id))
+              .where(and(eq(InboxTable.receiver_session_id, parent.id), eq(InboxTable.type, "actor_notification")))
               .all(),
           ),
         )
@@ -379,13 +381,13 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
         // outcome Deferred is also resolved; await it for safety.
         yield* Deferred.await(result.outcome)
 
-        // No inbox row should exist — foreground path skips inbox.send.
+        // 前台 spawn 由调用方直接取得结果，不额外受理终止通知。
         const rows = yield* Effect.sync(() =>
           Database.use((db) =>
             db
               .select()
               .from(InboxTable)
-              .where(eq(InboxTable.receiver_session_id, parent.id))
+              .where(and(eq(InboxTable.receiver_session_id, parent.id), eq(InboxTable.type, "actor_notification")))
               .all(),
           ),
         )
@@ -455,7 +457,7 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
         // Wake the peer with an inbox message. This drives a woken turn via
         // SessionPrompt.loop({ notifyParentOnComplete: true }).
         yield* inbox
-          .send({
+          .accept({
             receiverSessionID: result.sessionID,
             receiverActorID: result.actorID,
             senderSessionID: parent.id,
@@ -469,14 +471,12 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
         // can exceed the old 5s (200×25ms) window. Use 600 iterations × 50ms
         // = 30s worst-case, but the test bun --timeout is also 30s, so in
         // practice the LLM response lands well before the deadline.
-        // Delivery can land in TWO places: the raw InboxTable row, OR a
-        // drained synthetic user message in the parent main slice.
         const found = yield* Effect.gen(function* () {
           for (let i = 0; i < 600; i++) {
             const r = yield* inboxRows("main")
             if (r.length > 0) {
-              const content = r[0].content as { text?: string }
-              if (content.text?.includes("woken turn")) return { type: r[0].type, text: content.text }
+              const text = MessageV2.get({ sessionID: r[0].receiver_session_id, messageID: r[0].input_message_id! }).parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n")
+              if (text.includes("woken turn")) return { type: r[0].type, text }
             }
             const msgs = yield* Session.Service.use((s) => s.messages({ sessionID: parent.id, agentID: "main" })).pipe(
               Effect.catch(() => Effect.succeed([] as MessageV2.WithParts[])),
@@ -545,7 +545,7 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
         )
 
         yield* inbox
-          .send({
+          .accept({
             receiverSessionID: result.sessionID,
             receiverActorID: result.actorID,
             senderSessionID: parent.id,
@@ -562,7 +562,7 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
             db
               .select()
               .from(InboxTable)
-              .where(eq(InboxTable.receiver_session_id, parent.id))
+              .where(and(eq(InboxTable.receiver_session_id, parent.id), eq(InboxTable.type, "actor_notification")))
               .all(),
           ),
         )

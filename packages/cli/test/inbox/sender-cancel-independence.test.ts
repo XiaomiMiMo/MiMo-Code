@@ -17,9 +17,7 @@ afterEach(async () => {
 })
 
 describe("Inbox sender cancel independence (Plan 2 / Task 7)", () => {
-  // Proves send is INSERT-then-fork: the DB row exists immediately after send returns,
-  // independent of whether any downstream wake fiber is alive.
-  test("inbox row persists after send regardless of wake fiber state", async () => {
+  test("admission persists the input message and receipt before returning", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
@@ -44,11 +42,9 @@ describe("Inbox sender cancel independence (Plan 2 / Task 7)", () => {
             ),
           )
 
-          // Send a message — send is synchronous INSERT + async wake fork.
-          // The row must be durable before send returns.
           const { inboxID } = await rt.runPromise(
             Inbox.Service.use((inbox) =>
-              inbox.send({
+              inbox.accept({
                 receiverSessionID: session.id,
                 receiverActorID: "recv-1",
                 content: "persistent message",
@@ -76,7 +72,11 @@ describe("Inbox sender cancel independence (Plan 2 / Task 7)", () => {
 
           expect(rows.length).toBe(1)
           expect(rows[0]!.id).toBe(inboxID)
-          expect((rows[0]!.content as { text: string }).text).toBe("persistent message")
+          expect(rows[0]!.content).toBeNull()
+          const message = await rt.runPromise(Session.Service.use((sessions) =>
+            sessions.messages({ sessionID: session.id, agentID: "recv-1" })))
+          expect(message[0].info.id).toBe(rows[0].input_message_id!)
+          expect(message[0].parts).toEqual([expect.objectContaining({ type: "text", synthetic: true, text: expect.stringContaining("persistent message") })])
         } finally {
           await rt.dispose()
         }
@@ -114,12 +114,12 @@ describe("Inbox sender cancel independence (Plan 2 / Task 7)", () => {
             Inbox.Service.use((inbox) =>
               Effect.all(
                 [
-                  inbox.send({
+                  inbox.accept({
                     receiverSessionID: session.id,
                     receiverActorID: "recv-2",
                     content: "first",
                   }),
-                  inbox.send({
+                  inbox.accept({
                     receiverSessionID: session.id,
                     receiverActorID: "recv-2",
                     content: "second",

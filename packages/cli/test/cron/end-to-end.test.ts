@@ -25,13 +25,9 @@ import { testEffect } from "../lib/effect"
 //   Scheduler.add → tick → onFire(task) → injectScheduledPrompt
 //     → SessionPrompt.Service.prompt (stubbed to capture) → cron origin survives.
 //
-// The bridge's own onFire callback uses production AppRuntime via dynamic
-// import (cron-bridge.ts:168), which cannot route into the test's stubbed
-// Service. So this test mounts Scheduler directly with a captured onFire
-// callback that invokes the same injectScheduledPrompt seam the bridge uses
-// — verifying the composed pipeline without fighting the AppRuntime detour.
-// The bridge's own wiring to Scheduler.start (isKilled / onFire / onArmLoop)
-// is covered by cron-bridge.integration.test.ts and keepalive.integration.test.ts.
+// This test mounts Scheduler directly and drains captured fires through the
+// injection seam. Runtime ownership and the bridge's real onFire callback are
+// covered by cron-bridge.integration.test.ts.
 
 const originalCronFlag = Flag.MIMOCODE_EXPERIMENTAL_CRON
 afterEach(async () => {
@@ -46,7 +42,8 @@ const captured: { value: PromptInput[] } = { value: [] }
 const stubPrompt = Layer.succeed(
   SessionPrompt.Service,
   SessionPrompt.Service.of({
-    cancel: () => Effect.void,
+    cancel: () => Effect.succeed(0),
+    promptAsync: () => Effect.die("promptAsync not expected in cron test"),
     prompt: (input: PromptInput) =>
       Effect.sync(() => {
         captured.value.push(input)

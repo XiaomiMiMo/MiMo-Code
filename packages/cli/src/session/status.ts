@@ -30,6 +30,20 @@ export const Info = z
     z.object({
       type: z.literal("busy"),
       message: z.string().optional(),
+      /**
+       * Structured automatic-wait marker while the main turn is parked on
+       * child executions. Cleared as soon as the wait ends, a new input
+       * interrupts it, or the deadline fires — clients must not treat a
+       * stale wait as still active.
+       */
+      wait: z
+        .object({
+          kind: z.literal("subagents"),
+          actorIDs: z.array(z.string()),
+          stalled: z.array(z.string()),
+          deadline: z.number(),
+        })
+        .optional(),
     }),
   ])
   .meta({

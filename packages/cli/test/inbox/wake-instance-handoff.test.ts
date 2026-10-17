@@ -5,7 +5,8 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { Instance, type InstanceContext } from "../../src/project/instance"
 import { InboxTable } from "../../src/inbox"
-import { inboxServiceRef, sessionPromptRef } from "../../src/inbox/inbox-ref"
+import { inboxServiceRef } from "../../src/inbox/inbox-ref"
+import { schedulerRef } from "../../src/inbox/scheduler"
 import { Database, eq } from "../../src/storage"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
@@ -89,7 +90,6 @@ const receiver = (held = true) =>
   })
 
 for (const deliveries of [1, 2]) {
-  // Desktop turn-execution [TP-RUN-R12-42], tool-step-schema [TP-R16-09].
   it.live(
     `pending disposal keeps ${deliveries} inbox wake deliveries alive until the real receiver finishes`,
     () =>
@@ -106,7 +106,7 @@ for (const deliveries of [1, 2]) {
           // lets the scheduled wake acquire its Runner before this boundary.
           yield* Effect.gen(function* () {
             for (let index = 0; index < deliveries; index++)
-              yield* inbox.send({
+              yield* inbox.accept({
                 receiverSessionID: fixture.session.id,
                 receiverActorID: "main",
                 type: "actor_notification",
@@ -145,11 +145,12 @@ it.live(
         if (!inbox) throw new Error("Inbox service was not initialized")
         const releaseSender = Instance.claim(fixture.dir)
         yield* Effect.promise(() => Instance.disposeDirectory(fixture.dir))
-        const result = yield* inbox.send({
-          receiverSessionID: fixture.session.id,
-          receiverActorID: "main",
-          content: "QUIET_DELIVERY",
-          wake: false,
+        const prompt = yield* SessionPrompt.Service
+        const result = yield* prompt.prompt({
+          sessionID: fixture.session.id,
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("model") },
+          parts: [{ type: "text", text: "QUIET_DELIVERY" }],
+          noReply: true,
         })
         yield* Effect.sync(releaseSender)
         yield* eventually(
@@ -157,9 +158,10 @@ it.live(
           "quiet delivery retained the instance",
         )
         const row = yield* Effect.sync(() =>
-          Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.id, result.inboxID)).get()),
+          Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.input_message_id, result.info.id)).get()),
         )
-        expect(row?.content).toEqual({ text: "QUIET_DELIVERY" })
+        expect(row).toBeUndefined()
+        expect(result.parts.some(part => part.type === "text" && part.text === "QUIET_DELIVERY")).toBe(true)
         expect(fixture.server.captures).toHaveLength(1)
       }).pipe(restoreInstance(fixture.context))
     }),
@@ -177,7 +179,7 @@ it.live(
         const state = yield* SessionRunState.Service
         const releaseSender = Instance.claim(fixture.dir)
         yield* Effect.promise(() => Instance.disposeDirectory(fixture.dir))
-        yield* inbox.send({ receiverSessionID: fixture.session.id, receiverActorID: "main", content: "ABORT_DELIVERY" })
+        yield* inbox.accept({ receiverSessionID: fixture.session.id, receiverActorID: "main", content: "ABORT_DELIVERY" })
         yield* Effect.sync(releaseSender)
         yield* Effect.promise(() => fixture.entered.promise).pipe(Effect.timeout("2 seconds"))
         yield* state.cancel(fixture.session.id)
@@ -198,14 +200,14 @@ it.live(
   () =>
     Effect.gen(function* () {
       const fixture = yield* receiver()
-      const previous = sessionPromptRef.current
+      const previous = schedulerRef.current
       // Existing runtime port: isolate the before-body interruption boundary,
       // while keeping real Inbox persistence and Instance disposal accounting.
-      const interrupted = { loop: () => Effect.interrupt }
-      sessionPromptRef.current = interrupted
+      const interrupted = { kick: () => Effect.interrupt }
+      schedulerRef.current = interrupted
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
-          if (sessionPromptRef.current === interrupted) sessionPromptRef.current = previous
+          if (schedulerRef.current === interrupted) schedulerRef.current = previous
         }),
       )
       yield* Effect.gen(function* () {
@@ -213,7 +215,7 @@ it.live(
         if (!inbox) throw new Error("Inbox service was not initialized")
         const releaseSender = Instance.claim(fixture.dir)
         yield* Effect.promise(() => Instance.disposeDirectory(fixture.dir))
-        const result = yield* inbox.send({
+        const result = yield* inbox.accept({
           receiverSessionID: fixture.session.id,
           receiverActorID: "main",
           content: "INTERRUPTED_WAKE",
@@ -226,7 +228,7 @@ it.live(
         const row = yield* Effect.sync(() =>
           Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.id, result.inboxID)).get()),
         )
-        expect(row?.content).toEqual({ text: "INTERRUPTED_WAKE" })
+        expect(row).toMatchObject({ state: "accepted", input_message_id: result.inputMessageID, content: null })
         expect(fixture.server.captures).toHaveLength(1)
       }).pipe(restoreInstance(fixture.context))
     }),
@@ -245,7 +247,7 @@ it.live(
         const sessions = yield* Session.Service
         const releaseSender = Instance.claim(fixture.dir)
         yield* Effect.promise(() => Instance.disposeDirectory(fixture.dir))
-        yield* inbox.send({
+        yield* inbox.accept({
           receiverSessionID: fixture.session.id,
           receiverActorID: "main",
           content: "IMMEDIATE_ABORT_DELIVERY",

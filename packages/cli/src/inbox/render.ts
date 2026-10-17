@@ -1,4 +1,26 @@
-import type { InboxRow } from "./inbox.sql"
+// Structural subset of InboxRow — render only reads these fields, so callers
+// (including tests) need not construct a full queue row.
+export function renderInboxRow(row: {
+  type: string
+  content: { text?: string } | null
+  sender_session_id?: string | null
+  sender_actor_id?: string | null
+  created_at: number
+}): string {
+  if (row.type === "actor_notification") {
+    // Pre-rendered notification text — sender produced the full
+    // <actor-notification>...</actor-notification> wrapper.
+    const content = row.content as { text?: string } | null
+    return blankTo(content?.text, "(no notification body)")
+  }
+  // Default: type === "text" or unknown — wrap as <inbox> element so
+  // the LLM can route by sender; the wrapper format mirrors the
+  // <actor-notification> convention from the legacy completion.ts.
+  const content = row.content as { text?: string } | null
+  const sender = row.sender_session_id ? `${row.sender_session_id}:${row.sender_actor_id ?? "?"}` : "system"
+  const sentAt = new Date(row.created_at).toISOString()
+  return `<inbox from="${sender}" sent_at="${sentAt}">\n${blankTo(content?.text, "(empty)")}\n</inbox>`
+}
 
 // A blank body must fall back to the placeholder, not just a missing one.
 // `?? placeholder` only catches null/undefined, but a blank body is stored as
@@ -8,22 +30,6 @@ import type { InboxRow } from "./inbox.sql"
 // and a provider 400 ("user messages must have non-empty content").
 function blankTo(text: string | undefined, placeholder: string) {
   return text !== undefined && text.trim().length > 0 ? text : placeholder
-}
-
-export function renderInboxRow(row: InboxRow): string {
-  if (row.type === "actor_notification") {
-    // Pre-rendered notification text — sender produced the full
-    // <actor-notification>...</actor-notification> wrapper.
-    const content = row.content as { text?: string }
-    return blankTo(content.text, "(no notification body)")
-  }
-  // Default: type === "text" or unknown — wrap as <inbox> element so
-  // the LLM can route by sender; the wrapper format mirrors the
-  // <actor-notification> convention from the legacy completion.ts.
-  const content = row.content as { text?: string }
-  const sender = row.sender_session_id ? `${row.sender_session_id}:${row.sender_actor_id ?? "?"}` : "system"
-  const sentAt = new Date(row.created_at).toISOString()
-  return `<inbox from="${sender}" sent_at="${sentAt}">\n${blankTo(content.text, "(empty)")}\n</inbox>`
 }
 
 // Display-only decoding; keep the persisted synthetic part unchanged for model context.

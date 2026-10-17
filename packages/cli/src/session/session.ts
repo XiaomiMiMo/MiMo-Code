@@ -12,6 +12,10 @@ import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt 
 import { SyncEvent } from "../sync"
 import type { SQL } from "../storage"
 import { PartTable, SessionTable, MessageTable } from "./session.sql"
+import { InboxTable } from "../inbox/inbox.sql"
+import { monotonicFactory } from "ulid"
+import { ExecutionOwnership } from "./execution-ownership"
+import * as QueueSync from "../inbox/sync"
 import { ActorRegistryTable } from "../actor/actor.sql"
 import { ProjectTable } from "../project/project.sql"
 import { Storage } from "@/storage"
@@ -626,17 +630,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       if (!options?.visible) return rows.map(fromRow)
       if (!rows.length) return []
       // visible: only children a user should see in session lists. Peer actors
-      // register under the child session with actor_id === session id. Exactly
-      // three code paths create a child session, so the two dropped here are
-      // the checkpoint-writer host (session/checkpoint.ts:851, mode "subagent")
-      // and the HTTP `/ask` fork-query host (tool/session.ts forkQuery, title
-      // `ask: …`, mode "subagent"); a pre-registry child with no actor row at
-      // all is dropped too.
-      //
-      // ⚠️This list used to also name "workflow subagent sessions". There is no
-      // such session: a workflow's agent() calls actor.spawn with
-      // sessionID = its OWN session (workflow/runtime.ts:814-816, :945-948), so
-      // it registers an actor, not a child session.
+      // register under the child session with actor_id === session id. Subagent
+      // hosts (checkpoint writer, fork-query and isolated workflow attempts) are
+      // omitted from this list, as are children without an actor row.
       //
       // ⚠️This filter is NOT the render prohibition. Being absent here means
       // "not offered in a list"; what may never be RENDERED is narrower and
@@ -808,43 +804,80 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         title,
         prompt: original.prompt,
       })
-      const msgs = yield* messages({ sessionID: input.sessionID, agentID: "*" })
-      const idMap = new Map<string, MessageID>()
-
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
-        const newID = MessageID.ascending()
-        idMap.set(msg.info.id, newID)
-
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
-        const cloned = yield* updateMessage({
-          ...msg.info,
-          sessionID: session.id,
-          id: newID,
-          ...(parentID && { parentID }),
-        })
-
-        const idle = yield* runs.assertNotBusy(input.sessionID, msg.info.agentID ?? "main").pipe(
+      const idleByAgent = new Map<string, boolean>()
+      const sourceMsgs = Array.from(MessageV2.stream(input.sessionID, { agentID: "*" }))
+      for (const agentID of new Set(sourceMsgs.map((msg) => msg.info.agentID ?? "main"))) {
+        const idle = yield* runs.assertNotBusy(input.sessionID, agentID).pipe(
           Effect.match({ onFailure: () => false, onSuccess: () => true }),
         )
-        for (const part of msg.parts) {
-          const copy = { ...part, id: PartID.ascending(), messageID: cloned.id, sessionID: session.id }
-          if (copy.type === "tool") {
-            yield* mutateToolPart({ partID: copy.id, messageID: copy.messageID, sessionID: copy.sessionID }, () => {
-              const source = Database.use((db) => db.select().from(PartTable).where(eq(PartTable.id, part.id)).get())
-              if (!source) return
-              const latest = MessageV2.ToolPart.parse({ ...source.data, id: source.id, sessionID: source.session_id, messageID: source.message_id })
-              if (latest.sessionID !== part.sessionID || latest.messageID !== part.messageID || latest.callID !== copy.callID) {
-                throw new Error("Fork source tool identity changed")
+        idleByAgent.set(agentID, idle)
+      }
+      yield* Effect.sync(() => Database.transaction((tx) => {
+        // Copy in the order the model saw the source: still-queued inputs are
+        // hidden from the body and appended at the end in acceptance order,
+        // consumed inputs sit in front of the assistant message that first read
+        // them. The clone then needs no inbox records — its raw id order is
+        // already the rendered one.
+        const all = Array.from(MessageV2.stream(input.sessionID, { agentID: "*" })).reverse()
+        const receipts = tx.select().from(InboxTable)
+          .where(eq(InboxTable.receiver_session_id, input.sessionID)).all()
+        // Consumed receipts count as owned so their inputs stay visible; the
+        // still-queued ones are hidden by the same rule the model uses.
+        const body = MessageV2.renderedOrder(all, receipts, input.sessionID, new Set(
+          receipts.filter((row) => row.consumed).map((row) => row.id),
+        ), (messageID) => MessageV2.get({ sessionID: input.sessionID, messageID }))
+        const bodyIDs = new Set(body.map((msg) => msg.info.id))
+        const queuedIDs = receipts
+          .filter((row) => row.input_message_id && !bodyIDs.has(row.input_message_id) &&
+            (row.state === "accepted" || (row.state === "claimed" && !row.consumed)))
+          .map((row) => row.input_message_id!)
+        const tail = queuedIDs
+          .map((id) => all.find((msg) => msg.info.id === id))
+          .filter((msg): msg is MessageV2.WithParts => msg !== undefined)
+        const sequence = [...body, ...tail]
+        let copied = sequence
+        if (input.messageID) {
+          const cutoff = sequence.findIndex((msg) => msg.info.id === input.messageID)
+          if (cutoff < 0) throw new NotFoundError({ message: `Message not found: ${input.messageID}` })
+          copied = sequence.slice(0, cutoff)
+        }
+        const idMap = new Map(copied.map((msg) => [msg.info.id, MessageID.ascending()]))
+        const now = Date.now()
+        let created = 0
+        for (const msg of copied) {
+          // Reads sort by time_created before id, so creation time must not
+          // decrease along the rendered order.
+          created = Math.max(created, msg.info.time.created)
+          const info = { ...msg.info, sessionID: session.id, id: idMap.get(msg.info.id)!, time: { ...msg.info.time, created } }
+          if (info.role !== "user") {
+            info.parentID = idMap.get(info.parentID) ?? info.parentID
+          }
+          SyncEvent.run(MessageV2.Event.Updated, { sessionID: session.id, info })
+          for (const part of msg.parts) {
+            const copy = { ...structuredClone(part), id: PartID.ascending(), messageID: info.id, sessionID: session.id }
+            if (copy.type === "tool") {
+              const source = tx.select().from(PartTable).where(eq(PartTable.id, part.id)).get()
+              if (source) {
+                const latest = MessageV2.ToolPart.parse({ ...source.data, id: source.id, sessionID: source.session_id, messageID: source.message_id })
+                if (latest.sessionID === part.sessionID && latest.messageID === part.messageID && latest.callID === copy.callID) {
+                  const idle = idleByAgent.get(msg.info.agentID ?? "main") ?? true
+                  copy.execution = latest.execution === "started" || idle ? latest.execution : undefined
+                  if (latest.metadata?.providerExecuted) copy.metadata = { ...copy.metadata, providerExecuted: true }
+                  if (latest.state.status === "completed" || latest.state.status === "error") copy.state = latest.state
+                }
               }
-              return { ...latest, id: copy.id, sessionID: copy.sessionID, messageID: copy.messageID,
-                execution: latest.execution === "started" || idle ? latest.execution : undefined }
+            }
+            SyncEvent.run(MessageV2.Event.PartUpdated, {
+              sessionID: session.id,
+              part: copy,
+              time: now,
             })
-          } else {
-            yield* updatePart(copy)
           }
         }
-      }
+        QueueSync.snapshot(session.id)
+      }, { behavior: "immediate" })).pipe(Effect.catchCause((cause) =>
+        remove(session.id).pipe(Effect.andThen(Effect.failCause(cause))),
+      ))
       return session
     })
 

@@ -18,13 +18,10 @@ function inbox(text: string, sender = "build"): Extract<Part, { type: "text" }> 
     type: "text",
     synthetic: true,
     text: renderInboxRow({
-      id: `inbox_${sender}`,
-      receiver_session_id: SessionID.make("ses_example"),
-      receiver_actor_id: "explore-1",
-      sender_session_id: SessionID.make("ses_example"),
-      sender_actor_id: sender,
       type: "text",
       content: { text },
+      sender_session_id: SessionID.make("ses_example"),
+      sender_actor_id: sender,
       created_at: Date.parse("2026-01-01T00:00:00.000Z"),
     }),
   }

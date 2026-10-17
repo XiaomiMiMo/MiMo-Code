@@ -12,7 +12,7 @@ const log = Log.create({ service: "session.visibility" })
  * clearly not conversations, and everything else a user can reach should render.
  * The prohibition exists because navigation was landing inside a writer host.
  *
- * ## Exactly three code paths create a child session
+ * ## Child session populations
  *
  * Enumerated by grepping every `create({ parentID })` in src/ (non-test):
  *
@@ -29,12 +29,9 @@ const log = Log.create({ service: "session.visibility" })
  *      `agentType: "checkpoint-writer"` (`checkpoint.ts:878`). RUNTIME-spawned
  *      bookkeeping. The one population this file exists to refuse.
  *
- * ⚠️"workflow subagent sessions" is NOT a fourth path: a workflow's `agent()`
- * calls `actor.spawn({ mode: "subagent", sessionID: input.sessionID })`
- * (`workflow/runtime.ts:814-816`, `:945-948`) — it registers an actor under the
- * workflow's OWN session and creates no child session at all. An earlier
- * revision of this comment (and of `Session.children`'s) named it as a hidden
- * session category; it never was one.
+ *   4. `workflow/runtime.ts` — an isolated attempt owns a child session in its
+ *      worktree. It retains subagent/ephemeral semantics and is renderable for
+ *      trace inspection. Shared-tree workflow agents use the parent's session.
  *
  * ## The criterion: the agent-type set, not `mode !== "peer"`
  *

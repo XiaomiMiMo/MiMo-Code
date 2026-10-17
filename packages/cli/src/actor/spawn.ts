@@ -23,6 +23,8 @@ import { parseReturnHeader, type ReturnStatus } from "./return-header"
 import { Log } from "@/util"
 import { Instance, type InstanceContext } from "@/project/instance"
 import { InstanceRef } from "@/effect/instance-ref"
+import { inboxControllerRef } from "@/inbox"
+import type { AdmissionGuard } from "@/inbox/controller"
 
 const log = Log.create({ service: "actor.spawn" })
 
@@ -211,6 +213,8 @@ export interface SpawnInput {
   tools: ToolWhitelist
   model?: { providerID: ProviderID; modelID: ModelID }
   background: boolean
+  // A foreground waiter decides whether terminal delivery must be handed off.
+  notifyOnCompletion?: Deferred.Deferred<boolean>
   parentActorID?: string
   task_id?: string // Spec ②: bound user-task ID for postStop progress.md validation
   // Peer-only: directory the child session runs in. When set, the child's work
@@ -264,7 +268,7 @@ export interface Interface {
     sessionID: SessionID,
     actorID: string,
     mode: "graceful" | "forced",
-    options?: { wake?: boolean },
+    guard?: AdmissionGuard,
   ) => Effect.Effect<void>
   readonly getForkContext: (sessionID: SessionID, actorID: string) => Effect.Effect<ForkContext | undefined>
 }
@@ -288,8 +292,12 @@ export const layer = Layer.effect(
     // ForkContext snapshot per actor, captured at spawn for fork agents
     // (contextMode = "full"). Read by fork's runLoop (see prompt.ts) and
     // cleared on terminal status; ActorExecution tracks the complete lifecycle.
-    const forkContexts = new Map<string, ForkContext>()
+    const forkContexts = new Map<string, { execution: Execution; context: ForkContext }>()
     const forkContextKey = (sessionID: SessionID, actorID: string) => sessionID + ":" + actorID
+    const clearForkContext = (execution: Execution) => Effect.sync(() => {
+      const key = forkContextKey(execution.sessionID, execution.actorID)
+      if (forkContexts.get(key)?.execution === execution) forkContexts.delete(key)
+    })
 
     const executions = yield* ActorExecution.Service
     const notifyTerminal = makeTerminalNotifier({ inbox, registry: actorReg, sessions: session })
@@ -300,7 +308,7 @@ export const layer = Layer.effect(
     // load-bearing piece this primitive exists for.
     //
     // Returns the assistant's final text (if any) so forkWork's onSuccess can
-    // pass it to inbox.send (notification body) and into the success Deferred.
+    // pass it to inbox.accept (notification body) and into the success Deferred.
     const runAgentLoop = Effect.fn("Actor.runAgentLoop")(function* (input: {
       sessionID: SessionID
       actorID: string
@@ -356,8 +364,11 @@ export const layer = Layer.effect(
       task: string
       description?: string
       background: boolean
+      notifyOnCompletion?: Deferred.Deferred<boolean>
+      expectedEpoch?: number
       model?: { providerID: ProviderID; modelID: ModelID }
       lifecycle: "ephemeral" | "persistent"
+      actorMode: "peer" | "subagent"
       task_id?: string
       format?: MessageV2.OutputFormat
       // When set, the child's work fiber runs under this InstanceContext (via
@@ -391,21 +402,20 @@ export const layer = Layer.effect(
             reportedSummary?: string
             warnings?: string[]
           },
-        ) =>
-          notifyTerminal({
+        ) => Effect.gen(function* () {
+          if (input.notifyOnCompletion && !(yield* Deferred.await(input.notifyOnCompletion))) return
+          yield* notifyTerminal({
             ...input,
             source: "spawn",
             status,
             ...extra,
-            // Quiet is execution-bound: only THIS execution's group-abort flag
-            // suppresses auto-wake. Persist the terminal row either way.
-            ...(input.execution.groupAbort ? { wake: false as const } : {}),
+            expectedEpoch: input.execution.groupAbort ? undefined : input.expectedEpoch,
           })
+        })
         const warnings: string[] = []
         let lastResult: { finalText?: string; structured?: unknown } = {}
 
-        // Derive actor mode from spawn shape: peer creates a new session, subagent shares parent's
-        const actorMode: "peer" | "subagent" = input.parentSessionID === input.sessionID ? "subagent" : "peer"
+        const actorMode = input.actorMode
 
         // Writability of THIS agent, derived from the same predicate the runtime uses to
         // strip the Write tool (llm.ts resolveTools → Permission.disabled). Read-only agents
@@ -625,6 +635,9 @@ export const layer = Layer.effect(
           Effect.matchCauseEffect({
             onSuccess: (result) =>
               Effect.gen(function* () {
+                // The inline waiter needs the reconciled result to decide delivery;
+                // notification and release must still finish inside this execution.
+                if (input.notifyOnCompletion) yield* Deferred.succeed(outcome, result)
                 yield* notify("completed", {
                   result:
                     result.structured !== undefined
@@ -646,7 +659,10 @@ export const layer = Layer.effect(
                 // absent rather than being guessed from `error`.
                 const squashed = Cause.squash(cause)
                 const failure = squashed instanceof AssistantSettledError ? squashed.failure : undefined
-                // notify() applies wake:false when this execution.groupAbort is set.
+                const result: AgentOutcome = cancelled
+                  ? { status: "cancelled" }
+                  : { status: "failure", error, ...lastResult, ...(failure ? { failure } : {}) }
+                if (input.notifyOnCompletion) yield* Deferred.succeed(outcome, result)
                 yield* notify(
                   cancelled ? "cancelled" : "failed",
                   cancelled
@@ -659,27 +675,24 @@ export const layer = Layer.effect(
                             : lastResult.finalText,
                       },
                 )
-                yield* Deferred.succeed(
-                  outcome,
-                  cancelled
-                    ? { status: "cancelled" as const }
-                    : { status: "failure" as const, error, ...lastResult, ...(failure ? { failure } : {}) },
-                )
+                yield* Deferred.succeed(outcome, result)
               }),
           }),
           Effect.ensuring(
-            Effect.sync(() => {
-              forkContexts.delete(forkContextKey(input.sessionID, input.actorID))
-            }).pipe(Effect.andThen(executions.release(input.execution))),
+            clearForkContext(input.execution).pipe(Effect.andThen(executions.release(input.execution))),
           ),
           Effect.uninterruptible,
         )
         const boundWork = input.instanceRef ? work.pipe(Effect.provideService(InstanceRef, input.instanceRef)) : work
-        const fiber = yield* executions.fork(input.execution, boundWork, scope)
+        const fiber = yield* executions.fork(input.execution, boundWork, scope, (cause) =>
+          clearForkContext(input.execution).pipe(Effect.andThen(
+            Deferred.succeed(outcome, { status: "failure", error: Cause.pretty(cause) }),
+          ), Effect.asVoid),
+        )
         return { fiber, outcome }
       })
 
-    const spawnPeer = Effect.fn("Actor.spawnPeer")(function* (input: SpawnInput) {
+    const spawnPeer = Effect.fn("Actor.spawnPeer")(function* (input: SpawnInput, expectedEpoch?: number) {
       // When the caller gives the child its own directory (e.g. a worktree the
       // session tool created), bind the child's work fiber to that directory's
       // Instance so its file tools / write boundary are isolated there. A
@@ -695,21 +708,13 @@ export const layer = Layer.effect(
         parentID: input.sessionID,
         contextFrom: input.context === "full" ? input.sessionID : undefined,
         title: `${input.agentType}: ${input.task.slice(0, 40)}`,
-        ...(input.cwd ? { directory: input.cwd } : {}),
+        ...(input.cwd ? { directory: instanceRef?.directory ?? input.cwd } : {}),
       })
-      // T42: register the peer's receiver/actor-registry row (session_id ===
-      // actor_id === child.id, mode "peer") SYNCHRONOUSLY here — before spawn
-      // resolves and before the child's first turn. This is the single
-      // spawn-time registration that makes a child addressable the instant
-      // spawn returns: Inbox.send's ESRCH pre-check (reg.get) and
-      // any later relay both resolve against this row without waiting for the
-      // child to arm anything on its first turn. turn_count/status start at 0/
-      // "pending"; the per-step turn heartbeat (registry.updateTurn) advances
-      // them later. No double-registration: nothing on the first-turn path
-      // (prompt.ts) re-registers a peer — it only reads (reg.get) and updates
-      // (updateTurn/updateStatus). Prerequisite for T43 (--topic reuse).
+      // peer 必须在 spawn 返回前注册，保证首次执行前也可通过 Inbox.accept 接收输入。
       return yield* Effect.acquireUseRelease(
-        executions.reserve(child.id, child.id, instanceRef?.directory),
+        instanceRef
+          ? executions.reserve(child.id, child.id, instanceRef.directory).pipe(Effect.provideService(InstanceRef, instanceRef))
+          : executions.reserve(child.id, child.id),
         (execution) =>
           Effect.gen(function* () {
             yield* actorReg.register({
@@ -726,7 +731,7 @@ export const layer = Layer.effect(
               tools: input.tools,
             })
             if (input.forkContext) {
-              forkContexts.set(forkContextKey(child.id, child.id), input.forkContext) // peer's actorID === child.id
+              forkContexts.set(forkContextKey(child.id, child.id), { execution, context: input.forkContext }) // peer's actorID === child.id
             }
             const { fiber, outcome } = yield* forkWork({
               execution,
@@ -738,8 +743,11 @@ export const layer = Layer.effect(
               task: input.task,
               description: input.description,
               background: input.background,
+              notifyOnCompletion: input.notifyOnCompletion,
+              expectedEpoch,
               model: input.model,
               lifecycle: input.lifecycle ?? "persistent",
+              actorMode: "peer",
               task_id: input.task_id,
               format: input.format,
               ...(instanceRef ? { instanceRef } : {}),
@@ -751,7 +759,7 @@ export const layer = Layer.effect(
       )
     })
 
-    const spawnSubagent = Effect.fn("Actor.spawnSubagent")(function* (input: SpawnInput) {
+    const spawnSubagent = Effect.fn("Actor.spawnSubagent")(function* (input: SpawnInput, expectedEpoch?: number) {
       const actorID = yield* actorReg.allocateActorID(input.sessionID, input.agentType)
 
       const watermark = input.context === "full" ? yield* session.lastMainMessageID(input.sessionID) : undefined
@@ -780,7 +788,7 @@ export const layer = Layer.effect(
             if (input.onActorID) yield* Effect.sync(() => input.onActorID!(actorID)).pipe(Effect.ignore)
 
             if (input.forkContext) {
-              forkContexts.set(forkContextKey(input.sessionID, actorID), input.forkContext)
+              forkContexts.set(forkContextKey(input.sessionID, actorID), { execution, context: input.forkContext })
             }
 
             // Auto-inject return-format instruction for lifecycle-managed subagents.
@@ -804,8 +812,11 @@ export const layer = Layer.effect(
               task: taskWithFormat,
               description: input.description,
               background: input.background,
+              notifyOnCompletion: input.notifyOnCompletion,
+              expectedEpoch,
               model: input.model,
               lifecycle: input.lifecycle ?? "ephemeral",
+              actorMode: "subagent",
               task_id: input.task_id,
               format: input.format,
             })
@@ -818,24 +829,26 @@ export const layer = Layer.effect(
     })
 
     const spawn = Effect.fn("Actor.spawn")(function* (input: SpawnInput) {
-      if (input.mode === "peer") return yield* spawnPeer(input)
-      return yield* spawnSubagent(input)
+      const tq = inboxControllerRef.current
+      // Bind delivery to the parent's epoch before any child execution can exist.
+      const expectedEpoch = tq ? yield* tq.getEpoch(input.parentSessionID ?? input.sessionID) : undefined
+      if (input.mode === "peer") return yield* spawnPeer(input, expectedEpoch)
+      return yield* spawnSubagent(input, expectedEpoch)
     })
 
     const cancel: (
       sessionID: SessionID,
       actorID: string,
       mode: "graceful" | "forced",
-      options?: { wake?: boolean },
+      guard?: AdmissionGuard,
     ) => Effect.Effect<void> = Effect.fn("Actor.cancel")(function* (
       sessionID: SessionID,
       actorID: string,
       mode: "graceful" | "forced",
-      options?: { wake?: boolean },
+      guard?: AdmissionGuard,
     ) {
-      const wake = options?.wake !== false
       const children = yield* actorReg.listByParent(sessionID, actorID)
-      yield* Effect.forEach(children, (c) => cancel(sessionID, c.actorID, mode, options), {
+      yield* Effect.forEach(children, (c) => cancel(sessionID, c.actorID, mode, guard), {
         concurrency: "unbounded",
         discard: true,
       })
@@ -843,16 +856,14 @@ export const layer = Layer.effect(
       // (continuation acquire/attach before runTurn marks running).
       const execution = yield* executions.current(sessionID, actorID)
       if (execution) {
-        if (!wake) execution.groupAbort = true
         yield* executions.requestCancel(execution)
         yield* state.cancelActor(sessionID, actorID)
         yield* executions.interrupt(execution)
         return
       }
+      const forkContext = forkContexts.get(forkContextKey(sessionID, actorID))
       const actor = yield* actorReg.get(sessionID, actorID)
       // Registry-only cancel (no live ActorExecution fiber).
-      // R006: quiet abort (`wake:false`) must still materialize a cancelled
-      // notification — wake only suppresses auto-fork, not durable delivery.
       // Skip when the row is already idle (terminal already delivered) or when
       // prior lastOutcome is already cancelled (execution-path notify won the race).
       if (!actor || actor.status === "idle") return
@@ -865,12 +876,12 @@ export const layer = Layer.effect(
       const after = yield* actorReg.get(sessionID, actorID)
       if (!after || after.status !== "idle" || after.lastOutcome !== "cancelled") return
       if (priorOutcome === "cancelled") return
-      yield* notifyTerminal({ sessionID, actorID, source: "pending", status: "cancelled", wake })
-      yield* Effect.sync(() => forkContexts.delete(forkContextKey(sessionID, actorID)))
+      yield* notifyTerminal({ sessionID, actorID, source: "pending", status: "cancelled", ...guard })
+      if (forkContext) yield* clearForkContext(forkContext.execution)
     })
 
     const getForkContext = Effect.fn("Actor.getForkContext")(function* (sessionID: SessionID, actorID: string) {
-      return forkContexts.get(forkContextKey(sessionID, actorID))
+      return forkContexts.get(forkContextKey(sessionID, actorID))?.context
     })
 
     const impl = Service.of({ spawn, cancel, getForkContext })

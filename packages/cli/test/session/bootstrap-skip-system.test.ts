@@ -28,6 +28,7 @@ const stubActorRegistry = Layer.succeed(
   ActorRegistry.Service.of({
     register: () => Effect.die("not used"),
     updateStatus: () => Effect.void,
+    failOrphan: () => Effect.die("not used"),
     updateTurn: () => Effect.void,
     updateAgent: () => Effect.void,
     get: () => Effect.succeed(undefined),

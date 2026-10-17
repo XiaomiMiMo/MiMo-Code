@@ -28,7 +28,6 @@ export const ActorStatusChanged = BusEvent.define(
     error: z.string().optional(),
   }),
 )
-
 // Legacy wire event; no runtime scanner emits it.
 export const ActorStuck = BusEvent.define(
   "actor.stuck",
@@ -40,7 +39,6 @@ export const ActorStuck = BusEvent.define(
     stuckDuration: z.number(),
   }),
 )
-
 // Legacy wire event retained for old clients/history. No runtime scanner emits it.
 export const ActorStalled = BusEvent.define(
   "actor.stalled",
@@ -64,17 +62,5 @@ export const WriterCachePerf = BusEvent.define(
     cache_write_tokens: z.number(),
     cache_hit_rate: z.number(),
     num_llm_calls: z.number(),
-  }),
-)
-
-export const InboxArrived = BusEvent.define(
-  "inbox.arrived",
-  z.object({
-    receiverSessionID: SessionID.zod,
-    receiverActorID: z.string(),
-    senderSessionID: SessionID.zod.optional(),
-    senderActorID: z.string().optional(),
-    inboxID: z.string(),
-    type: z.string(),
   }),
 )

@@ -10,7 +10,7 @@ export const ResumeTestHooks = {
   beforeAdmissionRecheck: undefined as undefined | (() => Effect.Effect<void>),
   /** [C003] After admission re-check / handshake, before any residue cleanup read. */
   afterAdmissionBeforeCleanup: undefined as undefined | (() => Effect.Effect<void>),
-  /** After inbox.drain on step-0, before parent-tail lock checks. */
+  /** At step-0, before parent-tail lock checks. */
   beforeStep0ParentCheck: undefined as undefined | (() => Effect.Effect<void>),
   /** After successful planResume, before launchResume exclusive occupy (ensureExclusive/start). */
   beforeExclusiveOccupy: undefined as undefined | (() => Effect.Effect<void>),

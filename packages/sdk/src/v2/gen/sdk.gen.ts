@@ -54,6 +54,7 @@ import type {
   FindTextResponses,
   FormatterStatusResponses,
   GlobalConfigGetResponses,
+  GlobalConfigStatusResponses,
   GlobalConfigUpdateErrors,
   GlobalConfigUpdateResponses,
   GlobalDisposeResponses,
@@ -171,6 +172,8 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionReceiptErrors,
+  SessionReceiptResponses,
   SessionRecoveryErrors,
   SessionRecoveryResponses,
   SessionResumeErrors,
@@ -288,6 +291,23 @@ class HeyApiRegistry<T> {
 
 export class Config extends HeyApiClient {
   /**
+   * Get configuration application status
+   */
+  public status<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).get<GlobalConfigStatusResponses, unknown, ThrowOnError>({
+      url: "/global/config/status",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Get global configuration
    *
    * Retrieve the current global OpenCode configuration settings and preferences.
@@ -375,16 +395,6 @@ export class Import extends HeyApiClient {
 
 export class Global extends HeyApiClient {
   /**
-   * Refresh model configuration and provider caches without rebuilding instances
-   */
-  public refreshProviders<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<GlobalRefreshProvidersResponses, unknown, ThrowOnError>({
-      url: "/global/provider/refresh",
-      ...options,
-    })
-  }
-
-  /**
    * Get health
    *
    * Get health information about the OpenCode server.
@@ -404,6 +414,16 @@ export class Global extends HeyApiClient {
   public event<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).sse.get<GlobalEventResponses, unknown, ThrowOnError>({
       url: "/global/event",
+      ...options,
+    })
+  }
+
+  /**
+   * Refresh model configuration and provider caches without rebuilding instances
+   */
+  public refreshProviders<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<GlobalRefreshProvidersResponses, unknown, ThrowOnError>({
+      url: "/global/provider/refresh",
       ...options,
     })
   }
@@ -2479,7 +2499,7 @@ export class Session2 extends HeyApiClient {
   /**
    * Send message
    *
-   * Create and send a new message to a session, streaming the AI response.
+   * Create and send a new message to a session. Busy never 409: admit queues with 202+receiptId; idle streams 200.
    */
   public prompt<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2761,7 +2781,7 @@ export class Session2 extends HeyApiClient {
   /**
    * Send async message
    *
-   * Create and send a new message to a session asynchronously, starting the session if needed and returning immediately.
+   * Create and send a message asynchronously. Returns 202 with a durable receiptId, or 204 when no user turn is admitted.
    */
   public promptAsync<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2831,6 +2851,40 @@ export class Session2 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Get turn receipt
+   *
+   * Durable receipt for an admitted prompt/resume/wake. Source of truth after HTTP 202.
+   */
+  public receipt<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      receiptId: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "receiptId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionReceiptResponses, SessionReceiptErrors, ThrowOnError>({
+      url: "/session/{sessionID}/receipt/{receiptId}",
+      ...options,
+      ...params,
     })
   }
 
@@ -4152,6 +4206,47 @@ export class Sync extends HeyApiClient {
           [key: string]: unknown
         }
       }>
+      queueSnapshot?: {
+        version: 1
+        sessionID: string
+        receipts: Array<{
+          id: string
+          receiver_session_id: string
+          receiver_actor_id: string
+          sender_session_id: string | null
+          sender_actor_id: string | null
+          type: string
+          content: {
+            text?: string
+          } | null
+          input_message_id: string | null
+          state: "accepted" | "claimed" | "settled" | "cancelled" | "rejected"
+          epoch: number
+          run_id: number | null
+          claim_frontier: string | null
+          consumed: boolean
+          outcome: "success" | "assistant_error" | "interrupted" | "never_ran" | null
+          delivery_message_id: string | null
+          error: string | null
+          idempotency_key: string
+          created_at: number
+          time_updated: number
+        }>
+        lanes: Array<{
+          session_id: string
+          agent_id: string
+          consumed_frontier: string | null
+          input_revision: number
+          time_updated: number
+        }>
+        epoch: {
+          session_id: string
+          epoch: number
+          time_updated: number
+        } | null
+      }
+      finalSeq?: number
+      workspaceID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -4172,6 +4267,9 @@ export class Sync extends HeyApiClient {
               map: "directory",
             },
             { in: "body", key: "events" },
+            { in: "body", key: "queueSnapshot" },
+            { in: "body", key: "finalSeq" },
+            { in: "body", key: "workspaceID" },
           ],
         },
       ],

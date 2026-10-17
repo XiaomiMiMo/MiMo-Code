@@ -20,6 +20,7 @@ import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { TaskID } from "@/task/schema"
 import { EffectBridge } from "@/effect"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
+import { inboxControllerRef } from "@/inbox"
 import { Effect, Deferred } from "effect"
 
 export interface ActorPromptOps {
@@ -101,7 +102,7 @@ export const ActorTool = Tool.define(
         action: z
           .literal("run")
           .describe(
-            "RARE EXCEPTION — launches a subagent and BLOCKS the whole conversation until it completes; the result is returned inline. Use it only when you cannot make your very next decision without the result in THIS turn and the work is a tiny, fast lookup. For ordinary analysis, review, or implementation work use `spawn` instead.",
+            "RARE EXCEPTION — launches a subagent and waits for its inline result until completion, user input, or timeout. Interruption and timeout release the wait without cancelling the subagent. Use it only when you cannot make your very next decision without the result in THIS turn and the work is a tiny, fast lookup. For ordinary analysis, review, or implementation work use `spawn` instead.",
           ),
         description: z.string().min(1).describe("A short (3-5 words) description of the task."),
         prompt: z.string().min(1).describe("The task for the agent to perform."),
@@ -280,7 +281,7 @@ export const ActorTool = Tool.define(
           }
           const targetSid = op.to_session_id !== undefined ? SessionID.make(op.to_session_id) : ctx.sessionID
           const sendResult = yield* inboxSvc
-            .send({
+            .accept({
               receiverSessionID: targetSid,
               receiverActorID: op.to_actor_id,
               senderSessionID: ctx.sessionID,
@@ -306,9 +307,10 @@ export const ActorTool = Tool.define(
           }
           return {
             title: `Sent to ${op.to_actor_id}`,
-            output: JSON.stringify({ inboxID: sendResult.inboxID }),
+            output: JSON.stringify(sendResult),
             metadata: {
               inboxID: sendResult.inboxID,
+              inputMessageID: sendResult.inputMessageID,
               receiver_actor_id: op.to_actor_id,
               receiver_session_id: targetSid,
             } as Record<string, any>,
@@ -348,9 +350,17 @@ export const ActorTool = Tool.define(
             actor_id: op.actor_id,
             timeout_ms: op.timeout_ms,
           })
+          const title =
+            snap.status === "interrupted"
+              ? "Actor wait: interrupted by user message"
+              : `Actor wait: ${snap.status}${snap.lastOutcome ? "/" + snap.lastOutcome : ""}`
+          const output =
+            snap.status === "interrupted"
+              ? JSON.stringify(snap) + "\n" + ActorWaiter.WAIT_INTERRUPTED_HINT
+              : JSON.stringify(snap.status === "timeout" ? { ...snap, hint: ActorWaiter.WAIT_TIMEOUT_HINT } : snap)
           return {
-            title: `Actor wait: ${snap.status}${snap.lastOutcome ? "/" + snap.lastOutcome : ""}`,
-            output: JSON.stringify(snap),
+            title,
+            output,
             metadata: {
               actor_id: snap.actor_id,
               status: snap.status,
@@ -457,7 +467,6 @@ export const ActorTool = Tool.define(
         }
 
         const prompt = op.prompt
-        const background = op.action ==="spawn"
 
         const msg = yield* Effect.sync(() => MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }))
         if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
@@ -497,6 +506,23 @@ export const ActorTool = Tool.define(
         // the agent loop, and sending inbox notifications on terminal — replacing
         // the legacy session.create + manual fork path that lived here pre-Task-29.
         const actor = yield* requireActor()
+        let actorID: string | undefined
+        let afterRevision: number | undefined
+        const notifyOnCompletion = op.action === "run"
+          ? yield* Effect.acquireRelease(Deferred.make<boolean>(), (decision) => Deferred.succeed(decision, false))
+          : undefined
+        if (op.action === "run") {
+          function cancelHandler() {
+            if (actorID) bridge.fork(actor.cancel(ctx.sessionID, actorID, "graceful"))
+          }
+          yield* Effect.acquireRelease(
+            Effect.sync(() => ctx.abort.addEventListener("abort", cancelHandler)),
+            () => Effect.sync(() => ctx.abort.removeEventListener("abort", cancelHandler)),
+          )
+          if (ctx.abort.aborted) return yield* Effect.interrupt
+          const tq = inboxControllerRef.current
+          if (tq) afterRevision = yield* tq.observeInput({ sessionID: ctx.sessionID, agentID: "main" }, -1)
+        }
         const spawnResult = yield* actor.spawn({
           mode: "subagent",
           sessionID: ctx.sessionID,
@@ -506,8 +532,15 @@ export const ActorTool = Tool.define(
           context: "none",
           tools: next.toolAllowlist ? [...next.toolAllowlist] : "INHERIT",
           model,
-          background,
+          // run owns an interruptible wait; the child must outlive it and still notify.
+          background: true,
+          notifyOnCompletion,
           task_id: effectiveTaskId,
+          onActorID: (id) => {
+            actorID = id
+            if (op.action === "run" && ctx.abort.aborted)
+              bridge.fork(actor.cancel(ctx.sessionID, id, "graceful"))
+          },
           onReady: ({ actorID, sessionID }) =>
             ctx.metadata({
               title: op.description,
@@ -528,28 +561,38 @@ export const ActorTool = Tool.define(
           }
         }
 
-        // op.action ==="run": blocking path — await the authoritative
-        // `outcome` Deferred. It is resolved in spawn's onSuccess AFTER the
-        // preStop loop (and before the fire-and-forget postStop loop), so the
-        // parent sees the settled status/summary — unlike ActorWaiter, which
-        // resolves on the row's first `idle`.
-        function cancelHandler() {
-          bridge.fork(actor.cancel(spawnResult.sessionID, spawnResult.actorID, "graceful"))
+        const snap = yield* waiter.wait({
+          sessionID: spawnResult.sessionID,
+          actor_id: spawnResult.actorID,
+          timeout_ms: op.timeout_ms,
+          afterRevision,
+        }).pipe(Effect.raceFirst(Deferred.await(spawnResult.outcome).pipe(Effect.as(undefined))))
+        if (snap && (snap.status === "interrupted" || snap.status === "timeout")) {
+          if (notifyOnCompletion) yield* Deferred.succeed(notifyOnCompletion, !ctx.abort.aborted)
+          return {
+            title: snap.status === "interrupted" ? "Actor run: interrupted by user message" : "Actor run: timeout",
+            metadata: {
+              sessionId: spawnResult.sessionID,
+              actorId: spawnResult.actorID,
+              actor_id: spawnResult.actorID,
+              status: snap.status,
+              model,
+            } as Record<string, any>,
+            output:
+              (taskNotice ? taskNotice + "\n" : "") +
+              (snap.status === "interrupted"
+                ? JSON.stringify(snap) + "\n" + ActorWaiter.WAIT_INTERRUPTED_HINT
+                : JSON.stringify({ ...snap, hint: ActorWaiter.WAIT_TIMEOUT_HINT })),
+          }
         }
-        const outcome = yield* Effect.acquireUseRelease(
-          Effect.sync(() => {
-            ctx.abort.addEventListener("abort", cancelHandler)
-          }),
-          () =>
-            Deferred.await(spawnResult.outcome).pipe(
-              Effect.timeout(op.timeout_ms ?? 600_000),
-              Effect.catchTag("TimeoutError", () => Effect.succeed({ status: "timeout" as const })),
-            ),
-          () =>
-            Effect.sync(() => {
-              ctx.abort.removeEventListener("abort", cancelHandler)
-            }),
-        )
+        // Only spawn's reconciled outcome is authoritative. If execution exits
+        // without publishing it, never wait again or substitute a registry outcome.
+        if (!(yield* Deferred.isDone(spawnResult.outcome))) {
+          return yield* Effect.fail(
+            new Error(`Actor ${spawnResult.actorID} exited without an authoritative outcome: ${JSON.stringify(snap)}`),
+          )
+        }
+        const outcome = yield* Deferred.await(spawnResult.outcome)
 
         // Blocking run preserves the pre-unification contract: tool call fails
         // when the child fails. The LLM sees a tool error, not a "success with
@@ -565,9 +608,7 @@ export const ActorTool = Tool.define(
             ? outcome.structured !== undefined
               ? JSON.stringify(outcome.structured)
               : (outcome.finalText ?? "(no output)")
-            : outcome.status === "timeout"
-              ? "<timeout>task did not complete within timeout</timeout>"
-              : "<cancelled>task was cancelled</cancelled>"
+            : "<cancelled>task was cancelled</cancelled>"
         const statusAttr = outcome.status === "success" ? (outcome.reportedStatus ?? "unknown") : outcome.status
         const summaryAttr =
           outcome.status === "success" && outcome.reportedSummary
@@ -586,7 +627,7 @@ export const ActorTool = Tool.define(
             ...(outcome.status === "success" ? (outcome.warnings ?? []).map((warning) => `Warning: ${warning}`) : []),
           ].join("\n"),
         }
-      })
+      }, Effect.scoped)
 
       return {
         description: withCheckpointDescription(DESCRIPTION, DESCRIPTION_CHECKPOINT),

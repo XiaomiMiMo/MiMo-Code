@@ -41,6 +41,12 @@ describe("WorkflowRuntime agent() fan-out", () => {
         const outcome = yield* runtime.wait({ runID })
         expect(outcome.status).toBe("completed")
         expect((outcome as { result: string[] }).result.filter((x) => x === "done").length).toBe(3)
+        // inbox (i)
+        yield* Effect.sleep("100 millis")
+        expect(yield* llm.calls).toBe(3)
+        const mainMessages = yield* session.messages({ sessionID: parent.id, agentID: "main" })
+        expect(mainMessages.some((message) => message.info.role === "assistant")).toBe(false)
+        expect(mainMessages.some((message) => message.parts.some((part) => part.type === "text" && part.synthetic))).toBe(true)
       }),
       { git: true, config: providerCfg },
     ),

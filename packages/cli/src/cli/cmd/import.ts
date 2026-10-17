@@ -6,12 +6,14 @@ import { MessageV2 } from "../../session/message-v2"
 import { cmd } from "./cmd"
 import { bootstrap } from "../bootstrap"
 import { Database, eq } from "../../storage"
+import { isDeepStrictEqual } from "node:util"
 import { SessionTable, MessageTable, PartTable } from "../../session/session.sql"
 import { Instance } from "../../project/instance"
 import { ShareNext } from "../../share"
 import { EOL } from "os"
 import { Filesystem } from "../../util"
 import { AppRuntime } from "@/effect/app-runtime"
+import * as QueueSync from "../../inbox/sync"
 
 /** Discriminated union returned by the ShareNext API (GET /api/shares/:id/data) */
 export type ShareData =
@@ -78,21 +80,53 @@ export function transformShareData(shareData: ShareData[]): {
 export function storeImportedSession(
   info: Session.Info,
   messages: readonly { info: unknown; parts: readonly unknown[] }[],
+  queue?: unknown,
 ) {
+  const snapshot = queue === undefined ? undefined : QueueSync.SnapshotSchema.parse(queue)
+  if (snapshot && snapshot.sessionID !== info.id) throw new Error("Imported queue belongs to another session")
   const row = Session.toRow(info)
+  const messageIDs = new Set<string>()
+  const partIDs = new Set<string>()
+  const parsed = messages.map((message) => {
+    const msg = MessageV2.Info.parse(message.info)
+    if (msg.sessionID !== info.id || messageIDs.has(msg.id)) throw new Error(`Invalid imported message: ${msg.id}`)
+    messageIDs.add(msg.id)
+    const parts = message.parts.map((value) => {
+      const part = MessageV2.Part.parse(value)
+      if (part.sessionID !== info.id || part.messageID !== msg.id || partIDs.has(part.id))
+        throw new Error(`Invalid imported part: ${part.id}`)
+      partIDs.add(part.id)
+      return part
+    }).sort((a, b) => a.id.localeCompare(b.id))
+    return { info: { ...msg, agentID: msg.agentID ?? "main" }, parts }
+  }).sort((a, b) => a.info.id.localeCompare(b.info.id))
   Database.transaction((tx) => {
-    tx.insert(SessionTable)
-      .values(row)
-      .onConflictDoUpdate({ target: SessionTable.id, set: { project_id: row.project_id } })
-      .run()
-    for (const msg of messages) {
-      const msgInfo = MessageV2.Info.parse(msg.info)
-      const { id, sessionID: _, ...msgData } = msgInfo
+    const existing = tx.select().from(SessionTable).where(eq(SessionTable.id, info.id)).get()
+    if (existing) {
+      const current = Array.from(MessageV2.stream(info.id, { agentID: "*" })).map((message) => ({
+        info: { ...message.info, agentID: message.info.agentID ?? "main" },
+        parts: message.parts.sort((a, b) => a.id.localeCompare(b.id)),
+      })).sort((a, b) => a.info.id.localeCompare(b.info.id))
+      const currentQueue = QueueSync.capture(info.id, tx)
+      const queueMatches = snapshot
+        ? isDeepStrictEqual(currentQueue, {
+          ...snapshot,
+          receipts: [...snapshot.receipts].sort((a, b) => a.id.localeCompare(b.id)),
+          lanes: [...snapshot.lanes].sort((a, b) => a.agent_id.localeCompare(b.agent_id)),
+        })
+        : currentQueue.receipts.length === parsed.filter((message) => message.info.role === "user").length &&
+          currentQueue.receipts.every((receipt) => receipt.state === "settled" && receipt.consumed && receipt.outcome === null &&
+            receipt.idempotency_key === QueueSync.historyReceiptKey("cli", info.id, receipt.input_message_id as string))
+      if (!isDeepStrictEqual(Session.toRow(Session.fromRow(existing)), row) || !isDeepStrictEqual(current, parsed) || !queueMatches)
+        throw new Error(`Imported session conflicts with existing session: ${info.id}`)
+      return
+    }
+    tx.insert(SessionTable).values(row).run()
+    for (const msg of parsed) {
+      const { id, sessionID: _, agentID, ...msgData } = msg.info
       tx.insert(MessageTable)
-        .values({ id, session_id: row.id, time_created: msgInfo.time?.created ?? Date.now(), data: msgData })
-        .onConflictDoNothing()
+        .values({ id, session_id: row.id, agent_id: agentID, time_created: msg.info.time.created, data: msgData })
         .run()
-      const ids = []
       for (const part of msg.parts) {
         const partInfo = MessageV2.Part.parse(part)
         if (partInfo.type === "tool" && partInfo.execution === "not-started") delete partInfo.execution
@@ -106,18 +140,20 @@ export function storeImportedSession(
         }
         tx.insert(PartTable)
           .values({ id: partId, message_id: messageID, session_id: row.id, data: partData })
-          .onConflictDoNothing()
           .run()
-        ids.push(partId)
       }
-      indexImportedParts(tx, ids)
+      indexImportedParts(tx, msg.parts.map((part) => part.id))
     }
-  })
+    if (snapshot) QueueSync.applySnapshot(snapshot, tx)
+    else QueueSync.materializeHistory({
+      sessionID: info.id, source: "cli", sourceKey: info.id, messages: parsed.map((message) => message.info),
+    }, tx)
+  }, { behavior: "immediate" })
 }
 
 export const ImportCommand = cmd({
   command: "import <file>",
-  describe: "import session data from JSON file or URL",
+  describe: "import session data from JSON or URL without starting runs or transferring live process ownership",
   builder: (yargs: Argv) => {
     return yargs.positional("file", {
       describe: "path to JSON file or share URL",
@@ -134,6 +170,7 @@ export const ImportCommand = cmd({
               info: Message
               parts: Part[]
             }>
+            queue?: unknown
           }
         | undefined
 
@@ -198,11 +235,11 @@ export const ImportCommand = cmd({
       const info = Session.Info.parse({
         ...exportData.info,
         title: exportData.info.title || "Untitled",
-        titleSource: exportData.info.title ? "user" : "fallback",
-        titleRevision: 0,
+        titleSource: exportData.queue === undefined ? (exportData.info.title ? "user" : "fallback") : exportData.info.titleSource,
+        titleRevision: exportData.queue === undefined ? 0 : exportData.info.titleRevision,
         projectID: Instance.project.id,
       })
-      storeImportedSession(info, exportData.messages)
+      storeImportedSession(info, exportData.messages, exportData.queue)
 
       process.stdout.write(`Imported session: ${exportData.info.id}`)
       process.stdout.write(EOL)

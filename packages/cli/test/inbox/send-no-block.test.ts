@@ -31,7 +31,7 @@ async function withInbox(
   })
 }
 
-describe("Inbox.send no-block (Plan 2 / Task 7)", () => {
+describe("Inbox.accept nonblocking admission", () => {
   test("send wall-clock < 50ms even when receiver actor exists", async () => {
     await using tmp = await tmpdir({ git: true })
     await withInbox(tmp.path, async (rt) => {
@@ -56,7 +56,7 @@ describe("Inbox.send no-block (Plan 2 / Task 7)", () => {
       const t0 = Date.now()
       const result = await rt.runPromise(
         Inbox.Service.use((inbox) =>
-          inbox.send({
+          inbox.accept({
             receiverSessionID: session.id,
             receiverActorID: "explore-1",
             content: "test message",
@@ -94,7 +94,7 @@ describe("Inbox.send no-block (Plan 2 / Task 7)", () => {
 
       const r1 = await rt.runPromise(
         Inbox.Service.use((inbox) =>
-          inbox.send({
+          inbox.accept({
             receiverSessionID: session.id,
             receiverActorID: "explore-2",
             content: "first",
@@ -105,7 +105,7 @@ describe("Inbox.send no-block (Plan 2 / Task 7)", () => {
       await Bun.sleep(2)
       const r2 = await rt.runPromise(
         Inbox.Service.use((inbox) =>
-          inbox.send({
+          inbox.accept({
             receiverSessionID: session.id,
             receiverActorID: "explore-2",
             content: "second",
@@ -113,7 +113,7 @@ describe("Inbox.send no-block (Plan 2 / Task 7)", () => {
         ),
       )
 
-      // drain orders by id — later ULID must sort after earlier one (FIFO contract)
+      // 认领按回执 ID 排序，保持输入顺序。
       expect(r1.inboxID < r2.inboxID).toBe(true)
     })
   })
