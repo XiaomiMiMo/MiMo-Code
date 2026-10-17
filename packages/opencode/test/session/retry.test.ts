@@ -960,4 +960,11 @@ describe("retry decision and coordinator budget", () => {
     const overflow = new MessageV2.ContextOverflowError({ message: "too long" }).toObject()
     expect(decide(overflow)).toMatchObject({ retryable: false, kind: "terminal" })
   })
+
+  test("InvalidOutputError is retryable", () => {
+    const empty = new MessageV2.InvalidOutputError({ message: "empty output" }).toObject()
+    expect(decide(empty)).toMatchObject({ retryable: true, kind: "unknown" })
+    expect(isRetryableTransientError(empty)).toBe(true)
+    expect(retryable(empty)).toBeTruthy()
+  })
 })
