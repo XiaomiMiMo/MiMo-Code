@@ -2,6 +2,9 @@
 import { Script } from "./meta.ts"
 
 const PACKAGES = [
+  // Published every release — keep mirrors current for new installs.
+  "@mimo-ai/sdk",
+  "@mimo-ai/plugin",
   "@mimo-ai/cli",
   // Legacy platform packages (no longer published; keep syncing existing versions
   // so mirrors stay complete for old installs). New releases only update the list

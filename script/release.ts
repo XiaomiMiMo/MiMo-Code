@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 // Release stages run by .github/workflows/release.yml for a pushed vX.Y.Z tag.
-// Usage: MIMOCODE_VERSION=vX.Y.Z bun script/release.ts <verify|build|github|fds|npm libs|npm cli>
+// Usage: MIMOCODE_VERSION=vX.Y.Z bun script/release.ts <verify|build|preflight|github|fds|npm libs|npm cli>
 //        bun script/release.ts trust   (one-time npm trusted publisher setup)
 //
 // build writes dist/release/{archives,npm}; the publishing stages only read it.
+// preflight must run before any publish stage so bad FDS creds or missing
+// tarballs cannot leave npm/GitHub half-shipped.
 // Publishing stages are idempotent so "Re-run failed jobs" resumes a release.
 
 import { $ } from "bun"
@@ -38,6 +40,8 @@ const npmGroups = {
   // just the launcher wrapper (plus the two libraries above).
   cli: ["@mimo-ai/cli"],
 }
+
+export const npmPackages = [...npmGroups.libs, ...npmGroups.cli]
 
 export function stableVersion(value: string | undefined) {
   if (!value || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)) {
@@ -209,6 +213,37 @@ async function fds(version: string) {
   console.log(`Uploaded to FDS: releases/latest -> ${version}`)
 }
 
+// Fail if any npm tarball is missing or its embedded name/version drifted.
+export async function assertTarballs(version: string, dir = path.join(out, "npm")) {
+  const problems: string[] = []
+  for (const name of npmPackages) {
+    const file = path.join(dir, tarball(name, version))
+    if (!(await Bun.file(file).exists())) {
+      problems.push(`${name}: missing ${path.relative(root, file)}`)
+      continue
+    }
+    const pkg = JSON.parse(await $`tar -xOzf ${file} package/package.json`.quiet().text())
+    if (pkg.name !== name || pkg.version !== version) {
+      problems.push(`${name}: tarball has ${pkg.name}@${pkg.version}, expected ${name}@${version}`)
+    }
+  }
+  if (problems.length) throw new Error(`Release tarballs are not ready:\n${problems.join("\n")}`)
+}
+
+export function assertFdsCredentials(env: Record<string, string | undefined> = process.env) {
+  if (!env.MIMO_FDS_AK || !env.MIMO_FDS_SK) throw new Error("MIMO_FDS_AK / MIMO_FDS_SK must be set before publish")
+}
+
+// Gate before any publish stage: prove the artifact is complete and FDS accepts
+// a signed write, so a bad release cannot half-ship npm and/or GitHub.
+async function preflight(version: string) {
+  await assertTarballs(version)
+  assertFdsCredentials()
+  await Bun.write(path.join(out, "preflight.txt"), version)
+  await uploadFile(path.join(out, "preflight.txt"), `releases/v${version}/.preflight-ok`)
+  console.log(`Preflight OK: ${npmPackages.length} tarballs ready; FDS accepted canary for v${version}`)
+}
+
 async function npm(version: string, group: keyof typeof npmGroups) {
   // Trusted publishing (OIDC) needs npm >= 11.5.1.
   const npmVersion = (await $`npm --version`.quiet().text()).trim()
@@ -259,6 +294,7 @@ if (import.meta.main) {
   const stages: Record<string, () => Promise<void>> = {
     verify: () => verify(version()),
     build: () => build(version()),
+    preflight: () => preflight(version()),
     github: () => github(version()),
     fds: () => fds(version()),
     "npm libs": () => npm(version(), "libs"),
@@ -266,6 +302,6 @@ if (import.meta.main) {
     trust,
   }
   const stage = stages[process.argv.slice(2).join(" ")]
-  if (!stage) throw new Error("Usage: bun script/release.ts <verify|build|github|fds|npm libs|npm cli|trust>")
+  if (!stage) throw new Error("Usage: bun script/release.ts <verify|build|preflight|github|fds|npm libs|npm cli|trust>")
   await stage()
 }

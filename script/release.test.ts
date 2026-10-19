@@ -3,7 +3,7 @@ import { $ } from "bun"
 import path from "path"
 import { mkdtemp, mkdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { packLibrary, stableVersion, verify } from "./release"
+import { assertFdsCredentials, assertTarballs, npmPackages, packLibrary, stableVersion, verify } from "./release"
 
 const root = path.resolve(import.meta.dir, "..")
 const git = (cwd: string) => new $.Shell().cwd(cwd)
@@ -89,4 +89,50 @@ describe("packLibrary", () => {
     },
     120_000,
   )
+})
+
+describe("assertTarballs", () => {
+  const tarballName = (name: string, version: string) => `${name.slice(1).replace("/", "-")}-${version}.tgz`
+
+  async function writeTarball(dir: string, name: string, version: string, meta: { name: string; version: string }) {
+    const stage = path.join(dir, "stage")
+    await mkdir(path.join(stage, "package"), { recursive: true })
+    await Bun.write(
+      path.join(stage, "package", "package.json"),
+      JSON.stringify({ name: meta.name, version: meta.version }),
+    )
+    await $`tar -czf ${path.join(dir, tarballName(name, version))} -C ${stage} package`.quiet()
+    await rm(stage, { recursive: true, force: true })
+  }
+
+  test("passes when every package tarball matches name and version", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "release-tarballs-"))
+    for (const name of npmPackages) await writeTarball(dir, name, "1.2.3", { name, version: "1.2.3" })
+    await assertTarballs("1.2.3", dir)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("lists every missing tarball", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "release-tarballs-"))
+    await writeTarball(dir, "@mimo-ai/sdk", "1.2.3", { name: "@mimo-ai/sdk", version: "1.2.3" })
+    await expect(assertTarballs("1.2.3", dir)).rejects.toThrow("@mimo-ai/plugin: missing")
+    await expect(assertTarballs("1.2.3", dir)).rejects.toThrow("@mimo-ai/cli: missing")
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("rejects tarball metadata that does not match the release version", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "release-tarballs-"))
+    for (const name of npmPackages) await writeTarball(dir, name, "1.2.3", { name, version: "1.2.2" })
+    await expect(assertTarballs("1.2.3", dir)).rejects.toThrow("expected @mimo-ai/sdk@1.2.3")
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("assertFdsCredentials", () => {
+  test("requires both AK and SK before any publish stage", () => {
+    expect(() => assertFdsCredentials({})).toThrow("MIMO_FDS_AK / MIMO_FDS_SK")
+    expect(() => assertFdsCredentials({ MIMO_FDS_AK: "ak" })).toThrow("MIMO_FDS_AK / MIMO_FDS_SK")
+    expect(() => assertFdsCredentials({ MIMO_FDS_SK: "sk" })).toThrow("MIMO_FDS_AK / MIMO_FDS_SK")
+    expect(() => assertFdsCredentials({ MIMO_FDS_AK: "ak", MIMO_FDS_SK: "sk" })).not.toThrow()
+  })
 })

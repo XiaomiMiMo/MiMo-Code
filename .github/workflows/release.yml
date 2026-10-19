@@ -113,6 +113,17 @@ jobs:
           name: release-${{ github.ref_name }}
           path: dist/release/
 
+      # Gate before any publish stage: fail on missing tarballs or unusable FDS
+      # so npm/GitHub cannot half-ship.
+      - name: Preflight tarballs and FDS
+        env:
+          MIMO_FDS_AK: ${{ secrets.MIMO_FDS_AK }}
+          MIMO_FDS_SK: ${{ secrets.MIMO_FDS_SK }}
+          MIMO_FDS_ENDPOINT: ${{ vars.MIMO_FDS_ENDPOINT }}
+          MIMO_FDS_BUCKET: ${{ vars.MIMO_FDS_BUCKET }}
+          MIMO_FDS_PREFIX: ${{ vars.MIMO_FDS_PREFIX }}
+        run: bun script/release.ts preflight
+
       # Libraries first: a released binary may resolve @mimo-ai/plugin at its own version.
       - name: npm — SDK and plugin
         run: bun script/release.ts npm libs
@@ -129,7 +140,7 @@ jobs:
           MIMO_FDS_PREFIX: ${{ vars.MIMO_FDS_PREFIX }}
         run: bun script/release.ts fds
 
-      - name: npm — platform packages and CLI wrapper
+      - name: npm — @mimo-ai/cli launcher
         run: bun script/release.ts npm cli
 
       - name: Sync China npm mirrors
