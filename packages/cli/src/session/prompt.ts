@@ -2354,7 +2354,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // cached history; such changes wait for the next turn.
       if (input.messages.slice(userIndex + 1).some((message) => message.info.role === "assistant")) return
       const userMessage = input.messages[userIndex]
-      const announced = announcedMcpReminders(
+      const { seen: announced, byServer } = announcedMcpReminders(
         input.messages.flatMap((message) =>
           message.info.role !== "user"
             ? []
@@ -2371,7 +2371,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         context: input.model.limit.context,
       })
 
-      const serverNames = input.readiness.servers.map((server) => server.name).toSorted()
+      const serverNames = input.readiness.servers
+        .filter((server) => server.status !== "disabled")
+        .map((server) => server.name)
+        .toSorted()
       const entryMeta: McpReminderMeta = { kind: "entry", servers: serverNames }
       if (serverNames.length > 0 && !announced.has(mcpReminderMarker(entryMeta))) {
         yield* ensurePersistedUserSynthetic({
@@ -2396,7 +2399,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         yield* ensurePersistedUserSynthetic({
           message: userMessage,
           marker: mcpReminderMarker(meta),
-          text: renderMcpServerReminder(server, budget),
+          text: renderMcpServerReminder(server, budget, byServer.get(server.name)),
           metadata: { [MCP_REMINDER_METADATA_KEY]: meta },
         })
       }

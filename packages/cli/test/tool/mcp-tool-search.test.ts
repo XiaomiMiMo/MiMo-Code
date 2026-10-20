@@ -101,6 +101,7 @@ describe("MCP Tool Search", () => {
       1_000,
     )
     expect(text).toContain("MCP server drive connected.")
+    expect(text).toContain("Current tools:")
     expect(text).toContain("- drive_lookup: Search files and documents in Google Drive.")
     expect(text).toContain("- drive_fetch: Fetch file contents.")
     expect(text).toContain("mcp_tool_search")
@@ -112,11 +113,11 @@ describe("MCP Tool Search", () => {
       { name: "legacy", status: "failed", error: "ETIMEDOUT" },
       1_000,
     )
-    expect(failed).toContain("MCP server legacy failed (ETIMEDOUT).")
+    expect(failed).toContain("MCP server legacy is unavailable (failed: ETIMEDOUT).")
     expect(failed).toContain("Do not invent its tools")
 
     const auth = renderMcpServerReminder({ name: "github", status: "needs_auth" }, 1_000)
-    expect(auth).toContain("MCP server github needs auth.")
+    expect(auth).toContain("MCP server github is unavailable (needs auth)")
     expect(auth).toContain("user action")
   })
 
@@ -185,14 +186,48 @@ describe("MCP Tool Search", () => {
       toolNames: ["a", "b"],
     }
     const failed = { kind: "server" as const, server: "exa", status: "failed", error: "boom" }
-    const seen = announcedMcpReminders([entry, connected, undefined, { added: 1 }])
+    const { seen, byServer } = announcedMcpReminders([entry, connected, undefined, { added: 1 }])
     expect(seen.has(mcpReminderMarker(entry))).toBe(true)
     expect(seen.has(mcpReminderMarker(connected))).toBe(true)
     expect(seen.has(mcpReminderMarker(failed))).toBe(false)
+    expect(byServer.get("exa")?.toolNames).toEqual(["a", "b"])
     expect(mcpReminderMarker(connected)).not.toBe(
       mcpReminderMarker({ ...connected, toolNames: ["a", "c"] }),
     )
   })
+
+  test("server update supersedes earlier tool lists and whole-server unavailability", () => {
+    const shrunk = renderMcpServerReminder(
+      {
+        name: "exa",
+        status: "connected",
+        toolCount: 1,
+        tools: [{ name: "a", description: "still here" }],
+      },
+      1_000,
+      { status: "connected", toolNames: ["a", "b"] },
+    )
+    expect(shrunk).toContain("No longer available from exa: b.")
+    expect(shrunk).toContain("Current tools:")
+    expect(shrunk).toContain("- a: still here")
+
+    const down = renderMcpServerReminder(
+      { name: "exa", status: "failed", error: "ETIMEDOUT" },
+      1_000,
+      { status: "connected", toolNames: ["a", "b"] },
+    )
+    expect(down).toContain("MCP server exa is unavailable (failed: ETIMEDOUT).")
+    expect(down).toContain("Disregard earlier tool lists for exa")
+
+    const auth = renderMcpServerReminder(
+      { name: "exa", status: "needs_auth" },
+      1_000,
+      { status: "connected", toolNames: ["a"] },
+    )
+    expect(auth).toContain("MCP server exa is unavailable (needs auth)")
+    expect(auth).toContain("Disregard earlier tool lists for exa")
+  })
+
 
   test("ranks names, descriptions, and nested schema metadata with BM25", () => {
     expect(searchMcpTools(entries, { query: "search Google Drive documents" }).map((tool) => tool.name)).toEqual([
