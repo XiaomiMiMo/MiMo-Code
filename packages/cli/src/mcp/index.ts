@@ -483,6 +483,17 @@ export interface Interface {
   readonly status: () => Effect.Effect<Record<string, Status>>
   readonly clients: (context?: TurnContext) => Effect.Effect<Record<string, MCPClient>>
   readonly tools: (context?: TurnContext) => Effect.Effect<Record<string, Tool>>
+  /** Optional non-blocking connect snapshot for reminders/search diagnostics. Never awaits `settled`. */
+  readonly readiness?: () => Effect.Effect<{
+    configured: boolean
+    servers: Array<{
+      name: string
+      status: Status["status"]
+      toolCount?: number
+      error?: string
+      tools?: Array<{ name: string; description: string }>
+    }>
+  }>
   readonly prompts: () => Effect.Effect<Record<string, PromptInfo & { client: string }>>
   readonly resources: () => Effect.Effect<Record<string, ResourceInfo & { client: string }>>
   readonly add: (name: string, mcp: ConfigMCP.Info) => Effect.Effect<{ status: Record<string, Status> | Status }>
@@ -1241,6 +1252,38 @@ export const layer = Layer.effect(
       return result
     })
 
+    // Bounded wait only on tools(); readiness is the unbound sibling used by
+    // entry/server reminders and mcp_tool_search miss diagnostics. Never awaits settled.
+    const readiness = Effect.fn("MCP.readiness")(function* () {
+      const s = yield* InstanceState.get(state)
+      const cfg = yield* cfgSvc.get()
+      const config = { ...cfg.mcp, ...HostMcp.get() }
+      const configuredKeys = Object.entries(config)
+        .filter(([, mcp]) => isMcpConfigured(mcp))
+        .map(([key]) => key)
+      const servers = configuredKeys.map((name) => {
+        const current = s.status[name] ?? { status: "disabled" as const }
+        const listed = s.defs[name] ?? []
+        const tools =
+          current.status === "connected"
+            ? listed.map((mcpTool) => ({
+                name: sanitize(name) + "_" + sanitize(mcpTool.name),
+                description: mcpTool.description ?? "",
+              }))
+            : undefined
+        return {
+          name,
+          status: current.status,
+          ...(current.status === "failed" || current.status === "needs_client_registration"
+            ? { error: current.error }
+            : {}),
+          ...(current.status === "connected" ? { toolCount: listed.length } : {}),
+          ...(tools ? { tools } : {}),
+        }
+      })
+      return { configured: configuredKeys.length > 0, servers }
+    })
+
     function collectFromConnected<T extends { name: string }>(
       s: State,
       listFn: (c: Client) => Promise<T[]>,
@@ -1543,6 +1586,7 @@ export const layer = Layer.effect(
       status,
       clients,
       tools,
+      readiness,
       prompts,
       resources,
       add,

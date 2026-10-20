@@ -215,6 +215,16 @@ function wireToolName(tool: Record<string, unknown>) {
 function mcpLayer(
   tools: (context?: MCP.TurnContext) => Record<string, AITool> = () => ({}),
   clients: () => Record<string, any> = () => ({}),
+  readiness: () => {
+    configured: boolean
+    servers: Array<{
+      name: string
+      status: "pending" | "connected" | "failed" | "needs_auth" | "needs_client_registration" | "disabled"
+      toolCount?: number
+      error?: string
+      tools?: Array<{ name: string; description: string }>
+    }>
+  } = () => ({ configured: false, servers: [] }),
 ) {
   return Layer.succeed(
     MCP.Service,
@@ -222,6 +232,7 @@ function mcpLayer(
       status: () => Effect.succeed({}),
       clients: () => Effect.sync(clients),
       tools: (context) => Effect.sync(() => tools(context)),
+      readiness: () => Effect.sync(readiness),
       prompts: () => Effect.succeed({}),
       resources: () => Effect.succeed({}),
       add: () => Effect.succeed({ status: { status: "disabled" as const } }),
@@ -396,30 +407,47 @@ const mcpSuccessResult: CallToolResult = {
 }
 const mcpIt = testEffect(
   makeHttp(
-    mcpLayer(() => ({
-      mcp_success: dynamicTool({
-        description: "Return a standard structured MCP success result",
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: {
-            private_window_id: { type: "number", description: "Secret nested MCP window selector" },
-          },
-          additionalProperties: false,
+    mcpLayer(
+      () => ({
+        mcp_success: dynamicTool({
+          description: "Return a standard structured MCP success result",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: {
+              private_window_id: { type: "number", description: "Secret nested MCP window selector" },
+            },
+            additionalProperties: false,
+          }),
+          execute: async () => mcpSuccessResult,
         }),
-        execute: async () => mcpSuccessResult,
-      }),
-      mcp_result: dynamicTool({
-        description: "Return a standard MCP tool execution error",
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: {
-            private_error_code: { type: "string", description: "Secret nested MCP error selector" },
-          },
-          additionalProperties: false,
+        mcp_result: dynamicTool({
+          description: "Return a standard MCP tool execution error",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: {
+              private_error_code: { type: "string", description: "Secret nested MCP error selector" },
+            },
+            additionalProperties: false,
+          }),
+          execute: async () => mcpErrorResult,
         }),
-        execute: async () => mcpErrorResult,
       }),
-    })),
+      () => ({}),
+      () => ({
+        configured: true,
+        servers: [
+          {
+            name: "demo",
+            status: "connected" as const,
+            toolCount: 2,
+            tools: [
+              { name: "mcp_success", description: "Return a standard structured MCP success result" },
+              { name: "mcp_result", description: "Return a standard MCP tool execution error" },
+            ],
+          },
+        ],
+      }),
+    ),
   ),
 )
 const lifecycleContexts: MCP.TurnContext[] = []
@@ -3381,11 +3409,13 @@ mcpIt.live(
 // whether the configured server is connected.
 let flappingCalls = 0
 let flappingConnected: (call: number) => boolean = () => true
+let flappingIsConnected = true
 const flappingMcpIt = testEffect(
   makeHttp(
     mcpLayer(
-      (): Record<string, AITool> =>
-        flappingConnected(flappingCalls++)
+      (): Record<string, AITool> => {
+        flappingIsConnected = flappingConnected(flappingCalls++)
+        return flappingIsConnected
           ? {
               mcp_flappy: dynamicTool({
                 description: "Return a value from a server that disconnects",
@@ -3393,7 +3423,22 @@ const flappingMcpIt = testEffect(
                 execute: async () => ({ content: [{ type: "text", text: "flappy" }] }),
               }),
             }
-          : {},
+          : {}
+      },
+      () => ({}),
+      () => ({
+        configured: true,
+        servers: [
+          flappingIsConnected
+            ? {
+                name: "flappy",
+                status: "connected" as const,
+                toolCount: 1,
+                tools: [{ name: "mcp_flappy", description: "Return a value from a server that disconnects" }],
+              }
+            : { name: "flappy", status: "pending" as const },
+        ],
+      }),
     ),
   ),
 )
@@ -3401,6 +3446,7 @@ const flappingMcpIt = testEffect(
 const resetFlapping = Effect.sync(() => {
   flappingCalls = 0
   flappingConnected = () => true
+  flappingIsConnected = true
 })
 
 const flappingSession = Effect.fnUntraced(function* (
@@ -3523,7 +3569,7 @@ flappingMcpIt.live("keeps auto mode deferred when MCP tools first arrive under t
       })
       const tools = requests.map((request) => JSON.stringify(request.tools))
       expect(tools[0]).toContain("mcp_tool_search")
-      expect(lastUserText(requests[0])).toContain("No deferred MCP tools are available yet")
+      expect(lastUserText(requests[0])).toContain("MCP servers configured")
       expect(tools[1]).toBe(tools[0])
       expect(tools[2]).toBe(tools[0])
       expect(tools[1]).not.toContain("mcp_flappy")
