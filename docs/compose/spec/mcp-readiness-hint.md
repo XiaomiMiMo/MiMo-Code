@@ -1,14 +1,35 @@
 ---
 feature: mcp-readiness-hint
-status: in-progress
+status: delivered
 updated: 2026-10-20
 branch: feat/example # Synthetic label per repository documentation conventions
-commits:
+commits: 113e3192..4ac39f79
 ---
 
 # MCP Readiness Hint
 
 ## Report
+
+**What was built** — Deferred MCP discovery now gives the model a compact view of configured servers, current connection status, and request-visible tool names/descriptions. Full schemas remain available on demand through `mcp_tool_search`, and calls use `mcp_tool_use`. Reminders compare with the latest reported state: unchanged failures stay quiet, while recovery, disable/removal, and changed tool sets are reported at a user-turn boundary.
+
+The amendment aligns advertised tools and counts with the authorized search catalog, budgets all reminders together, and bounds long diagnostics/retractions. A single ignored metadata record preserves sticky deferral even when no visible reminder is emitted; it adds no model-visible text. Search diagnostics reuse existing escaping. Prompts were shortened to status, tools, and discovery/call pointers. MCP connection behavior and normalized-name registration ownership remain unchanged.
+
+**Verification** — Run from `packages/cli` unless stated otherwise, against reviewed code head `4ac39f79`:
+
+- PASS — `bun test test/tool/mcp-tool-search.test.ts`: 33 passed, 0 failed.
+- PASS — `bun test test/session/prompt-effect.test.ts -t 'mcp|MCP|search'`: 50 passed, 0 failed, 90 filtered out. Covers serialized state recurrence, filtering, budgets, silent entry, legacy evidence, and prefix stability.
+- PASS — `bun run typecheck`: exit 0.
+- PASS — repository root: `./node_modules/.bin/oxlint --format json packages/cli/src/session/prompt.ts packages/cli/src/tool/mcp-tool-search.ts packages/cli/test/session/prompt-effect.test.ts packages/cli/test/tool/mcp-tool-search.test.ts`: 0 errors and no new diagnostics. **PRE-EXISTING LINT-134**: 134 warnings match the pre-amendment baseline by file, rule, message, and severity.
+- PASS — repository root: `git diff --check`.
+- PASS — independent review of `113e3192..4ac39f79`: spec compliance, correctness, and codebase consistency approved; no unresolved critical findings. The final documentation-only commit is excluded from this range.
+
+**Journey log**
+
+- Readiness answers whether a server is connected; the authorized catalog answers which tools this request can use. Neither should replace the other.
+- Comparing with every historical state suppressed recovery. Comparing with the latest state preserves updates without repeating unchanged failures or volatile error details.
+- Visible reminders are not durable mode evidence when entry is silent. Ignored metadata preserves deferral without adding an empty-session prompt.
+- Prompt-wire regressions caught the original gaps; independent review additionally caught silent-mode evidence, unescaped diagnostics, and duplicate per-server names. Focused regressions cover the retained fixes.
+- The user explicitly required a simple mechanism and concise prompts. Extra cross-server ownership handling was discarded; existing MCP configuration ambiguity remains outside scope.
 
 ## [S1] Problem
 
@@ -78,10 +99,10 @@ Use the real prompt serialization path with controlled MCP service snapshots to 
 
 ## Tasks
 
-- [ ] T4: Compare the latest server state — acceptance: repeated failures and error-detail changes add no reminder; failure/recovery and tool-set recurrence each reach the model (covers: S2)
-- [ ] T5: Report unavailable and removed servers — acceptance: pending, disabled, and removed transitions invalidate prior tool availability once; pending-server removal is covered; initially disabled servers remain quiet (covers: S2)
-- [ ] T6: Align advertised tools with request authorization — acceptance: request disables, permissions, and agent allowlists hide the same tools from reminders and search, with matching visible counts (covers: S2)
-- [ ] T7: Enforce a shared reminder budget — acceptance: multi-server serialized reminders remain within one budget; long diagnostics, retractions, and zero budgets are covered without marking omitted outcomes delivered (covers: S2)
-- [ ] T9: Persist deferral without visible text — acceptance: unconfigured, disabled, and budget-omitted initial states retain search/use with no ambient text; legacy announcements still lock deferral (covers: S2)
-- [ ] T10: Keep diagnostics safe and prompts concise — acceptance: search-miss names/errors use existing escaping and preview bounds; reminders contain status, tools, and a brief search/use pointer (covers: S2)
-- [ ] T8: Verify and independently review the integrated feature — acceptance: focused MCP suites and typecheck pass, lint introduces no diagnostics, and spec compliance/correctness/codebase consistency have no unresolved critical findings (covers: S2; depends: T4, T5, T6, T7, T9, T10)
+- [x] T4: Compare the latest server state — acceptance: repeated failures and error-detail changes add no reminder; failure/recovery and tool-set recurrence each reach the model (covers: S2)
+- [x] T5: Report unavailable and removed servers — acceptance: pending, disabled, and removed transitions invalidate prior tool availability once; pending-server removal is covered; initially disabled servers remain quiet (covers: S2)
+- [x] T6: Align advertised tools with request authorization — acceptance: request disables, permissions, and agent allowlists hide the same tools from reminders and search, with matching visible counts (covers: S2)
+- [x] T7: Enforce a shared reminder budget — acceptance: multi-server serialized reminders remain within one budget; long diagnostics, retractions, and zero budgets are covered without marking omitted outcomes delivered (covers: S2)
+- [x] T9: Persist deferral without visible text — acceptance: unconfigured, disabled, and budget-omitted initial states retain search/use with no ambient text; legacy announcements still lock deferral (covers: S2)
+- [x] T10: Keep diagnostics safe and prompts concise — acceptance: search-miss names/errors use existing escaping and preview bounds; reminders contain status, tools, and a brief search/use pointer (covers: S2)
+- [x] T8: Verify and independently review the integrated feature — acceptance: focused MCP suites and typecheck pass, lint introduces no diagnostics, and spec compliance/correctness/codebase consistency have no unresolved critical findings (covers: S2; depends: T4, T5, T6, T7, T9, T10)
