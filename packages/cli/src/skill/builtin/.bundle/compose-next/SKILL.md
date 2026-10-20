@@ -42,16 +42,14 @@ Use the Question tool for every user decision:
 
 Split requests spanning independent subsystems before refining each part. Do not begin implementation until requirements and scope are settled.
 
-### Never-Ask handling
+### When user input is unavailable
 
-If the Question tool is unavailable or returns `[Never-Ask]`, resolve **this one decision** yourself and continue:
+If user input cannot be obtained — the Question tool is absent, a question gets no reply, or the run cannot stop and wait (for example a goal that keeps running) — and the decision is not a dangerous action that requires explicit user consent, resolve **this one decision** yourself and continue:
 
 1. Choose the option marked `(Recommended)` when repository evidence still supports it and it can run unattended.
 2. Otherwise choose the closest minimal-scope option supported by the evidence; prefer text-only, non-interactive work.
 3. If the decision includes destructive or irreversible work, choose a non-destructive path that preserves progress; never auto-approve the destructive option.
 4. State the option selected and the reason in the response.
-
-Never-Ask applies to the current decision only. At every later decision point, call the Question tool again — Never-Ask does not disable future questions or pause the workflow.
 
 ## Workspace — worktree ownership
 
@@ -73,8 +71,7 @@ Maintain one document per feature at `docs/compose/spec/<feature-name>.md` from 
 feature: <feature-name>
 status: designed | in-progress | delivered
 updated: YYYY-MM-DD
-branch: <branch-name>
-commits: <short-base-sha>..<short-head-sha> # leave empty while in progress; fill at delivery
+source: Local <path> | Branch <name> | PR #id | MR !id
 ---
 
 # <Feature Name>
@@ -98,6 +95,7 @@ State explicit boundaries.
 ### Design-time rules
 
 - Leave `Report` empty and set `status: designed`.
+- Set `source` to the form that best names where the spec's source lives — `Local <path>`, `Branch <name>`, `PR #id`, or `MR !id` — and update it whenever that changes.
 - Keep `[Sn]` anchors stable when headings change; never renumber existing anchors.
 - Record settled decisions and precise contracts, not exploration history or file-level code dumps. Include architecture, interfaces, data flow, error behavior, and testing boundaries when they affect the change.
 - Make each task the smallest independently verifiable work item; give it an observable acceptance criterion. Add `depends:` only for real prerequisites; dependencies must be acyclic.
@@ -165,7 +163,7 @@ For parallel task work, review integrated task diffs at useful boundaries only w
 
 If a feature document exists, after review passes and before finishing the branch:
 
-1. Set `status: delivered`, bump `updated:`, and record the reviewed range as `<short-base-sha>..<short-head-sha>` using `git rev-parse --short`. The range excludes the final documentation commit below.
+1. Set `status: delivered` and bump `updated:`.
 2. Check off completed tasks; leave incomplete tasks unchecked and do not claim delivery if they block acceptance.
 3. Replace `Report` with:
 
@@ -183,13 +181,15 @@ Update a design section only when it contradicts the delivered behavior. Commit 
 
 ## Finish
 
-Do not auto-finish. After Finalize, report branch, base, head SHA, workspace, feature-doc path when available, and suggest a closing action.
+Do not auto-finish: confirm with the user before any irreversible action, including opening a PR or MR, merging locally, or pushing. If the user already specified the closing action and a PR or MR already exists, confirm before the merge instead.
 
-If the user asks to finish but the path is unclear, use the Question tool to settle:
+Report branch, base, head SHA, workspace, feature-doc path when available, and ask the user which way to finish — for example:
 
-- closing action: local merge / open PR / push only / keep the branch;
+- local merge / open PR / push only / keep the branch;
 - which base branch to merge or target;
 - keep or remove the worktree.
+
+When the closing action changes where the spec lives, update `source` and commit it as documentation only: `PR #id` or `MR !id` after opening one, `Branch <target>` before a local merge.
 
 Worktree pitfalls:
 
