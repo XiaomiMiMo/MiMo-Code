@@ -14,7 +14,7 @@ commits: 113e3192..WORKTREE
 
 **Verification**
 - `bun run typecheck` (packages/cli): PASS
-- `bun test test/tool/mcp-tool-search.test.ts`: 29 pass / 0 fail
+- `bun test test/tool/mcp-tool-search.test.ts`: 30 pass / 0 fail
 - `bun test test/session/prompt-effect.test.ts -t "mcp|MCP|search"`: 32 pass / 0 fail
 
 **Journey log**
@@ -22,6 +22,9 @@ commits: 113e3192..WORKTREE
 - Entry is unconditional on configured servers (not empty-catalog / auto-only).
 - `MCP.status()` awaits `settled`; diagnostics use `MCP.readiness()`.
 - `ensurePersistedUserSynthetic` gained optional `metadata` + `syntheticMarker` dedupe.
+- Append-only reminders cannot retract history — when a server’s status or toolNames change, the new line must supersede (`No longer available from X: …` / `Disregard earlier tool lists for X`).
+- Sticky-defer “search-active” lock for empty catalog would inject a useless sentence into every MCP-free session. Entry already covers the real case (configured + pending servers). Do not add global reminders for hypothetical auto-mode edge cases; “configured but all disabled” is too rare to justify noise.
+- Deleted `deferredMcpToolsDelta` add path is fine (per-server connected list replaces it); the remove/retract path needed an explicit supersede sentence, not a revival of catalog deltas.
 
 ## [S1] Problem
 
