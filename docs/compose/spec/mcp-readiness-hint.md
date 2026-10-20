@@ -2,7 +2,7 @@
 feature: mcp-readiness-hint
 status: delivered
 updated: 2026-10-20
-branch: feat/example # Synthetic label per repository documentation conventions
+branch: feat/mcp-readiness-hint
 commits: 113e3192..4ac39f79
 ---
 
