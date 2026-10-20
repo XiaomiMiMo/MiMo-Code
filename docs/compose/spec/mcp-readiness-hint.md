@@ -1,14 +1,35 @@
 ---
 feature: mcp-readiness-hint
-status: in-progress
+status: delivered
 updated: 2026-10-20
 branch: feat/mcp-readiness-hint
-commits:
+commits: 113e3192..5d6de390
 ---
 
 # MCP Readiness Hint
 
 ## Report
+
+**What was built** — Deferred MCP discovery reports configured servers, current connection status, and request-visible tool names/descriptions. Reminders compare against the latest reported server state, so unchanged failures stay quiet while recovery, disable/removal, and changed tool sets are reported. All reminders share one budget; diagnostics use existing preview and escaping helpers. Prompts contain concise status, tools, and search/use pointers.
+
+No auxiliary mode state is written into user history. Existing real reminders and search/use calls provide deferral evidence; silent auto-mode sessions may re-evaluate when tools arrive. This accepts a cache change instead of altering original user messages for bookkeeping. MCP connection, permission, dispatch, registration, and storage implementations remain unchanged. One actor guard test now explicitly provides the Inbox and verifies actual delivery, removing a dependency on prior test initialization.
+
+**Verification** — Run from `packages/cli` unless stated otherwise, for final code head `5d6de390`:
+
+- PASS — `bun test test/session/prompt-effect.test.ts --timeout 30000`: 135 passed, 3 skipped, 0 failed. Includes the full resume and MCP suites. The final assertion-only cleanup was rechecked with `-t 'MCP auto mode can'`: 1 passed.
+- PASS — `bun test test/server/session-recovery.test.ts test/session/title-first-turn.test.ts test/session/tool-gate-cancel.test.ts test/server/session-select.test.ts test/tool/actor.test.ts test/tool/actor-send.test.ts test/tool/mcp-tool-search.test.ts --timeout 30000`: 200 passed, 0 failed.
+- PASS — `bun run typecheck`: exit 0 on the final code head.
+- PASS — repository-root oxlint on the two changed MCP source files and the prompt-effect, mcp-tool-search, and actor tests: 0 errors and no new diagnostics. **PRE-EXISTING LINT-141**: 134 existing MCP-file warnings plus 7 existing actor-test warnings, compared by file, rule, message, and severity.
+- PASS — repository root: `git diff --check`.
+- PASS — independent MCP review and final scoped review of `e5f2a933..5d6de390`: spec compliance, correctness, and codebase consistency approved; no critical or blocking findings. The final documentation-only commit is excluded from the recorded range. Green remote CI is required before merge.
+
+**Journey log**
+
+- Readiness answers whether a server is connected; the authorized catalog answers which tools this request can use.
+- Comparing with every historical state suppressed recovery. Compare with the latest state while ignoring volatile error details.
+- Budget the complete set of reminders together, including status text and retractions, rather than allocating a full budget to every server.
+- An auxiliary hidden mode marker caused ten CI failures by modifying original user messages during resume and related flows. It was removed entirely; no replacement storage mechanism was introduced. Auto-mode re-evaluation without actual reminder/call evidence is accepted.
+- Another CI failure came from an actor test assuming Inbox was uninitialized. Explicit fixture setup and real delivery assertions fixed the test without changing actor behavior. Keep prompts and mechanisms simple; user configuration repair and cross-server ownership ambiguity stay out of scope.
 
 ## [S1] Problem
 
@@ -64,7 +85,7 @@ Only report the server's current status, a short diagnostic when useful, and ava
 
 ### Verification boundaries
 
-Use the real prompt serialization path with controlled MCP service snapshots to inspect what reaches the test model endpoint. Cover state recurrence, changing error details, disable/removal before and after connection, restored tool sets, request/permission/agent filtering, and a shared multi-server budget. Unit tests cover rendering, tiny/zero budgets, long errors and retractions, fingerprints, and escaped readiness/search output. Prompt tests also cover auto-mode re-evaluation without auxiliary message parts, legacy announcement evidence, and duplicate names within a server. Resume, cold-tool initialization, scheduled prompts, and title tests must preserve their original user messages. Existing MCP integration tests protect prefix stability, sticky deferral, dispatch, lifecycle, and result handling. These tests establish context correctness; they do not measure a real model's tool-selection success rate.
+Use the real prompt serialization path with controlled MCP service snapshots to inspect what reaches the test model endpoint. Cover state recurrence, changing error details, disable/removal before and after connection, restored tool sets, request/permission/agent filtering, and a shared multi-server budget. Unit tests cover rendering, tiny/zero budgets, long errors and retractions, fingerprints, and escaped readiness/search output. Prompt tests also cover auto-mode re-evaluation without auxiliary message parts, legacy announcement evidence, and duplicate names within a server. Resume, cold-tool initialization, scheduled prompts, and title tests must not acquire auxiliary MCP bookkeeping parts in their original user messages. The actor guard test must exercise actual Inbox delivery independently of prior test initialization. Existing MCP integration tests protect prefix stability, sticky deferral, dispatch, lifecycle, and result handling. These tests establish context correctness; they do not measure a real model's tool-selection success rate.
 
 ## [S3] Out of Scope
 
@@ -83,7 +104,7 @@ Use the real prompt serialization path with controlled MCP service snapshots to 
 - [x] T5: Report unavailable and removed servers — acceptance: pending, disabled, and removed transitions invalidate prior tool availability once; pending-server removal is covered; initially disabled servers remain quiet (covers: S2)
 - [x] T6: Align advertised tools with request authorization — acceptance: request disables, permissions, and agent allowlists hide the same tools from reminders and search, with matching visible counts (covers: S2)
 - [x] T7: Enforce a shared reminder budget — acceptance: multi-server serialized reminders remain within one budget; long diagnostics, retractions, and zero budgets are covered without marking omitted outcomes delivered (covers: S2)
-- [ ] T9: Remove auxiliary mode persistence — acceptance: auto mode may re-evaluate without real announcement/call evidence; original user messages remain unchanged across resume, cold initialization, scheduled prompts, and title handling (covers: S2)
+- [x] T9: Remove auxiliary mode persistence — acceptance: auto mode may re-evaluate without real announcement/call evidence; original user messages remain unchanged across resume, cold initialization, scheduled prompts, and title handling (covers: S2)
 - [x] T10: Keep diagnostics safe and prompts concise — acceptance: search-miss names/errors use existing escaping and preview bounds; reminders contain status, tools, and a brief search/use pointer (covers: S2)
-- [ ] T11: Make the actor send guard fixture deterministic — acceptance: the test proves a subagent may send via exec using actual inbox behavior, independent of prior app-runtime initialization (covers: S2)
-- [ ] T8: Verify and independently review the integrated feature — acceptance: focused MCP suites and typecheck pass, lint introduces no diagnostics, and spec compliance/correctness/codebase consistency have no unresolved critical findings (covers: S2; depends: T4, T5, T6, T7, T9, T10, T11)
+- [x] T11: Make the actor send guard fixture deterministic — acceptance: the test proves a subagent may send via exec using actual inbox behavior, independent of prior app-runtime initialization (covers: S2)
+- [x] T8: Verify and independently review the integrated feature — acceptance: focused MCP suites and typecheck pass, lint introduces no diagnostics, and spec compliance/correctness/codebase consistency have no unresolved critical findings (covers: S2; depends: T4, T5, T6, T7, T9, T10, T11)
