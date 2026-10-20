@@ -27,6 +27,9 @@ const ref = {
   modelID: ModelID.make("test-model"),
 }
 
+// Outcomes of every writer the stub spawned, in order, so a test can settle one.
+const spawned: Deferred.Deferred<AgentOutcome>[] = []
+
 // Actor stub that never resolves its outcome — simulates a writer subagent
 // stuck waiting on an LLM round-trip the shutdown budget can't afford.
 // Also populates spawnRef so tryStartCheckpointWriter resolves the actor at
@@ -38,9 +41,6 @@ const ref = {
 // resolve Provider.getModel against a different instance and abort
 // tryStartCheckpointWriter mid-flight. Clear it here so these tests never
 // depend on cross-file leftovers.
-// Outcomes of every writer the stub spawned, in order, so a test can settle one.
-const spawned: Deferred.Deferred<AgentOutcome>[] = []
-
 const hangingActor = Layer.effect(
   Actor.Service,
   Effect.gen(function* () {
