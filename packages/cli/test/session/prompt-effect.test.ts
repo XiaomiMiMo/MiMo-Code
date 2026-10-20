@@ -23,7 +23,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Question } from "../../src/question"
 import { Todo } from "../../src/session/todo"
 import { Session } from "../../src/session"
-import { MCP_REMINDER_METADATA_KEY, type McpReadiness } from "../../src/tool/mcp-tool-search"
+import { MCP_REMINDER_METADATA_KEY, MCP_DEFERRED_MODE_METADATA_KEY, type McpReadiness } from "../../src/tool/mcp-tool-search"
 import { LLM } from "../../src/session/llm"
 import { MessageV2 } from "../../src/session/message-v2"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
@@ -3530,7 +3530,7 @@ reminderMcpIt.live("MCP reminders report recovery and repeated transitions to a 
         failedReadiness,
       ])
       expect(lastUserText(requests[0])).toContain("MCP server example connected")
-      expect(lastUserText(requests[1])).toContain("Disregard earlier tool lists for example")
+      expect(lastUserText(requests[1])).toContain("Previously listed tools from example are unavailable")
       expect(lastUserText(requests[2])).toContain("MCP server example connected")
       expect(lastUserText(requests[3])).toContain("MCP server example is unavailable")
     }),
@@ -3553,7 +3553,7 @@ for (const status of ["disabled", "pending", "removed"] as const) {
           connectedReadiness,
         ])
         expect(lastUserText(requests[0])).toContain("MCP server example connected")
-        expect(lastUserText(requests[1])).toContain("Disregard earlier tool lists for example")
+        expect(lastUserText(requests[1])).toContain("Previously listed tools from example are unavailable")
         expect(lastUserText(requests[2])).not.toContain("MCP server example")
         expect(lastUserText(requests[3])).toContain("MCP server example connected")
       }),
@@ -3694,6 +3694,143 @@ reminderMcpIt.live("MCP reminders stay quiet for initially disabled servers", ()
     { git: true, config: providerCfg },
   ),
 )
+
+reminderMcpIt.live("MCP reminders list each callable name once", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      yield* llm.tool("mcp_tool_search", { query: "missing" })
+      const { session, requests } = yield* reminderSession(llm, [
+        {
+          configured: true,
+          servers: [
+            {
+              name: "example",
+              status: "connected",
+              tools: [
+                { name: "example_lookup", description: "Shadowed description" },
+                { name: "example_lookup", description: "Current description" },
+              ],
+            },
+          ],
+        },
+      ])
+      expect(lastUserText(requests[0]).match(/- example_lookup:/g)).toHaveLength(1)
+      expect(lastUserText(requests[0])).toContain("Current description")
+      const parts = (yield* MessageV2.filterCompactedEffect(session.id)).flatMap((message) => message.parts)
+      const search = parts.find(
+        (part): part is CompletedToolPart =>
+          part.type === "tool" && part.tool === "mcp_tool_search" && part.state.status === "completed",
+      )
+      expect(search?.state.output).toContain("example connected (1 tool)")
+      expect(search?.state.output).toContain("catalog has 1 tool")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+for (const initial of ["unconfigured", "disabled", "omitted"] as const) {
+  reminderMcpIt.live(`MCP auto deferral stays sticky after a silent ${initial} first step`, () => {
+    const previous = process.env.MIMOCODE_MCP_TOOL_SEARCH
+    return provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        process.env.MIMOCODE_MCP_TOOL_SEARCH = "auto:100"
+        const quiet: McpReadiness =
+          initial === "unconfigured"
+            ? { configured: false, servers: [] }
+            : {
+                configured: true,
+                servers: [{ name: "example", status: initial === "disabled" ? "disabled" : "pending" }],
+              }
+        const { session, requests } = yield* reminderSession(llm, [quiet, connectedReadiness, connectedReadiness])
+        const tools = requests.map((request) => JSON.stringify(request.tools))
+        expect(tools[0]).toContain("mcp_tool_search")
+        expect(lastUserText(requests[0])).not.toContain("MCP server")
+        expect(tools[1]).toBe(tools[0])
+        expect(tools[2]).toBe(tools[0])
+        const markers = (yield* MessageV2.filterCompactedEffect(session.id))
+          .flatMap((message) => message.parts)
+          .filter(
+            (part): part is MessageV2.TextPart =>
+              part.type === "text" && !!part.metadata?.[MCP_DEFERRED_MODE_METADATA_KEY],
+          )
+        expect(markers).toHaveLength(1)
+        expect(markers[0].ignored).toBe(true)
+        expect(markers[0].text).toBe("")
+      }),
+      {
+        git: true,
+        config: (url) => {
+          const config = providerCfg(url)
+          if (initial !== "omitted") return config
+          return {
+            ...config,
+            compaction: { auto: false },
+            checkpoint: { thresholds: [], reserved: 0 },
+            provider: {
+              ...config.provider,
+              test: {
+                ...config.provider.test,
+                models: {
+                  ...config.provider.test.models,
+                  "test-model": { ...config.provider.test.models["test-model"], limit: { context: 200, output: 100 } },
+                },
+              },
+            },
+          }
+        },
+      },
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.MIMOCODE_MCP_TOOL_SEARCH
+          else process.env.MIMOCODE_MCP_TOOL_SEARCH = previous
+        }),
+      ),
+    )
+  })
+}
+
+reminderMcpIt.live("MCP auto deferral recognizes legacy announcement metadata", () => {
+  const previous = process.env.MIMOCODE_MCP_TOOL_SEARCH
+  return provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      process.env.MIMOCODE_MCP_TOOL_SEARCH = "auto:100"
+      reminderReadiness = connectedReadiness
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({ title: "Legacy MCP deferral" })
+      const user = yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        model: ref,
+        noReply: true,
+        parts: [{ type: "text", text: "Continue the session" }],
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        sessionID: session.id,
+        messageID: user.info.id,
+        type: "text",
+        synthetic: true,
+        text: "Previously deferred MCP tools",
+        metadata: { mcpDeferredTools: { added: ["example_lookup"], removed: [] } },
+      })
+      yield* llm.text("done")
+      yield* prompt.loop({ sessionID: session.id })
+      const requests = yield* llm.inputs
+      expect(JSON.stringify(requests[0].tools)).toContain("mcp_tool_search")
+      expect(JSON.stringify(requests[0].tools)).not.toContain("example_lookup")
+    }),
+    { git: true, config: providerCfg },
+  ).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env.MIMOCODE_MCP_TOOL_SEARCH
+        else process.env.MIMOCODE_MCP_TOOL_SEARCH = previous
+      }),
+    ),
+  )
+})
 
 const resetFlapping = Effect.sync(() => {
   flappingCalls = 0

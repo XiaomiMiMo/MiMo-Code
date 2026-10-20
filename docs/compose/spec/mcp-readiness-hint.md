@@ -44,11 +44,11 @@ Replay `mcpReminder` metadata in conversation order into the latest entry and th
 | initially pending → disabled / removed before any outcome | report the change once; the entry retains the server's presence |
 | initially disabled, or no configured servers and no previous announcements | no ambient reminder |
 
-Previously announced servers absent from the current configuration receive a `removed` reminder. Repeated absence stays quiet. On disconnection, the new reminder says to disregard earlier tool lists; on a shrinking visible tool set, it names removed tools when the budget allows and otherwise uses a compact superseding statement. Entry metadata also remains evidence for sticky deferral. Compaction can discard that evidence and cause a fresh announcement, because it already rewrites the prefix.
+Previously announced servers absent from the current configuration receive a `removed` reminder. Repeated absence stays quiet. On disconnection, the new reminder briefly states that previously listed tools are unavailable; on a shrinking visible tool set, it names removed tools when the budget allows and otherwise uses a compact superseding statement. Deferral is recorded once as ignored, empty synthetic metadata whenever search is exposed. This record is never sent to the model, so silent entry states and budget omission still preserve sticky deferral without adding text. Legacy `mcpDeferredTools` metadata remains recognized when resuming older sessions. Compaction can discard that evidence and cause a fresh announcement, because it already rewrites the prefix.
 
 ### Connection state and request-visible capabilities
 
-Connection state comes from MCP readiness and is never inferred from an empty search catalog. Before presenting tools to the model, intersect each connected server's tool names with the same catalog used by search and dispatch. That catalog applies request disables, permissions, agent allowlists, actor whitelists, executable checks, and local-name collision handling. Use the catalog's description for each surviving name and compute the displayed tool count from this filtered list.
+Connection state comes from MCP readiness and is never inferred from an empty search catalog. Before presenting tools to the model, intersect each connected server's tool names with the same catalog used by search and dispatch. That catalog applies request disables, permissions, agent allowlists, actor whitelists, executable checks, and local-name collision handling. List each surviving name once, use the catalog's description, and compute the displayed count from this filtered list. This does not change MCP registration or resolve ambiguous ownership between colliding server namespaces.
 
 Consequently, a server can be **connected with no tools available to this request**. Do not claim the server itself exposes no tools. The reminder must never recommend a name that the current search/dispatch view excludes. The model receives names and short descriptions for discovery; complete parameter schemas remain on-demand through search.
 
@@ -56,11 +56,15 @@ Consequently, a server can be **connected with no tools available to this reques
 
 Entry plus all changed-server reminders share `min(floor(usable_input_tokens × 0.1), 20,000)` estimated tokens. The existing unknown-context fallback remains 20,000; an exhausted known window has zero budget. Deduct each emitted part, including a separator allowance, then divide the remaining budget among remaining changed servers.
 
-Count the entire text, including wrappers, status, instructions, diagnostics, and retractions. Connected tools fall back from descriptions to names, then a truncated list with a search hint, then compact status. Diagnostic previews and large retraction lists are bounded. If even a compact reminder cannot fit, emit no part and do not mark that outcome as delivered. Search still covers the complete authorized catalog.
+Count the entire text, including wrappers, status, instructions, diagnostics, and retractions. Connected tools fall back from descriptions to names, then a truncated list with a search hint, then compact status. Diagnostic previews and large retraction lists are bounded. Search-miss diagnostics reuse the same normalization and harness-tag escaping as reminders. If even a compact reminder cannot fit, emit no part and do not mark that outcome as delivered. Search still covers the complete authorized catalog.
+
+### Keep the mechanism and prompts simple
+
+Only report the server's current status, a short diagnostic when useful, and available tool names/descriptions with a search/use pointer. Avoid repeated instructions telling the model what to infer from a failure or how to work around the user's MCP setup. Ordinary ambiguity in invalid or conflicting MCP configuration is outside this amendment; preserve existing registration behavior.
 
 ### Verification boundaries
 
-Use the real prompt serialization path with controlled MCP service snapshots to inspect what reaches the test model endpoint. Cover state recurrence, changing error details, disable/removal before and after connection, restored tool sets, request/permission/agent filtering, and a shared multi-server budget. Unit tests cover rendering, tiny/zero budgets, long errors and retractions, fingerprints, and readiness/search output. Existing MCP integration tests protect prefix stability, sticky deferral, dispatch, lifecycle, and result handling. These tests establish context correctness; they do not measure a real model's tool-selection success rate.
+Use the real prompt serialization path with controlled MCP service snapshots to inspect what reaches the test model endpoint. Cover state recurrence, changing error details, disable/removal before and after connection, restored tool sets, request/permission/agent filtering, and a shared multi-server budget. Unit tests cover rendering, tiny/zero budgets, long errors and retractions, fingerprints, and escaped readiness/search output. Prompt tests also cover silent auto-mode entry, legacy mode evidence, and duplicate names within a server. Existing MCP integration tests protect prefix stability, sticky deferral, dispatch, lifecycle, and result handling. These tests establish context correctness; they do not measure a real model's tool-selection success rate.
 
 ## [S3] Out of Scope
 
@@ -70,6 +74,7 @@ Use the real prompt serialization path with controlled MCP service snapshots to 
 - Consuming `MCP.ToolsChanged` as a dirty signal.
 - Extending readiness reminders to GPT/`exec` or non-deferred tool exposure.
 - Empirical evaluation of real-model tool-selection success rates.
+- Repairing user MCP configuration, changing normalized-name registration ownership, or distinguishing all ambiguous cross-server name collisions.
 
 ## Tasks
 
@@ -77,4 +82,6 @@ Use the real prompt serialization path with controlled MCP service snapshots to 
 - [ ] T5: Report unavailable and removed servers — acceptance: pending, disabled, and removed transitions invalidate prior tool availability once; pending-server removal is covered; initially disabled servers remain quiet (covers: S2)
 - [ ] T6: Align advertised tools with request authorization — acceptance: request disables, permissions, and agent allowlists hide the same tools from reminders and search, with matching visible counts (covers: S2)
 - [ ] T7: Enforce a shared reminder budget — acceptance: multi-server serialized reminders remain within one budget; long diagnostics, retractions, and zero budgets are covered without marking omitted outcomes delivered (covers: S2)
-- [ ] T8: Verify and independently review the integrated feature — acceptance: focused MCP suites and typecheck pass, lint introduces no diagnostics, and spec compliance/correctness/codebase consistency have no unresolved critical findings (covers: S2; depends: T4, T5, T6, T7)
+- [ ] T9: Persist deferral without visible text — acceptance: unconfigured, disabled, and budget-omitted initial states retain search/use with no ambient text; legacy announcements still lock deferral (covers: S2)
+- [ ] T10: Keep diagnostics safe and prompts concise — acceptance: search-miss names/errors use existing escaping and preview bounds; reminders contain status, tools, and a brief search/use pointer (covers: S2)
+- [ ] T8: Verify and independently review the integrated feature — acceptance: focused MCP suites and typecheck pass, lint introduces no diagnostics, and spec compliance/correctness/codebase consistency have no unresolved critical findings (covers: S2; depends: T4, T5, T6, T7, T9, T10)

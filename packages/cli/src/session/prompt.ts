@@ -181,6 +181,7 @@ import {
   announcedMcpReminders,
   mcpToolCatalogBudget,
   MCP_REMINDER_METADATA_KEY,
+  MCP_DEFERRED_MODE_METADATA_KEY,
   MCP_TOOL_SEARCH_ID,
   MCP_TOOL_USE_DESCRIPTION,
   MCP_TOOL_USE_ID,
@@ -2271,7 +2272,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         ...readiness,
         servers: readiness.servers.map((server) => {
           if (server.status !== "connected") return server
-          const tools = (server.tools ?? []).flatMap(({ name }) => {
+          const names = new Set((server.tools ?? []).map((tool) => tool.name))
+          const tools = [...names].flatMap((name) => {
             const entry = visibleMcpTools.get(name)
             return entry ? [{ name, description: entry.description }] : []
           })
@@ -2282,14 +2284,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         mcpSearchEntries.toSorted((a, b) => a.name.localeCompare(b.name)),
         mcpReadiness,
       )
-      // Evidence the conversation already ran in deferred mode: an MCP reminder
-      // or a search/use call. Compaction drops reminders, which is fine —
+      // Mode evidence is independent of visible reminders. Keep legacy
+      // announcements recognizable when resuming older conversations.
+      // Compaction drops evidence, which is fine —
       // compaction rewrites the prefix anyway.
       const deferredEarlier = input.messages.some((message) =>
         message.parts.some(
           (part) =>
             (part.type === "tool" && (part.tool === MCP_TOOL_SEARCH_ID || part.tool === MCP_TOOL_USE_ID)) ||
-            (part.type === "text" && !!part.synthetic && !!part.metadata?.[MCP_REMINDER_METADATA_KEY]),
+            (part.type === "text" && !!part.synthetic && !!(
+              part.metadata?.[MCP_DEFERRED_MODE_METADATA_KEY] ||
+              part.metadata?.[MCP_REMINDER_METADATA_KEY] ||
+              part.metadata?.mcpDeferredTools
+            )),
         ),
       )
       deferMcpTools = shouldDeferMcpTools(
@@ -2300,6 +2307,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       )
       searchExposed =
         deferMcpTools && !useGPTTools && input.model.capabilities.toolcall && !!tools[MCP_TOOL_SEARCH_ID]
+      if (searchExposed && !deferredEarlier) {
+        const userMessage = input.messages.findLast((message) => message.info.role === "user")
+        if (userMessage) {
+          // Ignored metadata never reaches the model, including when deferral
+          // begins mid-turn or no server reminder can be emitted.
+          const part = yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: userMessage.info.id,
+            sessionID: userMessage.info.sessionID,
+            type: "text",
+            synthetic: true,
+            ignored: true,
+            text: "",
+            metadata: { [MCP_DEFERRED_MODE_METADATA_KEY]: true },
+          })
+          userMessage.parts.push(part)
+        }
+      }
       // Deferred MCP tools never join the provider-facing tool list: the model
       // fetches a schema with mcp_tool_search and calls the tool through the fixed
       // mcp_tool_use dispatcher, so tool definitions (the head of the prompt-cache
