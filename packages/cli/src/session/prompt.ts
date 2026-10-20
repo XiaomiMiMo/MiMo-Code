@@ -18,7 +18,7 @@ import {
 } from "@/util/media"
 import { shrinkAttachment } from "@/provider/image"
 import { classifyAssistantStep } from "./classify"
-import { Log } from "../util"
+import { Log, Token } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent, resolveStoredAgent } from "../agent/agent"
@@ -194,6 +194,7 @@ import {
   shouldDeferMcpTools,
   type McpReadiness,
   type McpReminderMeta,
+  type McpServerReminder,
   type McpToolSearchEntry,
 } from "@/tool/mcp-tool-search"
 import { mcpToolSearchMode, usesGPTToolset } from "@/tool/gpt"
@@ -2037,7 +2038,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
       const localToolNames = new Set(Object.keys(tools))
       const mcpTools = Object.entries(yield* mcp.tools(input.mcpContext)).toSorted(([a], [b]) => a.localeCompare(b))
-      const mcpReadiness: McpReadiness = mcp.readiness
+      const readiness: McpReadiness = mcp.readiness
         ? yield* mcp.readiness()
         : { configured: false, servers: [] }
       const agentToolAllowlist = input.agent.toolAllowlist ? new Set(input.agent.toolAllowlist) : undefined
@@ -2263,6 +2264,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
         }
       }
+      // Connection state comes from MCP; advertised capabilities must match the
+      // same request-authorized view that search and dispatch actually expose.
+      const visibleMcpTools = new Map(mcpSearchEntries.map((entry) => [entry.name, entry]))
+      const mcpReadiness: McpReadiness = {
+        ...readiness,
+        servers: readiness.servers.map((server) => {
+          if (server.status !== "connected") return server
+          const tools = (server.tools ?? []).flatMap(({ name }) => {
+            const entry = visibleMcpTools.get(name)
+            return entry ? [{ name, description: entry.description }] : []
+          })
+          return { ...server, tools, toolCount: tools.length }
+        }),
+      }
       mcpCatalog.current = createMcpToolSearchCatalog(
         mcpSearchEntries.toSorted((a, b) => a.name.localeCompare(b.name)),
         mcpReadiness,
@@ -2346,7 +2361,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       enabled: boolean
       model: Provider.Model
     }) {
-      if (!input.enabled || !input.readiness.configured) return
+      if (!input.enabled) return
       const userIndex = input.messages.findLastIndex((message) => message.info.role === "user")
       if (userIndex < 0) return
       // Only while the user message is still the tail of the conversation. Mid-turn
@@ -2354,19 +2369,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // cached history; such changes wait for the next turn.
       if (input.messages.slice(userIndex + 1).some((message) => message.info.role === "assistant")) return
       const userMessage = input.messages[userIndex]
-      const { seen: announced, byServer } = announcedMcpReminders(
+      const { entry: previousEntry, byServer } = announcedMcpReminders(
         input.messages.flatMap((message) =>
           message.info.role !== "user"
             ? []
             : message.parts.flatMap((part) =>
-                part.type === "text" && part.synthetic && part.metadata?.[MCP_REMINDER_METADATA_KEY]
+                part.type === "text" && part.synthetic && !part.ignored && part.metadata?.[MCP_REMINDER_METADATA_KEY]
                   ? [part.metadata[MCP_REMINDER_METADATA_KEY]]
                   : [],
               ),
         ),
       )
+      if (!input.readiness.configured && byServer.size === 0) return
       const cfg = yield* config.get()
-      const budget = mcpToolCatalogBudget({
+      let remaining = mcpToolCatalogBudget({
         usable: usable({ cfg, model: input.model }),
         context: input.model.limit.context,
       })
@@ -2376,17 +2392,33 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         .map((server) => server.name)
         .toSorted()
       const entryMeta: McpReminderMeta = { kind: "entry", servers: serverNames }
-      if (serverNames.length > 0 && !announced.has(mcpReminderMarker(entryMeta))) {
-        yield* ensurePersistedUserSynthetic({
-          message: userMessage,
-          marker: mcpReminderMarker(entryMeta),
-          text: renderMcpEntryReminder(serverNames),
-          metadata: { [MCP_REMINDER_METADATA_KEY]: entryMeta },
-        })
+      if (
+        serverNames.length > 0 &&
+        (!previousEntry || mcpReminderMarker(previousEntry) !== mcpReminderMarker(entryMeta))
+      ) {
+        const text = renderMcpEntryReminder(serverNames, remaining)
+        if (text) {
+          yield* ensurePersistedUserSynthetic({
+            message: userMessage,
+            marker: mcpReminderMarker(entryMeta),
+            text,
+            metadata: { [MCP_REMINDER_METADATA_KEY]: entryMeta },
+          })
+          remaining -= Token.estimate(text) + 1
+        }
       }
 
-      for (const server of input.readiness.servers) {
-        if (server.status === "pending" || server.status === "disabled") continue
+      const currentNames = new Set(input.readiness.servers.map((server) => server.name))
+      const servers: McpServerReminder[] = [
+        ...input.readiness.servers,
+        ...[...byServer.keys()]
+          .filter((name) => !currentNames.has(name))
+          .map((name) => ({ name, status: "removed" as const })),
+      ]
+      const changed = servers.flatMap((server) => {
+        const previous = byServer.get(server.name)
+        // Initial pending is covered by entry; initially disabled servers add no noise.
+        if (!previous && (server.status === "pending" || server.status === "disabled")) return []
         const toolNames = server.tools?.map((tool) => tool.name).toSorted()
         const meta: McpReminderMeta = {
           kind: "server",
@@ -2395,13 +2427,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           ...(toolNames ? { toolNames } : {}),
           ...(server.error ? { error: server.error } : {}),
         }
-        if (announced.has(mcpReminderMarker(meta))) continue
+        if (previous && mcpReminderMarker(previous) === mcpReminderMarker(meta)) return []
+        return [{ server, meta, previous }]
+      })
+      for (const [index, { server, meta, previous }] of changed.entries()) {
+        // Share one budget across all outcomes, including boilerplate and retractions.
+        const text = renderMcpServerReminder(server, Math.floor(remaining / (changed.length - index)), previous)
+        if (!text) continue
         yield* ensurePersistedUserSynthetic({
           message: userMessage,
           marker: mcpReminderMarker(meta),
-          text: renderMcpServerReminder(server, budget, byServer.get(server.name)),
+          text,
           metadata: { [MCP_REMINDER_METADATA_KEY]: meta },
         })
+        remaining -= Token.estimate(text) + 1
       }
     })
 

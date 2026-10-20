@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Token } from "../../src/util"
 import {
   announcedMcpReminders,
   checkMcpToolArguments,
@@ -82,7 +83,7 @@ describe("MCP Tool Search", () => {
     expect(text.startsWith("<system-reminder>\n")).toBe(true)
     expect(text.endsWith("\n</system-reminder>")).toBe(true)
     expect(text).toContain("MCP servers configured: exa, github.")
-    expect(text).toContain("Attempting to connect")
+    expect(text).toContain("Connections may still be pending")
     expect(text).toContain("mcp_tool_search")
     expect(text).toContain(MCP_TOOL_USE_ID)
   })
@@ -109,10 +110,7 @@ describe("MCP Tool Search", () => {
   })
 
   test("server reminder reports failed and needs_auth without inventing tools", () => {
-    const failed = renderMcpServerReminder(
-      { name: "legacy", status: "failed", error: "ETIMEDOUT" },
-      1_000,
-    )
+    const failed = renderMcpServerReminder({ name: "legacy", status: "failed", error: "ETIMEDOUT" }, 1_000)
     expect(failed).toContain("MCP server legacy is unavailable (failed: ETIMEDOUT).")
     expect(failed).toContain("Do not invent its tools")
 
@@ -122,11 +120,8 @@ describe("MCP Tool Search", () => {
   })
 
   test("connected server with zero tools says so", () => {
-    const text = renderMcpServerReminder(
-      { name: "empty", status: "connected", toolCount: 0, tools: [] },
-      1_000,
-    )
-    expect(text).toContain("exposes no tools")
+    const text = renderMcpServerReminder({ name: "empty", status: "connected", toolCount: 0, tools: [] }, 1_000)
+    expect(text).toContain("No tools are available for this request")
     expect(text).toContain("mcp_tool_search")
   })
 
@@ -135,20 +130,16 @@ describe("MCP Tool Search", () => {
       name: `catalog_tool_${index.toString().padStart(2, "0")}_${"x".repeat(24)}`,
       description: `Distinct catalog description ${index} ${"y".repeat(80)}`,
     }))
-    const namesOnly = renderMcpServerReminder(
-      { name: "big", status: "connected", toolCount: 20, tools },
-      300,
-    )
-    const truncated = renderMcpServerReminder(
-      { name: "big", status: "connected", toolCount: 20, tools },
-      80,
-    )
+    const namesOnly = renderMcpServerReminder({ name: "big", status: "connected", toolCount: 20, tools }, 400)
+    const truncated = renderMcpServerReminder({ name: "big", status: "connected", toolCount: 20, tools }, 180)
 
     expect(namesOnly).toContain("- catalog_tool_19")
     expect(namesOnly).not.toContain("Distinct catalog description")
     expect(truncated).toContain("- catalog_tool_00")
     expect(truncated).toContain("more; mcp_tool_search searches the complete catalog")
     expect(truncated).not.toContain("catalog_tool_19")
+    expect(Token.estimate(namesOnly)).toBeLessThanOrEqual(400)
+    expect(Token.estimate(truncated)).toBeLessThanOrEqual(180)
   })
 
   test("escapes forged harness tags in MCP metadata and schemas", () => {
@@ -177,7 +168,7 @@ describe("MCP Tool Search", () => {
     )
   })
 
-  test("reminder markers dedupe entry and per-server outcomes", () => {
+  test("reminder history retains the latest state instead of all previously seen states", () => {
     const entry = { kind: "entry" as const, servers: ["exa", "github"] }
     const connected = {
       kind: "server" as const,
@@ -186,14 +177,43 @@ describe("MCP Tool Search", () => {
       toolNames: ["a", "b"],
     }
     const failed = { kind: "server" as const, server: "exa", status: "failed", error: "boom" }
-    const { seen, byServer } = announcedMcpReminders([entry, connected, undefined, { added: 1 }])
-    expect(seen.has(mcpReminderMarker(entry))).toBe(true)
-    expect(seen.has(mcpReminderMarker(connected))).toBe(true)
-    expect(seen.has(mcpReminderMarker(failed))).toBe(false)
-    expect(byServer.get("exa")?.toolNames).toEqual(["a", "b"])
-    expect(mcpReminderMarker(connected)).not.toBe(
-      mcpReminderMarker({ ...connected, toolNames: ["a", "c"] }),
+    const history = announcedMcpReminders([entry, connected, undefined, { added: 1 }, failed])
+    expect(history.entry).toEqual(entry)
+    expect(history.byServer.get("exa")).toEqual(failed)
+    expect(mcpReminderMarker(history.byServer.get("exa")!)).not.toBe(mcpReminderMarker(connected))
+    expect(mcpReminderMarker(connected)).not.toBe(mcpReminderMarker({ ...connected, toolNames: ["a", "c"] }))
+    expect(mcpReminderMarker(connected)).toBe(mcpReminderMarker({ ...connected, toolNames: ["b", "a"] }))
+    expect(mcpReminderMarker(failed)).toBe(mcpReminderMarker({ ...failed, error: "another failure detail" }))
+    expect(mcpReminderMarker({ kind: "entry", servers: ["a,b"] })).not.toBe(
+      mcpReminderMarker({ kind: "entry", servers: ["a", "b"] }),
     )
+  })
+
+  test("bounds complete reminders including errors, removed tools, and boilerplate", () => {
+    const previous = { status: "connected", toolNames: Array.from({ length: 500 }, (_, index) => `example_${index}`) }
+    const servers = [
+      { name: "example", status: "failed" as const, error: "connection diagnostic ".repeat(1_000) },
+      {
+        name: "example",
+        status: "connected" as const,
+        tools: [{ name: "example_lookup", description: "Search records" }],
+      },
+      { name: "example", status: "disabled" as const },
+      { name: "example", status: "removed" as const },
+    ]
+    for (const server of servers) {
+      const text = renderMcpServerReminder(server, 160, previous)
+      expect(text).toContain("MCP server example")
+      expect(Token.estimate(text)).toBeLessThanOrEqual(160)
+      expect(renderMcpServerReminder(server, 0, previous)).toBe("")
+    }
+    const entry = renderMcpEntryReminder(
+      Array.from({ length: 500 }, (_, index) => `server_${index}`),
+      80,
+    )
+    expect(entry).toContain("500 MCP servers configured")
+    expect(Token.estimate(entry)).toBeLessThanOrEqual(80)
+    expect(renderMcpEntryReminder(["example"], 0)).toBe("")
   })
 
   test("server update supersedes earlier tool lists and whole-server unavailability", () => {
@@ -211,23 +231,20 @@ describe("MCP Tool Search", () => {
     expect(shrunk).toContain("Current tools:")
     expect(shrunk).toContain("- a: still here")
 
-    const down = renderMcpServerReminder(
-      { name: "exa", status: "failed", error: "ETIMEDOUT" },
-      1_000,
-      { status: "connected", toolNames: ["a", "b"] },
-    )
+    const down = renderMcpServerReminder({ name: "exa", status: "failed", error: "ETIMEDOUT" }, 1_000, {
+      status: "connected",
+      toolNames: ["a", "b"],
+    })
     expect(down).toContain("MCP server exa is unavailable (failed: ETIMEDOUT).")
     expect(down).toContain("Disregard earlier tool lists for exa")
 
-    const auth = renderMcpServerReminder(
-      { name: "exa", status: "needs_auth" },
-      1_000,
-      { status: "connected", toolNames: ["a"] },
-    )
+    const auth = renderMcpServerReminder({ name: "exa", status: "needs_auth" }, 1_000, {
+      status: "connected",
+      toolNames: ["a"],
+    })
     expect(auth).toContain("MCP server exa is unavailable (needs auth)")
     expect(auth).toContain("Disregard earlier tool lists for exa")
   })
-
 
   test("ranks names, descriptions, and nested schema metadata with BM25", () => {
     expect(searchMcpTools(entries, { query: "search Google Drive documents" }).map((tool) => tool.name)).toEqual([
@@ -236,9 +253,7 @@ describe("MCP Tool Search", () => {
     expect(searchMcpTools(entries, { query: "invite people by email" }).map((tool) => tool.name)).toEqual([
       "calendar_create_event",
     ])
-    expect(searchMcpTools(entries, { query: "slack send" }).map((tool) => tool.name)).toEqual([
-      "slack_send_message",
-    ])
+    expect(searchMcpTools(entries, { query: "slack send" }).map((tool) => tool.name)).toEqual(["slack_send_message"])
   })
 
   test("selects exact tools by name with select: and bare names", () => {
@@ -405,9 +420,7 @@ test("server success reminder points the model at mcp_tool_use", () => {
 describe("MCP readiness hint", () => {
   test("renderMcpReadiness distinguishes not configured, connecting, failed, auth, and connected counts", () => {
     expect(renderMcpReadiness(undefined)).toBe("MCP status: no MCP servers are configured.")
-    expect(renderMcpReadiness({ configured: false, servers: [] })).toBe(
-      "MCP status: no MCP servers are configured.",
-    )
+    expect(renderMcpReadiness({ configured: false, servers: [] })).toBe("MCP status: no MCP servers are configured.")
     expect(renderMcpReadiness({ configured: true, servers: [{ name: "exa", status: "pending" }] })).toBe(
       "MCP status: connecting exa.",
     )
@@ -442,9 +455,9 @@ describe("MCP readiness hint", () => {
     expect(mcpSearchActionHint({ configured: true, servers: [{ name: "exa", status: "pending" }] })).toContain(
       "Retry later",
     )
-    expect(mcpSearchActionHint({ configured: true, servers: [{ name: "exa", status: "connected", toolCount: 1 }] })).toContain(
-      "select:",
-    )
+    expect(
+      mcpSearchActionHint({ configured: true, servers: [{ name: "exa", status: "connected", toolCount: 1 }] }),
+    ).toContain("select:")
     expect(mcpSearchActionHint(undefined)).toContain("select:")
   })
 
@@ -476,4 +489,3 @@ describe("MCP readiness hint", () => {
     expect(miss).toContain("select:")
   })
 })
-

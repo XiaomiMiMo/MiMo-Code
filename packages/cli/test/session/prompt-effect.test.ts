@@ -23,6 +23,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Question } from "../../src/question"
 import { Todo } from "../../src/session/todo"
 import { Session } from "../../src/session"
+import { MCP_REMINDER_METADATA_KEY, type McpReadiness } from "../../src/tool/mcp-tool-search"
 import { LLM } from "../../src/session/llm"
 import { MessageV2 } from "../../src/session/message-v2"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
@@ -53,7 +54,7 @@ import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { TaskRegistry } from "../../src/task/registry"
 import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { Auth } from "../../src/auth"
-import { Log } from "../../src/util"
+import { Log, Token } from "../../src/util"
 import { Global } from "../../src/global"
 import { EffectLogger } from "../../src/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -3440,6 +3441,257 @@ const flappingMcpIt = testEffect(
         ],
       }),
     ),
+  ),
+)
+
+
+let reminderReadiness: McpReadiness = { configured: false, servers: [] }
+const connectedReadiness: McpReadiness = {
+  configured: true,
+  servers: [
+    {
+      name: "example",
+      status: "connected",
+      tools: [{ name: "example_lookup", description: "Find a record" }],
+      toolCount: 1,
+    },
+  ],
+}
+const failedReadiness: McpReadiness = {
+  configured: true,
+  servers: [{ name: "example", status: "failed", error: "ETIMEDOUT" }],
+}
+const reminderMcpIt = testEffect(
+  makeHttp(
+    mcpLayer(
+      () =>
+        Object.fromEntries(
+          reminderReadiness.servers.flatMap((server) =>
+            server.status === "connected"
+              ? (server.tools ?? []).map((item) => [
+                  item.name,
+                  dynamicTool({
+                    description: item.description,
+                    inputSchema: jsonSchema({ type: "object" }),
+                    execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+                  }),
+                ])
+              : [],
+          ),
+        ),
+      () => ({}),
+      () => reminderReadiness,
+    ),
+  ),
+)
+
+const reminderSession = Effect.fnUntraced(function* (llm: TestLLMServer["Service"], snapshots: McpReadiness[]) {
+  const prompt = yield* SessionPrompt.Service
+  const sessions = yield* Session.Service
+  const session = yield* sessions.create({ title: "MCP readiness transitions" })
+  for (const [turn, snapshot] of snapshots.entries()) {
+    reminderReadiness = snapshot
+    yield* llm.text(`turn ${turn}`)
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      model: ref,
+      parts: [{ type: "text", text: `turn ${turn}` }],
+    })
+  }
+  return { session, requests: yield* llm.inputs }
+})
+
+reminderMcpIt.live("MCP reminders do not repeat failures when only error details change", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const { requests } = yield* reminderSession(
+        llm,
+        [0, 1, 2].map((attempt) => ({
+          configured: true,
+          servers: [{ name: "example", status: "failed", error: `Timeout on attempt ${attempt}` }],
+        })),
+      )
+      expect(lastUserText(requests[0])).toContain("MCP server example is unavailable")
+      expect(lastUserText(requests[1])).not.toContain("MCP server example")
+      expect(lastUserText(requests[2])).not.toContain("MCP server example")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+reminderMcpIt.live("MCP reminders report recovery and repeated transitions to a previously seen state", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const { requests } = yield* reminderSession(llm, [
+        connectedReadiness,
+        failedReadiness,
+        connectedReadiness,
+        failedReadiness,
+      ])
+      expect(lastUserText(requests[0])).toContain("MCP server example connected")
+      expect(lastUserText(requests[1])).toContain("Disregard earlier tool lists for example")
+      expect(lastUserText(requests[2])).toContain("MCP server example connected")
+      expect(lastUserText(requests[3])).toContain("MCP server example is unavailable")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+for (const status of ["disabled", "pending", "removed"] as const) {
+  reminderMcpIt.live(`MCP reminders retract tools once when a server becomes ${status}`, () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const unavailable: McpReadiness =
+          status === "removed"
+            ? { configured: false, servers: [] }
+            : { configured: true, servers: [{ name: "example", status }] }
+        const { requests } = yield* reminderSession(llm, [
+          connectedReadiness,
+          unavailable,
+          unavailable,
+          connectedReadiness,
+        ])
+        expect(lastUserText(requests[0])).toContain("MCP server example connected")
+        expect(lastUserText(requests[1])).toContain("Disregard earlier tool lists for example")
+        expect(lastUserText(requests[2])).not.toContain("MCP server example")
+        expect(lastUserText(requests[3])).toContain("MCP server example connected")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+}
+
+reminderMcpIt.live("MCP reminders announce tools restored to an earlier tool set", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const expanded: McpReadiness = {
+        configured: true,
+        servers: [
+          {
+            name: "example",
+            status: "connected",
+            tools: [
+              { name: "example_lookup", description: "Find a record" },
+              { name: "example_fetch", description: "Read a record" },
+            ],
+          },
+        ],
+      }
+      const { requests } = yield* reminderSession(llm, [expanded, connectedReadiness, expanded])
+      expect(lastUserText(requests[0])).toContain("- example_fetch:")
+      expect(lastUserText(requests[1])).toContain("No longer available from example: example_fetch.")
+      expect(lastUserText(requests[2])).toContain("- example_fetch:")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+for (const filter of ["request", "permission", "agent"] as const) {
+  mcpIt.live(`MCP reminders omit tools hidden by the ${filter}`, () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({
+          title: "MCP filtered announcement",
+          ...(filter === "permission"
+            ? {
+                permission: [{ permission: "mcp_result", pattern: "*", action: "deny" as const }],
+              }
+            : {}),
+        })
+        yield* llm.tool("mcp_tool_search", { query: "select:mcp_result" })
+        yield* llm.text("done")
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: filter === "agent" ? "restricted" : "build",
+          model: ref,
+          ...(filter === "request" ? { tools: { mcp_result: false } } : {}),
+          parts: [{ type: "text", text: "Find the permitted tool" }],
+        })
+        const requests = yield* llm.inputs
+        const parts = (yield* MessageV2.filterCompactedEffect(session.id)).flatMap((message) => message.parts)
+        const search = parts.find(
+          (part): part is CompletedToolPart =>
+            part.type === "tool" && part.tool === "mcp_tool_search" && part.state.status === "completed",
+        )
+        expect(search?.state.output).toContain("No matching deferred tools found (catalog has 1 tool)")
+        expect(search?.state.output).toContain("demo connected (1 tool)")
+        expect(lastUserText(requests[0])).toContain("- mcp_success:")
+        expect(lastUserText(requests[0])).not.toContain("- mcp_result:")
+      }),
+      { git: true, config: filter === "agent" ? restrictedAgentProviderCfg : providerCfg },
+    ),
+  )
+}
+
+reminderMcpIt.live("MCP server reminders share a single context budget", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const snapshot: McpReadiness = {
+        configured: true,
+        servers: ["alpha", "beta", "gamma"].map((name) => ({
+          name,
+          status: "connected",
+          tools: Array.from({ length: 150 }, (_, index) => ({
+            name: `${name}_lookup_${index}`,
+            description: "Search matching records in the example catalog. ".repeat(4),
+          })),
+        })),
+      }
+      const { session, requests } = yield* reminderSession(llm, [snapshot])
+      const reminders = (yield* MessageV2.filterCompactedEffect(session.id))
+        .flatMap((message) => message.parts)
+        .filter(
+          (part): part is MessageV2.TextPart => part.type === "text" && !!part.metadata?.[MCP_REMINDER_METADATA_KEY],
+        )
+      expect(reminders).toHaveLength(4)
+      expect(Token.estimate(reminders.map((part) => part.text).join("\n"))).toBeLessThanOrEqual(10_000)
+      for (const name of ["alpha", "beta", "gamma"]) {
+        expect(lastUserText(requests[0])).toContain(`MCP server ${name} connected`)
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+for (const status of ["disabled", "removed"] as const) {
+  reminderMcpIt.live(`MCP reminders report a pending server becoming ${status} once`, () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const pending: McpReadiness = {
+          configured: true,
+          servers: [{ name: "example", status: "pending" }],
+        }
+        const unavailable: McpReadiness =
+          status === "removed"
+            ? { configured: false, servers: [] }
+            : { configured: true, servers: [{ name: "example", status }] }
+        const { requests } = yield* reminderSession(llm, [pending, unavailable, unavailable])
+        expect(lastUserText(requests[0])).toContain("MCP servers configured: example")
+        expect(lastUserText(requests[1])).toContain(
+          `MCP server example is ${status === "removed" ? "no longer configured" : "disabled"}`,
+        )
+        expect(lastUserText(requests[2])).not.toContain("MCP server example")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+}
+
+reminderMcpIt.live("MCP reminders stay quiet for initially disabled servers", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const { requests } = yield* reminderSession(llm, [
+        {
+          configured: true,
+          servers: [{ name: "example", status: "disabled" }],
+        },
+      ])
+      expect(lastUserText(requests[0])).not.toContain("MCP server")
+    }),
+    { git: true, config: providerCfg },
   ),
 )
 
