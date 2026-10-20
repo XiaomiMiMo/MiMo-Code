@@ -1,14 +1,23 @@
 ---
 feature: checkpoint-capture-defect
-status: in-progress
-updated: 2026-06-20
+status: delivered
+updated: 2026-10-20
 branch: fix/checkpoint-capture-defect
-commits:
+commits: 115eeee3..6cb88c78
 ---
 
 # Checkpoint prefix capture defect containment
 
 ## Report
+
+**What was built** — The prefix-capture closure installed by `SessionPrompt.layer` is now total except for interruption: one `Effect.catchCause` around the whole effect logs `checkpoint prefix capture failed` and returns the empty prefix, so a `Provider.getModel` / `Session.get` defect no longer escapes `tryStartCheckpointWriter` (and through `fireCheckpoints` the foreground turn) or fork-query. `drainWriters` classifies its snapshot of writer Deferreds with `Deferred.isDone` instead of reading the live map. The F40 test now settles writer1 and asserts the newest pending fires as a second writer.
+
+**Verification** — `bun run typecheck` (packages/cli): PASS. `bun test --timeout 30000` on prompt-effect, checkpoint-drain, checkpoint-fork-mode, checkpoint-child-session, checkpoint-main-slice, checkpoint-memory-write, prune, prune-skip-system in one process: 179 pass / 3 skip / 0 fail. New capture cases (unknown model / unknown session) and the drain "settling during drain" case were confirmed failing on the base code (`{drained:0,timedOut:1}`). After review nits: checkpoint-drain 4/4 PASS, typecheck PASS. Independent review: no critical findings.
+
+**Journey log**
+- Effect 4 beta: `Effect.catch` and `Effect.ignore` do not see a `throw` inside `Effect.fn`; best-effort boundaries need `catchCause` with a `hasInterrupts` re-raise.
+- A drain test that forks the drain must use `forkChild({ startImmediately: true })`, otherwise the writer settles and is removed before the drain snapshots it.
+- Review follow-up (not done): on a capture miss fork-query silently runs with an empty prefix; returning an explicit "unavailable" message would be clearer.
 
 ## [S1] Problem
 
@@ -57,6 +66,6 @@ Deferreds; the test settles writer1 and asserts that a second spawn happens
 - Changing `Provider.getModel` / `Session.get` to typed failures (wide blast radius).
 
 ## Tasks
-- [ ] T1: Wrap capture closure in interrupt-preserving `catchCause` — acceptance: real `prefixCaptureRef.current` called with an unknown modelID and with an unknown sessionID succeeds with the empty prefix; new tests fail before the fix (covers: S2)
-- [ ] T2: `drainWriters` counts via `Deferred.isDone` over the snapshot — acceptance: `checkpoint-drain.test.ts` hanging-writer case still reports `{ drained: 0, timedOut: 1 }`, and a settled writer reports `drained: 1, timedOut: 0` (covers: S2)
-- [ ] T3: F40 test settles writer1 and asserts pending fires a second spawn (covers: S2; depends: T2)
+- [x] T1: Wrap capture closure in interrupt-preserving `catchCause` — acceptance: real `prefixCaptureRef.current` called with an unknown modelID and with an unknown sessionID succeeds with the empty prefix; new tests fail before the fix (covers: S2)
+- [x] T2: `drainWriters` counts via `Deferred.isDone` over the snapshot — acceptance: `checkpoint-drain.test.ts` hanging-writer case still reports `{ drained: 0, timedOut: 1 }`, and a settled writer reports `drained: 1, timedOut: 0` (covers: S2)
+- [x] T3: F40 test settles writer1 and asserts pending fires a second spawn (covers: S2; depends: T2)
