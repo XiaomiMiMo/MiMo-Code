@@ -711,9 +711,9 @@ export const layer = Layer.effect(
     // (ToolRegistry → SessionCheckpoint → ToolRegistry). See prefix-capture-ref.ts.
     // The closure resolves Agent.Info and Provider.Model internally so checkpoint.ts
     // only needs to pass string IDs.
-    const capture: typeof prefixCaptureRef.current = (input) =>
-      Effect.gen(function* () {
-        const empty = { system: [] as string[], tools: {} as Record<string, AITool>, inheritedMessages: [] as ModelMessage[], parentPermission: [] as Permission.Ruleset }
+    const capture: typeof prefixCaptureRef.current = (input) => {
+      const empty = { system: [] as string[], tools: {} as Record<string, AITool>, inheritedMessages: [] as ModelMessage[], parentPermission: [] as Permission.Ruleset }
+      return Effect.gen(function* () {
         const ag = yield* agents.get(input.agentName).pipe(Effect.catch(() => Effect.succeed(undefined)))
         if (!ag) return empty
         const model = yield* provider
@@ -786,7 +786,18 @@ export const layer = Layer.effect(
           Effect.catch(() => Effect.succeed(empty)),
         )
         return { ...prefix, parentPermission: ag.permission }
-      })
+      }).pipe(
+        // getModel / Session.get throw inside Effect.fn (defects), which
+        // Effect.catch above cannot see. Contain every non-interrupt cause here
+        // so a capture miss degrades to the empty prefix instead of failing
+        // tryStartCheckpointWriter and, through it, the foreground turn.
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : elog.warn("checkpoint prefix capture failed", { cause }).pipe(Effect.as(empty)),
+        ),
+      )
+    }
     prefixCaptureRef.current = capture
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {

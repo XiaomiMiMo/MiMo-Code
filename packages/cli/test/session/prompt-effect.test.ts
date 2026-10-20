@@ -5368,6 +5368,37 @@ for (const failure of ["throw", "rejection", "interruption"] as const) {
   )
 }
 
+// Provider.getModel and Session.get throw inside Effect.fn (a defect, not a
+// typed failure). Capture must still degrade to the empty prefix, otherwise
+// the defect escapes tryStartCheckpointWriter and fails the foreground turn.
+for (const miss of ["unknown model", "unknown session"] as const) {
+  it.live(`checkpoint prefix capture soft-fails ${miss}`, () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({ title: "Pinned" })
+        yield* user(chat.id, "inspect")
+        const capture = prefixCaptureRef.current!
+        expect(capture).toBeDefined()
+        const result = yield* Effect.exit(
+          capture({
+            sessionID: miss === "unknown session" ? SessionID.descending() : chat.id,
+            agentName: "build",
+            providerID: ref.providerID,
+            modelID: miss === "unknown model" ? ModelID.make("missing-model") : ref.modelID,
+            msgs: yield* sessions.messages({ sessionID: chat.id }),
+          }),
+        )
+        expect(Exit.isSuccess(result)).toBe(true)
+        if (Exit.isSuccess(result))
+          expect(result.value).toEqual({ system: [], tools: {}, inheritedMessages: [], parentPermission: [] })
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+}
+
 // [TP-SR-R21-17][D16f] Trailing-user resume golden path against the real SessionPrompt/LLM boundary.
 describe("trailing-user resume integration", () => {
   const waitIdle = Effect.fn("waitIdle")(function* (sessionID: SessionID) {

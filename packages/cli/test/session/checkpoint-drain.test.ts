@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Deferred, Effect, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer } from "effect"
 import { Bus } from "../../src/bus"
 import { Config } from "../../src/config"
 import { Agent } from "../../src/agent/agent"
@@ -14,7 +14,7 @@ import { Log } from "../../src/util"
 import { Plugin } from "../../src/plugin"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { Session as SessionNs } from "../../src/session"
-import { MessageID, PartID } from "../../src/session/schema"
+import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { ProviderTest } from "../fake/provider"
 import { testEffect } from "../lib/effect"
@@ -38,6 +38,9 @@ const ref = {
 // resolve Provider.getModel against a different instance and abort
 // tryStartCheckpointWriter mid-flight. Clear it here so these tests never
 // depend on cross-file leftovers.
+// Outcomes of every writer the stub spawned, in order, so a test can settle one.
+const spawned: Deferred.Deferred<AgentOutcome>[] = []
+
 const hangingActor = Layer.effect(
   Actor.Service,
   Effect.gen(function* () {
@@ -49,6 +52,7 @@ const hangingActor = Layer.effect(
         Effect.gen(function* () {
           counter += 1
           const outcome = yield* Deferred.make<AgentOutcome>()
+          spawned.push(outcome)
           return {
             actorID: `${input.agentType}-${counter}`,
             sessionID: input.sessionID,
@@ -90,6 +94,39 @@ const env = Layer.mergeAll(
 
 const it = testEffect(env)
 
+// Writer needs at least one message to proceed past the empty-skip guard.
+const seedSession = Effect.fn("test.seedSession")(function* () {
+  spawned.length = 0
+  const ssn = yield* SessionNs.Service
+  const info = yield* ssn.create({})
+  const user = yield* ssn.updateMessage({
+    id: MessageID.ascending(),
+    role: "user",
+    sessionID: info.id,
+    agent: "build",
+    model: ref,
+    time: { created: Date.now() },
+  })
+  yield* ssn.updatePart({
+    id: PartID.ascending(),
+    messageID: user.id,
+    sessionID: info.id,
+    type: "text",
+    text: "seed",
+  })
+  return info
+})
+
+const start = (sessionID: SessionID) =>
+  Effect.gen(function* () {
+    const svc = yield* SessionCheckpoint.Service
+    return yield* svc.tryStartCheckpointWriter({
+      sessionID,
+      model: { providerID: "test", modelID: "test-model" },
+      promptOps: {} as never,
+    })
+  })
+
 describe("SessionCheckpoint.drainWriters", () => {
   it.live(
     "no active writers → drained=0, timedOut=0",
@@ -107,94 +144,57 @@ describe("SessionCheckpoint.drainWriters", () => {
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const svc = yield* SessionCheckpoint.Service
-        const ssn = yield* SessionNs.Service
-        const info = yield* ssn.create({})
-
-        // Writer needs at least one message to proceed past the empty-skip guard.
-        const user = yield* ssn.updateMessage({
-          id: MessageID.ascending(),
-          role: "user",
-          sessionID: info.id,
-          agent: "build",
-          model: ref,
-          time: { created: Date.now() },
-        })
-        yield* ssn.updatePart({
-          id: PartID.ascending(),
-          messageID: user.id,
-          sessionID: info.id,
-          type: "text",
-          text: "seed",
-        })
+        const info = yield* seedSession()
 
         // Actor.spawn returns a never-resolving outcome — simulates an LLM
         // round-trip that the shutdown budget can't afford to wait on.
-        const outcome = yield* svc.tryStartCheckpointWriter({
-          sessionID: info.id,
-          model: { providerID: "test", modelID: "test-model" },
-          promptOps: {} as never,
-        })
-        expect(outcome).toBe("started")
+        expect(yield* start(info.id)).toBe("started")
 
         const result = yield* svc.drainWriters({ timeoutMs: 50 })
-        expect(result.drained).toBe(0)
-        expect(result.timedOut).toBe(1)
+        expect(result).toEqual({ drained: 0, timedOut: 1 })
       }),
     ),
   )
 
   it.live(
-    "F40 queue-1 writer: 3 bursty triggers fire writer1 + drain pending (newest wins)",
+    "writer settling during drain → drained=1, timedOut=0",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const svc = yield* SessionCheckpoint.Service
-        const ssn = yield* SessionNs.Service
-        const info = yield* ssn.create({})
+        const info = yield* seedSession()
+        expect(yield* start(info.id)).toBe("started")
 
-        // Writer needs at least one message to proceed past the empty-skip guard.
-        const user = yield* ssn.updateMessage({
-          id: MessageID.ascending(),
-          role: "user",
-          sessionID: info.id,
-          agent: "build",
-          model: ref,
-          time: { created: Date.now() },
-        })
-        yield* ssn.updatePart({
-          id: PartID.ascending(),
-          messageID: user.id,
-          sessionID: info.id,
-          type: "text",
-          text: "seed",
-        })
-
-        // writer1: nothing running yet → starts and runs (hangs).
-        const r1 = yield* svc.tryStartCheckpointWriter({
-          sessionID: info.id,
-          model: { providerID: "test", modelID: "test-model" },
-          promptOps: {} as never,
-        })
-        expect(r1).toBe("started")
-
-        // writer2: writer1 still running → queued (1-slot pending).
-        const r2 = yield* svc.tryStartCheckpointWriter({
-          sessionID: info.id,
-          model: { providerID: "test", modelID: "test-model" },
-          promptOps: {} as never,
-        })
-        expect(r2).toBe("queued")
-
-        // writer3: writer1 still running, writer2 in pending → writer3 evicts
-        // writer2 and takes its slot (newest wins — writer3's range is a
-        // strict superset of writer2's).
-        const r3 = yield* svc.tryStartCheckpointWriter({
-          sessionID: info.id,
-          model: { providerID: "test", modelID: "test-model" },
-          promptOps: {} as never,
-        })
-        expect(r3).toBe("queued")
+        // startImmediately: drain must snapshot the writer before it settles.
+        const drain = yield* svc
+          .drainWriters({ timeoutMs: 5_000 })
+          .pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.succeed(spawned[0], { status: "success" })
+        expect(yield* Fiber.join(drain)).toEqual({ drained: 1, timedOut: 0 })
       }),
     ),
   )
 
+  it.live(
+    "F40 queue-1 writer: bursty triggers queue, settling writer1 fires the newest pending",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const info = yield* seedSession()
+
+        // writer1 starts and hangs; writer2 queues; writer3 evicts writer2
+        // (newest wins — its range is a strict superset of writer2's).
+        expect(yield* start(info.id)).toBe("started")
+        expect(yield* start(info.id)).toBe("queued")
+        expect(yield* start(info.id)).toBe("queued")
+        expect(spawned).toHaveLength(1)
+
+        // Settling writer1 drains the single pending slot as a fresh writer.
+        yield* Deferred.succeed(spawned[0], { status: "success" })
+        for (let i = 0; i < 200 && spawned.length < 2; i++) yield* Effect.sleep("10 millis")
+        expect(spawned).toHaveLength(2)
+
+        // The drained writer now owns the slot, so the next trigger queues.
+        expect(yield* start(info.id)).toBe("queued")
+      }),
+    ),
+  )
 })
