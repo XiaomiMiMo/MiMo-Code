@@ -189,6 +189,7 @@ import {
   neutralizeHarnessTags,
   parseMcpToolSearchMode,
   renderMcpEntryReminder,
+  renderMcpSearchActiveReminder,
   renderMcpServerReminder,
   renderMcpToolFunctions,
   shouldDeferMcpTools,
@@ -2382,6 +2383,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           marker: mcpReminderMarker(entryMeta),
           text: renderMcpEntryReminder(serverNames),
           metadata: { [MCP_REMINDER_METADATA_KEY]: entryMeta },
+        })
+      } else if (announced.size === 0) {
+        // No configured server to name, but deferred search is on: persist a
+        // sticky lock so auto mode never flips back after an empty first catalog.
+        const searchActive: McpReminderMeta = { kind: "search-active" }
+        yield* ensurePersistedUserSynthetic({
+          message: userMessage,
+          marker: mcpReminderMarker(searchActive),
+          text: renderMcpSearchActiveReminder(),
+          metadata: { [MCP_REMINDER_METADATA_KEY]: searchActive },
         })
       }
 

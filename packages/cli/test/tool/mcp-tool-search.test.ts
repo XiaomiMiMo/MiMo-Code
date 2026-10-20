@@ -9,6 +9,7 @@ import {
   mcpToolDefinitionTokens,
   neutralizeHarnessTags,
   renderMcpEntryReminder,
+  renderMcpSearchActiveReminder,
   renderMcpServerReminder,
   MCP_TOOL_SEARCH_DEFAULT_LIMIT,
   MCP_TOOL_SEARCH_DEFAULT_PERCENT,
@@ -85,6 +86,16 @@ describe("MCP Tool Search", () => {
     expect(text).toContain("Attempting to connect")
     expect(text).toContain("mcp_tool_search")
     expect(text).toContain(MCP_TOOL_USE_ID)
+  })
+
+  test("search-active reminder locks sticky defer when no server can be named yet", () => {
+    const text = renderMcpSearchActiveReminder()
+    expect(text).toContain("Deferred MCP tool search is active")
+    expect(text).toContain("mcp_tool_search")
+    expect(text).toContain(MCP_TOOL_USE_ID)
+    const meta = { kind: "search-active" as const }
+    const { seen } = announcedMcpReminders([meta])
+    expect(seen.has(mcpReminderMarker(meta))).toBe(true)
   })
 
   test("server reminder lists tools with description previews on success", () => {

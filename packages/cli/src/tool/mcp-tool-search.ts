@@ -115,11 +115,13 @@ export const MCP_REMINDER_METADATA_KEY = "mcpReminder"
 
 export type McpReminderMeta =
   | { kind: "entry"; servers: string[] }
+  | { kind: "search-active" }
   | { kind: "server"; server: string; status: string; toolNames?: string[]; error?: string }
 
 /** Stable fingerprint so the same reminder is never injected twice. */
 export function mcpReminderMarker(meta: McpReminderMeta): string {
   if (meta.kind === "entry") return `mcp:entry:${meta.servers.join(",")}`
+  if (meta.kind === "search-active") return "mcp:search-active"
   const tools = meta.toolNames?.join(",") ?? ""
   return `mcp:server:${meta.server}:${meta.status}:${tools}`
 }
@@ -132,7 +134,8 @@ export function announcedMcpReminders(metas: Iterable<unknown>) {
   for (const meta of metas) {
     if (!meta || typeof meta !== "object") continue
     const value = meta as McpReminderMeta
-    if (value.kind === "entry" || value.kind === "server") seen.add(mcpReminderMarker(value))
+    if (value.kind === "entry" || value.kind === "server" || value.kind === "search-active")
+      seen.add(mcpReminderMarker(value))
     if (value.kind === "server") byServer.set(value.server, value)
   }
   return { seen, byServer }
@@ -169,6 +172,17 @@ export function renderMcpEntryReminder(serverNames: string[]) {
     `MCP servers configured: ${serverNames.map(normalizeMetadata).join(", ")}.`,
     `Attempting to connect. Connection success or failure is reported here as servers settle.`,
     `Fetch tool schemas with ${MCP_TOOL_SEARCH_ID} (for example "select:<name>"), then call through ${MCP_TOOL_USE_ID} with { name, arguments }.`,
+  ])
+}
+
+/**
+ * Sticky-defer lock when deferred search is on but there is no configured server
+ * to name yet (empty catalog). Keeps `auto` from flipping back to direct exposure.
+ */
+export function renderMcpSearchActiveReminder() {
+  return reminderBody([
+    `Deferred MCP tool search is active for this conversation.`,
+    `Fetch schemas with ${MCP_TOOL_SEARCH_ID} (for example "select:<name>"), then call through ${MCP_TOOL_USE_ID} with { name, arguments }.`,
   ])
 }
 
