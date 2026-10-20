@@ -1,35 +1,14 @@
 ---
 feature: mcp-readiness-hint
-status: delivered
+status: in-progress
 updated: 2026-10-20
 branch: feat/mcp-readiness-hint
-commits: 113e3192..4ac39f79
+commits:
 ---
 
 # MCP Readiness Hint
 
 ## Report
-
-**What was built** — Deferred MCP discovery now gives the model a compact view of configured servers, current connection status, and request-visible tool names/descriptions. Full schemas remain available on demand through `mcp_tool_search`, and calls use `mcp_tool_use`. Reminders compare with the latest reported state: unchanged failures stay quiet, while recovery, disable/removal, and changed tool sets are reported at a user-turn boundary.
-
-The amendment aligns advertised tools and counts with the authorized search catalog, budgets all reminders together, and bounds long diagnostics/retractions. A single ignored metadata record preserves sticky deferral even when no visible reminder is emitted; it adds no model-visible text. Search diagnostics reuse existing escaping. Prompts were shortened to status, tools, and discovery/call pointers. MCP connection behavior and normalized-name registration ownership remain unchanged.
-
-**Verification** — Run from `packages/cli` unless stated otherwise, against reviewed code head `4ac39f79`:
-
-- PASS — `bun test test/tool/mcp-tool-search.test.ts`: 33 passed, 0 failed.
-- PASS — `bun test test/session/prompt-effect.test.ts -t 'mcp|MCP|search'`: 50 passed, 0 failed, 90 filtered out. Covers serialized state recurrence, filtering, budgets, silent entry, legacy evidence, and prefix stability.
-- PASS — `bun run typecheck`: exit 0.
-- PASS — repository root: `./node_modules/.bin/oxlint --format json packages/cli/src/session/prompt.ts packages/cli/src/tool/mcp-tool-search.ts packages/cli/test/session/prompt-effect.test.ts packages/cli/test/tool/mcp-tool-search.test.ts`: 0 errors and no new diagnostics. **PRE-EXISTING LINT-134**: 134 warnings match the pre-amendment baseline by file, rule, message, and severity.
-- PASS — repository root: `git diff --check`.
-- PASS — independent review of `113e3192..4ac39f79`: spec compliance, correctness, and codebase consistency approved; no unresolved critical findings. The final documentation-only commit is excluded from this range.
-
-**Journey log**
-
-- Readiness answers whether a server is connected; the authorized catalog answers which tools this request can use. Neither should replace the other.
-- Comparing with every historical state suppressed recovery. Comparing with the latest state preserves updates without repeating unchanged failures or volatile error details.
-- Visible reminders are not durable mode evidence when entry is silent. Ignored metadata preserves deferral without adding an empty-session prompt.
-- Prompt-wire regressions caught the original gaps; independent review additionally caught silent-mode evidence, unescaped diagnostics, and duplicate per-server names. Focused regressions cover the retained fixes.
-- The user explicitly required a simple mechanism and concise prompts. Extra cross-server ownership handling was discarded; existing MCP configuration ambiguity remains outside scope.
 
 ## [S1] Problem
 
@@ -50,7 +29,7 @@ Readiness reminders must also stay accurate without accumulating repeated failur
 
 `MCP.readiness()` is optional on the MCP service interface and never awaits connection `settled`. It reports configured server names, connection status, errors where applicable, and connected tools. `resolveTools` refreshes the model-facing snapshot on each model step; a search uses that step's snapshot. Connection changes during model generation are picked up at the next resolution, not pushed into an in-flight request.
 
-Reminders are persisted synthetic text parts on the last user message through `ensurePersistedUserSynthetic`. They are appended only before that user's first assistant step. Earlier messages and the provider-facing search/use definitions remain unchanged during a turn. This preserves the existing prefix-cache contract. These reminders apply where deferred `mcp_tool_search` is exposed; the GPT/`exec` and direct-tool paths retain their existing behavior.
+Reminders are persisted synthetic text parts on the last user message through `ensurePersistedUserSynthetic`. They are appended only before that user's first assistant step. Already-sent message content is not rewritten by visible reminders. Deferred search/use definitions stay stable while deferral remains selected; an empty, silent auto-mode session can re-evaluate the mode when tools arrive. This preserves the existing prefix-cache contract. These reminders apply where deferred `mcp_tool_search` is exposed; the GPT/`exec` and direct-tool paths retain their existing behavior.
 
 ### Latest-state comparison and bounded repetition
 
@@ -65,7 +44,7 @@ Replay `mcpReminder` metadata in conversation order into the latest entry and th
 | initially pending → disabled / removed before any outcome | report the change once; the entry retains the server's presence |
 | initially disabled, or no configured servers and no previous announcements | no ambient reminder |
 
-Previously announced servers absent from the current configuration receive a `removed` reminder. Repeated absence stays quiet. On disconnection, the new reminder briefly states that previously listed tools are unavailable; on a shrinking visible tool set, it names removed tools when the budget allows and otherwise uses a compact superseding statement. Deferral is recorded once as ignored, empty synthetic metadata whenever search is exposed. This record is never sent to the model, so silent entry states and budget omission still preserve sticky deferral without adding text. Legacy `mcpDeferredTools` metadata remains recognized when resuming older sessions. Compaction can discard that evidence and cause a fresh announcement, because it already rewrites the prefix.
+Previously announced servers absent from the current configuration receive a `removed` reminder. Repeated absence stays quiet. On disconnection, the new reminder briefly states that previously listed tools are unavailable; on a shrinking visible tool set, it names removed tools when the budget allows and otherwise uses a compact superseding statement. Actual MCP reminders and search/use calls provide the existing evidence for sticky deferral, including legacy `mcpDeferredTools` announcements. If none exists, `auto` may re-evaluate when tools arrive; a cache change in that case is accepted. Do not persist an auxiliary mode marker or modify an original user message merely to retain a cache decision. Compaction can discard that evidence and cause a fresh announcement, because it already rewrites the prefix.
 
 ### Connection state and request-visible capabilities
 
@@ -85,7 +64,7 @@ Only report the server's current status, a short diagnostic when useful, and ava
 
 ### Verification boundaries
 
-Use the real prompt serialization path with controlled MCP service snapshots to inspect what reaches the test model endpoint. Cover state recurrence, changing error details, disable/removal before and after connection, restored tool sets, request/permission/agent filtering, and a shared multi-server budget. Unit tests cover rendering, tiny/zero budgets, long errors and retractions, fingerprints, and escaped readiness/search output. Prompt tests also cover silent auto-mode entry, legacy mode evidence, and duplicate names within a server. Existing MCP integration tests protect prefix stability, sticky deferral, dispatch, lifecycle, and result handling. These tests establish context correctness; they do not measure a real model's tool-selection success rate.
+Use the real prompt serialization path with controlled MCP service snapshots to inspect what reaches the test model endpoint. Cover state recurrence, changing error details, disable/removal before and after connection, restored tool sets, request/permission/agent filtering, and a shared multi-server budget. Unit tests cover rendering, tiny/zero budgets, long errors and retractions, fingerprints, and escaped readiness/search output. Prompt tests also cover auto-mode re-evaluation without auxiliary message parts, legacy announcement evidence, and duplicate names within a server. Resume, cold-tool initialization, scheduled prompts, and title tests must preserve their original user messages. Existing MCP integration tests protect prefix stability, sticky deferral, dispatch, lifecycle, and result handling. These tests establish context correctness; they do not measure a real model's tool-selection success rate.
 
 ## [S3] Out of Scope
 
@@ -95,6 +74,7 @@ Use the real prompt serialization path with controlled MCP service snapshots to 
 - Consuming `MCP.ToolsChanged` as a dirty signal.
 - Extending readiness reminders to GPT/`exec` or non-deferred tool exposure.
 - Empirical evaluation of real-model tool-selection success rates.
+- Persisting auxiliary cache-mode state when there is no real MCP reminder or call.
 - Repairing user MCP configuration, changing normalized-name registration ownership, or distinguishing all ambiguous cross-server name collisions.
 
 ## Tasks
@@ -103,6 +83,7 @@ Use the real prompt serialization path with controlled MCP service snapshots to 
 - [x] T5: Report unavailable and removed servers — acceptance: pending, disabled, and removed transitions invalidate prior tool availability once; pending-server removal is covered; initially disabled servers remain quiet (covers: S2)
 - [x] T6: Align advertised tools with request authorization — acceptance: request disables, permissions, and agent allowlists hide the same tools from reminders and search, with matching visible counts (covers: S2)
 - [x] T7: Enforce a shared reminder budget — acceptance: multi-server serialized reminders remain within one budget; long diagnostics, retractions, and zero budgets are covered without marking omitted outcomes delivered (covers: S2)
-- [x] T9: Persist deferral without visible text — acceptance: unconfigured, disabled, and budget-omitted initial states retain search/use with no ambient text; legacy announcements still lock deferral (covers: S2)
+- [ ] T9: Remove auxiliary mode persistence — acceptance: auto mode may re-evaluate without real announcement/call evidence; original user messages remain unchanged across resume, cold initialization, scheduled prompts, and title handling (covers: S2)
 - [x] T10: Keep diagnostics safe and prompts concise — acceptance: search-miss names/errors use existing escaping and preview bounds; reminders contain status, tools, and a brief search/use pointer (covers: S2)
-- [x] T8: Verify and independently review the integrated feature — acceptance: focused MCP suites and typecheck pass, lint introduces no diagnostics, and spec compliance/correctness/codebase consistency have no unresolved critical findings (covers: S2; depends: T4, T5, T6, T7, T9, T10)
+- [ ] T11: Make the actor send guard fixture deterministic — acceptance: the test proves a subagent may send via exec using actual inbox behavior, independent of prior app-runtime initialization (covers: S2)
+- [ ] T8: Verify and independently review the integrated feature — acceptance: focused MCP suites and typecheck pass, lint introduces no diagnostics, and spec compliance/correctness/codebase consistency have no unresolved critical findings (covers: S2; depends: T4, T5, T6, T7, T9, T10, T11)

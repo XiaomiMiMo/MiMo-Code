@@ -116,7 +116,6 @@ export function mcpToolCatalogBudget(input: { usable: number; context: number })
 
 /** Metadata key on synthetic user reminders that describe MCP connection state. */
 export const MCP_REMINDER_METADATA_KEY = "mcpReminder"
-export const MCP_DEFERRED_MODE_METADATA_KEY = "mcpDeferredMode"
 
 export type McpReminderMeta =
   | { kind: "entry"; servers: string[] }

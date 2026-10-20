@@ -8,6 +8,7 @@ import { Config } from "../../src/config"
 import { Provider } from "../../src/provider"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Instance } from "../../src/project/instance"
+import { Inbox } from "../../src/inbox"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import type { SessionPrompt } from "../../src/session/prompt"
@@ -78,11 +79,11 @@ describe("Actor tool fromExec guard", () => {
         const tool = yield* ActorTool
         const def = yield* tool.init()
 
-        const exit = yield* Effect.exit(def.execute(
+        const result = yield* def.execute(
           {
             operation: {
               action: "send",
-              to_actor_id: "ses_nonexistent",
+              to_actor_id: "main",
               content: "hello",
             },
           },
@@ -96,17 +97,24 @@ describe("Actor tool fromExec guard", () => {
             metadata: () => Effect.void,
             ask: () => Effect.void,
           },
-        ))
+        )
 
-        // send is not blocked by the fromExec guard — it reaches the inbox service
-        // (which is not set up in this test, so we get an inbox error, not a guard error)
-        expect(exit._tag).toBe("Failure")
-        if (exit._tag === "Failure") {
-          const causeStr = String(exit.cause)
-          expect(causeStr).toContain("Inbox service unavailable")
-          expect(causeStr).not.toContain("Subagents can only use actor send")
-        }
-      }),
+        expect(result.title).toBe("Sent to main")
+        expect(result.metadata.inboxID).toBeString()
+        expect(result.metadata).toMatchObject({
+          receiver_actor_id: "main",
+          receiver_session_id: chat.id,
+        })
+        const message = MessageV2.get({ sessionID: chat.id, messageID: result.metadata.inputMessageID })
+        expect(message.info).toMatchObject({
+          role: "user",
+          agentID: "main",
+          provenance: { source: "agent", senderSessionID: chat.id, senderActorID: "general" },
+        })
+        expect(message.parts).toEqual([
+          expect.objectContaining({ type: "text", synthetic: true, text: expect.stringContaining("hello") }),
+        ])
+      }).pipe(Effect.provide(Inbox.defaultLayer)),
     ),
   )
 

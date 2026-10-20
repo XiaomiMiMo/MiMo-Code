@@ -23,7 +23,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Question } from "../../src/question"
 import { Todo } from "../../src/session/todo"
 import { Session } from "../../src/session"
-import { MCP_REMINDER_METADATA_KEY, MCP_DEFERRED_MODE_METADATA_KEY, type McpReadiness } from "../../src/tool/mcp-tool-search"
+import { MCP_REMINDER_METADATA_KEY, type McpReadiness } from "../../src/tool/mcp-tool-search"
 import { LLM } from "../../src/session/llm"
 import { MessageV2 } from "../../src/session/message-v2"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
@@ -3728,57 +3728,27 @@ reminderMcpIt.live("MCP reminders list each callable name once", () =>
   ),
 )
 
-for (const initial of ["unconfigured", "disabled", "omitted"] as const) {
-  reminderMcpIt.live(`MCP auto deferral stays sticky after a silent ${initial} first step`, () => {
+reminderMcpIt.live(
+  "MCP auto mode can re-evaluate without an announcement or call and leaves user input unchanged",
+  () => {
     const previous = process.env.MIMOCODE_MCP_TOOL_SEARCH
     return provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         process.env.MIMOCODE_MCP_TOOL_SEARCH = "auto:100"
-        const quiet: McpReadiness =
-          initial === "unconfigured"
-            ? { configured: false, servers: [] }
-            : {
-                configured: true,
-                servers: [{ name: "example", status: initial === "disabled" ? "disabled" : "pending" }],
-              }
-        const { session, requests } = yield* reminderSession(llm, [quiet, connectedReadiness, connectedReadiness])
-        const tools = requests.map((request) => JSON.stringify(request.tools))
-        expect(tools[0]).toContain("mcp_tool_search")
-        expect(lastUserText(requests[0])).not.toContain("MCP server")
-        expect(tools[1]).toBe(tools[0])
-        expect(tools[2]).toBe(tools[0])
-        const markers = (yield* MessageV2.filterCompactedEffect(session.id))
-          .flatMap((message) => message.parts)
-          .filter(
-            (part): part is MessageV2.TextPart =>
-              part.type === "text" && !!part.metadata?.[MCP_DEFERRED_MODE_METADATA_KEY],
-          )
-        expect(markers).toHaveLength(1)
-        expect(markers[0].ignored).toBe(true)
-        expect(markers[0].text).toBe("")
+        const { session, requests } = yield* reminderSession(llm, [
+          { configured: false, servers: [] },
+          connectedReadiness,
+        ])
+      const tools = requests.map((request) => JSON.stringify(request.tools))
+      expect(tools[0]).toContain('"name":"mcp_tool_search"')
+      expect(tools[1]).toContain('"name":"example_lookup"')
+      expect(tools[1]).not.toContain('"name":"mcp_tool_search"')
+        const messages = yield* MessageV2.filterCompactedEffect(session.id)
+        expect(messages.find((message) => message.info.role === "user")?.parts).toEqual([
+          expect.objectContaining({ type: "text", text: "turn 0" }),
+        ])
       }),
-      {
-        git: true,
-        config: (url) => {
-          const config = providerCfg(url)
-          if (initial !== "omitted") return config
-          return {
-            ...config,
-            compaction: { auto: false },
-            checkpoint: { thresholds: [], reserved: 0 },
-            provider: {
-              ...config.provider,
-              test: {
-                ...config.provider.test,
-                models: {
-                  ...config.provider.test.models,
-                  "test-model": { ...config.provider.test.models["test-model"], limit: { context: 200, output: 100 } },
-                },
-              },
-            },
-          }
-        },
-      },
+      { git: true, config: providerCfg },
     ).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -3787,8 +3757,8 @@ for (const initial of ["unconfigured", "disabled", "omitted"] as const) {
         }),
       ),
     )
-  })
-}
+  },
+)
 
 reminderMcpIt.live("MCP auto deferral recognizes legacy announcement metadata", () => {
   const previous = process.env.MIMOCODE_MCP_TOOL_SEARCH
