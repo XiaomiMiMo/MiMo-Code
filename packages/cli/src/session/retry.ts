@@ -1,6 +1,6 @@
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { Cause, Clock, Duration, Effect, Schedule } from "effect"
-import { hostRetryClass, isQuotaExhaustionError, isSafetyTerminal, retryConstraint, type RetryClass } from "@/error/host-registry"
+import { hostRetryClass, isSafetyTerminal, retryConstraint, type RetryClass } from "@/error/host-registry"
 import { MessageV2 } from "./message-v2"
 import { ProviderError } from "@/provider"
 import type { Budget as RetryBudgetConfig, Info as RetryConfig } from "@/config/retry"
@@ -213,9 +213,6 @@ export type RetryDecision = {
 }
 
 const RETRYABLE_HTTP_STATUS = new Set([425, 429])
-const CAPACITY_ERROR_CODES = new Set([
-  "resource_exhausted", "server_is_overloaded", "service_unavailable", "service_unavailable_error",
-])
 
 export function isRateLimitMessage(message: string): boolean {
   const lower = message.toLowerCase()
@@ -402,7 +399,6 @@ export function decide(
     return terminal("Usage limit reached", GO_UPSELL_MESSAGE)
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
     return terminal()
-  if (isQuotaExhaustionError(error)) return terminal()
   if (status === 402 || status === 501 || status === 505) return terminal()
   if (status === 404 && (!MessageV2.APIError.isInstance(error) || error.data.metadata?.allow404Retry !== "true")) return terminal()
   if (signals.code === "stream_read_error" || signals.type === "upstream_error")
@@ -417,9 +413,9 @@ export function decide(
   )
     return retry("rate_limit", phase, "Too Many Requests")
   if (isRateLimitMessage(message)) return retry("rate_limit", phase, message)
-  if (retryConstraint(error) === "terminal") return terminal()
-  if (CAPACITY_ERROR_CODES.has(signals.code) || signals.type === "service_unavailable_error")
+  if (signals.code.includes("exhausted") || signals.code.includes("unavailable"))
     return retry("server", phase, "Provider is overloaded")
+  if (retryConstraint(error) === "terminal") return terminal()
   if (status !== undefined && (RETRYABLE_HTTP_STATUS.has(status) || (status >= 500 && status <= 599 && status !== 501 && status !== 505)))
     return retry(status === 429 ? "rate_limit" : "server")
   if (MessageV2.APIError.isInstance(error)) {

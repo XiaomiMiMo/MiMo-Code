@@ -46,7 +46,7 @@ describe("external imported history execution", () => {
       sender_session_id: null, sender_actor_id: null, type: "prompt", content: null, input_message_id: message.id,
       epoch: 4, run_id: index === 1 ? 77 : null,
       claim_frontier: message.id, consumed: false, outcome: null,
-      delivery_message_id: null, outcome_message_id: null, error: null, idempotency_key: "", created_at: 1, time_updated: 10,
+      delivery_message_id: null, error: null, idempotency_key: "", created_at: 1, time_updated: 10,
     }))
     yield* Effect.sync(() => Database.transaction((tx) => QueueSync.applySnapshot(queue, tx)))
     const data = yield* Effect.sync(() => captureExportData(session.id))

@@ -159,7 +159,7 @@ export async function run(opts?: { force?: boolean; dbPath?: string }): Promise<
           continue
         }
 
-        const queue = hasQueue ? QueueSync.normalizeSnapshot(QueueSync.SnapshotSchema.parse({
+        const queue = hasQueue ? QueueSync.SnapshotSchema.parse({
           version: 1, sessionID: sess.id,
           receipts: (srcDb.all(hasLegacyInbox
             ? `SELECT id, receiver_session_id, receiver_actor_id, sender_session_id, sender_actor_id, type, content,
@@ -174,7 +174,7 @@ export async function run(opts?: { force?: boolean; dbPath?: string }): Promise<
             })),
           lanes: hasSnapshot ? srcDb.all("SELECT * FROM inbox_lane_state WHERE session_id = ? ORDER BY agent_id", sess.id) : [],
           epoch: hasSnapshot ? srcDb.get("SELECT * FROM inbox_session_epoch WHERE session_id = ?", sess.id) ?? null : null,
-        })) : undefined
+        }) : undefined
         const parsedMessages = messages.map((message) => {
           const data = typeof message.data === "string" ? JSON.parse(message.data) : message.data
           const agentID = message.agent_id ?? data.agentID ?? "main"

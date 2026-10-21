@@ -2,16 +2,13 @@ import { createHash } from "node:crypto"
 import type { Tool as AITool } from "ai"
 import { jsonSchema, tool } from "ai"
 import { asSchema } from "@ai-sdk/provider-utils"
-import { Cause, Effect } from "effect"
-import { EffectLogger } from "@/effect"
+import { Effect } from "effect"
 import { and, Database, eq } from "@/storage"
 import type { Permission } from "@/permission"
 import type { MessageID, SessionID } from "./schema"
 import { SessionPrefixSnapshotTable, type SessionPrefixToolSnapshot } from "./session.sql"
 
 export type Info = typeof SessionPrefixSnapshotTable.$inferSelect
-
-const log = EffectLogger.create({ service: "session.prefix-snapshot" })
 
 type Profile = {
   providerID: string
@@ -55,7 +52,9 @@ export function toolsHash(tools: Record<string, AITool>, activeTools: string[]) 
   return hash(
     activeTools.toSorted().flatMap((name) => {
       const item = tools[name]
-      return item ? [{ name, description: item.description, inputSchema: item.inputSchema }] : []
+      return item
+        ? [{ name, description: item.description, inputSchema: item.inputSchema }]
+        : []
     }),
   )
 }
@@ -182,55 +181,19 @@ export const advance = Effect.fn("SessionPrefixSnapshot.advance")(function* (inp
   watermarkMessageID: MessageID
 }) {
   yield* Effect.sync(() =>
-    Database.transaction(
-      (db) =>
-        db
-          .update(SessionPrefixSnapshotTable)
-          .set({ watermark_message_id: input.watermarkMessageID, updated_at: Date.now() })
-          .where(
-            and(
-              eq(SessionPrefixSnapshotTable.session_id, input.sessionID),
-              eq(SessionPrefixSnapshotTable.profile_key, input.profileKey),
-              eq(SessionPrefixSnapshotTable.revision, input.revision),
-            ),
-          )
-          .run(),
-      { behavior: "immediate" },
-    ),
-  ).pipe(
-    Effect.catchCause((cause) => {
-      if (Cause.hasInterrupts(cause)) return Effect.failCause(cause)
-      // The prefix is derived cache state: failed bookkeeping cannot change a delivered answer.
-      // Invalidate only the failed revision; a concurrent rotation owns its newer snapshot.
-      return Effect.gen(function* () {
-        yield* log.warn("prefix watermark advance failed", { ...input, cause: Cause.pretty(cause) })
-        yield* Effect.sync(() =>
-          Database.transaction(
-            (db) =>
-              db
-                .delete(SessionPrefixSnapshotTable)
-                .where(
-                  and(
-                    eq(SessionPrefixSnapshotTable.session_id, input.sessionID),
-                    eq(SessionPrefixSnapshotTable.profile_key, input.profileKey),
-                    eq(SessionPrefixSnapshotTable.revision, input.revision),
-                  ),
-                )
-                .run(),
-            { behavior: "immediate" },
-          ),
-        ).pipe(
-          Effect.catchCause((invalidationCause) =>
-            Cause.hasInterrupts(invalidationCause)
-              ? Effect.failCause(invalidationCause)
-              : log.warn("prefix snapshot invalidation failed; previous watermark retained", {
-                  ...input,
-                  cause: Cause.pretty(invalidationCause),
-                }),
+    Database.use((db) =>
+      db
+        .update(SessionPrefixSnapshotTable)
+        .set({ watermark_message_id: input.watermarkMessageID, updated_at: Date.now() })
+        .where(
+          and(
+            eq(SessionPrefixSnapshotTable.session_id, input.sessionID),
+            eq(SessionPrefixSnapshotTable.profile_key, input.profileKey),
+            eq(SessionPrefixSnapshotTable.revision, input.revision),
           ),
         )
-      })
-    }),
+        .run(),
+    ),
   )
 })
 

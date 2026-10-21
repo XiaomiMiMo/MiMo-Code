@@ -545,7 +545,7 @@ function hanging(ready: () => void) {
 }
 
 describe("session.prompt terminal model errors", () => {
-  test("returns the persisted assistant error when a saved prompt references a missing model", async () => {
+  test("persists an assistant error before a missing model fails the prompt", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -568,11 +568,10 @@ describe("session.prompt terminal model errors", () => {
               })
               .pipe(Effect.exit)
 
-            expect(Exit.isSuccess(exit)).toBe(true)
+            expect(Exit.isFailure(exit)).toBe(true)
             const messages = yield* sessions.messages({ sessionID: session.id, agentID: "*" })
             expect(messages).toHaveLength(2)
             expect(messages[0]?.info.role).toBe("user")
-            if (Exit.isSuccess(exit)) expect(exit.value).toEqual(messages[1])
             const assistant = messages[1]?.info
             expect(assistant?.role).toBe("assistant")
             if (assistant?.role !== "assistant") return

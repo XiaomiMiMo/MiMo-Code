@@ -21,7 +21,6 @@ export type Receipt = {
   outcome?: ReceiptOutcome
   inputMessageID: MessageID
   deliveryMessageID?: MessageID
-  outcomeMessageID?: MessageID
   error?: string
   idempotencyKey?: string
   time: { created: number; updated: number }
@@ -43,7 +42,7 @@ export const ReceiptOutcomeSchema = z.enum(["success", "assistant_error", "inter
 
 /**
  * Single source for the GET receipt response body and its OpenAPI schema.
- * Internal claim bookkeeping (runId, claimFrontier, outcomeMessageID, idempotencyKey, time) is
+ * Internal claim bookkeeping (runId, claimFrontier, idempotencyKey, time) is
  * not part of the external contract.
  */
 export const PublicReceipt = z.object({

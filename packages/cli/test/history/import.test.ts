@@ -50,7 +50,7 @@ function nativeContinuation(sessionID: SessionID) {
     id: `native-${id}`, receiver_session_id: sessionID, receiver_actor_id: "main", state: "settled",
     sender_session_id: null, sender_actor_id: null, type: "prompt", content: null, input_message_id: id,
     epoch: 7, run_id: 4, claim_frontier: id, consumed: true, outcome: "success",
-    delivery_message_id: null, outcome_message_id: null, error: null, idempotency_key: id, created_at: 1, time_updated: 10,
+    delivery_message_id: null, error: null, idempotency_key: id, created_at: 1, time_updated: 10,
   })
   snapshot.receipts.push(receipt)
   Database.transaction((tx) => QueueSync.applySnapshot(snapshot, tx))
@@ -288,7 +288,7 @@ test("OpenCode reimport cannot erase execution proof through message replacement
   }
 })
 
-test("[TP-RUN-R1C-08] OpenCode old queue snapshots preserve claims, remain idempotent, and reject queue-only divergence", async () => {
+test("OpenCode queue snapshots preserve claims and reject queue-only divergence without skipping it", async () => {
   await using dir = await tmpdir()
   const file = path.join(dir.path, "native-source.db")
   const src = new SQLite(file)

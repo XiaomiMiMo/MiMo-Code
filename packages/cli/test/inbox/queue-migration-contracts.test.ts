@@ -38,8 +38,8 @@ describe("turn-queue full migration contracts", () => {
   it("loop claims and acks via Controller (C-01)", async () => {
     const src = await Bun.file(new URL("../../src/session/prompt.ts", import.meta.url).pathname).text()
     expect(src).toContain("claimNext")
-    expect(src).toMatch(/controller\s*\.\s*extendClaim\s*\(/)
-    expect(src).toMatch(/controller\s*\.\s*ack\s*\(/)
+    expect(src).toContain("controller.extendClaim(")
+    expect(src).toContain("controller.ack(")
     expect(src).toContain("settleClaims(")
   })
 })

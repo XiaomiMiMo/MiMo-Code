@@ -28,8 +28,6 @@ export const InboxTable = sqliteTable(
     consumed: integer({ mode: "boolean" }).notNull().default(false),
     outcome: text().$type<"success" | "assistant_error" | "interrupted" | "never_ran">(),
     delivery_message_id: text().$type<MessageID>(),
-    /** Final result for this receipt; independent of its first model delivery. */
-    outcome_message_id: text().$type<MessageID>(),
     error: text(),
     idempotency_key: text().notNull().default(""),
     created_at: integer().notNull(),

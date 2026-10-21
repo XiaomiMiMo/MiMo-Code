@@ -56,7 +56,7 @@ export interface Interface {
   readonly ack: (
     lane: Lane,
     claimFrontier: MessageID | undefined,
-    settled: Array<{ receiptId: string; outcome: ReceiptOutcome; error?: string; outcomeMessageID?: MessageID }>,
+    settled: Array<{ receiptId: string; outcome: ReceiptOutcome; error?: string }>,
     expectedRunId?: number,
   ) => Effect.Effect<void>
   readonly extendClaim: (
@@ -93,7 +93,6 @@ function toReceipt(row: typeof InboxTable.$inferSelect): Receipt {
     outcome: row.outcome ?? undefined,
     inputMessageID: row.input_message_id!,
     deliveryMessageID: row.delivery_message_id ?? undefined,
-    outcomeMessageID: row.outcome_message_id ?? undefined,
     error: row.error ?? undefined,
     idempotencyKey: row.idempotency_key ? row.idempotency_key : undefined,
     time: { created: row.created_at, updated: row.time_updated },
@@ -417,7 +416,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     const ack = Effect.fn("Inbox.ack")(function* (
       lane: Lane,
       claimFrontier: MessageID | undefined,
-      settled: Array<{ receiptId: string; outcome: ReceiptOutcome; error?: string; outcomeMessageID?: MessageID }>,
+      settled: Array<{ receiptId: string; outcome: ReceiptOutcome; error?: string }>,
       expectedRunId?: number,
     ) {
       const identity = yield* ExecutionOwnership.captureIdentity
@@ -437,7 +436,6 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
               .set({
                 state,
                 outcome: s.outcome,
-                outcome_message_id: s.outcomeMessageID ?? null,
                 error: s.error ?? null,
                 consumed: s.outcome !== "never_ran",
                 time_updated: now,

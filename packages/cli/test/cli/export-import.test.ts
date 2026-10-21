@@ -74,20 +74,6 @@ describe("CLI session transport", () => {
     expect(yield* Effect.sync(() => captureExportData(session.id))).toEqual(data)
   })))
 
-  it.live("[TP-RUN-R1C-08] old version-1 queue imports remain idempotent and preserve their original envelope", provideTmpdirInstance(() => Effect.gen(function* () {
-    const { sessions, session, data } = yield* queuedFixture()
-    const queue = structuredClone(data.queue)
-    for (const row of queue.receipts) delete row.outcome_message_id
-    const unchanged = structuredClone(queue)
-    yield* sessions.remove(session.id)
-    yield* Effect.sync(() => storeImportedSession(data.info, data.messages, queue))
-    const saved = yield* Effect.sync(() => captureExportData(session.id))
-    expect(saved.queue.receipts.every((row) => row.outcome_message_id === null)).toBe(true)
-    yield* Effect.sync(() => storeImportedSession(data.info, data.messages, queue))
-    expect(yield* Effect.sync(() => captureExportData(session.id))).toEqual(saved)
-    expect(queue).toEqual(unchanged)
-  })))
-
   it.live("rejects divergent transcript and metadata without changing existing data", provideTmpdirInstance(() => Effect.gen(function* () {
     const { session } = yield* fixture()
     const before = yield* Effect.sync(() => captureExportData(session.id))

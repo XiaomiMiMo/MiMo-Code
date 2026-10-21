@@ -1,7 +1,7 @@
 ---
 feature: inbox
 status: in-progress
-updated: 2026-10-20
+updated: 2026-09-26
 ---
 
 # Inbox 输入队列
@@ -41,7 +41,6 @@ updated: 2026-10-20
 | `consumed` | integer NOT NULL default 0 | 是否已被模型读入 |
 | `outcome` | text | `success` \| `assistant_error` \| `interrupted` \| `never_ran` |
 | `delivery_message_id` | text | 首次读入该输入的 assistant 消息 |
-| `outcome_message_id` | text | 内部最终交付消息引用；与首次读入位置独立，可空用于迁移前记录 |
 | `error` | text | 结算错误 |
 | `idempotency_key` | text NOT NULL default `''` | 会话内幂等；空串表示无键 |
 | `created_at` | integer NOT NULL | |
@@ -86,8 +85,6 @@ updated: 2026-10-20
 
 旧行转成消息不在 SQL 里做：生成 `MessageID` 与确定 synthetic 消息的 agent/model 都依赖运行时，见「已发布数据」。
 
-`20261020000000_inbox_outcome_anchor` 在既有 Inbox 上增加可空的 `outcome_message_id`，不重建队列、不改已发布迁移。已有回执保持原值，该引用初始为 NULL；它没有消息外键，删除或恢复裁剪历史不会删除回执。旧版本的完整同步行未携带该字段时按 NULL 投影，后续完整行保留新的精确结果引用。`QueueSync.normalizeSnapshot` 在队列模块统一规范化旧v1快照缺字段与SQL排序；CLI/OpenCode导入和恢复使用该形状做幂等比较，避免旧载荷首次落库补NULL后误判为冲突。规范化不改源载荷，真实队列差异继续拒绝。
-
 ## 状态机
 
 ```text
@@ -100,19 +97,6 @@ claimed  → cancelled           (停止 / epoch；consumed 区分 interrupted �
 - `settled` + `assistant_error`：回合已跑，assistant 消息带错误。
 - 一个 `runId` 可认领 N 条记录；认领与执行通过 `acquireUseRelease` 形成完整生命周期，退出时统一结算，覆盖已认领但尚未进入 `runLoop` 的取消。`runLoop` 共用结算处理，成功、assistant 错误与执行中断均覆盖，每条 claimed 记录得到终态。
 - 幂等：唯一性按会话（`receiver_session_id` + `idempotency_key`）。并发 accept 同键一条插入胜出，另一条返回同一记录。
-
-### 执行错误与回执归属
-
-- 准备与执行使用不同归属：排队 prompt 在 `inbox.accept` 事务提交前没有本次消息的失败结算权；请求携带已有消息 ID 不等于保存成功。touch 先于受理；权限与 title 保持受理后的生命周期，停止时能结算已接受的输入。受理后准备失败必须按同事务 receipt 状态判定归属：accepted 才由准备方结算，错误消息保存与取消 accepted 回执在同一事务内完成；claimed 已转交 lane 执行者。`noReply`/无 controller 的直接保存路径只在 user 写入成功后记录归属，parts 写入失败仍能保存该 user 的错误结果。
-- 实际 lane 执行者在领取输入后负责未处理异常：初始化在模型读取前失败时，按数据库消息创建时间与 ID 选择本次 claim 中最新的真实输入；显式旧 ID 更新保留其 SQL 创建顺序，不能用回执受理顺序或 payload 时间替代。初始化错误不产生 delivery；步骤完成准备并创建 assistant 时归实际选中的 user；之后只更新本次新建输出。不会改写历史 assistant，也不会把恢复 B 的失败挂到后来 C。模型 processor 外的插件、转换、裁剪异常保存为精确 parent 的 assistant.error，并发布消息事实与 session.error。
-- 错误消息不等于输入已经读入模型。`consumed` 与 `deliveryMessageID` 只由 `recordDelivery` 写入；执行在 delivery 前失败，claimed 输入结算为 `cancelled/never_ran`，错误文本保留在回执且 prompt 等待方仍得到持久错误消息。已 delivery 的输入失败结算为 `settled/assistant_error`。结算不得从成功的 Effect Exit 推导未读输入为 consumed。
-- 纯中断、停止 epoch 已改变、instance/workspace ownership 已失效、目标 session/user 已删除时，不补业务错误或复活历史。持久错误写入与 ownership、epoch、parent 校验在同一事务内；停止和 runId 条件继续保护回执结算。
-- `runLoop` 仅结算业务 body 的失败；body 成功后的生命周期/清理失败不能覆盖成功输出。Resume 不写 inbox，其准入后的 beforeWork/裁剪失败由 Resume owner 结算；进入 loop 后由 loop 结算，避免重复错误。
-- 每条结算回执内部保存 `outcome_message_id`，引用本 lane 执行 owner 最终交付的消息；一轮认领 A/B/C 时三条回执可引用同一最终结果。`delivery_message_id` 仍只表示首次模型读入位置，不能替代最终结果。准备失败的错误消息与回执取消/outcome 引用在同一事务保存。终态等待者回放该精确 ID，核对 session/actor；后续同 parent Resume、同毫秒新输出都不改变旧回执定位的结果 ID。回放使用该原消息 ID 的当前持久事实；恢复对该消息的合法原地裁剪由历史真相承载，不复制冻结快照。原消息被删除时明确 NotFound，不借后次新 ID。迁移前无 outcome 引用的记录仅在原 delivery ID 当前持久事实为错误或可确认终态时回放，并核对创建时间未越过原 ACK 边界；这不还原冻结的旧错误/正文。无法证明归属的历史拒绝回放，不借后续消息 ID。
-- 本地结果登记由 `attachReceiptResult` 统一获取并核验：get/create 与SQL回执读取在同一不可中断同步段，读取失败只回滚本次新登记。终态回放完成Deferred后在登记作用域await，明确暴露失败；准备失败/退出仅清理已完成且引用仍相等的登记，保留并发同ID的活跃等待交给owner，不误删后继新Deferred。原结果删除后的失败请求不留下待扫旧登记，之后回执GC不会污染新输入。
-- session 删除、ownership 移交或回执 ACK 写入失败时，执行者仍必须完成本地等待者的 Deferred（明确失败）并释放 lease；回执持久化失败不能使客户端无限等待。
-- HTTP 保持 202/receipt 与 message stream 契约。同步 message 已开始 200 后发生无法持久保存的失败，明确使响应正文读取失败；异步执行外层记录异常，不再次发布无 parent 的错误事件。
-- 同步 `message` 的 Hono 流显式声明 `Transfer-Encoding: chunked`。Node HTTP/1.1 adapter 对原生 Response 不再探测预读并把首读错误当作空正文完成；由持续 reader 读取，错误销毁响应传输。该头只声明本段流传输，不是业务回执字段：Bun 可按实际输出归一传输编码；代理可在自身连接上重建 framing，客户端应以请求/正文读取明确失败识别未交付结果，不依赖响应保留该头或固定 Content-Length。当前 Node adapter 使用 HTTP/1.1，直接 HTTP/2 adapter 不属于此实现边界。
 
 ## 受理（accept）
 
@@ -157,7 +141,7 @@ claimed  → cancelled           (停止 / epoch；consumed 区分 interrupted �
 
 | 端点 | 契约 |
 |---|---|
-| `POST /session/:id/prompt_async` | **202** + `{ receiptId }`；无执行输入（`noReply` 或无有效内容）为 **204**，不写 Inbox 回执 |
+| `POST /session/:id/prompt_async` | **202** + `{ receiptId }` |
 | `POST /session/:id/message` | 受理。busy 不 409。认领开始且客户端仍连接 → **200 stream**；否则 **202** + `{ receiptId }` 并结束响应 |
 | `GET /session/:id/receipt/:receiptId` | 返回 `PublicReceipt` 投影 |
 | `POST /session/:id/abort` | 响应 `{ epoch }` |
@@ -167,14 +151,12 @@ claimed  → cancelled           (停止 / epoch；consumed 区分 interrupted �
 
 每条记录只承载一条输入，字段直接平铺在回执上，没有 `intent` 包装。resume 与 shell 是独占入口（C-03），不写 inbox 记录，因此不存在 resume、shell、wake 类型。
 
-同步 `message` 流成功时返回 JSON 结果；已开始 200 后、无法持久化的失败使正文读取拒绝，不能以空正文结束成功响应。busy 路径未产生回执时为 204；空闲 `noReply` 路径返回所保存的 user 消息，不启动模型。响应断连只 detach 此请求，已受理输入的执行归 Controller/Runner。
-
-客户端公开回执引用两条消息：
+记录只引用两条消息：
 
 - `inputMessageID`：受理时写入的 user 消息。客户端用它把回执关联到消息。
 - `deliveryMessageID`：首次读入该输入的 model-step assistant 消息，只写一次；引擎渲染上下文时用它确定输入的位置，客户端用它判断输入已被消费。写入时发布 `session.receipt.updated`。
 
-结算（ack）写 `state` / `outcome` / `error` 与内部 `outcome_message_id`，不改首次读入的 `delivery_message_id`。OpenAPI 响应 schema 与 HTTP body 共用 `PublicReceipt` zod 单源。
+结算（ack）只写 `state` / `outcome` / `error`，不记录任何消息 ID。OpenAPI 响应 schema 与 HTTP body 共用 `PublicReceipt` zod 单源。
 
 ## fork
 
@@ -223,7 +205,7 @@ fork 不复制 inbox 记录，也不改写任何记录里的消息 ID。新会�
 - 删掉 `inbox.drain` 全部调用（约 862、4610、4735、6228 行）及 `deferInbox` 分叉；步骤边界改为 `claimNext` / `extendClaim`。
 - 认领可见性过滤（约 4766–4785 行）改为按 inbox 记录状态判断：accepted 未认领或其他运行 claimed 的消息隐藏；其余可见。
 - `recordDelivery` 写 `delivery_message_id`，事件在事务提交后发布。
-- 运行结束结算（ack）传内部 `outcomeMessageID` 指向本 owner 最终结果；不传递或修改首次 delivery ID。
+- 运行结束结算（ack）不再传 `messageId`。
 - `abortSession` 去掉 `queuedPolicy`；`cancel` 不再收 `AbortPolicy`。
 - `waitForSubagents` 与显式 `actor.wait` 都用 `observeInput` 解除；任一输入唤醒。
 - 删掉 `requireClaim` / `inboxWake` / `LoopInput` 相关字段与分叉（约 3536、6155、6227、7372、7546、7548 行）。
@@ -259,14 +241,14 @@ fork 不复制 inbox 记录，也不改写任何记录里的消息 ID。新会�
 | `packages/cli/src/inbox/inbox.ts` | `send` 里的 `promptRef.loop` / `inboxWake` / `requireClaim` 分叉、`wake` 意图、`inboxWatermark` 合并、`MAX_DRAIN_PER_TURN`、`drain` 及其手工回滚、`InboxArrived` 发布（`actor/events.ts` 中的定义一并删，无订阅方） |
 | `packages/cli/src/turn-queue/schema.ts` | `WakeIntent`、`ResumeIntent`、`ShellIntent`（后两者从未被受理）、`isCoalescable`、`intentRank`、`AbortPolicy`、`suspended` 字段 |
 | `packages/cli/src/session/session.ts` | `persistQueuedUser`（并入 `inbox.accept`）；`fork` 中复制 inbox 记录与 `idMap` 改写记录字段的整段 |
-| `packages/cli/src/inbox/controller.ts` | ack 只写状态、错误与内部最终 `outcome_message_id`；首次 `delivery_message_id` 由步骤的 `recordDelivery` 单独写入 |
+| `packages/cli/src/inbox/controller.ts` | ack 的 `messageId` 参数及其写入 `delivery_message_id` 的 `coalesce` |
 | 回执投影与事件 | `intent` 包装、`messageId` 字段 |
 | `packages/cli/src/session/message-v2.ts` | user 消息的 `queueAdmission` 字段 |
 | `packages/cli/src/server/routes/instance/session.ts` | abort 的 `queuedPolicy` |
 | `packages/cli/src/session/prompt.ts` | `requireClaim` / `inboxWake` / `deferInbox` / `inbox.drain` 调用 / `queuedPolicy` |
 | `packages/cli/src/session/resume-test-hooks.ts` | `inbox.drain` 相关注释与钩子 |
 
-## 测试点 (a)–(s)
+## 测试点 (a)–(o)
 
 | # | 场景 | 验收 |
 |---|---|---|
@@ -285,8 +267,3 @@ fork 不复制 inbox 记录，也不改写任何记录里的消息 ID。新会�
 | (m) | GC | 已结算记录在 `time_updated` 后 7 天清理；`accepted`/`claimed` 不清理 |
 | (n) | fork 继承上下文 | 原会话含插话（输入受理早于 delivery）时，fork 后新会话渲染的消息序列与原会话逐条一致（角色、内容、顺序）；新会话无 inbox 记录；按 `messageID` 截断时按渲染顺序截断 |
 | (o) | `noReply` prompt | 不产生 inbox 记录；之后的 prompt 不会执行它，也不会因它多出一次模型请求；下一次运行时对模型可见 |
-| (p) | 准备保存失败归属 | Inbox.accept 消息/parts 事务失败不增加 message/receipt 或污染旧 ID；直接保存 user 成功后 parts 失败产生精确 parent 错误 |
-| (q) | 未处理异常早于模型 delivery | 实际 claim owner 保存错误 assistant，回执 never_ran、consumed=false、无 delivery；所有 prompt 等待方收到该持久结果 |
-| (r) | 已 delivery 后执行失败 | 消费记录结算 assistant_error；错误消息与回执可观测，lane 释放且后续输入可执行 |
-| (s) | Resume 与 ownership 边界 | 准入后失败归原 parent；中断、epoch/ownership 失效、目标删除不补业务错误；成功后清理失败不重写成功回答 |
-| (t) | 精确结果、旧v1兼容与登记清理（TP-RUN-R1C-08） | 同parent后续Resume/同毫秒/多模型步骤不能改变旧回执原结果；删除原结果明确失败，回执GC后新输入继续。新增迁移保留旧记录；旧快照重复导入/恢复幂等、不改载荷、不调度，真实差异拒绝。自动化：`packages/cli/test/server/session-inbox-outcome.test.ts`、`packages/cli/test/inbox/queue-outcome-migration.test.ts`、`packages/cli/test/inbox/queue-sync.test.ts`、`packages/cli/test/cli/export-import.test.ts`、`packages/cli/test/history/import.test.ts`、`packages/cli/test/sync/restore-order.test.ts`；Desktop真实Electron回归挂既有 `turn-execution` TP08 |

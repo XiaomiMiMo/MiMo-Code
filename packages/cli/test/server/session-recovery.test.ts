@@ -346,19 +346,8 @@ for (const variant of ["text", "tools", "pending", "provider", "protected", "del
           const rejected = yield* prompt.resume({ sessionID: session.id, assistantMessageID: target.id }).pipe(Effect.exit)
           failure?.mockRestore()
           offMessage(); offPart()
-          const after = yield* sessions.messages({ sessionID: session.id })
-          if (variant === "delete-failure") {
-            // [TP-SR-R21-35] Accepted work that fails before the model delivers a terminal error, preserving history.
-            expect(rejected._tag).toBe("Success")
-            const terminal = after.filter(message => !before.some(previous => previous.info.id === message.info.id))
-            expect(terminal).toHaveLength(1)
-            expect(terminal[0]?.info).toMatchObject({ role: "assistant", parentID: user.id,
-              error: { data: { message: "injected delete failure" } }, time: { completed: expect.any(Number) } })
-            expect(after.filter(message => before.some(previous => previous.info.id === message.info.id))).toEqual(before)
-          } else {
-            expect(rejected._tag).toBe("Failure")
-            expect(after).toEqual(before)
-          }
+          expect(rejected._tag).toBe("Failure")
+          expect(yield* sessions.messages({ sessionID: session.id })).toEqual(before)
           expect(removed).toEqual([])
           expect(removedParts).toEqual([])
           expect(stub.captures).toHaveLength(0)

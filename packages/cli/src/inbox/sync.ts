@@ -34,8 +34,6 @@ export const ReceiptRowSchema = z.object({
   consumed: z.boolean(),
   outcome: z.enum(["success", "assistant_error", "interrupted", "never_ran"]).nullable(),
   delivery_message_id: MessageID.zod.nullable(),
-  // Version-1 snapshots and deltas written before the result anchor omit this field.
-  outcome_message_id: MessageID.zod.nullable().optional(),
   error: z.string().nullable(),
   idempotency_key: z.string(),
   created_at: z.number().int(),
@@ -63,7 +61,13 @@ export const DeltaSchema = z.object({
   lanes: LaneRowSchema.array().optional(),
   epoch: EpochRowSchema.optional(),
 })
-export type Delta = z.infer<typeof DeltaSchema>
+export type Delta = {
+  sessionID: SessionID
+  receipts?: Array<typeof InboxTable.$inferSelect>
+  deletedReceiptIDs?: string[]
+  lanes?: Array<typeof InboxLaneStateTable.$inferSelect>
+  epoch?: typeof InboxSessionEpochTable.$inferSelect
+}
 
 export const SnapshotSchema = z.object({
   version: z.literal(1),
@@ -73,16 +77,6 @@ export const SnapshotSchema = z.object({
   epoch: EpochRowSchema.nullable(),
 })
 export type Snapshot = z.infer<typeof SnapshotSchema>
-
-/** Canonical SQL snapshot shape for comparisons across version-1 producers. */
-export function normalizeSnapshot(snapshot: Snapshot): Snapshot {
-  return {
-    ...snapshot,
-    receipts: snapshot.receipts.map((row) => ({ ...row, outcome_message_id: row.outcome_message_id ?? null }))
-      .toSorted((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-    lanes: snapshot.lanes.toSorted((a, b) => a.agent_id < b.agent_id ? -1 : a.agent_id > b.agent_id ? 1 : 0),
-  }
-}
 
 export const Event = {
   Delta: SyncEvent.define({ type: "session.inbox.delta", version: 1, aggregate: "sessionID", schema: DeltaSchema }),
@@ -111,7 +105,6 @@ function validate(db: Database.TxOrDb, data: Delta | Snapshot) {
   for (const row of data.receipts ?? []) {
     if (row.input_message_id) references.add(row.input_message_id)
     if (row.delivery_message_id) references.add(row.delivery_message_id)
-    if (row.outcome_message_id) references.add(row.outcome_message_id)
     if (row.claim_frontier) references.add(row.claim_frontier)
   }
   for (const id of references) {
@@ -119,21 +112,15 @@ function validate(db: Database.TxOrDb, data: Delta | Snapshot) {
     if (message && message.sessionID !== data.sessionID) throw new QueueValidationError(`Inbox message belongs to another session: ${id}`)
   }
   for (const row of data.receipts ?? []) {
-    for (const id of [row.input_message_id, row.outcome_message_id]) {
-      if (!id) continue
-      const message = db.select({ agentID: MessageTable.agent_id, data: MessageTable.data }).from(MessageTable).where(eq(MessageTable.id, id)).get()
-      if (message && message.agentID !== row.receiver_actor_id) throw new QueueValidationError(`Inbox message belongs to another lane: ${id}`)
-      if (message && id === row.outcome_message_id && message.data.role !== "assistant")
-        throw new QueueValidationError(`Inbox outcome is not an assistant message: ${id}`)
-    }
+    if (!row.input_message_id) continue
+    const message = db.select({ agentID: MessageTable.agent_id }).from(MessageTable).where(eq(MessageTable.id, row.input_message_id)).get()
+    if (message && message.agentID !== row.receiver_actor_id) throw new QueueValidationError(`Inbox message belongs to another lane: ${row.input_message_id}`)
   }
 }
 
 function apply(db: Database.TxOrDb, data: Delta | Snapshot) {
-  for (const row of data.receipts ?? []) {
-    const normalized = { ...row, outcome_message_id: row.outcome_message_id ?? null }
-    db.insert(InboxTable).values(normalized).onConflictDoUpdate({ target: InboxTable.id, set: normalized }).run()
-  }
+  for (const row of data.receipts ?? [])
+    db.insert(InboxTable).values(row).onConflictDoUpdate({ target: InboxTable.id, set: row }).run()
   for (const row of data.lanes ?? [])
     db.insert(InboxLaneStateTable).values(row).onConflictDoUpdate({ target: [InboxLaneStateTable.session_id, InboxLaneStateTable.agent_id], set: row }).run()
   if (data.epoch)
@@ -225,7 +212,6 @@ export function materializeHistory(input: {
       consumed: true,
       outcome: null,
       delivery_message_id: null,
-      outcome_message_id: null,
       error: null,
       idempotency_key: key,
       created_at: now,

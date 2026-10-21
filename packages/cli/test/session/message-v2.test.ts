@@ -99,62 +99,6 @@ describe("resume trim model boundary", () => {
       state: { status: "completed", input: { command: "already executed" }, output: "original output", title: "done", metadata: {}, time: { start: 1, end: 2 } },
     }
   }
-  // [TP-RUN-R1C-08] Late outcomes of an earlier input are legal durable history;
-  // only the resumed parent's own blocks are candidates for trimming.
-  test("resuming latest input preserves older-parent late outcomes in original order", async () => {
-    const olderID = MessageID.make("older-user"), olderAssistantID = MessageID.make("older-assistant")
-    const olderUser: MessageV2.WithParts = { info: userInfo(olderID), parts: [{ ...base, messageID: olderID,
-      id: PartID.make("older-user-text"), type: "text", text: "Earlier input" }] }
-    const target = history([tool("target-call"), { ...base, id: PartID.make("unfinished-step"), type: "step-start" },
-      { ...base, id: PartID.make("unfinished-target"), type: "text", text: "unfinished target text" }])
-    const late: MessageV2.WithParts = { info: { ...assistantInfo(olderAssistantID, olderID),
-      time: { created: 3, completed: 4 }, error: { name: "UnknownError", data: { message: "earlier initialization failed" } } }, parts: [] }
-    const input = [olderUser, target[0], late, target[1]]
-    const original = structuredClone(input)
-    const trim = MessageV2.planResumeTrim(input, userID)
-    expect(trim.messages.map(message => message.info.id)).toEqual([olderID, userID, olderAssistantID, assistantID])
-    expect(trim.messages[2]).toBe(late)
-    expect(trim.removeParts.map(part => part.id)).toEqual([PartID.make("unfinished-step"), PartID.make("unfinished-target")])
-    expect(trim.removeMessages).toEqual([])
-    expect(trim.updateMessages).toEqual([])
-    expect(input).toEqual(original)
-    MessageV2.assertResumeModelBoundary(await MessageV2.toModelMessages(trim.messages, model))
-  })
-  // [TP-RUN-R1C-08] Trimming the current parent never deletes or changes an older side effect.
-  test("older-parent tools remain unchanged while current parent residue is removed", async () => {
-    const olderID = MessageID.make("older-user"), olderAssistantID = MessageID.make("older-assistant")
-    const completed = { ...tool("older-completed"), messageID: olderAssistantID }
-    const late: MessageV2.WithParts = { info: { ...assistantInfo(olderAssistantID, olderID), finish: "tool-calls" }, parts: [completed] }
-    const target = history([{ ...base, id: PartID.make("target-discard"), type: "text", text: "unfinished target" }])
-    const olderUser: MessageV2.WithParts = { info: userInfo(olderID), parts: [{ ...base, messageID: olderID,
-      id: PartID.make("older-user-text"), type: "text", text: "Earlier input" }] }
-    const input = [olderUser, target[0], late, target[1]]
-    const trim = MessageV2.planResumeTrim(input, userID)
-    expect(trim.messages).toEqual([olderUser, target[0], late])
-    expect(trim.messages[2]).toBe(late)
-    expect(trim.removeMessages).toEqual([assistantID])
-    expect(trim.removeParts).toEqual([])
-    expect(trim.updateParts).toEqual([])
-    expect(trim.updateMessages).toEqual([])
-    const converted = await MessageV2.toModelMessages(trim.messages, model)
-    MessageV2.assertResumeModelBoundary(converted)
-    expect(JSON.stringify(converted)).toContain("original output")
-  })
-  // [TP-RUN-R1C-08] Cross-parent tolerance does not grant cross-session/actor ownership or admit a later user.
-  test("resume rejects foreign or missing earlier parents and later users", () => {
-    const target = history([])
-    const olderID = MessageID.make("older-user"), olderAssistantID = MessageID.make("older-assistant")
-    const olderUser: MessageV2.WithParts = { info: userInfo(olderID), parts: [] }
-    const late: MessageV2.WithParts = { info: assistantInfo(olderAssistantID, olderID), parts: [] }
-    for (const foreign of [late,
-      { ...late, info: { ...late.info, sessionID: SessionID.make("other-session") } },
-      { ...late, info: { ...late.info, agentID: "other-actor" } },
-    ]) {
-      const prefix = foreign === late ? [] : [olderUser]
-      expect(() => MessageV2.planResumeTrim([...prefix, target[0], foreign, target[1]], userID)).toThrow("parent boundary")
-    }
-    expect(() => MessageV2.planResumeTrim([...target, { info: userInfo(MessageID.make("later-user")), parts: [] }], userID)).toThrow("parent boundary")
-  })
   test("legacy tool block keeps text after the call because SDK emits results after the entire block", async () => {
     const parts: MessageV2.Part[] = [tool("call-a"),
       { ...base, id: PartID.make("after-tool"), type: "text", text: "still before SDK results" }, tool("call-b"),

@@ -79,7 +79,6 @@ function receipt(sessionID: SessionID, id = "receipt"): QueueSync.Snapshot["rece
     consumed: false,
     outcome: null,
     delivery_message_id: null,
-    outcome_message_id: null,
     error: null,
     idempotency_key: "",
     created_at: 1,
@@ -104,7 +103,7 @@ function makeUser(sessionID: SessionID, messageID = MessageID.ascending()) {
 }
 
 describe("turn queue sync transport", () => {
-  it.live("[TP-RUN-R1C-08] replays actual controller deltas including exact outcome anchors without scheduler execution", provideTmpdirInstance(() => Effect.gen(function* () {
+  it.live("replays actual controller deltas without whole-queue snapshots or scheduler execution", provideTmpdirInstance(() => Effect.gen(function* () {
     const sessions = yield* Session.Service
     const tq = yield* InboxController.Service
     const session = yield* sessions.create({ title: "delta lifecycle" })
@@ -119,7 +118,6 @@ describe("turn queue sync transport", () => {
     const extended = yield* tq.extendClaim(lane, 42)
     expect(extended?.receipts.map((r) => r.id)).toEqual([second.id])
     const delivery = MessageID.ascending()
-    const outcome = MessageID.ascending()
     Database.transaction((db) => {
       const rows = db.update(InboxTable).set({ delivery_message_id: delivery })
         .where(eq(InboxTable.id, first.id)).returning().all()
@@ -127,13 +125,11 @@ describe("turn queue sync transport", () => {
     })
     expect(latestDelta(session.id).receipts?.[0].delivery_message_id).toBe(delivery)
     yield* tq.ack(lane, extended!.claimFrontier, [
-      { receiptId: first.id, outcome: "success", outcomeMessageID: outcome },
-      { receiptId: second.id, outcome: "assistant_error", error: "provider error", outcomeMessageID: outcome },
+      { receiptId: first.id, outcome: "success" },
+      { receiptId: second.id, outcome: "assistant_error", error: "provider error" },
     ], 42)
     const ack = latestDelta(session.id)
     expect(ack.receipts).toHaveLength(2)
-    expect(ack.receipts?.every((receipt) => receipt.outcome_message_id === outcome)).toBe(true)
-    expect(ack.receipts?.find((receipt) => receipt.id === first.id)?.delivery_message_id).toBe(delivery)
     expect(ack.lanes?.[0].consumed_frontier).toBe(extended!.claimFrontier)
     expect(ack.lanes?.[0].input_revision).toBe(2)
     yield* tq.abortSession(session.id)
@@ -316,7 +312,7 @@ describe("turn queue sync transport", () => {
     const base = { ...empty(session.id), receipts: [own] }
     const candidates: QueueSync.Snapshot[] = [
       { ...base, receipts: [{ ...own, input_message_id: messageID }] },
-      ...(["input_message_id", "delivery_message_id", "outcome_message_id", "claim_frontier"] as const).map((field) => ({ ...base, receipts: [{ ...own, [field]: messageID }] })),
+      ...(["input_message_id", "delivery_message_id", "claim_frontier"] as const).map((field) => ({ ...base, receipts: [{ ...own, [field]: messageID }] })),
       { ...base, lanes: [{ session_id: session.id, agent_id: "main", consumed_frontier: messageID, input_revision: 0, time_updated: 1 }] },
     ]
     for (const value of candidates) {
@@ -339,49 +335,5 @@ describe("turn queue sync transport", () => {
     expect(() => Database.transaction(() => QueueSync.record({ sessionID: session.id, receipts: [row] }))).toThrow(QueueSync.QueueValidationError)
     Database.transaction(() => QueueSync.record({ sessionID: session.id, receipts: [{ ...row, receiver_actor_id: "actor-other" }] }))
     expect(QueueSync.capture(session.id).receipts[0].receiver_actor_id).toBe("actor-other")
-  })))
-
-  it.live("[TP-RUN-R1C-08] old version-1 full after-images map missing outcomes to null before later anchored deltas", provideTmpdirInstance(() => Effect.gen(function* () {
-    const session = yield* (yield* Session.Service).create({ title: "old receipt compatibility" })
-    const initial = receipt(session.id, "old-receipt")
-    const outcome = MessageID.ascending()
-    const anchored = { ...initial, state: "settled" as const, consumed: true, outcome: "success" as const, outcome_message_id: outcome }
-    Database.transaction(() => QueueSync.record({ sessionID: session.id, receipts: [anchored] }))
-    expect(QueueSync.capture(session.id).receipts[0].outcome_message_id).toBe(outcome)
-    const { outcome_message_id: omitted, ...old } = initial
-    expect(omitted).toBeNull()
-    expect(QueueSync.ReceiptRowSchema.parse(old)).not.toHaveProperty("outcome_message_id")
-    SyncEvent.run(QueueSync.Event.Delta, { sessionID: session.id, receipts: [old] })
-    expect(QueueSync.capture(session.id).receipts).toEqual([initial])
-    Database.transaction((db) => QueueSync.applySnapshot({ ...empty(session.id), receipts: [old] }, db))
-    expect(QueueSync.capture(session.id).receipts).toEqual([initial])
-    Database.transaction(() => QueueSync.record({ sessionID: session.id, receipts: [anchored] }))
-    expect(QueueSync.capture(session.id).receipts).toEqual([anchored])
-    rebuild(session.id)
-  })))
-
-  it.live("[TP-RUN-R1C-08] outcome anchors reject an existing result in another lane while allowing deleted history", provideTmpdirInstance(() => Effect.gen(function* () {
-    const sessions = yield* Session.Service
-    const session = yield* sessions.create({ title: "outcome lane ownership" })
-    const parent = makeUser(session.id).message
-    yield* sessions.updateMessage(parent)
-    const outcome = MessageID.ascending()
-    yield* sessions.updateMessage({
-      id: outcome, sessionID: session.id, agentID: "actor-other", role: "assistant",
-      time: { created: Date.now(), completed: Date.now() }, parentID: parent.id,
-      providerID: parent.model.providerID, modelID: parent.model.modelID, mode: "build", agent: "build",
-      path: { cwd: "/tmp", root: "/tmp" }, cost: 0,
-      tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop",
-    })
-    const row = { ...receipt(session.id, "result-lane"), outcome_message_id: outcome }
-    expect(() => Database.transaction(() => QueueSync.record({ sessionID: session.id, receipts: [{ ...row, outcome_message_id: parent.id }] }))).toThrow(QueueSync.QueueValidationError)
-    expect(() => Database.transaction(() => QueueSync.record({ sessionID: session.id, receipts: [row] }))).toThrow(QueueSync.QueueValidationError)
-    expect(QueueSync.capture(session.id)).toEqual(empty(session.id))
-    Database.transaction(() => QueueSync.record({ sessionID: session.id, receipts: [{ ...row, receiver_actor_id: "actor-other" }] }))
-    expect(QueueSync.capture(session.id).receipts[0].outcome_message_id).toBe(outcome)
-    yield* sessions.removeMessage({ sessionID: session.id, messageID: outcome })
-    Database.transaction(() => QueueSync.record({ sessionID: session.id, receipts: [row] }))
-    expect(QueueSync.capture(session.id).receipts[0].outcome_message_id).toBe(outcome)
-    rebuild(session.id)
   })))
 })

@@ -162,7 +162,7 @@ for (const withTranscript of [false, true]) test(`OpenCode imports published leg
         sender_session_id: SessionID.make("ses_sender"), sender_actor_id: "main", type: "text",
         content: { text: "Published pending content" }, input_message_id: null,
         state: "accepted", epoch: 0, run_id: null, claim_frontier: null, consumed: false,
-        outcome: null, delivery_message_id: null, outcome_message_id: null, error: null, idempotency_key: "",
+        outcome: null, delivery_message_id: null, error: null, idempotency_key: "",
         created_at: 42, time_updated: 42,
       }],
     })

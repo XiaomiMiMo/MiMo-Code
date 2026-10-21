@@ -109,7 +109,6 @@ function seedQueue(sessionID: SessionID, messageID: MessageID) {
         consumed: false,
         outcome: null,
         delivery_message_id: null,
-        outcome_message_id: null,
         error: null,
         idempotency_key: messageID,
         created_at: 100,

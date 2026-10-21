@@ -62,7 +62,7 @@ const changes = () => Database.use((db) => db.get<{ changes: number }>(sql`selec
 
 describe("restore snapshot ordering", () => {
   for (const withLanes of [false, true]) {
-    it.live(`[TP-RUN-R1C-08] an unchanged old version-1 unsorted envelope retries without writes, publication, or dispatch (lanes=${withLanes})`, provideTmpdirInstance(() => Effect.gen(function* () {
+    it.live(`an unchanged unsorted envelope retries without writes, publication, or dispatch (lanes=${withLanes})`, provideTmpdirInstance(() => Effect.gen(function* () {
       const template = yield* (yield* Session.Service).create({})
       const input = envelope(template, withLanes)
       const unchanged = structuredClone(input.queueSnapshot)
@@ -78,7 +78,6 @@ describe("restore snapshot ordering", () => {
       try {
         expect(yield* Effect.sync(() => installRestore(input))).toBe(sessionID)
         const saved = QueueSync.capture(sessionID)
-        expect(saved.receipts.every((receipt) => receipt.outcome_message_id === null)).toBe(true)
         expect(saved.receipts.map((receipt) => receipt.id)).toEqual([`${sessionID}-a`, `${sessionID}-z`])
         expect(saved.lanes.map((lane) => lane.agent_id)).toEqual(withLanes ? ["a", "z"] : [])
         const before = changes()

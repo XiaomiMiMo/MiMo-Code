@@ -163,7 +163,6 @@ function envelope(http: Http, template: Session.Info) {
       consumed: state === "settled",
       outcome: state === "settled" ? "success" : state === "cancelled" || state === "claimed" ? "never_ran" : null,
       delivery_message_id: state === "settled" ? assistants[0].info.id : null,
-      outcome_message_id: null,
       error: state === "rejected" ? "fixture rejection" : null,
       idempotency_key: users[index].info.id,
       created_at: 100,

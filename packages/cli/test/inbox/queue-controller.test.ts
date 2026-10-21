@@ -13,7 +13,6 @@ import { testEffect } from "../lib/effect"
 import { Log } from "../../src/util"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { ProviderID, ModelID } from "../../src/provider/schema"
-import { PublicReceipt, toPublicReceipt } from "../../src/inbox/schema"
 
 void Log.init({ print: false })
 
@@ -172,7 +171,7 @@ describe("Inbox controller", () => {
   )
 
   it.live(
-    "[TP-RUN-R1C-08] ack stores its actual result without changing first delivery or the public receipt",
+    "ack settles claimed records and advances the consumed frontier",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const sessions = yield* SessionNs.Service
@@ -186,37 +185,13 @@ describe("Inbox controller", () => {
         })
         const batch = yield* tq.claimNext(lane, 7)
         expect(batch?.receipts).toHaveLength(1)
-        const delivery = MessageID.ascending()
-        const outcome = MessageID.ascending()
-        for (const id of [delivery, outcome]) yield* sessions.updateMessage({
-          id, sessionID: session.id, agentID: "main", role: "assistant",
-          time: { created: Date.now(), completed: Date.now() }, parentID: message.id,
-          providerID: message.model.providerID, modelID: message.model.modelID,
-          mode: "build", agent: "build", path: { cwd: "/tmp", root: "/tmp" }, cost: 0,
-          tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop",
-        })
-        Database.use((db) => db.update(InboxTable).set({ delivery_message_id: delivery })
-          .where(eq(InboxTable.id, receipt.id)).run())
-        // A stale run cannot claim the later run's persisted result.
         yield* tq.ack(lane, batch!.claimFrontier, [
-          { receiptId: receipt.id, outcome: "success", outcomeMessageID: outcome },
-        ], 6)
-        expect((yield* tq.getReceipt(receipt.id)).outcomeMessageID).toBeUndefined()
-        yield* tq.ack(lane, batch!.claimFrontier, [
-          { receiptId: receipt.id, outcome: "success", outcomeMessageID: outcome },
+          { receiptId: receipt.id, outcome: "success" },
         ], 7)
         const settled = yield* tq.getReceipt(receipt.id)
         expect(settled.state).toBe("settled")
         expect(settled.outcome).toBe("success")
         expect(settled.consumed).toBe(true)
-        expect(settled.deliveryMessageID).toBe(delivery)
-        expect(settled.outcomeMessageID).toBe(outcome)
-        expect(Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.id, receipt.id)).get())?.outcome_message_id).toBe(outcome)
-        const external = toPublicReceipt(settled)
-        expect(external).not.toHaveProperty("outcomeMessageID")
-        expect(PublicReceipt.safeParse({ ...external, outcomeMessageID: outcome }).data).not.toHaveProperty("outcomeMessageID")
-        yield* sessions.removeMessage({ sessionID: session.id, messageID: outcome })
-        expect((yield* tq.getReceipt(receipt.id)).outcomeMessageID).toBe(outcome)
       }),
     ),
   )
@@ -246,10 +221,8 @@ describe("Inbox controller", () => {
         const r2 = yield* tq.getReceipt(claimed.id)
         expect(r1.state).toBe("cancelled")
         expect(r1.outcome).toBe("never_ran")
-        expect(r1.outcomeMessageID).toBeUndefined()
         expect(r2.state).toBe("cancelled")
         expect(r2.outcome).toBe("never_ran")
-        expect(r2.outcomeMessageID).toBeUndefined()
       }),
     ),
   )

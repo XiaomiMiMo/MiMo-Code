@@ -82,7 +82,7 @@ export function storeImportedSession(
   messages: readonly { info: unknown; parts: readonly unknown[] }[],
   queue?: unknown,
 ) {
-  const snapshot = queue === undefined ? undefined : QueueSync.normalizeSnapshot(QueueSync.SnapshotSchema.parse(queue))
+  const snapshot = queue === undefined ? undefined : QueueSync.SnapshotSchema.parse(queue)
   if (snapshot && snapshot.sessionID !== info.id) throw new Error("Imported queue belongs to another session")
   const row = Session.toRow(info)
   const messageIDs = new Set<string>()
@@ -109,7 +109,11 @@ export function storeImportedSession(
       })).sort((a, b) => a.info.id.localeCompare(b.info.id))
       const currentQueue = QueueSync.capture(info.id, tx)
       const queueMatches = snapshot
-        ? isDeepStrictEqual(currentQueue, snapshot)
+        ? isDeepStrictEqual(currentQueue, {
+          ...snapshot,
+          receipts: [...snapshot.receipts].sort((a, b) => a.id.localeCompare(b.id)),
+          lanes: [...snapshot.lanes].sort((a, b) => a.agent_id.localeCompare(b.agent_id)),
+        })
         : currentQueue.receipts.length === parsed.filter((message) => message.info.role === "user").length &&
           currentQueue.receipts.every((receipt) => receipt.state === "settled" && receipt.consumed && receipt.outcome === null &&
             receipt.idempotency_key === QueueSync.historyReceiptKey("cli", info.id, receipt.input_message_id as string))

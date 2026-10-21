@@ -18,6 +18,14 @@ export const ReplayEventSchema = z.object({
 export class RestoreConflict extends Error {}
 export class RestorePayloadError extends Error {}
 
+function normalizeSnapshot(snapshot: QueueSync.Snapshot): QueueSync.Snapshot {
+  return {
+    ...snapshot,
+    receipts: snapshot.receipts.toSorted((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    lanes: snapshot.lanes.toSorted((a, b) => a.agent_id < b.agent_id ? -1 : a.agent_id > b.agent_id ? 1 : 0),
+  }
+}
+
 export function installRestore(input: {
   events: SyncEvent.SerializedEvent[]
   queueSnapshot: QueueSync.Snapshot
@@ -25,7 +33,7 @@ export function installRestore(input: {
   workspaceID: string
   isIdle: () => boolean
 }) {
-  const snapshot = QueueSync.normalizeSnapshot(QueueSync.SnapshotSchema.parse(input.queueSnapshot))
+  const snapshot = normalizeSnapshot(QueueSync.SnapshotSchema.parse(input.queueSnapshot))
   const sessionID = snapshot.sessionID
   const { events } = input
   if (snapshot.receipts.some((receipt) => receipt.state === "claimed"))
@@ -53,7 +61,7 @@ export function installRestore(input: {
           isDeepStrictEqual(event.data, incoming.data)
       })
       if (sequence?.seq === input.finalSeq && identical && existing?.workspace_id === input.workspaceID &&
-          isDeepStrictEqual(QueueSync.normalizeSnapshot(QueueSync.capture(sessionID, db)), snapshot)) return sessionID
+          isDeepStrictEqual(normalizeSnapshot(QueueSync.capture(sessionID, db)), snapshot)) return sessionID
       throw new RestoreConflict("Restore conflicts with an existing or newer session")
     }
     const messageOwners = new Map<string, string>()

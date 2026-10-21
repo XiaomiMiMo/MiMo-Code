@@ -6150,18 +6150,18 @@ describe("trailing-user resume integration", () => {
           })
           barrier.release()
           const exit = yield* Effect.exit(Fiber.join(fiber).pipe(Effect.timeout("5 seconds")))
-          // [TP-SR-R21-35] A post-admission step-0 failure is delivered against the original user.
-          expect(Exit.isSuccess(exit)).toBe(true)
-          if (Exit.isSuccess(exit)) expect(exit.value.info).toMatchObject({ role: "assistant", parentID: user2.id,
-            error: { data: { message: expect.stringContaining("no longer the slice tail") } }, time: { completed: expect.any(Number) } })
+          // C003: target reject is the step-0 strict-tail throw, and it surfaces.
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            expect(String(Cause.squash(exit.cause))).toContain("no longer the slice tail")
+          }
           const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
           // C003 contract: step-0 strict reject must not force-delete the later empty assistant.
           expect(after.some((m) => m.info.id === emptyId)).toBe(true)
           // Full message+parts snapshot: originals untouched.
-          expect(messagePartSnapshot(after.filter((m) => before.some(previous => previous.info.id === m.info.id)))).toEqual(
+          expect(messagePartSnapshot(after.filter((m) => m.info.id !== emptyId))).toEqual(
             messagePartSnapshot(before),
           )
-          expect(after.filter(m => m.info.role === "assistant" && m.info.error)).toHaveLength(1)
           const empty = after.find((m) => m.info.id === emptyId)
           expect(empty?.parts.map((p) => p.id)).toEqual([emptyPartId])
           expect(empty?.parts.map((p) => (p as { text?: string }).text)).toEqual([""])

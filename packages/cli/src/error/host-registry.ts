@@ -96,23 +96,6 @@ export function isSafetyTerminal(error: unknown): boolean {
   )
 }
 
-const QUOTA_TERMINAL_CODES = new Set([
-  "insufficient_quota", "usage_not_included", "quota_exhausted", "subscription_quota_exhausted",
-])
-
-// Quota semantics are distinct from broad HTTP failures: native transient
-// signals can override HTTP400/403, but cannot replenish an exhausted quota.
-export function isQuotaExhaustionError(error: unknown): boolean {
-  if (error === null || typeof error !== "object") return false
-  const e = error as { responseBody?: unknown; data?: { responseBody?: unknown; message?: unknown } }
-  const body = e.data?.responseBody ?? e.responseBody ?? e.data?.message
-  const parsed = record(json(body))
-  const nested = record(parsed?.error)
-  return [nested?.code, nested?.type, parsed?.code, parsed?.type].some((value) =>
-    typeof value === "string" && QUOTA_TERMINAL_CODES.has(value),
-  )
-}
-
 export function isTerminalError(error: unknown, allow404Retry = isRetryableNotFound(error)): boolean {
   if (error === null || typeof error !== "object") return false
   if (isSafetyTerminal(error)) return true
@@ -123,7 +106,10 @@ export function isTerminalError(error: unknown, allow404Retry = isRetryableNotFo
   const body = e.data?.responseBody ?? e.responseBody ?? e.data?.message
   if (typeof body !== "string") return false
   if (body.includes("FreeUsageLimitError") || body.includes("SubscriptionUsageLimitError")) return true
-  return isQuotaExhaustionError(error)
+  const parsed = record(json(body))
+  const nested = record(parsed?.error)
+  const code = nested?.code ?? nested?.type ?? parsed?.code
+  return code === "insufficient_quota" || code === "usage_not_included"
 }
 
 export function retryConstraint(error: unknown): "terminal" | "network" | null {
