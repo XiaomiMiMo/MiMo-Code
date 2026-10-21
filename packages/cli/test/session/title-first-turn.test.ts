@@ -6,6 +6,7 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
+import { SessionStatus } from "../../src/session/status"
 import { Command } from "../../src/command"
 import { injectScheduledPrompt, SessionPrompt, SESSION_MEMORY_DIR_MARKER } from "../../src/session/prompt"
 import { ProviderID, ModelID } from "../../src/provider/schema"
@@ -21,6 +22,63 @@ async function until(predicate: () => boolean | Promise<boolean>) {
   }
   throw new Error("Timed out waiting for detached title")
 }
+
+// [TP-REFUSAL-01] host-error-registry.md: logged account refusals settle the turn.
+test.each([
+  { status: 403, code: "membership_required", type: "permission_error", biz_code: 30012,
+    message: "未开通会员或会员已到期，请订阅后使用" },
+  { status: 403, code: "subscription_quota_exhausted", type: "permission_error", biz_code: 30011,
+    message: "本周用量已满，请等待额度重置或升级套餐" },
+  { status: 402, code: "402", type: "insufficient_balance",
+    message: "Insufficient account balance" },
+])("HTTP $status $code finishes the prompt and releases the session", async ({ status, ...error }) => {
+  let requests = 0
+  let refused = true
+  const server = Bun.serve({ port: 0, fetch() {
+    requests++
+    if (!refused) return new Response(textStopResponse("Recovered answer").join(""), {
+      headers: { "content-type": "text/event-stream" },
+    })
+    return Response.json({ error }, { status })
+  } })
+  try {
+    await using tmp = await tmpdir({ git: true, config: {
+      enabled_providers: ["fixture"], model: "fixture/text", model_groups: { lite: "fixture/text" },
+      provider: { fixture: {
+        npm: "@ai-sdk/openai-compatible", env: [],
+        options: { apiKey: "fixture", baseURL: `http://localhost:${server.port}/v1` },
+        models: { text: { name: "Text", tool_call: true, limit: { context: 128000, output: 1000 },
+          modalities: { input: ["text"], output: ["text"] } } },
+      } },
+    } })
+    await Instance.provide({ directory: tmp.path, fn: async () => {
+      const run = AppRuntime.runPromise
+      const session = await run(Session.Service.use(svc => svc.create()))
+      // Keep title generation outside this count; the log has separate title failures.
+      await run(Session.Service.use(svc => svc.setTitle({ sessionID: session.id, title: "Test task", expectedRevision: 0 })))
+      const result = await run(SessionPrompt.Service.use(svc => svc.prompt({
+        sessionID: session.id, parts: [{ type: "text", text: "Test request" }],
+      })).pipe(Effect.timeout("5 seconds")))
+      expect(result.info).toMatchObject({ role: "assistant", error: {
+        name: "APIError", data: { statusCode: status, isRetryable: false },
+      } })
+      expect(requests).toBe(1)
+      expect(await run(SessionStatus.Service.use(svc => svc.get(session.id)))).toEqual({ type: "idle" })
+      const receipt = Database.use(db => db.select().from(InboxTable)
+        .where(eq(InboxTable.receiver_session_id, session.id)).get())
+      expect(receipt).toMatchObject({ state: "settled", outcome: "assistant_error" })
+      refused = false
+      const next = await run(SessionPrompt.Service.use(svc => svc.prompt({
+        sessionID: session.id, parts: [{ type: "text", text: "New request" }],
+      })).pipe(Effect.timeout("5 seconds")))
+      expect(next.info).toMatchObject({ role: "assistant", finish: "stop" })
+      expect(next.info.role === "assistant" && next.info.error).toBeUndefined()
+      expect(next.parts).toContainEqual(expect.objectContaining({ type: "text", text: "Recovered answer" }))
+      expect(requests).toBe(2)
+      expect(await run(SessionStatus.Service.use(svc => svc.get(session.id)))).toEqual({ type: "idle" })
+    } })
+  } finally { await server.stop(true) }
+}, 15000)
 
 // [TP-ST-R3-01, TP-ST-R4-01, TP-ST-R4-02, TP-ST-R2-05, TP-ST-R7-05]
 test("fallback commits before detached lite request; duplicate receipt and later AI cannot overwrite manual", async () => {

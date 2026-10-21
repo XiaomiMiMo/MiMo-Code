@@ -413,9 +413,9 @@ export function decide(
   )
     return retry("rate_limit", phase, "Too Many Requests")
   if (isRateLimitMessage(message)) return retry("rate_limit", phase, message)
+  if (retryConstraint(error) === "terminal") return terminal()
   if (signals.code.includes("exhausted") || signals.code.includes("unavailable"))
     return retry("server", phase, "Provider is overloaded")
-  if (retryConstraint(error) === "terminal") return terminal()
   if (status !== undefined && (RETRYABLE_HTTP_STATUS.has(status) || (status >= 500 && status <= 599 && status !== 501 && status !== 505)))
     return retry(status === 429 ? "rate_limit" : "server")
   if (MessageV2.APIError.isInstance(error)) {
