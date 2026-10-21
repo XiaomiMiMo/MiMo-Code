@@ -106,7 +106,7 @@ describe("subagent resume recovery negatives", () => {
                     background: true,
                     lifecycle: "ephemeral",
                   })
-                  yield* reg.updateStatus(session.id, actorID, { status: "idle", lastOutcome: "failure" })
+                  yield* reg.updateStatus(session.id, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "failure" })
                   const u = yield* sessions.updateMessage({
                     id: MessageID.ascending(),
                     role: "user" as const,
@@ -290,7 +290,7 @@ describe("subagent resume recovery negatives", () => {
                 background: true,
                 lifecycle: "ephemeral",
               })
-              yield* reg.updateStatus(session.id, "custom-full", { status: "idle", lastOutcome: "failure" })
+              yield* reg.updateStatus(session.id, "custom-full", { expectedGeneration: null, status: "idle", lastOutcome: "failure" })
               const fu = yield* sessions.updateMessage({
                 id: MessageID.ascending(),
                 role: "user" as const,
@@ -421,7 +421,7 @@ describe("subagent resume recovery negatives", () => {
                 background: true,
                 lifecycle: "ephemeral",
               })
-              yield* reg.updateStatus(session.id, "custom-1", { status: "idle", lastOutcome: "failure" })
+              yield* reg.updateStatus(session.id, "custom-1", { expectedGeneration: null, status: "idle", lastOutcome: "failure" })
               const u = yield* sessions.updateMessage({
                 id: MessageID.ascending(),
                 role: "user" as const,
@@ -544,7 +544,7 @@ describe("subagent resume recovery negatives", () => {
                 background: true,
                 lifecycle: "ephemeral",
               })
-              yield* reg.updateStatus(session.id, "custom-1", { status: "idle", lastOutcome: "failure" })
+              yield* reg.updateStatus(session.id, "custom-1", { expectedGeneration: null, status: "idle", lastOutcome: "failure" })
               const u = yield* sessions.updateMessage({
                 id: MessageID.ascending(),
                 role: "user" as const,
@@ -670,7 +670,7 @@ describe("subagent resume recovery negatives", () => {
                 background: true,
                 lifecycle: "ephemeral",
               })
-              yield* reg.updateStatus(session.id, "custom-full", { status: "idle", lastOutcome: "failure" })
+              yield* reg.updateStatus(session.id, "custom-full", { expectedGeneration: null, status: "idle", lastOutcome: "failure" })
               const fu = yield* sessions.updateMessage({
                 id: MessageID.ascending(),
                 role: "user" as const,

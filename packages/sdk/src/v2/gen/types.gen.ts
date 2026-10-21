@@ -23,6 +23,10 @@ export type EventActorRegistered = {
   properties: {
     sessionID: string
     actorID: string
+    sourceSessionID?: string
+    sourceCallID?: string
+    sourceTurnID?: string
+    executionGeneration?: string
     mode: "peer" | "subagent" | "main"
     parentActorID?: string
     description: string
@@ -36,6 +40,10 @@ export type EventActorStatus = {
   properties: {
     sessionID: string
     actorID: string
+    sourceSessionID?: string
+    sourceCallID?: string
+    sourceTurnID?: string
+    executionGeneration?: string
     status: "pending" | "running" | "idle"
     lastOutcome?: "success" | "failure" | "cancelled"
     turnCount: number
@@ -105,6 +113,7 @@ export type EventTaskCreated = {
       status: "open" | "in_progress" | "blocked" | "done" | "abandoned"
       summary: string
       owner?: string
+      source_call_id?: string
       created_at: number
       last_event_at: number
       ended_at?: number
@@ -124,6 +133,7 @@ export type EventTaskUpdated = {
       status: "open" | "in_progress" | "blocked" | "done" | "abandoned"
       summary: string
       owner?: string
+      source_call_id?: string
       created_at: number
       last_event_at: number
       ended_at?: number
@@ -1130,6 +1140,12 @@ export type OutputFormatJsonSchema = {
 
 export type OutputFormat = OutputFormatText | OutputFormatJsonSchema
 
+export type PromptContext = {
+  system: string
+  systemMode: "append" | "replace-agent"
+  instructions: string
+}
+
 export type HookProvenance = {
   hookPhase: "pre" | "post"
   hookIteration: number
@@ -1169,6 +1185,7 @@ export type UserMessage = {
     modelID: string
     variant?: string
   }
+  promptContext?: PromptContext
   system?: string
   systemMode?: "append" | "replace-agent"
   harness?: "auto" | "codex" | "default"
@@ -5229,6 +5246,7 @@ export type SessionTaskResponses = {
     status: "open" | "in_progress" | "blocked" | "done" | "abandoned"
     summary: string
     owner?: string
+    source_call_id?: string
     created_at: number
     last_event_at: number
     ended_at?: number
@@ -5582,6 +5600,7 @@ export type SessionPromptData = {
      * BCP 47 locale used for automatic title generation.
      */
     titleLocale?: string
+    promptContext?: PromptContext
     /**
      * Additional system prompt selected by the session's first user query. Later values are ignored.
      */
@@ -5957,6 +5976,7 @@ export type SessionPromptAsyncData = {
      * BCP 47 locale used for automatic title generation.
      */
     titleLocale?: string
+    promptContext?: PromptContext
     /**
      * Additional system prompt selected by the session's first user query. Later values are ignored.
      */
@@ -6075,6 +6095,7 @@ export type SessionCommandData = {
      */
     titleLocale?: string
     variant?: string
+    promptContext?: PromptContext
     /**
      * Additional system prompt selected by the session's first user command. Later values are ignored.
      */

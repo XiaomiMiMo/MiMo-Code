@@ -14,3 +14,4 @@ export { HostModelTransport } from "./provider/host-transport"
 export { LLMServerTokens } from "./llm-server/tokens"
 /** Generic host error catalog injection (codes + retry class). */
 export { HostErrorRegistry } from "./error/host-registry"
+export { PROMPT_CONTEXT_VERSION } from "./session/prompt-context"

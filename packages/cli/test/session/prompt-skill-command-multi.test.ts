@@ -351,7 +351,7 @@ describe("skill command with additional mentions", () => {
             "checkpoint-writer mode",
           )
 
-          yield* actors.updateStatus(session.id, actorID, { status: "idle", lastOutcome: "failure" })
+          yield* actors.updateStatus(session.id, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "failure" })
           yield* sessions.remove(session.id)
         }),
         { git: true, config: providerCfg },

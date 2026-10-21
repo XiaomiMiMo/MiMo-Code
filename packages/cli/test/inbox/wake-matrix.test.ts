@@ -86,6 +86,7 @@ describe("Inbox.accept receiver admission", () => {
       await rt.runPromise(
         ActorRegistry.Service.use((reg) =>
           reg.updateStatus(session.id, "cancelled-actor", {
+            expectedGeneration: null,
             status: "idle",
             lastOutcome: "cancelled",
           }),

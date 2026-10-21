@@ -70,14 +70,14 @@ describe("actor.status event payload", () => {
         )
 
         await rt.runPromise(
-          ActorRegistry.Service.use((reg) => reg.updateStatus(sid, "explore-1", { status: "running" })),
+          ActorRegistry.Service.use((reg) => reg.updateStatus(sid, "explore-1", { expectedGeneration: null, status: "running" })),
         )
         await rt.runPromise(
           ActorRegistry.Service.use((reg) => reg.updateTurn(sid, "explore-1")),
         )
         await rt.runPromise(
           ActorRegistry.Service.use((reg) =>
-            reg.updateStatus(sid, "explore-1", { status: "idle", lastOutcome: "success" }),
+            reg.updateStatus(sid, "explore-1", { expectedGeneration: null, status: "idle", lastOutcome: "success" }),
           ),
         )
 
@@ -118,7 +118,7 @@ describe("actor.status event payload", () => {
       try {
         await rt.runPromise(
           ActorRegistry.Service.use((reg) =>
-            reg.updateStatus(sid, "ghost-1", { status: "running" }),
+            reg.updateStatus(sid, "ghost-1", { expectedGeneration: null, status: "running" }),
           ),
         )
 

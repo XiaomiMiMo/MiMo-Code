@@ -14,6 +14,7 @@ export const Task = z.object({
   status: TaskStatus,
   summary: z.string(),
   owner: z.string().optional(),
+  source_call_id: z.string().min(1).optional(),
   created_at: z.number(),
   last_event_at: z.number(),
   ended_at: z.number().optional(),

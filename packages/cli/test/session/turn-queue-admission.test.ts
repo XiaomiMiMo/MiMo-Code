@@ -5,6 +5,7 @@ import { Global } from "../../src/global"
 import { AppLayer } from "../../src/effect/app-runtime"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Session } from "../../src/session"
+import { ActorRegistry } from "../../src/actor/registry"
 import { injectScheduledPrompt, SessionPrompt } from "../../src/session/prompt"
 import { inboxServiceRef } from "../../src/inbox/inbox-ref"
 import { SessionCompaction } from "../../src/session/compaction"
@@ -359,6 +360,47 @@ describe("InboxController admission and claim acceptance without child execution
       yield* successful((yield* receiptFor(session.id, thirdID)).id)
       expect(yield* llm.calls).toBe(3)
     }), { git: true, config }),
+    30_000,
+  )
+
+  // [TP-R23-05] Turn-queue admission is the main generation boundary: one admitted run
+  // allocates one generation; inputs it claims mid-turn, model steps and empty kicks do not.
+  it.live(
+    "main execution generation advances once per admitted run, not per claimed input or model step",
+    provideTmpdirServer(({ dir, llm }) => Effect.gen(function* () {
+      const { session, prompt } = yield* setup("Main execution generation")
+      const registry = yield* ActorRegistry.Service
+      const expansion = yield* pauseFirstExtension(session.id)
+      const firstGate = yield* responseGate()
+      yield* llm.push(reply().wait(firstGate.promise).tool("write", { file_path: path.join(dir, "generation.txt"), content: "step" }))
+      yield* llm.text("FIRST-RUN-DONE")
+      const firstID = MessageID.ascending()
+      const lateID = MessageID.ascending()
+      const running = yield* prompt.prompt({ sessionID: session.id, messageID: firstID, agent: "build",
+        parts: [{ type: "text", text: "First admitted request" }] }).pipe(Effect.forkChild)
+      yield* Deferred.await(expansion.entered).pipe(Effect.timeout("5 seconds"))
+      expect(yield* registry.get(session.id, "main")).toMatchObject({ executionGeneration: "1", status: "running" })
+      yield* prompt.promptAsync({ sessionID: session.id, messageID: lateID, agent: "build",
+        parts: [{ type: "text", text: "Input claimed by the running execution" }] })
+      yield* Deferred.succeed(expansion.release, undefined)
+      yield* llm.wait(1).pipe(Effect.timeout("5 seconds"))
+      expect((yield* receiptFor(session.id, lateID)).state).toBe("claimed")
+      firstGate.resolve()
+      answer(yield* Fiber.join(running).pipe(Effect.timeout("10 seconds")), "FIRST-RUN-DONE", lateID)
+      expect(yield* llm.calls).toBe(2)
+      expect(yield* registry.get(session.id, "main")).toMatchObject({ executionGeneration: "1", status: "idle", lastOutcome: "success" })
+
+      const scheduler = schedulerRef.current
+      if (!scheduler) throw new Error("Inbox scheduler missing")
+      yield* scheduler.kick({ sessionID: session.id, agentID: "main" })
+      expect((yield* registry.get(session.id, "main"))?.executionGeneration).toBe("1")
+
+      yield* llm.text("SECOND-RUN-DONE")
+      const secondID = MessageID.ascending()
+      answer(yield* prompt.prompt({ sessionID: session.id, messageID: secondID, agent: "build",
+        parts: [{ type: "text", text: "Second admitted request" }] }), "SECOND-RUN-DONE", secondID)
+      expect(yield* registry.get(session.id, "main")).toMatchObject({ executionGeneration: "2", status: "idle", lastOutcome: "success" })
+    }), { git: true, config: url => ({ ...config(url), permission: { "*": "allow" } }) }),
     30_000,
   )
 

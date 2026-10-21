@@ -410,7 +410,7 @@ describe("ActorRegistry.liveness (T39 integration)", () => {
     await withRegistry(tmp.path, async (rt) => {
       const child = await rt.runPromise(Session.Service.use((s) => s.create()))
       await rt.runPromise(ActorRegistry.Service.use((reg) => register(reg, child.id)))
-      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { status: "running" })))
+      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { expectedGeneration: null, status: "running" })))
       await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateTurn(child.id, child.id)))
 
       const found = await rt.runPromise(ActorRegistry.Service.use((reg) => reg.liveness(child.id, child.id)))
@@ -425,7 +425,7 @@ describe("ActorRegistry.liveness (T39 integration)", () => {
     await withRegistry(tmp.path, async (rt) => {
       const child = await rt.runPromise(Session.Service.use((s) => s.create()))
       await rt.runPromise(ActorRegistry.Service.use((reg) => register(reg, child.id)))
-      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { status: "running" })))
+      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { expectedGeneration: null, status: "running" })))
       // Advance one turn so the row is no longer a not-yet-started child; its
       // last_turn_time now dates from this updateTurn. With a 1ms staleness
       // window and no further advance, elapsed real time flips it to stalled.
@@ -453,7 +453,7 @@ describe("ActorRegistry.liveness (T39 integration)", () => {
     await withRegistry(tmp.path, async (rt) => {
       const child = await rt.runPromise(Session.Service.use((s) => s.create()))
       await rt.runPromise(ActorRegistry.Service.use((reg) => register(reg, child.id)))
-      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { status: "running" })))
+      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { expectedGeneration: null, status: "running" })))
 
       const row = await rt.runPromise(ActorRegistry.Service.use((reg) => reg.get(child.id, child.id)))
       // register() writes NULL, and fromRow flattens it to undefined.
@@ -483,7 +483,7 @@ describe("ActorRegistry.liveness (T39 integration)", () => {
     await withRegistry(tmp.path, async (rt) => {
       const child = await rt.runPromise(Session.Service.use((s) => s.create()))
       await rt.runPromise(ActorRegistry.Service.use((reg) => register(reg, child.id)))
-      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { status: "running" })))
+      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { expectedGeneration: null, status: "running" })))
 
       const before = await rt.runPromise(ActorRegistry.Service.use((reg) => reg.get(child.id, child.id)))
       expect(before!.lastActivityTime).toBeUndefined()
@@ -529,13 +529,13 @@ describe("ActorRegistry.liveness (T39 integration)", () => {
       const child = await rt.runPromise(Session.Service.use((s) => s.create()))
       await rt.runPromise(ActorRegistry.Service.use((reg) => register(reg, child.id)))
       await rt.runPromise(
-        ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { status: "idle", lastOutcome: "failure" })),
+        ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { expectedGeneration: null, status: "idle", lastOutcome: "failure" })),
       )
       const failed = await rt.runPromise(ActorRegistry.Service.use((reg) => reg.liveness(child.id, child.id)))
       expect(failed!.liveness).toBe("failure")
 
       await rt.runPromise(
-        ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { status: "idle", lastOutcome: "success" })),
+        ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { expectedGeneration: null, status: "idle", lastOutcome: "success" })),
       )
       const done = await rt.runPromise(ActorRegistry.Service.use((reg) => reg.liveness(child.id, child.id)))
       expect(done!.liveness).toBe("success")
@@ -566,7 +566,7 @@ describe("ActorRegistry.liveness (T39 integration)", () => {
     await withRegistry(tmp.path, async (rt) => {
       const child = await rt.runPromise(Session.Service.use((s) => s.create()))
       await rt.runPromise(ActorRegistry.Service.use((reg) => register(reg, child.id)))
-      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { status: "running" })))
+      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { expectedGeneration: null, status: "running" })))
 
       const messageID = MessageID.ascending()
       await rt.runPromise(
@@ -636,7 +636,7 @@ describe("ActorRegistry.liveness (T39 integration)", () => {
     await withRegistry(tmp.path, async (rt) => {
       const child = await rt.runPromise(Session.Service.use((s) => s.create()))
       await rt.runPromise(ActorRegistry.Service.use((reg) => register(reg, child.id)))
-      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { status: "running" })))
+      await rt.runPromise(ActorRegistry.Service.use((reg) => reg.updateStatus(child.id, child.id, { expectedGeneration: null, status: "running" })))
 
       const messageID = MessageID.ascending()
       await rt.runPromise(

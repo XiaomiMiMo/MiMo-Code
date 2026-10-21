@@ -68,7 +68,7 @@ beforeAll(() => {
       Effect.gen(function* () {
         cancelled.push({ sessionID, actorID, mode })
         if (installedRegistry) {
-          yield* installedRegistry.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" }).pipe(Effect.ignore)
+          yield* installedRegistry.updateStatus(sessionID, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "cancelled" }).pipe(Effect.ignore)
         }
       }),
     getForkContext: () => Effect.succeed(undefined),
@@ -120,7 +120,7 @@ describe("actor tool — cancel action", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* registry.updateStatus(child.id, child.id, { status: "running" })
+        yield* registry.updateStatus(child.id, child.id, { expectedGeneration: null, status: "running" })
 
         const { ctx } = ctxFor(chat.id)
         const tool = yield* ActorTool
@@ -190,7 +190,7 @@ describe("actor tool — cancel action", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* registry.updateStatus(child.id, child.id, { status: "idle", lastOutcome: "success" })
+        yield* registry.updateStatus(child.id, child.id, { expectedGeneration: null, status: "idle", lastOutcome: "success" })
 
         const { ctx } = ctxFor(chat.id)
         const tool = yield* ActorTool

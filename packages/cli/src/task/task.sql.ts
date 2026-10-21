@@ -14,6 +14,7 @@ export const TaskTable = sqliteTable(
     status: text().$type<"open" | "in_progress" | "blocked" | "done" | "abandoned">().notNull(),
     summary: text().notNull(),
     owner: text(),
+    source_call_id: text(),
     created_at: integer().notNull(),
     last_event_at: integer().notNull(),
     ended_at: integer(),

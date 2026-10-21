@@ -85,6 +85,7 @@ describe("cascadeSubagentResume", () => {
               lifecycle: "ephemeral",
             })
             yield* reg.updateStatus(session.id, "explore-1", {
+              expectedGeneration: null,
               status: "idle",
               lastOutcome: "failure",
               lastError:
@@ -120,7 +121,7 @@ describe("cascadeSubagentResume", () => {
               background: true,
               lifecycle: "ephemeral",
             })
-            yield* reg.updateStatus(session.id, "explore-orphan-run", { status: "running" })
+            yield* reg.updateStatus(session.id, "explore-orphan-run", { expectedGeneration: null, status: "running" })
             const oUser = yield* sessions.updateMessage({
               id: MessageID.ascending(),
               role: "user",
@@ -152,6 +153,7 @@ describe("cascadeSubagentResume", () => {
               lifecycle: "ephemeral",
             })
             yield* reg.updateStatus(session.id, "explore-cancelled", {
+              expectedGeneration: null,
               status: "idle",
               lastOutcome: "cancelled",
             })
@@ -186,6 +188,7 @@ describe("cascadeSubagentResume", () => {
               lifecycle: "ephemeral",
             })
             yield* reg.updateStatus(session.id, "explore-2", {
+              expectedGeneration: null,
               status: "idle",
               lastOutcome: "success",
             })
@@ -239,7 +242,7 @@ describe("cascadeSubagentResume", () => {
               background: true,
               lifecycle: "ephemeral",
             })
-            yield* reg.updateStatus(session.id, "explore-1", { status: "idle", lastOutcome: "failure" })
+            yield* reg.updateStatus(session.id, "explore-1", { expectedGeneration: null, status: "idle", lastOutcome: "failure" })
             const u = yield* sessions.updateMessage({
               id: MessageID.ascending(),
               role: "user" as const,

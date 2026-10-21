@@ -63,7 +63,7 @@ const register = Effect.fn("test.registerChild")(function* (
     lifecycle: "ephemeral",
     parentActorID,
   })
-  yield* registry.updateStatus(sessionID, actorID, { status: "running" })
+  yield* registry.updateStatus(sessionID, actorID, { expectedGeneration: null, status: "running" })
 })
 
 const child = Effect.fn("test.child")(function* (
@@ -83,7 +83,7 @@ const child = Effect.fn("test.child")(function* (
     execution,
     Effect.gen(function* () {
       yield* Deferred.await(finish)
-      yield* registry.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "success" })
+      yield* registry.updateStatus(sessionID, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "success" })
       yield* Deferred.succeed(terminal, undefined)
       yield* Deferred.await(release)
     }).pipe(Effect.interruptible, Effect.ensuring(executions.release(execution))),
@@ -240,7 +240,7 @@ describe("main automatically waits for subagent executions", () => {
       const finish = yield* Deferred.make<void>()
       yield* state.start(session.id, "legacy-1", Effect.never, Effect.gen(function* () {
         yield* Deferred.await(finish)
-        yield* registry.updateStatus(session.id, "legacy-1", { status: "idle", lastOutcome: "success" })
+        yield* registry.updateStatus(session.id, "legacy-1", { expectedGeneration: null, status: "idle", lastOutcome: "success" })
         return (yield* sessions.messages({ sessionID: session.id })).at(-1)!
       }))
       expect(yield* executions.current(session.id, "legacy-1")).toBeUndefined()
@@ -525,7 +525,7 @@ describe("main automatically waits for subagent executions", () => {
           const registry = yield* ActorRegistry.Service
           const session = yield* sessions.create({ title: "nested orphan delivery" })
           yield* register(session.id, "parent-1")
-          yield* registry.updateStatus(session.id, "parent-1", { status: "idle", lastOutcome: "success" })
+          yield* registry.updateStatus(session.id, "parent-1", { expectedGeneration: null, status: "idle", lastOutcome: "success" })
           yield* register(session.id, "nested-1", "general", "subagent", "parent-1")
           yield* llm.text("MAIN-FINAL")
           yield* llm.text("MAIN-ACKNOWLEDGED-NESTED-FAILURE")

@@ -181,12 +181,12 @@ function installMockSpawn(onSpawn?: (input: SpawnInput) => void, result: AgentOu
             lifecycle: "ephemeral",
             tools: input.tools,
           })
-          yield* actorReg.updateStatus(input.sessionID, actorID, { status: "running" }).pipe(Effect.ignore)
+          yield* actorReg.updateStatus(input.sessionID, actorID, { expectedGeneration: null, status: "running" }).pipe(Effect.ignore)
 
           const outcome = yield* Deferred.make<AgentOutcome>()
 
           // Synchronously complete the actor so waiter.wait resolves immediately.
-          yield* actorReg.updateStatus(input.sessionID, actorID, { status: "idle", lastOutcome: result.status }).pipe(Effect.ignore)
+          yield* actorReg.updateStatus(input.sessionID, actorID, { expectedGeneration: null, status: "idle", lastOutcome: result.status }).pipe(Effect.ignore)
           yield* Deferred.succeed(outcome, result)
 
           return { actorID, sessionID: input.sessionID, outcome }

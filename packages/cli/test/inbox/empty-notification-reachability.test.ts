@@ -78,7 +78,7 @@ const registerActor = Effect.fn(function* (sessionID: SessionID) {
     background: true,
     lifecycle: "ephemeral",
   })
-  yield* registry.updateStatus(sessionID, actorID, { status: "running" })
+  yield* registry.updateStatus(sessionID, actorID, { expectedGeneration: null, status: "running" })
   return actorID
 })
 

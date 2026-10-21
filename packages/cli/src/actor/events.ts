@@ -1,5 +1,5 @@
 import { BusEvent } from "@/bus/bus-event"
-import { SessionID } from "@/session/schema"
+import { MessageID, SessionID } from "@/session/schema"
 import { ActorStatus, ActorOutcome, SpawnMode } from "./schema"
 import z from "zod"
 
@@ -8,6 +8,10 @@ export const ActorRegistered = BusEvent.define(
   z.object({
     sessionID: SessionID.zod,
     actorID: z.string(),
+    sourceSessionID: SessionID.zod.optional(),
+    sourceCallID: z.string().min(1).optional(),
+    sourceTurnID: MessageID.zod.optional(),
+    executionGeneration: z.string().regex(/^[1-9][0-9]*$/).optional(),
     mode: SpawnMode,
     parentActorID: z.string().optional(),
     description: z.string(),
@@ -21,6 +25,10 @@ export const ActorStatusChanged = BusEvent.define(
   z.object({
     sessionID: SessionID.zod,
     actorID: z.string(),
+    sourceSessionID: SessionID.zod.optional(),
+    sourceCallID: z.string().min(1).optional(),
+    sourceTurnID: MessageID.zod.optional(),
+    executionGeneration: z.string().regex(/^[1-9][0-9]*$/).optional(),
     status: ActorStatus,
     lastOutcome: ActorOutcome.optional(),
     turnCount: z.number(),

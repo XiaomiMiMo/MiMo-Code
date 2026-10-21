@@ -99,7 +99,7 @@ describe("actor tool — status action", () => {
             background: true,
             lifecycle: "ephemeral",
           })
-          yield* registry.updateStatus(chat.id, "explore-1", { status: "idle", lastOutcome: outcome })
+          yield* registry.updateStatus(chat.id, "explore-1", { expectedGeneration: null, status: "idle", lastOutcome: outcome })
           const tool = yield* ActorTool
           const def = yield* tool.init()
           for (const action of ["status", "wait"] as const) {
@@ -137,7 +137,7 @@ describe("actor tool — status action", () => {
             background: true,
             lifecycle: "ephemeral",
           })
-          yield* registry.updateStatus(chat.id, "explore-1", { status: storedStatus })
+          yield* registry.updateStatus(chat.id, "explore-1", { expectedGeneration: null, status: storedStatus })
           const before = yield* registry.get(chat.id, "explore-1")
           const tool = yield* ActorTool
           const def = yield* tool.init()
@@ -232,7 +232,7 @@ describe("actor tool — status action", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* registry.updateStatus(chat.id, actorID, { status: "running" })
+        yield* registry.updateStatus(chat.id, actorID, { expectedGeneration: null, status: "running" })
 
         const executions = yield* ActorExecution.Service
         const execution = yield* executions.reserve(chat.id, actorID)
@@ -282,7 +282,7 @@ describe("actor tool — status action", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* registry.updateStatus(chat.id, actorID, { status: "idle", lastOutcome: "success" })
+        yield* registry.updateStatus(chat.id, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "success" })
 
         const tool = yield* ActorTool
         const def = yield* tool.init()
@@ -323,6 +323,7 @@ describe("actor tool — status action", () => {
           lifecycle: "ephemeral",
         })
         yield* registry.updateStatus(chat.id, actorID, {
+          expectedGeneration: null,
           status: "idle",
           lastOutcome: "failure",
           lastError: "network unreachable",
@@ -367,7 +368,7 @@ describe("actor tool — status action", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* registry.updateStatus(chatA.id, actorID, { status: "running" })
+        yield* registry.updateStatus(chatA.id, actorID, { expectedGeneration: null, status: "running" })
 
         // chatB queries chatA's subagent. Subagent lookup is keyed by
         // (ctx.sessionID, actorID), so the row under chatA is invisible to

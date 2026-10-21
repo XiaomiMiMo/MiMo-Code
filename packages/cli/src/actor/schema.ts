@@ -19,12 +19,23 @@ export type SpawnMode = z.infer<typeof SpawnMode>
 export const ToolWhitelist = z.union([z.array(z.string()).readonly(), z.literal("INHERIT")])
 export type ToolWhitelist = z.infer<typeof ToolWhitelist>
 
+export const ActorSource = z.object({
+  sourceSessionID: SessionID.zod,
+  sourceCallID: z.string().min(1),
+  sourceTurnID: MessageID.zod,
+})
+export type ActorSource = z.infer<typeof ActorSource>
+
 export const Actor = z
   .object({
     sessionID: SessionID.zod,
     actorID: z.string(),
     mode: SpawnMode,
     parentActorID: z.string().optional(),
+    sourceSessionID: SessionID.zod.optional(),
+    sourceCallID: z.string().min(1).optional(),
+    sourceTurnID: MessageID.zod.optional(),
+    executionGeneration: z.string().regex(/^[1-9][0-9]*$/).optional(),
     status: ActorStatus,
     lastOutcome: ActorOutcome.optional(),
     resultMessageID: MessageID.zod.optional(),

@@ -526,6 +526,9 @@ export const ActorTool = Tool.define(
         const spawnResult = yield* actor.spawn({
           mode: "subagent",
           sessionID: ctx.sessionID,
+          ...(ctx.callID && msg.info.parentID ? { source: {
+            sourceSessionID: ctx.sessionID, sourceCallID: ctx.callID, sourceTurnID: msg.info.parentID,
+          } } : {}),
           agentType: next.name,
           description: op.description,
           task: prompt,

@@ -36,7 +36,7 @@ test("actor list reports runtime execution without rewriting persisted claims or
             background: true,
             lifecycle: "ephemeral",
           })
-          yield* registry.updateStatus(session.id, actorID, { status: "running" })
+          yield* registry.updateStatus(session.id, actorID, { expectedGeneration: null, status: "running" })
           const read = Effect.gen(function* () {
             const response = yield* Effect.promise(() =>
               Promise.resolve(
@@ -84,7 +84,7 @@ test("actor list reports runtime execution without rewriting persisted claims or
           expect(yield* read).toMatchObject({ status: "running", executionActive: true })
           // The executor remains active through terminal hooks, even if a step has
           // already written an idle snapshot. Releasing execution is authoritative.
-          yield* registry.updateStatus(session.id, actorID, { status: "idle", lastOutcome: "success" })
+          yield* registry.updateStatus(session.id, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "success" })
           expect(yield* read).toMatchObject({ status: "running", executionActive: true })
           yield* executions.release(execution)
           expect(yield* read).toMatchObject({ status: "idle", executionActive: false, lastOutcome: "success" })

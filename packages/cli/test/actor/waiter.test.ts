@@ -112,6 +112,7 @@ const terminalDelivery = (sessionID: SessionID, lastOutcome: "success" | "failur
     if (message.info.role !== "assistant") throw new Error("missing assistant")
     yield* sessions.updateMessage({ ...message.info, actorResult: { finalText: "PREVIOUS-RESULT" } })
     yield* registry.updateStatus(sessionID, "child", {
+      expectedGeneration: null,
       status: "idle",
       lastOutcome,
       lastError: lastOutcome === "failure" ? "PREVIOUS-ERROR" : undefined,
@@ -319,7 +320,7 @@ describe("ActorWaiter.status — actual execution and fresh registry projection"
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const { entry, waiter, registry, executions } = yield* statusFixture
-        yield* registry.updateStatus(entry.sessionID, entry.actorID, { status: "running" })
+        yield* registry.updateStatus(entry.sessionID, entry.actorID, { expectedGeneration: null, status: "running" })
         const old = (yield* registry.get(entry.sessionID, entry.actorID))!
         const execution = yield* Effect.acquireRelease(
           executions.reserve(entry.sessionID, entry.actorID),
@@ -343,7 +344,7 @@ describe("ActorWaiter.status — actual execution and fresh registry projection"
         Effect.gen(function* () {
           const { entry, waiter, registry, executions } = yield* statusFixture
           const old = yield* terminalDelivery(entry.sessionID, "success")
-          yield* registry.updateStatus(entry.sessionID, entry.actorID, { status: "running" })
+          yield* registry.updateStatus(entry.sessionID, entry.actorID, { expectedGeneration: null, status: "running" })
           yield* registry.updateTurn(entry.sessionID, entry.actorID)
           if (live) {
             const execution = yield* Effect.acquireRelease(
@@ -373,7 +374,7 @@ describe("ActorWaiter.status — actual execution and fresh registry projection"
       provideTmpdirInstance(() =>
         Effect.gen(function* () {
           const { entry, waiter, registry, executions, sessions } = yield* statusFixture
-          yield* registry.updateStatus(entry.sessionID, entry.actorID, { status: "running" })
+          yield* registry.updateStatus(entry.sessionID, entry.actorID, { expectedGeneration: null, status: "running" })
           const execution = yield* Effect.acquireRelease(
             executions.reserve(entry.sessionID, entry.actorID),
             executions.release,
@@ -459,6 +460,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
         yield* sessions.updateMessage({ ...delivery.info, actorResult: { structured: { answer: 42 } } })
         yield* seedAssistantText(parent.id, "child", "UNRELATED-NEWER-TEXT")
         yield* registry.updateStatus(parent.id, "child", {
+          expectedGeneration: null,
           status: "idle",
           lastOutcome: "failure",
           lastError: "verification failed",
@@ -497,6 +499,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
           if (message.info.role !== "assistant") throw new Error("missing assistant")
           yield* sessions.updateMessage({ ...message.info, actorResult: { finalText: "OLD-RESULT" } })
           yield* registry.updateStatus(parent.id, "child", {
+            expectedGeneration: null,
             status: "idle",
             lastOutcome: previousOutcome,
             resultMessageID: message.info.id,
@@ -543,7 +546,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
         // Seed an assistant message with text "done" in explore-1's slice
         yield* seedAssistantText(parent.id, "explore-1", "done")
 
-        yield* registry.updateStatus(parent.id, "explore-1", { status: "idle", lastOutcome: "success" })
+        yield* registry.updateStatus(parent.id, "explore-1", { expectedGeneration: null, status: "idle", lastOutcome: "success" })
 
         const snap = yield* waiter.wait({ sessionID: parent.id, actor_id: "explore-1" })
 
@@ -577,7 +580,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
           background: true,
           lifecycle: "persistent",
         })
-        yield* registry.updateStatus(parent.id, "peer-1", { status: "idle", lastOutcome: "success" })
+        yield* registry.updateStatus(parent.id, "peer-1", { expectedGeneration: null, status: "idle", lastOutcome: "success" })
 
         const snap = yield* waiter.wait({ sessionID: parent.id, actor_id: "peer-1", timeout_ms: 200 })
 
@@ -609,6 +612,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
           lifecycle: "persistent",
         })
         yield* registry.updateStatus(parent.id, "peer-2", {
+          expectedGeneration: null,
           status: "idle",
           lastOutcome: "failure",
           lastError: "boom",
@@ -643,7 +647,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
             background: true,
             lifecycle: "persistent",
           })
-          yield* registry.updateStatus(parent.id, "child", { status: "idle", lastOutcome: "success" })
+          yield* registry.updateStatus(parent.id, "child", { expectedGeneration: null, status: "idle", lastOutcome: "success" })
           const subscribed = yield* Deferred.make<void>()
           const result = yield* Effect.gen(function* () {
             const waiter = yield* ActorWaiter.Service
@@ -652,6 +656,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
                 yield* Deferred.await(subscribed)
                 yield* Effect.sleep("5 millis")
                 yield* registry.updateStatus(parent.id, "child", {
+                  expectedGeneration: null,
                   status: "idle",
                   lastOutcome,
                   lastError: lastOutcome === "failure" ? "boom" : undefined,
@@ -717,7 +722,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
             background: false,
             lifecycle: "ephemeral",
           })
-          yield* registry.updateStatus(parent.id, "explore-2", { status: "running" })
+          yield* registry.updateStatus(parent.id, "explore-2", { expectedGeneration: null, status: "running" })
           const executions = yield* ActorExecution.Service
           const execution = yield* executions.reserve(parent.id, "explore-2")
 
@@ -727,6 +732,7 @@ describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
               yield* Effect.sleep("50 millis")
               yield* seedAssistantText(parent.id, "explore-2", "result from slow path")
               yield* registry.updateStatus(parent.id, "explore-2", {
+                expectedGeneration: null,
                 status: "idle",
                 lastOutcome,
                 lastError: lastOutcome === "failure" ? "execution failed" : undefined,

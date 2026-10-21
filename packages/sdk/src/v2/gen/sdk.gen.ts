@@ -110,6 +110,7 @@ import type {
   ProjectListResponses,
   ProjectUpdateErrors,
   ProjectUpdateResponses,
+  PromptContext,
   Provenance,
   ProviderAuthResponses,
   ProviderListResponses,
@@ -2523,6 +2524,7 @@ export class Session2 extends HeyApiClient {
       }
       format?: OutputFormat
       titleLocale?: string
+      promptContext?: PromptContext
       system?: string
       systemMode?: "append" | "replace-agent"
       harness?: "auto" | "codex" | "default"
@@ -2551,6 +2553,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
             { in: "body", key: "titleLocale" },
+            { in: "body", key: "promptContext" },
             { in: "body", key: "system" },
             { in: "body", key: "systemMode" },
             { in: "body", key: "harness" },
@@ -2805,6 +2808,7 @@ export class Session2 extends HeyApiClient {
       }
       format?: OutputFormat
       titleLocale?: string
+      promptContext?: PromptContext
       system?: string
       systemMode?: "append" | "replace-agent"
       harness?: "auto" | "codex" | "default"
@@ -2833,6 +2837,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
             { in: "body", key: "titleLocale" },
+            { in: "body", key: "promptContext" },
             { in: "body", key: "system" },
             { in: "body", key: "systemMode" },
             { in: "body", key: "harness" },
@@ -2907,6 +2912,7 @@ export class Session2 extends HeyApiClient {
       command?: string
       titleLocale?: string
       variant?: string
+      promptContext?: PromptContext
       system?: string
       systemMode?: "append" | "replace-agent"
       harness?: "auto" | "codex" | "default"
@@ -2954,6 +2960,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "command" },
             { in: "body", key: "titleLocale" },
             { in: "body", key: "variant" },
+            { in: "body", key: "promptContext" },
             { in: "body", key: "system" },
             { in: "body", key: "systemMode" },
             { in: "body", key: "harness" },

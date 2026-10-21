@@ -64,7 +64,7 @@ describe("ActorRegistry.renderForAgent", () => {
           }),
         ),
       )
-      await rt.runPromise(ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, actorId, { status: "running" })))
+      await rt.runPromise(ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, actorId, { expectedGeneration: null, status: "running" })))
 
       const result = await rt.runPromise(
         ActorRegistry.Service.use((svc) => svc.renderForAgent(parent.id)),
@@ -101,7 +101,7 @@ describe("ActorRegistry.renderForAgent", () => {
           }),
         ),
       )
-      await rt.runPromise(ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { status: "idle", lastOutcome: "success" })))
+      await rt.runPromise(ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { expectedGeneration: null, status: "idle", lastOutcome: "success" })))
 
       const result = await rt.runPromise(
         ActorRegistry.Service.use((svc) => svc.renderForAgent(parent.id)),

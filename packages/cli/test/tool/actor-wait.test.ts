@@ -76,7 +76,7 @@ describe("actor tool — wait action", () => {
       const registry = yield* ActorRegistry.Service
       const chat = yield* sessions.create({ title: "failed child" })
       yield* registry.register({ sessionID: chat.id, actorID: "child", mode: "subagent", agent: "general", description: "failed child", contextMode: "none", background: true, lifecycle: "ephemeral" })
-      yield* registry.updateStatus(chat.id, "child", { status: "idle", lastOutcome: "failure", lastError: "execution failed" })
+      yield* registry.updateStatus(chat.id, "child", { expectedGeneration: null, status: "idle", lastOutcome: "failure", lastError: "execution failed" })
       const tool = yield* ActorTool
       const def = yield* tool.init()
       for (const action of ["status", "wait"] as const) {
@@ -107,7 +107,7 @@ describe("actor tool — wait action", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* registry.updateStatus(chat.id, actorID, { status: "idle", lastOutcome: "success" })
+        yield* registry.updateStatus(chat.id, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "success" })
 
         const tool = yield* ActorTool
         const def = yield* tool.init()
@@ -143,7 +143,7 @@ describe("actor tool — wait action", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* registry.updateStatus(chatA.id, actorID, { status: "idle", lastOutcome: "success" })
+        yield* registry.updateStatus(chatA.id, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "success" })
 
         const tool = yield* ActorTool
         const def = yield* tool.init()

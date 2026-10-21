@@ -63,7 +63,7 @@ describe("turn-queue + actor wait steer", () => {
           Effect.never.pipe(Effect.interruptible, Effect.ensuring(executions.release(execution))),
           yield* Effect.scope,
         )
-        yield* registry.updateStatus(parent.id, "explore-9", { status: "running" })
+        yield* registry.updateStatus(parent.id, "explore-9", { expectedGeneration: null, status: "running" })
 
         const waitFiber = yield* waiter
           .wait({ sessionID: parent.id, actor_id: "explore-9", timeout_ms: 5000 })
@@ -150,14 +150,14 @@ describe("turn-queue + actor wait steer", () => {
               lifecycle: "ephemeral",
             })
             const execution = yield* Effect.acquireRelease(executions.reserve(parent.id, actorID), executions.release)
-            yield* registry.updateStatus(parent.id, actorID, { status: "running" })
+            yield* registry.updateStatus(parent.id, actorID, { expectedGeneration: null, status: "running" })
             const finish = yield* Deferred.make<void>()
             const actorFiber = yield* executions.fork(
               execution,
               Effect.gen(function* () {
                 yield* Deferred.await(observing)
                 if (outcome === "timeout") yield* Deferred.await(finish)
-                yield* registry.updateStatus(parent.id, actorID, { status: "idle", lastOutcome: "success" })
+                yield* registry.updateStatus(parent.id, actorID, { expectedGeneration: null, status: "idle", lastOutcome: "success" })
               }).pipe(Effect.interruptible, Effect.ensuring(executions.release(execution))),
               yield* Effect.scope,
             )

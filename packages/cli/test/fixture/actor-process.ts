@@ -33,8 +33,16 @@ try {
       yield* Effect.promise(() => send({ kind: "result", actor, waited }))
       return
     }
+    if (mode === "resume") {
+      const sessionID = SessionID.make(sessionInput)
+      const before = yield* registry.get(sessionID, "case-child")
+      yield* runTurn(sessionID, "case-child", Effect.void)
+      const actor = yield* registry.get(sessionID, "case-child")
+      yield* Effect.promise(() => send({ kind: "result", actor, previousGeneration: before?.executionGeneration }))
+      return
+    }
     const session = yield* sessions.create({ title: `actor process case: ${mode}` })
-    yield* registry.register({ sessionID: session.id, actorID: "case-child", mode: "subagent", agent: "general", description: "process case", contextMode: "none", background: true, lifecycle: "ephemeral" })
+    yield* registry.register({ sessionID: session.id, actorID: "case-child", mode: "subagent", agent: "general", description: "process case", contextMode: "none", background: true, lifecycle: "ephemeral", source: { sourceSessionID: session.id, sourceCallID: "process-spawn", sourceTurnID: MessageID.ascending() } })
     if (mode === "hold") {
       yield* runTurn(session.id, "case-child", Effect.gen(function* () {
         yield* Effect.promise(() => send({ kind: "ready", sessionID: session.id }))

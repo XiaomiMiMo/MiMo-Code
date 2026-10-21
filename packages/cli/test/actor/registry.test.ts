@@ -167,7 +167,7 @@ describe("ActorRegistry", () => {
           ),
         )
 
-        await rt.runPromise(ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { status: "running" })))
+        await rt.runPromise(ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { expectedGeneration: null, status: "running" })))
 
         const updated = await rt.runPromise(ActorRegistry.Service.use((svc) => svc.get(parent.id, taskId)))
         expect(updated!.status).toBe("running")
@@ -196,7 +196,7 @@ describe("ActorRegistry", () => {
         )
 
         await rt.runPromise(
-          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { status: "idle", lastOutcome: "success" })),
+          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { expectedGeneration: null, status: "idle", lastOutcome: "success" })),
         )
 
         const updated = await rt.runPromise(ActorRegistry.Service.use((svc) => svc.get(parent.id, taskId)))
@@ -228,7 +228,7 @@ describe("ActorRegistry", () => {
 
         await rt.runPromise(
           ActorRegistry.Service.use((svc) =>
-            svc.updateStatus(parent.id, taskId, { status: "idle", lastOutcome: "failure", lastError: "something went wrong" }),
+            svc.updateStatus(parent.id, taskId, { expectedGeneration: null, status: "idle", lastOutcome: "failure", lastError: "something went wrong" }),
           ),
         )
 
@@ -393,10 +393,10 @@ describe("ActorRegistry", () => {
         )
 
         await rt.runPromise(
-          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, idRunning, { status: "running" })),
+          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, idRunning, { expectedGeneration: null, status: "running" })),
         )
         await rt.runPromise(
-          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, idCompleted, { status: "idle", lastOutcome: "success" })),
+          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, idCompleted, { expectedGeneration: null, status: "idle", lastOutcome: "success" })),
         )
 
         const active = await rt.runPromise(ActorRegistry.Service.use((svc) => svc.listActive()))
@@ -446,7 +446,7 @@ describe("ActorRegistry", () => {
           ),
         )
         await rt.runPromise(
-          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { status: "running" })),
+          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { expectedGeneration: null, status: "running" })),
         )
 
         const before = await rt.runPromise(ActorRegistry.Service.use((svc) => svc.get(parent.id, taskId)))
@@ -505,7 +505,7 @@ describe("ActorRegistry", () => {
           ),
         )
         await rt.runPromise(
-          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { status: "running" })),
+          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { expectedGeneration: null, status: "running" })),
         )
 
         // Actor should still be running — not orphaned
@@ -545,7 +545,7 @@ describe("ActorRegistry", () => {
               ),
             )
             await rt1.runPromise(
-              ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { status: "running" })),
+              ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { expectedGeneration: null, status: "running" })),
             )
           } finally {
             await rt1.dispose()
@@ -593,7 +593,7 @@ describe("ActorRegistry", () => {
           ),
         )
         await rt.runPromise(
-          ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { status: "running" })),
+          ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { expectedGeneration: null, status: "running" })),
         )
 
         // Verify it's running
@@ -1037,7 +1037,7 @@ describe("ActorRegistry", () => {
               ),
             )
             await rt1.runPromise(
-              ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { status: "running" })),
+              ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { expectedGeneration: null, status: "running" })),
             )
             // Backdate activity past the abandon threshold. This row still
             // belongs to PROCESS_INSTANCE_ID — a rebuild must not settle it.

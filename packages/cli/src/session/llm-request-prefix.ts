@@ -9,6 +9,8 @@ import { LLM } from "./llm"
 import { ToolRegistry } from "../tool"
 import { ProviderTransform } from "../provider"
 import type { PromptConfig } from "./session"
+import { promptForUser } from "./prompt-context"
+import { appendTurnInstructions } from "./prompt-instructions"
 
 /**
  * Build the LLM request prefix (system + tools + inheritedMessages) from the
@@ -43,7 +45,7 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
    * then instruction files. Caller is responsible for the ordering and content.
    */
   additions: string[]
-  /** Frozen Session/Fork system; bypasses all system regeneration when present. */
+  /** Frozen stable system, excluding message-owned instructions. */
   prebuiltSystem?: string[]
   prompt?: PromptConfig
   /**
@@ -68,17 +70,18 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   const lastUserMsg = input.msgs.findLast((m) => m.info.role === "user")
   if (!lastUserMsg)
     return yield* Effect.die(new Error("buildLLMRequestPrefix: no user message in msgs"))
-  const lastUser = input.prompt
+  const prompt = input.prompt && promptForUser(input.prompt, lastUserMsg.info as MessageV2.User)
+  const lastUser = prompt
     ? {
         ...(lastUserMsg.info as MessageV2.User),
-        system: input.prompt.system,
-        systemMode: input.prompt.systemMode,
-        harness: input.prompt.harness,
+        system: prompt.system,
+        systemMode: prompt.systemMode,
+        harness: prompt.harness,
       }
     : (lastUserMsg.info as MessageV2.User)
 
   // Build system using LLM.buildSystemArray (single source of truth shared with stream())
-  const system =
+  const stableSystem =
     input.prebuiltSystem ??
     (yield* llm.buildSystemArray({
       agent: input.agent,
@@ -107,5 +110,6 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
     })
   }
 
-  return { system, tools, inheritedMessages }
+  const system = yield* appendTurnInstructions(stableSystem, input.sessionID, lastUser)
+  return { system, stableSystem, tools, inheritedMessages }
 })

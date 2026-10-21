@@ -92,6 +92,7 @@ describe("resumeMainCascading integration", () => {
                 lifecycle: "ephemeral",
               })
               yield* reg.updateStatus(session.id, "custom-1", {
+                expectedGeneration: null,
                 status: "idle",
                 lastOutcome: "failure",
                 lastError: "abandoned",

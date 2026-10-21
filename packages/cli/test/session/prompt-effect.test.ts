@@ -62,7 +62,7 @@ import { Ripgrep } from "../../src/file/ripgrep"
 import { Format } from "../../src/format"
 import { provideTmpdirInstance, provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { reply, TestLLMServer } from "../lib/llm-server"
+import { reply, raw, TestLLMServer } from "../lib/llm-server"
 
 // The runLoop may persist the memory paths reminder on a user
 // message; tests pinning user parts compare everything else.
@@ -74,7 +74,7 @@ function usersWithoutDirReminder(messages: MessageV2.WithParts[]) {
       parts: m.parts.filter((p) => !(p.type === "text" && p.text.includes(SESSION_MEMORY_DIR_MARKER))),
     }))
 }
-import { Inbox } from "../../src/inbox"
+import { Inbox, schedulerRef } from "../../src/inbox"
 import { Metrics } from "../../src/metrics"
 import { Database, eq, NotFoundError } from "../../src/storage"
 import { prefixCaptureRef } from "../../src/session/prefix-capture-ref"
@@ -374,7 +374,7 @@ function makeHttp(mcpService = mcp, providerLayer = ProviderSvc.defaultLayer) {
       Layer.provideMerge(trunc),
       Layer.provide(Instruction.defaultLayer),
       Layer.provide(SystemPrompt.defaultLayer),
-      Layer.provide(Inbox.defaultLayer),
+      Layer.provideMerge(Inbox.defaultLayer),
       Layer.provideMerge(deps),
     ),
   ).pipe(Layer.provide(summary))
@@ -1647,6 +1647,169 @@ it.live("[TP-R7-01] uncommitted-hint decision logs land in a WARN-level sink", (
     { git: true, config: providerCfg },
   ),
   15_000,
+)
+
+// Desktop prompt-assembly [TP-R8-20][TP-R14-20]: use actual model requests and stored messages.
+it.live("per-turn caller instructions replace and clear without thawing the stable prefix", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Per-turn context" })
+      yield* llm.text("legacy response")
+      yield* prompt.prompt({
+        sessionID: chat.id, agent: "build", model: ref,
+        system: "STABLE_BASE LEGACY_CUSTOM", systemMode: "replace-agent", harness: "default",
+        parts: [{ type: "text", text: "legacy query" }],
+      })
+      const contexts = ["CUSTOM_ALPHA", "CUSTOM_BETA", ""].map((instructions) => ({
+        system: "STABLE_BASE", systemMode: "replace-agent" as const, instructions,
+      }))
+      const snapshots: string[] = []
+      for (const [index, context] of contexts.entries()) {
+        yield* llm.text(`response ${index}`)
+        yield* prompt.prompt({
+          sessionID: chat.id, agent: "build", model: ref, noReply: true,
+          ...{ promptContext: context },
+          parts: [{ type: "text", text: `query ${index}` }],
+        })
+        // Rehydrate the submitted message through the normal loop, as on recovery.
+        yield* prompt.loop({ sessionID: chat.id })
+        const request = (yield* llm.inputs).at(-1)!
+        const systems = JSON.stringify((request.messages as Array<{ role: string; content: unknown }>).filter((m) => m.role === "system"))
+        expect(systems).toContain("STABLE_BASE")
+        expect(systems).not.toContain("LEGACY_CUSTOM")
+        for (const marker of ["CUSTOM_ALPHA", "CUSTOM_BETA"]) {
+          if (marker === context.instructions) expect(systems).toContain(marker)
+          else expect(systems).not.toContain(marker)
+        }
+        const rows = Database.use((db) => db.select().from(SessionPrefixSnapshotTable)
+          .where(eq(SessionPrefixSnapshotTable.session_id, chat.id)).all())
+        expect(rows).toHaveLength(2)
+        expect(JSON.stringify(rows)).not.toContain("CUSTOM_ALPHA")
+        expect(JSON.stringify(rows)).not.toContain("CUSTOM_BETA")
+        snapshots.push(JSON.stringify(rows.map((row) => ({ key: row.profile_key, system: row.system, revision: row.revision }))))
+      }
+      expect(new Set(snapshots).size).toBe(1)
+      const users = (yield* sessions.messages({ sessionID: chat.id })).filter((m) => m.info.role === "user")
+      expect(users.slice(1).map((m) => (m.info as MessageV2.User & { promptContext?: unknown }).promptContext)).toEqual(contexts)
+      expect(JSON.stringify(users.flatMap((m) => m.parts))).not.toContain("CUSTOM_")
+      // Legacy session state and historic input are unchanged by opt-in migration.
+      expect((yield* sessions.get(chat.id)).prompt?.system).toBe("STABLE_BASE LEGACY_CUSTOM")
+      yield* sessions.remove(chat.id)
+    }),
+    { git: true, config: providerCfg },
+  ),
+  30_000,
+)
+
+// [TP-R14-20] Recovery users must carry the same message-owned context.
+it.live("per-turn caller instructions survive automatic output continuation", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Continuation" })
+      yield* llm.push(raw({ chunks: [
+        { id: "first", choices: [{ delta: { role: "assistant", content: "partial" } }] },
+        { id: "first", choices: [{ delta: {}, finish_reason: "length" }] },
+      ] }))
+      yield* llm.text("finished")
+      const context = { system: "STABLE_BASE", systemMode: "replace-agent" as const, instructions: "CUSTOM_ALPHA" }
+      yield* prompt.prompt({ sessionID: chat.id, agent: "build", model: ref, promptContext: context, parts: [{ type: "text", text: "hello" }] })
+      const requests = yield* llm.inputs
+      expect(requests).toHaveLength(2)
+      for (const request of requests) {
+        const systems = (request.messages as Array<{ role: string; content: unknown }>).filter(m => m.role === "system")
+        expect(JSON.stringify(systems)).toContain("CUSTOM_ALPHA")
+      }
+      const users = (yield* sessions.messages({ sessionID: chat.id })).filter(m => m.info.role === "user")
+      expect(users).toHaveLength(2)
+      expect(users.map(m => (m.info as MessageV2.User).promptContext)).toEqual([context, context])
+      yield* sessions.remove(chat.id)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+// [TP-R14-20] Context follows the actual user/actor, including an overlapping send.
+it.live("per-turn caller instructions bind in-flight requests and exclude subagents", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const registry = yield* ActorRegistry.Service
+      const chat = yield* sessions.create({ title: "Isolation" })
+      const release = defer<void>()
+      yield* llm.hold("first response", release.promise)
+      const context = { system: "STABLE_BASE", systemMode: "replace-agent" as const, instructions: "CUSTOM_ALPHA" }
+      const running = yield* prompt.prompt({ sessionID: chat.id, agent: "build", model: ref, promptContext: context, parts: [{ type: "text", text: "first" }] }).pipe(Effect.forkChild)
+      yield* llm.wait(1)
+      yield* prompt.prompt({ sessionID: chat.id, agent: "build", model: ref, noReply: true, promptContext: { ...context, instructions: "CUSTOM_BETA" }, parts: [{ type: "text", text: "second" }] })
+      yield* llm.text("second response")
+      release.resolve()
+      yield* Fiber.join(running)
+      const requests = yield* llm.inputs
+      expect(requests).toHaveLength(2)
+      const systems = requests.map(request => JSON.stringify((request.messages as Array<{ role: string; content: unknown }>).filter(m => m.role === "system")))
+      expect(systems[0]).toContain("CUSTOM_ALPHA")
+      expect(systems[0]).not.toContain("CUSTOM_BETA")
+      expect(systems[1]).toContain("CUSTOM_BETA")
+      expect(systems[1]).not.toContain("CUSTOM_ALPHA")
+      yield* registry.register({ sessionID: chat.id, actorID: "child", mode: "subagent", parentActorID: "main", agent: "explore", description: "example", contextMode: "none", background: false, lifecycle: "ephemeral" })
+      yield* llm.text("child response")
+      yield* prompt.prompt({ sessionID: chat.id, agentID: "child", agent: "explore", model: ref, promptContext: context, parts: [{ type: "text", text: "child" }] })
+      const child = JSON.stringify((yield* llm.inputs).at(-1))
+      expect(child).not.toContain("CUSTOM_ALPHA")
+      expect(child).not.toContain("CUSTOM_BETA")
+      expect(child).not.toContain("STABLE_BASE")
+      yield* sessions.remove(chat.id)
+    }),
+    { git: true, config: providerCfg },
+  ),
+  30_000,
+)
+
+// [TP-R14-20] Synthetic actor wakes and compaction must inherit the same actor's context.
+it.live("per-turn caller instructions survive actor inbox and compaction boundaries", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const inbox = yield* Inbox.Service
+      const compaction = yield* SessionCompaction.Service
+      const chat = yield* sessions.create({ title: "Actor recovery" })
+      const context = { system: "STABLE_BASE", systemMode: "replace-agent" as const, instructions: "CUSTOM_ALPHA" }
+      yield* llm.text("first response")
+      yield* prompt.prompt({ sessionID: chat.id, agent: "build", model: ref, promptContext: context, parts: [{ type: "text", text: "first" }] })
+      yield* llm.text("inbox response")
+      // Agent input is admitted through the Controller; its synthetic user message is written at accept time.
+      const accepted = yield* inbox.accept(
+        { receiverSessionID: chat.id, receiverActorID: "main", senderActorID: "child", content: "Finished example work" },
+        { deferKick: true },
+      )
+      const scheduler = schedulerRef.current
+      if (!scheduler) throw new Error("Inbox scheduler missing")
+      yield* scheduler.kick({ sessionID: chat.id, agentID: "main" })
+      const receiptState = () =>
+        Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.id, accepted.inboxID)).get())?.state
+      while (["accepted", "claimed"].includes(receiptState() ?? "")) yield* Effect.sleep("10 millis")
+      expect(receiptState()).toBe("settled")
+      const request = (yield* llm.inputs).at(-1)!
+      expect(JSON.stringify(request.messages)).toContain("CUSTOM_ALPHA")
+      yield* compaction.create({ sessionID: chat.id, agent: "build", model: ref, auto: true })
+      const users = (yield* sessions.messages({ sessionID: chat.id })).filter(m => m.info.role === "user")
+      expect(users).toHaveLength(3)
+      expect(users.map(m => (m.info as MessageV2.User).promptContext)).toEqual([context, context, context])
+      const snapshot = yield* sessions.messages({ sessionID: chat.id })
+      yield* llm.text("summary")
+      expect(yield* compaction.process({ sessionID: chat.id, parentID: snapshot.at(-1)!.info.id, messages: snapshot, auto: true })).toBe("continue")
+      const compactRequest = (yield* llm.inputs).at(-1)!
+      expect(JSON.stringify((compactRequest.messages as Array<{ role: string }>).filter(m => m.role === "system"))).toContain("CUSTOM_ALPHA")
+      yield* sessions.remove(chat.id)
+    }),
+    { git: true, config: providerCfg },
+  ),
 )
 
 it.live("locks system and harness to the first user query", () =>
@@ -4807,6 +4970,9 @@ unix("shell captures stdout and stderr in completed tool output", () =>
           command: "printf out && printf err >&2",
         })
 
+        // [TP-R23-05] Direct shell execution uses the same admitted main lifecycle.
+        const registry = yield* ActorRegistry.Service
+        expect(yield* registry.get(chat.id, "main")).toMatchObject({ executionGeneration: "1", status: "idle", lastOutcome: "success" })
         expect(result.info.role).toBe("assistant")
         const tool = completedTool(result.parts)
         if (!tool) return
@@ -5818,6 +5984,8 @@ describe("trailing-user resume integration", () => {
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
           })
           const { user2 } = yield* seedTail(chat.id, dir, {})
+          const registry = yield* ActorRegistry.Service
+          const actorBefore = yield* registry.get(chat.id, "main")
           const before = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
           const toolsBefore = before.flatMap((m) => m.parts).filter((p) => p.type === "tool")
           // [C004] Deterministic plan→occupy→recheck window via shared seam.
@@ -5873,6 +6041,8 @@ describe("trailing-user resume integration", () => {
           expect(toolsAfter.map((p) => (p as { callID?: string }).callID)).toEqual(
             toolsBefore.map((p) => (p as { callID?: string }).callID),
           )
+          // [TP-R23-05] Rejected admission cannot allocate or settle an execution.
+          expect(yield* registry.get(chat.id, "main")).toEqual(actorBefore)
           expect(yield* llm.calls).toBe(0)
         }),
         { git: true, config: providerCfg },

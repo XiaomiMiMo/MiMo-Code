@@ -200,6 +200,7 @@ import {
 import { mcpToolSearchMode, usesGPTToolset } from "@/tool/gpt"
 import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
+import { PromptContext, promptForUser } from "./prompt-context"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -738,10 +739,11 @@ export const layer = Layer.effect(
         // parity, so fall through to empty rather than emit a divergent date.
         const captureSession = yield* sessions.get(input.sessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
         if (!captureSession) return empty
-        const capturePrompt = yield* sessions.resolvePrompt({ sessionID: input.sessionID })
+        const captureDefault = yield* sessions.resolvePrompt({ sessionID: input.sessionID })
         const captureMessages = input.msgs as MessageV2.WithParts[]
         const captureUser = captureMessages.findLast((message) => message.info.role === "user")
         if (!captureUser || captureUser.info.role !== "user") return empty
+        const capturePrompt = promptForUser(captureDefault, captureUser.info)
         const runtimePermission = Agent.runtimePermission(ag, captureSession.permission)
         const key = SessionPrefixSnapshot.profileKey({
           providerID: model.providerID,
@@ -884,9 +886,13 @@ export const layer = Layer.effect(
             const current = yield* actorRegistry.get(sessionID, actor.actorID)
             if (!current || current.status === "idle") return
             yield* actorRegistry.updateStatus(sessionID, actor.actorID, {
+              expectedGeneration: actor.executionGeneration ?? null,
               status: "idle",
               lastOutcome: "cancelled",
             })
+            const settled = yield* actorRegistry.get(sessionID, actor.actorID)
+            if (!settled || settled.executionGeneration !== actor.executionGeneration || settled.status !== "idle"
+              || settled.lastOutcome !== "cancelled") return
             // Registry-only path: no live fiber → no notifyTerminal. Materialize
             // a cancelled notification into parent history so chat inline can
             // show terminal state (wake still false — no LLM turn).
@@ -937,11 +943,13 @@ export const layer = Layer.effect(
       if (!boundary) return false
 
       const boundaryMsg = input.msgs.find((m) => m.info.id === boundary)
+      const contextUser = input.msgs.findLast((m) => m.info.role === "user")
       const inserted = yield* checkpoint
         .insertRebuildBoundary({
           sessionID: input.sessionID,
           boundary,
           lastMessageInfo: computeLastMessageInfo(input.msgs.map((m) => m.info)),
+          promptContext: contextUser?.info.role === "user" ? contextUser.info.promptContext : undefined,
           // Freeze the digest range at insert time: only this tail is eligible
           // for activity-log collapse. Auto rebuild mid-tool-loop keeps later
           // tool rounds live; manual rebuild digests the whole idle tail.
@@ -2657,6 +2665,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agent: lastUser.agent,
         model: lastUser.model,
         task_id: lastUser.task_id,
+        promptContext: lastUser.promptContext,
       }
       yield* sessions.updateMessage(summaryUserMsg)
       yield* sessions.updatePart({
@@ -2962,6 +2971,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           modelID: model.modelID,
           variant,
         },
+        promptContext: input.promptContext,
         system: input.system,
         systemMode: input.systemMode,
         harness: input.harness,
@@ -3407,17 +3417,22 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const prompt = yield* sessions.resolvePrompt({
         sessionID: input.sessionID,
         ...(parts.some((part) => !("synthetic" in part) || !part.synthetic)
-          ? { fallback: { system: input.system, systemMode: input.systemMode, harness: input.harness } }
+          ? {
+              fallback: {
+                system: input.promptContext?.system ?? input.system,
+                systemMode: input.promptContext?.systemMode ?? input.systemMode,
+                harness: input.harness,
+              },
+            }
           : {}),
       })
       let message: MessageV2.User = {
         ...info,
         // Attachment-only prompts can be all-synthetic and skip the resolvePrompt
         // fallback (so they do not pin session.prompt). Still keep the caller
-        // system on the message so attachment notes are not dropped.
-        system: prompt.system ?? input.system,
-        systemMode: prompt.systemMode,
-        harness: prompt.harness,
+        // system on the message so attachment notes are not dropped. A
+        // message-owned promptContext overrides both for this turn only.
+        ...promptForUser({ ...prompt, system: prompt.system ?? input.system }, info),
       }
 
       HostModelTransport.userMessage({ sessionID: input.sessionID, userMessageID: message.id, parts })
@@ -4307,6 +4322,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                       agent: agentName,
                       model,
                       task_id: newerUserOpt.value.info.task_id,
+                      promptContext: newerUserOpt.value.info.promptContext,
                     } as MessageV2.User)
                     yield* sessions.updatePart({
                       id: PartID.ascending(),
@@ -4415,6 +4431,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             tools: input.lastUser.tools,
             format: input.lastUser.format,
             task_id: input.lastUser.task_id,
+            promptContext: input.lastUser.promptContext,
             time: { created: Date.now() },
           })
           yield* sessions.updatePart({
@@ -4526,6 +4543,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             tools: lastUser.tools,
             format: lastUser.format,
             task_id: lastUser.task_id,
+            promptContext: lastUser.promptContext,
             time: { created: Date.now() },
           })
           yield* sessions.updatePart({
@@ -4606,6 +4624,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             tools: input.lastUser.tools,
             format: input.lastUser.format,
             task_id: input.lastUser.task_id,
+            promptContext: input.lastUser.promptContext,
             time: { created: Date.now() },
           })
           yield* sessions.updatePart({
@@ -4663,6 +4682,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // Must carry format so the next iteration re-registers the StructuredOutput tool.
             format: input.lastUser.format,
             task_id: input.lastUser.task_id,
+            promptContext: input.lastUser.promptContext,
             time: { created: Date.now() },
           })
           yield* sessions.updatePart({
@@ -4711,6 +4731,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             tools: input.lastUser.tools,
             format: input.lastUser.format,
             task_id: input.lastUser.task_id,
+            promptContext: input.lastUser.promptContext,
             time: { created: Date.now() },
           })
           yield* sessions.updatePart({
@@ -4859,6 +4880,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 tools: lastUser.tools,
                 format: lastUser.format,
                 task_id: lastUser.task_id,
+                promptContext: lastUser.promptContext,
                 time: { created: Date.now() },
               })
               yield* sessions.updatePart({
@@ -5089,13 +5111,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          lastUser = {
-            ...lastUser,
-            task_id,
-            system: sessionPrompt.system,
-            systemMode: sessionPrompt.systemMode,
-            harness: sessionPrompt.harness,
-          }
+          const turnPrompt = promptForUser(sessionPrompt, lastUser)
+          lastUser = { ...lastUser, task_id, ...turnPrompt }
           const usageRecovered =
             !!lastFinished &&
             msgs.some(
@@ -5648,7 +5665,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                       agentID: lastUser.agentID,
                     })
                     yield* actorRegistry
-                      .updateStatus(sessionID, lastUser.agentID!, { status: "idle", lastOutcome: "failure", lastError: "missing fork context" })
+                      .updateStatus(sessionID, lastUser.agentID!, {
+                        expectedGeneration: actorRecord?.executionGeneration ?? null,
+                        status: "idle",
+                        lastOutcome: "failure",
+                        lastError: "missing fork context",
+                      })
                       .pipe(Effect.ignore)
                     // Propagate failure at the source so resume/send/runTurn share one
                     // terminal semantic (C07) — do not return a clean break that outer
@@ -5849,16 +5871,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   modelID: model.id,
                   agent: agent.name,
                   agentID: lastUser.agentID ?? "main",
-                  harness: sessionPrompt.harness,
-                  systemMode: sessionPrompt.systemMode,
-                  system: sessionPrompt.system ?? "",
+                  harness: turnPrompt.harness,
+                  systemMode: turnPrompt.systemMode,
+                  system: turnPrompt.system ?? "",
                   permission: runtimePermission,
                 })
                 const frozen = yield* SessionPrefixSnapshot.get(sessionID, prefixProfileKey)
                 const currentAdditions = Effect.fnUntraced(function* () {
                   const [env, skills, instructions] = yield* Effect.all([
                     Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
-                      ? sys.environment(model, session.time.created, sessionPrompt.harness)
+                      ? sys.environment(model, session.time.created, turnPrompt.harness)
                       : Effect.succeed([]),
                     sys.skills({ ...agent, permission: runtimePermission }),
                     instruction.system().pipe(Effect.orDie),
@@ -5897,7 +5919,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   msgs,
                   additions: frozen ? [] : yield* currentAdditions(),
                   prebuiltSystem: frozen?.system,
-                  prompt: sessionPrompt,
+                  prompt: turnPrompt,
                   // Rebuild tails collapse into an activity log so hollow
                   // tool_results never look like a live transcript (anti-hallucination).
                   collapseCheckpointTail: true,
@@ -5912,7 +5934,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     const snapshot = yield* SessionPrefixSnapshot.pin({
                       sessionID,
                       profileKey: prefixProfileKey,
-                      system: initialPrefix.system,
+                      system: initialPrefix.stableSystem,
                       toolsHash: currentToolsHash,
                       tools: currentTools,
                       watermarkMessageID: lastUser.id,
@@ -5927,7 +5949,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     languageProvider: (yield* provider.getLanguage(model)).provider,
                     msgs,
                     additions: yield* currentAdditions(),
-                    prompt: sessionPrompt,
+                    prompt: turnPrompt,
                     collapseCheckpointTail: true,
                   }).pipe(
                     Effect.provideService(LLM.Service, llm),
@@ -5936,7 +5958,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   const snapshot = yield* SessionPrefixSnapshot.rotate({
                     sessionID,
                     profileKey: prefixProfileKey,
-                    system: prefix.system,
+                    system: prefix.stableSystem,
                     toolsHash: currentToolsHash,
                     tools: currentTools,
                     watermarkMessageID: lastUser.id,
@@ -6262,6 +6284,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   tools: lastUser.tools,
                   format: lastUser.format,
                   task_id: lastUser.task_id,
+                  promptContext: lastUser.promptContext,
                   time: { created: Date.now() },
                 })
                 yield* sessions.updatePart({
@@ -6313,15 +6336,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       },
     )
 
+    // The Runner owns admission; this decorator runs only for the admitted main
+    // execution, not callers that merely join it or model/hook steps within it.
+    const mainActorTurn = (sessionID: SessionID, work: Effect.Effect<MessageV2.WithParts>) =>
+      runTurn(sessionID, "main", work, undefined, (final) => {
+        const error = final.info.role === "assistant" ? final.info.error : undefined
+        return { lastOutcome: error ? error.name === "MessageAbortedError" ? "cancelled" : "failure" : "success",
+          ...(error && error.name !== "MessageAbortedError" ? { lastError: sessionErrorText(error) } : {}) }
+      }).pipe(Effect.provideService(ActorRegistry.Service, actorRegistry))
+
     const executeLoop = Effect.fn("SessionPrompt.executeLoop")(function* (
       input: z.infer<typeof LoopInput>,
       prepare: Effect.Effect<PreparedLoop | undefined>,
     ) {
       const agentID = input.agentID ?? "main"
       if (!input.notifyParentOnComplete || agentID === "main") {
+        // Runner joiners never evaluate this work; an empty claim admits nothing,
+        // so only a prepared main execution allocates an Actor generation.
         const work = Effect.acquireUseRelease(
           prepare,
-          (prepared) => prepared?.work ?? lastAssistant(input.sessionID, agentID),
+          (prepared) => prepared
+            ? agentID === "main" ? mainActorTurn(input.sessionID, prepared.work) : prepared.work
+            : lastAssistant(input.sessionID, agentID),
           (prepared, exit) => prepared?.claimOwner
             ? settleClaims({ sessionID: input.sessionID, agentID }, prepared.claimOwner, exit) : Effect.void,
         )
@@ -6423,7 +6459,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return yield* state.startShell(
           input.sessionID,
           lastAssistant(input.sessionID),
-          guard.pipe(Effect.andThen(shellImpl(input))),
+          guard.pipe(Effect.andThen(mainActorTurn(input.sessionID, shellImpl(input)))),
         )
       },
     )
@@ -6737,6 +6773,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         parts,
         titleLocale: input.titleLocale,
         variant: input.variant,
+        promptContext: input.promptContext,
         system: input.system,
         systemMode: input.systemMode,
         harness: input.harness,
@@ -6969,7 +7006,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         ),
       )
 
-      const work = input.guard.pipe(Effect.andThen(Effect.gen(function* () {
+      const resumed = Effect.gen(function* () {
         if (activation) yield* Effect.promise(activation.beforeWork)
         const afterAdmission = ResumeTestHooks.afterAdmissionBeforeCleanup
         if (afterAdmission) yield* afterAdmission()
@@ -6995,7 +7032,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }).pipe(
         Effect.provideService(HostModelTransport.ExecutionScope, execution),
         Effect.onExit((exit) => Deferred.succeed(outcome, exit).pipe(Effect.asVoid)),
-      )))
+      )
+      // Runner admission (admit) and the stale-lease guard run first, so a
+      // rejected resume never allocates an Actor generation.
+      const work = input.guard.pipe(Effect.andThen(
+        input.agentID === "main" ? mainActorTurn(input.sessionID, resumed) : resumed,
+      ))
 
 
       // [R003] Exclusive admission: never join an unrelated run (ensureRunning would).
@@ -7631,6 +7673,7 @@ export const PromptInput = z.object({
     .describe("@deprecated tools and permissions have been merged, you can set permissions on the session itself now"),
   format: MessageV2.Format.optional(),
   titleLocale: z.string().optional().describe("BCP 47 locale used for automatic title generation."),
+  promptContext: PromptContext.optional(),
   system: z
     .string()
     .optional()
@@ -7735,6 +7778,7 @@ export const CommandInput = z.object({
   command: z.string(),
   titleLocale: z.string().optional().describe("BCP 47 locale used for automatic title generation."),
   variant: z.string().optional(),
+  promptContext: PromptContext.optional(),
   system: z
     .string()
     .optional()

@@ -1,3 +1,4 @@
+import type { ActorOutcome } from "./schema"
 import { Cause, Effect, Exit } from "effect"
 import { ActorRegistry } from "@/actor/registry"
 import type { SessionID, MessageID } from "@/session/schema"
@@ -7,6 +8,7 @@ export const runTurn = <A, E>(
   actorID: string,
   work: Effect.Effect<A, E>,
   settle?: (exit: Exit.Exit<A, E>) => Effect.Effect<MessageID | undefined>,
+  outcome?: (value: A) => { lastOutcome: ActorOutcome; lastError?: string },
 ): Effect.Effect<A, E, ActorRegistry.Service> =>
   // Wrap the entire turn in Effect.uninterruptible so that status cleanup
   // always runs even when the fiber is externally interrupted (Fiber.interrupt).
@@ -14,7 +16,9 @@ export const runTurn = <A, E>(
   Effect.uninterruptible(
     Effect.gen(function* () {
       const reg = yield* ActorRegistry.Service
-      yield* reg.updateStatus(sessionID, actorID, { status: "running" }).pipe(Effect.ignore)
+      // undefined: no registry row (legacy behaviour) — work still runs and
+      // settlement only touches rows that still have no generation.
+      const generation = yield* reg.beginExecution(sessionID, actorID)
       // Run work interruptibly so it can be cancelled by Fiber.interrupt.
       // Effect.exit captures the outcome without re-raising, letting us
       // write status unconditionally before propagating the cause.
@@ -31,8 +35,10 @@ export const runTurn = <A, E>(
         yield* reg
           .updateStatus(sessionID, actorID, {
             status: "idle",
+            expectedGeneration: generation ?? null,
             lastOutcome: "success",
             lastError: undefined,
+            ...outcome?.(exit.value),
             resultMessageID,
           })
           .pipe(Effect.ignore)
@@ -43,6 +49,7 @@ export const runTurn = <A, E>(
       yield* reg
         .updateStatus(sessionID, actorID, {
           status: "idle",
+          expectedGeneration: generation ?? null,
           lastOutcome: cancelled ? "cancelled" : "failure",
           lastError: cancelled ? undefined : extractErrorString(cause),
           resultMessageID,

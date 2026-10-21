@@ -27,6 +27,7 @@ function fromTaskRow(row: TaskRow): Task {
     status: row.status,
     summary: row.summary,
     owner: row.owner ?? undefined,
+    source_call_id: row.source_call_id ?? undefined,
     created_at: row.created_at,
     last_event_at: row.last_event_at,
     ended_at: row.ended_at ?? undefined,
@@ -62,6 +63,7 @@ export interface Interface {
     summary: string
     parent_id?: string
     owner?: string
+    source_call_id?: string
   }) => Effect.Effect<Task>
 
   readonly list: (input: {
@@ -80,7 +82,7 @@ export interface Interface {
   readonly abandon: (input: { session_id: SessionID; id: string; event_summary?: string }) => Effect.Effect<Task>
   readonly rename: (input: { session_id: SessionID; id: string; summary: string }) => Effect.Effect<Task>
 
-  readonly start: (input: { session_id: SessionID; id: string; owner?: string; event_summary?: string }) => Effect.Effect<Task>
+  readonly start: (input: { session_id: SessionID; id: string; owner?: string; source_call_id?: string; event_summary?: string }) => Effect.Effect<Task>
 
   readonly events: (input: { session_id: SessionID; task_id: string }) => Effect.Effect<TaskEvent[]>
 }
@@ -131,6 +133,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       summary: string
       parent_id?: string
       owner?: string
+      source_call_id?: string
     }) {
       const now = Date.now()
       const siblings = Database.use((db) =>
@@ -157,6 +160,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
         status: "open",
         summary: input.summary,
         owner: input.owner ?? null,
+        source_call_id: input.source_call_id ?? null,
         created_at: now,
         last_event_at: now,
         ended_at: null,
@@ -269,6 +273,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       session_id: SessionID
       id: string
       owner?: string
+      source_call_id?: string
       event_summary?: string
     }) {
       const now = Date.now()
@@ -297,7 +302,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       Database.use((db) =>
         db
           .update(TaskTable)
-          .set({ status: "in_progress", owner: owner ?? null, last_event_at: now })
+          .set({ status: "in_progress", owner: owner ?? null, last_event_at: now,
+            source_call_id: input.source_call_id ?? (owner === existing.owner ? existing.source_call_id : null) ?? null })
           .where(and(eq(TaskTable.session_id, input.session_id), eq(TaskTable.id, input.id)))
           .run(),
       )

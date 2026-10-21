@@ -118,6 +118,7 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
           summary: op.summary,
           parent_id: op.parent_id || undefined,
           owner: ctx.actorID ?? ctx.agent,
+          source_call_id: sessionID === ctx.sessionID ? ctx.callID : undefined,
         })
         return {
           title: `Task created: ${t.id}`,
@@ -170,7 +171,8 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
         const existing = yield* reg.get({ session_id: sessionID, id: op.id })
         const isSubagent = ctx.actorID !== undefined && ctx.actorID !== "main"
         const keepOwner = isSubagent && existing?.owner != null && existing.owner !== caller
-        const result = yield* reg.start({ session_id: sessionID, id: op.id, owner: keepOwner ? undefined : caller, event_summary: op.event_summary })
+        const result = yield* reg.start({ session_id: sessionID, id: op.id, owner: keepOwner ? undefined : caller,
+          source_call_id: !keepOwner && sessionID === ctx.sessionID ? ctx.callID : undefined, event_summary: op.event_summary })
         return {
           title: `Task ${op.id}: ${result.status}`,
           output: `start → ${result.status}`,

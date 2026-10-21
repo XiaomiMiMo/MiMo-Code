@@ -78,7 +78,7 @@ describe("v5 verify (visual)", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* actorReg.updateStatus(sess.id, "explorer-1", { status: "running" })
+        yield* actorReg.updateStatus(sess.id, "explorer-1", { expectedGeneration: null, status: "running" })
 
         // Seed v5 single-file checkpoint artifacts on disk. Focus is on t2
         // (started last), so seed progress.md under t2's task dir.

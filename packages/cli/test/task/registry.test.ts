@@ -169,3 +169,21 @@ describe("TaskRegistry.list", () => {
     ),
   )
 })
+
+// [TP-R24-04] Association follows actual creation/start, never a previous owner.
+it.live("preserves explicit task source and clears it on an unbound owner handoff", () =>
+  provideTmpdirInstance(() => Effect.gen(function* () {
+    const reg = yield* TaskRegistry.Service
+    const sess = yield* seedSession()
+    const task = yield* reg.create({ session_id: sess.id, summary: "example", owner: "main", source_call_id: "create-call" })
+    expect(task.source_call_id).toBe("create-call")
+    expect(yield* reg.start({ session_id: sess.id, id: task.id, owner: "worker-1", source_call_id: "spawn-call" }))
+      .toMatchObject({ owner: "worker-1", source_call_id: "spawn-call" })
+    expect(yield* reg.start({ session_id: sess.id, id: task.id, owner: "worker-1" }))
+      .toMatchObject({ source_call_id: "spawn-call" })
+    const reassigned = yield* reg.start({ session_id: sess.id, id: task.id, owner: "worker-2" })
+    expect(reassigned.owner).toBe("worker-2")
+    expect(reassigned.source_call_id).toBeUndefined()
+    expect((yield* reg.get({ session_id: sess.id, id: task.id }))?.source_call_id).toBeUndefined()
+  })),
+)

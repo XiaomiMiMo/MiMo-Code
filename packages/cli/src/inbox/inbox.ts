@@ -105,6 +105,10 @@ export const layer = Layer.effect(
         receiverActorID: input.receiverActorID,
       }))
       const seed = yield* resolveDrainSeed(sessions, reg, input.receiverSessionID, input.receiverActorID)
+      // Synthetic wake input continues the receiver's latest user turn context.
+      const contextUser = yield* sessions.findMessage(input.receiverSessionID, (m) => m.info.role === "user", {
+        agentID: input.receiverActorID,
+      })
       const id = MessageID.ascending()
       const now = Date.now()
       const type = input.type ?? "text"
@@ -125,6 +129,9 @@ export const layer = Layer.effect(
           role: "user",
           time: { created: now },
           agent: seed?.agent ?? "system",
+          promptContext: Option.isSome(contextUser) && contextUser.value.info.role === "user"
+            ? contextUser.value.info.promptContext
+            : undefined,
           ...(input.senderSessionID || input.senderActorID ? { provenance: {
             source: "agent" as const,
             senderSessionID: input.senderSessionID, senderActorID: input.senderActorID,

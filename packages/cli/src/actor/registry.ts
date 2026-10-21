@@ -1,5 +1,5 @@
 import { Effect, Layer, Context } from "effect"
-import { Database, inArray, eq, and, ne, sql } from "@/storage"
+import { Database, inArray, eq, and, ne, sql, isNull } from "@/storage"
 import { Bus } from "@/bus"
 import type { SessionID, MessageID } from "@/session/schema"
 import { ActorRegistryTable } from "./actor.sql"
@@ -14,10 +14,13 @@ import type {
   ToolWhitelist,
   Liveness,
 } from "./schema"
-import { deriveLiveness, DEFAULT_LIVENESS_ABANDON_MS } from "./schema"
+import { ActorSource, deriveLiveness, DEFAULT_LIVENESS_ABANDON_MS } from "./schema"
 import * as Events from "./events"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { randomUUID } from "node:crypto"
+import { Log } from "@/util"
+
+const log = Log.create({ service: "actor.registry" })
 
 // Identifies the registering process; a different token does not prove termination.
 const PROCESS_INSTANCE_ID = randomUUID()
@@ -60,6 +63,10 @@ function fromRow(row: ActorRow): Actor {
     actorID: row.actor_id,
     mode: row.mode,
     parentActorID: row.parent_actor_id ?? undefined,
+    sourceSessionID: row.source_session_id ?? undefined,
+    sourceCallID: row.source_call_id ?? undefined,
+    sourceTurnID: row.source_turn_id ?? undefined,
+    executionGeneration: row.execution_generation == null ? undefined : String(row.execution_generation),
     status: row.status,
     lastOutcome: row.last_outcome ?? undefined,
     ...(row.result_message_id ? { resultMessageID: row.result_message_id } : {}),
@@ -88,6 +95,7 @@ export interface Interface {
     actorID: string
     mode: SpawnMode
     parentActorID?: string
+    source?: ActorSource
     agent: string
     description: string
     contextMode: ContextMode
@@ -97,6 +105,9 @@ export interface Interface {
     tools?: ToolWhitelist
   }) => Effect.Effect<Actor>
 
+  /** Allocates the next execution generation; `undefined` when the actor has no registry row. */
+  readonly beginExecution: (sessionID: SessionID, actorID: string) => Effect.Effect<string | undefined>
+
   readonly updateStatus: (
     sessionID: SessionID,
     actorID: string,
@@ -105,6 +116,8 @@ export interface Interface {
       lastOutcome?: ActorOutcome | undefined
       lastError?: string | undefined
       resultMessageID?: MessageID | undefined
+      /** Required: the generation the caller observed; `null` only matches rows without one. */
+      expectedGeneration: string | null
     },
   ) => Effect.Effect<void>
   readonly failOrphan: (
@@ -159,6 +172,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       actorID: string
       mode: SpawnMode
       parentActorID?: string
+      source?: ActorSource
       agent: string
       description: string
       contextMode: ContextMode
@@ -168,11 +182,16 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       tools?: ToolWhitelist
     }) {
       const now = Date.now()
+      const source = input.source ? ActorSource.parse(input.source) : undefined
       const row = {
         session_id: input.sessionID,
         actor_id: input.actorID,
         mode: input.mode,
         parent_actor_id: input.parentActorID ?? null,
+        source_session_id: source?.sourceSessionID ?? null,
+        source_call_id: source?.sourceCallID ?? null,
+        source_turn_id: source?.sourceTurnID ?? null,
+        execution_generation: null,
         status: "pending" as const,
         last_outcome: null,
         result_message_id: null,
@@ -201,6 +220,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         actorID: input.actorID,
         mode: input.mode,
         parentActorID: input.parentActorID,
+        ...source,
         description: input.description,
         agent: input.agent,
         background: input.background,
@@ -216,6 +236,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         lastOutcome?: ActorOutcome | undefined
         lastError?: string | undefined
         resultMessageID?: MessageID | undefined
+        expectedGeneration: string | null
       },
     ) {
       const now = Date.now()
@@ -233,37 +254,65 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       if (patch.lastOutcome !== undefined) set.last_outcome = patch.lastOutcome
       if (patch.lastError !== undefined) set.last_error = patch.lastError
       else if (patch.lastOutcome !== undefined && patch.lastOutcome !== "failure") set.last_error = null
-      yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .update(ActorRegistryTable)
-            .set(set)
-            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
-            .run(),
-        ),
-      )
-      // Re-read so the event payload reflects committed row values (not the
-      // sparse patch). Skip publish if the row vanished between UPDATE and
-      // SELECT — a dropped event beats a misleading one.
-      const row = yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .select()
-            .from(ActorRegistryTable)
-            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
-            .get(),
-        ),
-      )
-      if (!row) return
-      yield* bus.publish(Events.ActorStatusChanged, {
-        sessionID,
-        actorID,
-        status: row.status,
-        ...(row.last_outcome ? { lastOutcome: row.last_outcome } : {}),
-        turnCount: row.turn_count,
-        lastTurnTime: row.last_turn_time,
-        ...(row.last_error ? { error: row.last_error } : {}),
-      })
+      const generation = patch.expectedGeneration === null ? null : Number(patch.expectedGeneration)
+      if (generation !== null && (!Number.isSafeInteger(generation) || generation <= 0
+        || String(generation) !== patch.expectedGeneration)) throw new Error("Invalid actor execution generation")
+      const row = yield* Effect.sync(() => Database.use((db) => db.update(ActorRegistryTable).set(set)
+        .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID),
+          generation === null ? isNull(ActorRegistryTable.execution_generation) : eq(ActorRegistryTable.execution_generation, generation)))
+        .returning().get()))
+      if (row) yield* publishStatus(row)
+    })
+
+    const publishStatus = (row: ActorRow) => bus.publish(Events.ActorStatusChanged, {
+      sessionID: row.session_id,
+      actorID: row.actor_id,
+      status: row.status,
+      ...(row.source_session_id ? { sourceSessionID: row.source_session_id } : {}),
+      ...(row.source_call_id ? { sourceCallID: row.source_call_id } : {}),
+      ...(row.source_turn_id ? { sourceTurnID: row.source_turn_id } : {}),
+      ...(row.execution_generation == null ? {} : { executionGeneration: String(row.execution_generation) }),
+      ...(row.last_outcome ? { lastOutcome: row.last_outcome } : {}),
+      turnCount: row.turn_count,
+      lastTurnTime: row.last_turn_time,
+      ...(row.last_error ? { error: row.last_error } : {}),
+    })
+
+    const beginExecution = Effect.fn("ActorRegistry.beginExecution")(function* (sessionID: SessionID, actorID: string) {
+      // Old/imported sessions can predate root registration. The session itself
+      // proves the canonical main identity; never synthesize a missing child.
+      if (actorID === "main") {
+        yield* Effect.sync(() => Database.use((db) => db.run(sql`
+          INSERT INTO actor_registry
+            (session_id, actor_id, mode, status, lifecycle, agent, description,
+             context_mode, background, tools, last_turn_time, turn_count,
+             instance_id, time_created, time_updated)
+          SELECT id, 'main', 'main', 'pending', 'persistent', 'main', 'main agent',
+            'full', 0, '"INHERIT"', time_created, 0, ${instanceID}, time_created, time_updated
+          FROM session WHERE id = ${sessionID}
+          ON CONFLICT(session_id, actor_id) DO NOTHING
+        `)))
+      }
+      const row = yield* Effect.sync(() => Database.use((db) => db.update(ActorRegistryTable).set({
+        execution_generation: sql`COALESCE(${ActorRegistryTable.execution_generation}, 0) + 1`,
+        status: "running", result_message_id: null, time_completed: null,
+        instance_id: instanceID, time_updated: Date.now(),
+      }).where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID),
+        sql`COALESCE(${ActorRegistryTable.execution_generation}, 0) < 9007199254740991`))
+        .returning().get()))
+      if (!row) {
+        const exists = yield* Effect.sync(() => Database.use((db) => db.select({ actor_id: ActorRegistryTable.actor_id })
+          .from(ActorRegistryTable)
+          .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID))).get()))
+        // A row that exists but cannot advance (generation overflow) is a real fault.
+        if (exists) throw new Error("Actor execution could not be admitted")
+        // No registry row: run unversioned like legacy runTurn instead of failing the work.
+        log.warn("actor execution has no registry row; running without a generation", { sessionID, actorID })
+        return undefined
+      }
+      if (row.execution_generation == null) throw new Error("Actor execution could not be admitted")
+      yield* publishStatus(row)
+      return String(row.execution_generation)
     })
 
     const failOrphan = Effect.fn("ActorRegistry.failOrphan")(function* (
@@ -296,15 +345,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       })
       if (result === "retry") return "retry" as const
       if (!result) return "terminal" as const
-      yield* bus.publish(Events.ActorStatusChanged, {
-        sessionID,
-        actorID,
-        status: result.status,
-        lastOutcome: "failure",
-        turnCount: result.turn_count,
-        lastTurnTime: result.last_turn_time,
-        error,
-      })
+      // Same payload shape as conditional settlement, including source and generation.
+      yield* publishStatus(result)
       return "failed" as const
     })
 
@@ -540,6 +582,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
 
     return Service.of({
       register,
+      beginExecution,
       updateStatus,
       failOrphan,
       updateTurn,

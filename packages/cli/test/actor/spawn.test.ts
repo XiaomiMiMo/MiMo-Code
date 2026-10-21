@@ -859,7 +859,7 @@ describe("SessionPrompt.cancel — process-group kill", () => {
             background: true,
             lifecycle: "ephemeral",
           })
-          yield* reg.updateStatus(parent.id, "pending-1", { status: "pending" })
+          yield* reg.updateStatus(parent.id, "pending-1", { expectedGeneration: null, status: "pending" })
 
           yield* actor.cancel(parent.id, "pending-1", "forced")
 

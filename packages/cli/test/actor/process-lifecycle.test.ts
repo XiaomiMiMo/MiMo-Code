@@ -7,7 +7,8 @@ const reportSchema = z.object({
   kind: z.enum(["ready", "result", "finished", "error"]),
   sessionID: z.string().optional(),
   message: z.string().optional(),
-  actor: z.object({ status: z.string(), lastOutcome: z.string().optional(), lastError: z.string().optional(), resultMessageID: z.string().optional() }).optional(),
+  previousGeneration: z.string().optional(),
+  actor: z.object({ executionGeneration: z.string().optional(), sourceSessionID: z.string().optional(), sourceCallID: z.string().optional(), sourceTurnID: z.string().optional(), status: z.string(), lastOutcome: z.string().optional(), lastError: z.string().optional(), resultMessageID: z.string().optional() }).optional(),
   waited: z.object({ status: z.string(), lastOutcome: z.string().optional(), result: z.string().optional(), error: z.string().optional() }).optional(),
 })
 
@@ -98,4 +99,27 @@ test("a persisted failure delivery is read by a fresh operating-system process",
     expect(result.waited?.error).toContain("controlled failure")
     expect(await reader.child.exited).toBe(0)
   } finally { if (reader) await stop(reader.child); await stop(writer.child) }
+}, 30000)
+
+// [TP-R23-05] A real process restart preserves both source and next-generation allocation.
+test("recovery in a fresh process advances the durable generation and preserves source", async () => {
+  await using dir = await tmpdir({ git: true })
+  const owner = launch("hold", dir.path)
+  let inspector: ReturnType<typeof launch> | undefined
+  let resumed: ReturnType<typeof launch> | undefined
+  try {
+    const ready = await owner.first
+    await stop(owner.child)
+    inspector = launch("inspect", dir.path, ready.sessionID)
+    const saved = await inspector.first
+    expect(await inspector.child.exited).toBe(0)
+    expect(saved.actor).toMatchObject({ executionGeneration: "1", sourceSessionID: ready.sessionID, sourceCallID: "process-spawn" })
+    expect(saved.actor?.sourceTurnID).toBeDefined()
+    resumed = launch("resume", dir.path, ready.sessionID)
+    const result = await resumed.first
+    expect(await resumed.child.exited).toBe(0)
+    expect(result.previousGeneration).toBe("1")
+    expect(result.actor).toMatchObject({ executionGeneration: "2", status: "idle", lastOutcome: "success",
+      sourceSessionID: saved.actor?.sourceSessionID, sourceCallID: saved.actor?.sourceCallID, sourceTurnID: saved.actor?.sourceTurnID })
+  } finally { if (inspector) await stop(inspector.child); if (resumed) await stop(resumed.child); await stop(owner.child) }
 }, 30000)

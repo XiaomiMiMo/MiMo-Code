@@ -1,3 +1,5 @@
+import { promptForUser } from "./prompt-context"
+import { appendTurnInstructions } from "./prompt-instructions"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import * as Session from "./session"
@@ -12,7 +14,7 @@ import { Agent, resolveStoredAgent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { Effect, Layer, Context } from "effect"
+import { Effect, Layer, Context, Option } from "effect"
 import { InstanceState } from "@/effect"
 import { isOverflow as overflow } from "./overflow"
 import { makeRuntime } from "@/effect/run-service"
@@ -347,14 +349,15 @@ export const layer: Layer.Layer<
       const parentAgent = yield* resolveStoredAgent(agents, requestUser.info.agent)
       const parentModel = yield* provider.getModel(requestUser.info.model.providerID, requestUser.info.model.modelID)
       const parentSession = yield* session.get(input.sessionID)
+      const parentPrompt = promptForUser(promptConfig, requestUser.info)
       const profileKey = SessionPrefixSnapshot.profileKey({
         providerID: parentModel.providerID,
         modelID: parentModel.id,
         agent: parentAgent.name,
         agentID: requestUser.info.agentID ?? "main",
-        harness: promptConfig.harness,
-        systemMode: promptConfig.systemMode,
-        system: promptConfig.system ?? "",
+        harness: parentPrompt.harness,
+        systemMode: parentPrompt.systemMode,
+        system: parentPrompt.system ?? "",
         permission: Agent.runtimePermission(parentAgent, parentSession.permission),
       })
       const frozen = yield* SessionPrefixSnapshot.get(input.sessionID, profileKey)
@@ -430,12 +433,13 @@ export const layer: Layer.Layer<
         role: "user" as const,
         content: [{ type: "text" as const, text: prompt }],
       }
+      const requestSystem = yield* appendTurnInstructions(frozen?.system ?? [], input.sessionID, requestUser.info)
       const result = yield* processor.process({
         user: {
           ...requestUser.info,
-          system: promptConfig.system,
-          systemMode: promptConfig.systemMode,
-          harness: promptConfig.harness,
+          system: parentPrompt.system,
+          systemMode: parentPrompt.systemMode,
+          harness: parentPrompt.harness,
         },
         agent: parentAgent,
         permission: parentSession.permission,
@@ -443,8 +447,8 @@ export const layer: Layer.Layer<
         tools: frozen?.tools ? SessionPrefixSnapshot.restoreTools(frozen.tools) : {},
         activeTools: frozen?.tools?.map((item) => item.name),
         toolChoice: "auto",
-        system: [],
-        prebuiltSystem: frozen?.system,
+        system: frozen ? [] : requestSystem,
+        prebuiltSystem: frozen ? requestSystem : undefined,
         messages: [...modelMessages, summaryRequest],
         mergeTurnContextBeforeLastMessage: true,
         model,
@@ -523,6 +527,7 @@ export const layer: Layer.Layer<
             agent: original.agent,
             model: original.model,
             format: original.format,
+            promptContext: original.promptContext,
             tools: original.tools,
             task_id: original.task_id,
             system: promptConfig.system,
@@ -569,6 +574,7 @@ export const layer: Layer.Layer<
               agent: userMessage.agent,
               model: userMessage.model,
               task_id: userMessage.task_id,
+              promptContext: parent.info.promptContext,
             })
             const text =
               (input.overflow
@@ -612,6 +618,7 @@ export const layer: Layer.Layer<
       overflow?: boolean
       agentID?: string
     }) {
+      const previous = yield* session.findMessage(input.sessionID, (m) => m.info.role === "user", { agentID: input.agentID ?? "main" })
       // Tag the synthetic boundary message with agent_id so per-actor
       // filterCompactedEffect lookups stop at this row when scoping by the
       // same agent_id (subagent compaction stays inside its own scope).
@@ -619,6 +626,7 @@ export const layer: Layer.Layer<
         id: MessageID.ascending(),
         role: "user",
         model: input.model,
+        promptContext: Option.isSome(previous) && previous.value.info.role === "user" ? previous.value.info.promptContext : undefined,
         sessionID: input.sessionID,
         agentID: input.agentID ?? undefined,
         agent: input.agent,

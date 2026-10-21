@@ -317,7 +317,7 @@ describe("Actor.cancel cascade", () => {
           lifecycle: "ephemeral",
           tools: ["read"],
         })
-        yield* reg.updateStatus(parent.id, "explore-1", { status: "running" })
+        yield* reg.updateStatus(parent.id, "explore-1", { expectedGeneration: null, status: "running" })
 
         yield* reg.register({
           sessionID: parent.id,
@@ -331,7 +331,7 @@ describe("Actor.cancel cascade", () => {
           lifecycle: "ephemeral",
           tools: ["read"],
         })
-        yield* reg.updateStatus(parent.id, "general-1", { status: "running" })
+        yield* reg.updateStatus(parent.id, "general-1", { expectedGeneration: null, status: "running" })
 
         yield* reg.register({
           sessionID: parent.id,
@@ -345,7 +345,7 @@ describe("Actor.cancel cascade", () => {
           lifecycle: "ephemeral",
           tools: ["read"],
         })
-        yield* reg.updateStatus(parent.id, "general-2", { status: "running" })
+        yield* reg.updateStatus(parent.id, "general-2", { expectedGeneration: null, status: "running" })
 
         // Cancel the root — should cascade to children
         yield* actor.cancel(parent.id, "explore-1", "graceful")
@@ -387,7 +387,7 @@ describe("Actor.cancel cascade", () => {
           lifecycle: "ephemeral",
           tools: ["read"],
         })
-        yield* reg.updateStatus(parent.id, "explore-1", { status: "running" })
+        yield* reg.updateStatus(parent.id, "explore-1", { expectedGeneration: null, status: "running" })
 
         yield* reg.register({
           sessionID: parent.id,
@@ -401,7 +401,7 @@ describe("Actor.cancel cascade", () => {
           lifecycle: "ephemeral",
           tools: ["read"],
         })
-        yield* reg.updateStatus(parent.id, "general-1", { status: "running" })
+        yield* reg.updateStatus(parent.id, "general-1", { expectedGeneration: null, status: "running" })
 
         yield* reg.register({
           sessionID: parent.id,
@@ -415,7 +415,7 @@ describe("Actor.cancel cascade", () => {
           lifecycle: "ephemeral",
           tools: ["read"],
         })
-        yield* reg.updateStatus(parent.id, "general-2", { status: "running" })
+        yield* reg.updateStatus(parent.id, "general-2", { expectedGeneration: null, status: "running" })
 
         // Cancel only child 1
         yield* actor.cancel(parent.id, "general-1", "graceful")

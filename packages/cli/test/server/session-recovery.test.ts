@@ -1201,7 +1201,7 @@ async function exactResumeCase(
             sessionID: session.id, actorID: "child-1", mode: "subagent", agent: "build",
             description: "untouched child", contextMode: "none", background: true, lifecycle: "ephemeral",
           })
-          yield* actors.updateStatus(session.id, "child-1", { status: "idle", lastOutcome: "failure", lastError: "interrupted" })
+          yield* actors.updateStatus(session.id, "child-1", { expectedGeneration: null, status: "idle", lastOutcome: "failure", lastError: "interrupted" })
           const child = yield* user("CHILD_MUST_NOT_RESUME", created + 4, "child-1")
           yield* assistant(child.id, created + 5, "child-1")
         }

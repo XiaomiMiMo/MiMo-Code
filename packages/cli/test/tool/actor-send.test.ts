@@ -81,7 +81,7 @@ describe("actor tool — send action", () => {
           background: true,
           lifecycle: "ephemeral",
         })
-        yield* registry.updateStatus(chat.id, actorID, { status: "running" })
+        yield* registry.updateStatus(chat.id, actorID, { expectedGeneration: null, status: "running" })
 
         const tool = yield* ActorTool
         const def = yield* tool.init()

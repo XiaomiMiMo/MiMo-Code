@@ -81,6 +81,7 @@ describe("ActorRegistry shape (Plan 1 / Task 4)", () => {
       await rt.runPromise(
         ActorRegistry.Service.use((reg) =>
           reg.updateStatus(sid, "explore-2", {
+            expectedGeneration: null,
             status: "idle",
             lastOutcome: "failure",
             lastError: "first try",
@@ -89,12 +90,13 @@ describe("ActorRegistry shape (Plan 1 / Task 4)", () => {
       )
       await rt.runPromise(
         ActorRegistry.Service.use((reg) =>
-          reg.updateStatus(sid, "explore-2", { status: "running" }),
+          reg.updateStatus(sid, "explore-2", { expectedGeneration: null, status: "running" }),
         ),
       )
       await rt.runPromise(
         ActorRegistry.Service.use((reg) =>
           reg.updateStatus(sid, "explore-2", {
+            expectedGeneration: null,
             status: "idle",
             lastOutcome: "success",
           }),

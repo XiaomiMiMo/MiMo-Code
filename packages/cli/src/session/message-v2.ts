@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url"
 import { BusEvent } from "@/bus/bus-event"
 import { SessionID, MessageID, PartID } from "./schema"
 import z from "zod"
+import { PromptContext } from "./prompt-context"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import {
   APICallError,
@@ -552,6 +553,7 @@ export const User = Base.extend({
     modelID: ModelID.zod,
     variant: z.string().optional(),
   }),
+  promptContext: PromptContext.optional(),
   system: z.string().optional(),
   systemMode: z.enum(["append", "replace-agent"]).optional(),
   harness: z.enum(["auto", "codex", "default"]).optional(),

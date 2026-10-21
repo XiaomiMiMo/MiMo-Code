@@ -1,3 +1,4 @@
+import type { ActorSource } from "./schema"
 import { Effect, Deferred, Context, Fiber, Layer, Scope, Cause, Exit } from "effect"
 import { ActorExecution, type Execution } from "./execution"
 import { makeTerminalNotifier } from "./notification"
@@ -192,6 +193,7 @@ class AssistantSettledError extends Error {
 }
 
 export interface SpawnInput {
+  source?: ActorSource
   mode: SpawnMode
   sessionID: SessionID
   /**
@@ -356,6 +358,7 @@ export const layer = Layer.effect(
 
     const forkWork = (input: {
       execution: Execution
+      source?: ActorSource
       sessionID: SessionID
       parentSessionID: SessionID
       parentActorID?: string
@@ -390,7 +393,8 @@ export const layer = Layer.effect(
         // but log on swallow so a genuine bug in start() leaves a breadcrumb.
         if (input.task_id) {
           yield* taskRegistry
-            .start({ session_id: input.parentSessionID, id: input.task_id, owner: input.actorID })
+            .start({ session_id: input.parentSessionID, id: input.task_id, owner: input.actorID,
+              source_call_id: input.source?.sourceSessionID === input.parentSessionID ? input.source.sourceCallID : undefined })
             .pipe(Effect.ignoreCause({ log: "Warn", message: `auto-start of task ${input.task_id} failed` }))
         }
         const notify = (
@@ -721,6 +725,7 @@ export const layer = Layer.effect(
               sessionID: child.id,
               actorID: child.id,
               mode: "peer",
+              source: input.source,
               parentActorID: input.parentActorID,
               agent: input.agentType,
               description: input.description ?? input.agentType,
@@ -735,6 +740,7 @@ export const layer = Layer.effect(
             }
             const { fiber, outcome } = yield* forkWork({
               execution,
+              source: input.source,
               sessionID: child.id,
               parentSessionID: input.sessionID,
               parentActorID: input.parentActorID,
@@ -772,6 +778,7 @@ export const layer = Layer.effect(
               sessionID: input.sessionID,
               actorID,
               mode: "subagent",
+              source: input.source,
               parentActorID: input.parentActorID,
               agent: input.agentType,
               description: input.description ?? input.agentType,
@@ -804,6 +811,7 @@ export const layer = Layer.effect(
 
             const { fiber, outcome } = yield* forkWork({
               execution,
+              source: input.source,
               sessionID: input.sessionID,
               parentSessionID: input.parentSessionID ?? input.sessionID,
               parentActorID: input.parentActorID,
@@ -871,10 +879,10 @@ export const layer = Layer.effect(
       yield* state.cancelActor(sessionID, actorID)
       const current = yield* actorReg.get(sessionID, actorID)
       if (current && current.status !== "idle") {
-        yield* actorReg.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
+        yield* actorReg.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled", expectedGeneration: actor.executionGeneration ?? null })
       }
       const after = yield* actorReg.get(sessionID, actorID)
-      if (!after || after.status !== "idle" || after.lastOutcome !== "cancelled") return
+      if (!after || after.executionGeneration !== actor.executionGeneration || after.status !== "idle" || after.lastOutcome !== "cancelled") return
       if (priorOutcome === "cancelled") return
       yield* notifyTerminal({ sessionID, actorID, source: "pending", status: "cancelled", ...guard })
       if (forkContext) yield* clearForkContext(forkContext.execution)
