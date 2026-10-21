@@ -108,7 +108,6 @@ Optional. Dead ends, pivots, or transferable lessons worth future work. Do not p
 - Record settled decisions and precise contracts, not exploration history or file-level code dumps. Include architecture, interfaces, data flow, error behavior, and testing boundaries when they affect the change.
 - Make each task the smallest independently verifiable work item; give it an observable acceptance criterion. Add `depends:` only for real prerequisites; dependencies must be acyclic.
 - Under Design, give each contract or behavior its own H3 `S1 {{short name}}`, `S2 {{short name}}`, … and keep those labels stable. `covers:` on a task is optional (for example `covers: S2`).
-- Remove unfinished markers such as `TBD`, "handle edge cases", and references to unspecified similar work.
 - Scale detail to the change; do not pad small designs.
 
 Before implementation, fix ambiguous requirements, contradictions, unresolved references, and unverifiable acceptance criteria. If the user is available, request document approval with the Question tool; otherwise continue.
