@@ -2988,7 +2988,7 @@ export type Config = {
      */
     asr_model?: string
     /**
-     * Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.5.
+     * Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.6-flash.
      */
     control_model?: string
   }

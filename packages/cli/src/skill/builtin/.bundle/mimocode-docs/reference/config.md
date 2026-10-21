@@ -137,7 +137,7 @@ The trigger is the model's prompt capacity (`limit.input` when the provider publ
 | `dream.auto` / `dream.interval_days` | Auto memory consolidation on session start (default true / 7 days) |
 | `distill.auto` / `distill.interval_days` | Auto workflow packaging (default true / 30 days) |
 | `voice.asr_model` | ASR model (default `xiaomi/mimo-v2.5-asr`) |
-| `voice.control_model` | Voice control model (default `xiaomi/mimo-v2.5`) |
+| `voice.control_model` | Voice control model (default `xiaomi/mimo-v2.6-flash`) |
 | `workflow.maxConcurrentAgents` | Process-wide subagent concurrency ceiling (default min(16, 2×cores)) |
 | `workflow.maxDepth` | Max workflow nesting depth (default 8) |
 

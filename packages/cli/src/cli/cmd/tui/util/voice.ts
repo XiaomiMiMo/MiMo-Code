@@ -8,7 +8,7 @@ import type { TextPlacement } from "./voice-edit"
 const log = Log.create({ service: "tui.voice" })
 
 const DEFAULT_ASR_MODEL = "xiaomi/mimo-v2.5-asr"
-const DEFAULT_CONTROL_MODEL = "xiaomi/mimo-v2.5"
+const DEFAULT_CONTROL_MODEL = "xiaomi/mimo-v2.6-flash"
 
 export type VoiceProviderConfig = {
   providerID: string
@@ -501,7 +501,7 @@ export async function processVoiceControl(opts: {
   contextText: string | TextPlacement
   sendEnabled?: boolean
 }): Promise<VoiceControlResult> {
-  const model = opts.model || "mimo-v2.5"
+  const model = opts.model || "mimo-v2.6-flash"
   log.debug("voice control request", { model, samples: opts.audio.length })
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")

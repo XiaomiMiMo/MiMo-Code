@@ -9,7 +9,7 @@ describe("voice", () => {
       expect(result.asr.providerID).toBe("xiaomi")
       expect(result.asr.model).toBe("mimo-v2.5-asr")
       expect(result.control.providerID).toBe("xiaomi")
-      expect(result.control.model).toBe("mimo-v2.5")
+      expect(result.control.model).toBe("mimo-v2.6-flash")
     })
 
     test("returns xiaomi defaults when config is empty object", async () => {
@@ -18,7 +18,7 @@ describe("voice", () => {
       expect(result.asr.providerID).toBe("xiaomi")
       expect(result.asr.model).toBe("mimo-v2.5-asr")
       expect(result.control.providerID).toBe("xiaomi")
-      expect(result.control.model).toBe("mimo-v2.5")
+      expect(result.control.model).toBe("mimo-v2.6-flash")
     })
 
     test("parses custom asr_model correctly", async () => {
@@ -27,7 +27,7 @@ describe("voice", () => {
       expect(result.asr.providerID).toBe("newapi")
       expect(result.asr.model).toBe("mimo-v2.5-asr")
       expect(result.control.providerID).toBe("xiaomi")
-      expect(result.control.model).toBe("mimo-v2.5")
+      expect(result.control.model).toBe("mimo-v2.6-flash")
     })
 
     test("parses custom control_model correctly", async () => {

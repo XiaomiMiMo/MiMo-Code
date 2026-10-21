@@ -137,4 +137,4 @@ The slash menu also includes commands discovered at runtime:
 ## Notes
 
 - The web command is currently disabled; TUI is the supported interface.
-- Voice ASR (`mimo-v2.5-asr`) is MiMo-platform only; voice control (`mimo-v2.5`) also runs on OpenRouter and compatible relays via the `voice` config (see config.md and the README voice section).
+- Voice ASR (`mimo-v2.5-asr`) is MiMo-platform only; voice control (`mimo-v2.6-flash`) also runs on OpenRouter and compatible relays via the `voice` config (see config.md and the README voice section).

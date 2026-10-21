@@ -374,7 +374,7 @@ const InfoSchema = Schema.Struct({
       }),
       control_model: Schema.optional(ConfigModelID).annotate({
         description:
-          "Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.5.",
+          "Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.6-flash.",
       }),
     }),
   ).annotate({ description: "Voice input provider and model configuration." }),
