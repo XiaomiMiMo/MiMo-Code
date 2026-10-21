@@ -56,58 +56,66 @@ If user input cannot be obtained — the Question tool is absent, a question get
 Never begin implementation on `main` or `master` without explicit user consent. If the active workspace is already chosen, skip creation below and continue with toolchain setup.
 
 - Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
-- Create a linked worktree at `.worktrees/<slug>` by default. Base the new branch on the latest mainline (e.g. `origin/main`). If the current checkout makes the base unclear (detached HEAD, an unrelated feature branch, unknown default branch), ask the user explicitly which base to use before creating the worktree. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch" <base>`.
+- Create a linked worktree at `.worktrees/{{slug}}` by default. Base the new branch on the latest mainline (e.g. `origin/main`). If the current checkout makes the base unclear (detached HEAD, an unrelated feature branch, unknown default branch), ask the user explicitly which base to use before creating the worktree. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch" "$base"`.
 - When targeting the worktree with a command, pass its absolute path as `workdir`; omitted `workdir` uses the current session directory.
 - Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
 
 ## Spec — one document per feature
 
-Maintain one document per feature at `docs/compose/spec/<feature-name>.md` from the workspace root. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns the active workspace.
+Maintain one document per feature at `docs/compose/spec/{{feature-name}}.md` from the workspace root. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns the active workspace.
 
 ### Template
 
 ```markdown
 ---
-feature: <feature-name>
+feature: {{feature-name}}
 status: designed | in-progress | delivered
 updated: YYYY-MM-DD
-source: Local <path> | Branch <name> | PR #id | MR !id
+source: {{branch-name}} | {{pr-url}} | {{mr-url}}
 ---
 
-# <Feature Name>
+# {{Feature Name}}
 
 ## Report
 
-## [S1] Problem
+## Problem
 Describe the user-visible problem.
 
-## [S2] Design
+## Design
 Record the chosen behavior and the contracts needed to implement it.
 
-## [S3] Out of Scope
+### S1 {{short name}}
+{{contract or behavior}}
+
+### S2 {{short name}}
+{{contract or behavior}}
+
+## Out of Scope
 State explicit boundaries.
 
 ## Tasks
-- [ ] T1: <work item> — acceptance: <observable result> (covers: S2)
-- [ ] T2: <work item> — acceptance: <observable result> (covers: S2; depends: T1)
+- [ ] T1: {{work item}} — acceptance: {{observable result}} (covers: S2)
+- [ ] T2: {{work item}} — acceptance: {{observable result}} (depends: T1)
+
+## Journey log
+Optional. Dead ends, pivots, or transferable lessons worth future work. Do not pad an uncomplicated change by splitting it into several thin entries.
 ```
 
 ### Design-time rules
 
-- Leave `Report` empty and set `status: designed`.
-- Set `source` to the form that best names where the spec's source lives — `Local <path>`, `Branch <name>`, `PR #id`, or `MR !id` — and update it whenever that changes.
-- Keep `[Sn]` anchors stable when headings change; never renumber existing anchors.
+- Leave `Report` empty until finalized and set `status: designed`. Keep `Journey log` empty unless something is worth carrying forward.
+- Set `source` to the form that best names where the spec's source lives — `{{branch-name}}`, `{{pr-url}}`, or `{{mr-url}}` — and update it whenever that changes.
 - Record settled decisions and precise contracts, not exploration history or file-level code dumps. Include architecture, interfaces, data flow, error behavior, and testing boundaries when they affect the change.
 - Make each task the smallest independently verifiable work item; give it an observable acceptance criterion. Add `depends:` only for real prerequisites; dependencies must be acyclic.
-- Add `covers:` for every task implementing a design section. Every design requirement must be covered by at least one task; every reference must resolve.
-- Remove placeholders such as `TBD`, "handle edge cases", and references to unspecified similar work.
+- Under Design, give each contract or behavior its own H3 `S1 {{short name}}`, `S2 {{short name}}`, … and keep those labels stable. `covers:` on a task is optional (for example `covers: S2`).
+- Remove unfinished markers such as `TBD`, "handle edge cases", and references to unspecified similar work.
 - Scale detail to the change; do not pad small designs.
 
 Before implementation, fix ambiguous requirements, contradictions, unresolved references, and unverifiable acceptance criteria. If the user is available, request document approval with the Question tool; otherwise continue.
 
 ### Amendments
 
-Update only affected sections, bump `updated:`, preserve anchors, and keep only the tasks required by the amendment and their dependents. Do not regenerate the document or create duplicate tasks.
+Update only affected sections, bump `updated:`, and keep only the tasks required by the amendment and their dependents. Do not regenerate the document or create duplicate tasks.
 
 ## Implement
 
@@ -153,7 +161,7 @@ Require separate conclusions for:
 - **Correctness** — logic, boundaries, error handling, regressions, and tests are sound, including issues outside the written spec.
 - **Codebase consistency** — naming, structure, and local conventions match surrounding code.
 
-Classify unmet or unverifiable acceptance criteria and correctness bugs as critical. Fix critical findings, re-verify, and re-review affected areas. Reject incorrect findings with technical evidence. If the fix-and-re-review loop stops converging — repeated findings on the same area, or fixes that introduce new criticals — stop looping and report the impasse with the remaining findings instead of forcing a pass.
+Classify unmet or unverifiable acceptance criteria and correctness bugs as critical. Fix critical findings, re-verify, and re-review affected areas. Reject incorrect findings with technical evidence. When necessary, return to Spec and record the pivot in the Journey log. If the fix-and-re-review loop stops converging — repeated findings on the same area, or fixes that introduce new criticals — stop looping and report the impasse with the remaining findings instead of forcing a pass.
 
 For human review feedback, verify each item against the codebase, clarify ambiguous items before editing, and implement validated items one at a time with verification. Check actual usage before expanding an unused path, and surface conflicts with prior user decisions instead of silently complying.
 
@@ -165,23 +173,21 @@ If a feature document exists, after review passes and before finishing the branc
 
 1. Set `status: delivered` and bump `updated:`.
 2. Check off completed tasks; leave incomplete tasks unchecked and do not claim delivery if they block acceptance.
-3. Replace `Report` with:
+3. When finalized, fill `Journey log` when needed and replace `Report` with:
 
 ```markdown
 ## Report
 
-**What was built** — 1-3 concise paragraphs describing the final behavior.
+**What was built** — concise description of the final behavior.
 
 **Verification** — commands run and their observed results.
-
-**Journey log** — at most 5 entries that help future work: dead ends, pivots, or transferable lessons. Preserve useful prior entries and append new ones.
 ```
 
 Update a design section only when it contradicts the delivered behavior. Commit the finalized document on the feature branch before finishing. This documentation-only commit does not restart verification or review; CI re-running on it is expected.
 
 ## Finish
 
-Do not auto-finish: confirm with the user before any irreversible action, including opening a PR or MR, merging locally, or pushing. If the user already specified the closing action and a PR or MR already exists, confirm before the merge instead.
+Do not auto-finish: confirm with the user before any irreversible action, including opening a PR or MR, merging, or pushing.
 
 Report branch, base, head SHA, workspace, feature-doc path when available, and ask the user which way to finish — for example:
 
@@ -189,7 +195,9 @@ Report branch, base, head SHA, workspace, feature-doc path when available, and a
 - which base branch to merge or target;
 - keep or remove the worktree.
 
-When the closing action changes where the spec lives, update `source` and commit it as documentation only: `PR #id` or `MR !id` after opening one, `Branch <target>` before a local merge.
+Open PR or MR does not imply merge: unless the user also asked to merge, stop after opening — the merge always needs its own confirmation, whether the PR or MR was created here or already existed.
+
+When the closing action changes where the spec lives, update `source` and commit it as documentation only: `{{pr-url}}` or `{{mr-url}}` after opening one, `{{branch-name}}` before a local merge.
 
 Worktree pitfalls:
 
