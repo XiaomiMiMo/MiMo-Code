@@ -87,8 +87,7 @@ describe("pressureLevel", () => {
     const model = createModel({ context: 200_000 })
     const cfg = mockCfg({ auto: false })
     const limit = usable({ cfg, model })
-    const tokens = (ratio: number) =>
-      ({ input: limit * ratio, output: 0, cache: { read: 0, write: 0 } }) as any
+    const tokens = (ratio: number) => ({ input: limit * ratio, output: 0, cache: { read: 0, write: 0 } }) as any
 
     expect(contextPressureLevel({ cfg, tokens: tokens(0.5), model })).toBe(1)
     expect(contextPressureLevel({ cfg, tokens: tokens(0.7), model })).toBe(2)
@@ -653,6 +652,13 @@ describe("compaction.max_context", () => {
     expect(usable({ cfg: mockCfg({ max_context: "not-a-budget" }), model })).toBe(829_800)
   })
 
+  test.each(["40oops%", "40%%"])("ignores malformed percentage budget %s", (max_context) => {
+    expect(contextWindow({ cfg: mockCfg({ max_context }), model: large() })).toMatchObject({
+      effective: 922_000,
+      source: "model",
+    })
+  })
+
   test("keeps overflow handling disabled when the model reports no window", () => {
     const model = createModel({ context: 0, output: 0 })
     const cfg = mockCfg({ max_context: "300K" })
@@ -687,6 +693,24 @@ describe("util.token.parseQuantity", () => {
     expect(Token.parseQuantity("101%", 1_000)).toBeUndefined()
     expect(Token.parseQuantity("50%")).toBeUndefined()
     expect(Token.parseQuantity(-5)).toBeUndefined()
+  })
+
+  test.each(["40oops%", "40%%", "40.5.1%", "4e%", "40 50%", "0x28%", "0b101%", "0o50%"])(
+    "rejects malformed percentage %s",
+    (input) => {
+      expect(Token.parseQuantity(input, 200_000)).toBeUndefined()
+    },
+  )
+
+  test.each([
+    ["40 %", 80_000],
+    ["+40%", 80_000],
+    [".5%", 1_000],
+    ["4e1%", 80_000],
+    ["40.%", 80_000],
+    ["4E+1%", 80_000],
+  ] as const)("preserves percentage format %s", (input, expected) => {
+    expect(Token.parseQuantity(input, 200_000)).toBe(expected)
   })
 })
 

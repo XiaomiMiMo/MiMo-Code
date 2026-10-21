@@ -12,7 +12,9 @@ export function parseQuantity(input: number | string, relativeTo?: number): numb
   const trimmed = input.trim()
   if (trimmed.endsWith("%")) {
     if (relativeTo === undefined) return undefined
-    const pct = parseFloat(trimmed.slice(0, -1))
+    const value = trimmed.slice(0, -1).trim()
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) return undefined
+    const pct = parseFloat(value)
     if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return undefined
     return Math.floor((relativeTo * pct) / 100)
   }
