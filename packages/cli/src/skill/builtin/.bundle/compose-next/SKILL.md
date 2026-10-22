@@ -78,23 +78,23 @@ source: {{branch-name}} | {{pr-url}} | {{mr-url}}
 
 ## Report
 
-## Problem
+## [S1] Problem
 Describe the user-visible problem.
 
-## Design
+## [S2] Design
 Record the chosen behavior and the contracts needed to implement it.
 
-### S1 {{short name}}
+### S2.1 {{short name}}
 {{contract or behavior}}
 
-### S2 {{short name}}
+### S2.2 {{short name}}
 {{contract or behavior}}
 
-## Out of Scope
+## [S3] Out of Scope
 State explicit boundaries.
 
 ## Tasks
-- [ ] T1: {{work item}} — acceptance: {{observable result}} (covers: S2)
+- [ ] T1: {{work item}} — acceptance: {{observable result}} (covers: S2.1)
 - [ ] T2: {{work item}} — acceptance: {{observable result}} (depends: T1)
 
 ## Journey log
@@ -107,14 +107,15 @@ Optional. Dead ends, pivots, or transferable lessons worth future work. Do not p
 - Set `source` to the form that best names where the spec's source lives — `{{branch-name}}`, `{{pr-url}}`, or `{{mr-url}}` — and update it whenever that changes.
 - Record settled decisions and precise contracts, not exploration history or file-level code dumps. Include architecture, interfaces, data flow, error behavior, and testing boundaries when they affect the change.
 - Make each task the smallest independently verifiable work item; give it an observable acceptance criterion. Add `depends:` only for real prerequisites; dependencies must be acyclic.
-- Under Design, give each contract or behavior its own H3 `S1 {{short name}}`, `S2 {{short name}}`, … and keep those labels stable. `covers:` on a task is optional (for example `covers: S2`).
+- Under Design, give each contract or behavior its own subsection `S2.1 {{short name}}`, `S2.2 {{short name}}`, … and keep those labels stable. `covers:` on a task is optional (for example `covers: S2.1`).
+- Keep `Sn` and `Sn.m` anchors stable when headings change; never renumber existing anchors.
 - Scale detail to the change; do not pad small designs.
 
 Before implementation, fix ambiguous requirements, contradictions, unresolved references, and unverifiable acceptance criteria. If the user is available, request document approval with the Question tool; otherwise continue.
 
 ### Amendments
 
-Update only affected sections, bump `updated:`, and keep only the tasks required by the amendment and their dependents. Do not regenerate the document or create duplicate tasks.
+Update only affected sections, bump `updated:`, preserve anchors, and keep only the tasks required by the amendment and their dependents. Do not regenerate the document or create duplicate tasks.
 
 ## Implement
 
