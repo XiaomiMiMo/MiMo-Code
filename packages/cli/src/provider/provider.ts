@@ -1148,9 +1148,8 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
-// MiMo models only speak the OpenAI-compatible Chat
-// Completions API. Whatever npm a catalog entry or mimocode.json declares for such an
-// id, the model is pinned to @ai-sdk/openai-compatible.
+// Default MiMo catalog entries to the OpenAI-compatible Chat Completions API.
+// Explicit SDK configuration takes precedence so gateways can use other protocols.
 export function isMimoOrSmartModel(id: string) {
   return /(^|[/_-])mimo(?:-|$)/i.test(id)
 }
@@ -1327,15 +1326,14 @@ const layer: Layer.Layer<
           for (const [modelID, model] of Object.entries(provider.models ?? {})) {
             const existingModel = parsed.models[model.id ?? modelID]
             const apiID = model.id ?? existingModel?.api.id ?? modelID
-            const apiNpm = resolveModelNpm(
+            const apiNpm =
               model.provider?.npm ??
-                provider.npm ??
-                existingModel?.api.npm ??
-                modelsDev[providerID]?.npm ??
-                OPENAI_COMPATIBLE_NPM,
-              modelID,
-              apiID,
-            )
+              provider.npm ??
+              resolveModelNpm(
+                existingModel?.api.npm ?? modelsDev[providerID]?.npm ?? OPENAI_COMPATIBLE_NPM,
+                modelID,
+                apiID,
+              )
             const name = iife(() => {
               if (model.name) return model.name
               if (model.id && model.id !== modelID) return modelID

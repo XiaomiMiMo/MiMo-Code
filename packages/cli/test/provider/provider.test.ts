@@ -1942,7 +1942,7 @@ test("xiaomi chat streams reasoning_content as reasoning parts", async () => {
   }
 })
 
-test("mimo model ids are pinned to @ai-sdk/openai-compatible in config", async () => {
+test("mimo model ids respect the explicit provider npm in config", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -1971,11 +1971,11 @@ test("mimo model ids are pinned to @ai-sdk/openai-compatible in config", async (
     directory: tmp.path,
     fn: async () => {
       const models = (await list())[ProviderID.make("my-gateway")].models
-      expect(models["MiMo-V2.6"].api.npm).toBe("@ai-sdk/openai-compatible")
-      expect(models["alias-model"].api.npm).toBe("@ai-sdk/openai-compatible")
+      expect(models["MiMo-V2.6"].api.npm).toBe("@ai-sdk/openai")
+      expect(models["alias-model"].api.npm).toBe("@ai-sdk/openai")
       expect(models["gpt-5.4"].api.npm).toBe("@ai-sdk/openai")
       expect(models["mimosa-1"].api.npm).toBe("@ai-sdk/openai")
-      // Only the SDK is pinned; the provider stays as configured.
+      // The provider stays as configured as well.
       expect(models["MiMo-V2.6"].providerID).toBe(ProviderID.make("my-gateway"))
     },
   })
