@@ -2,8 +2,7 @@
 feature: default-port-ephemeral
 status: delivered
 updated: 2026-09-12
-branch: feat/default-port-ephemeral
-commits: ecbe6e59c7c9383f99767ca3f755ad032c4dc3cc..98ef287528e9c54fefe0055a90462338adc02f4b
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2385
 ---
 
 # Default Listen Port Ephemeral

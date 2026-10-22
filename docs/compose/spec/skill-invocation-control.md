@@ -2,8 +2,7 @@
 feature: skill-invocation-control
 status: delivered
 updated: 2026-07-31
-branch: feat/skill-invocation-control
-commits: 6674db7a..6236515e
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2026
 ---
 
 # Skill Invocation Control

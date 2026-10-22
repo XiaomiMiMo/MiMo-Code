@@ -2,8 +2,7 @@
 feature: question-recovery-scope
 status: delivered
 updated: 2026-09-21
-branch: codex/question-recovery-scope
-commits: 4101b3d4..0271ca02
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2462
 ---
 
 # Question Recovery Scope

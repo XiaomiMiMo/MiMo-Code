@@ -2,8 +2,7 @@
 feature: tui-quiet-mode
 status: delivered
 updated: 2026-08-05
-branch: feature/tui-quiet-mode
-commits: 91dc9d14c263d76f7e843eaf6cce3f112ee1ddda..0af69913
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2031
 ---
 
 # TUI Quiet Mode

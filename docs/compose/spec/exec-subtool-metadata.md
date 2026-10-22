@@ -2,8 +2,7 @@
 feature: exec-subtool-metadata
 status: delivered
 updated: 2026-08-24
-branch: codex/exec-subtool-metadata
-commits: 84f17b64233ae6bd4b65bb8ccd6325fb8a2cdf16..bc1abe91dc7334d709a7ab454269f58d50954b8f
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2222
 ---
 
 # Exec Sub-tool Metadata

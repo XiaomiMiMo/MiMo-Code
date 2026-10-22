@@ -2,8 +2,7 @@
 feature: host-error-registry
 status: in-progress
 updated: 2026-09-24
-branch: feat/host-error-registry
-commits:
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2521
 ---
 
 # Host Error Registry

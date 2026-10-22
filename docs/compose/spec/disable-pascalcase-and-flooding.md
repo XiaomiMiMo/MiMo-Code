@@ -2,8 +2,7 @@
 feature: disable-pascalcase-and-flooding
 status: delivered
 updated: 2026-09-22
-branch: codex/disable-pascalcase-and-flooding
-commits: 1579e7d9..HEAD
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2515
 ---
 
 # Disable PascalCase Tool Projection and Toolcall Flooding

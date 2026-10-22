@@ -2,8 +2,7 @@
 feature: sidebar-shrink-and-press-gate
 status: delivered
 updated: 2026-08-03
-branch: fix/sidebar-shrink-and-press-gate
-commits: 6853935c..6dff0b1a
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2021
 ---
 
 # Sidebar state model & press-gated mouse controls

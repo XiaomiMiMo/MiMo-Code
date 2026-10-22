@@ -2,8 +2,7 @@
 feature: skill-external-root-defaults
 status: delivered
 updated: 2026-09-20
-branch: feat/skill-external-root-defaults
-commits: 895ae523..9797f74f
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2446
 ---
 
 # Skill External Root Defaults

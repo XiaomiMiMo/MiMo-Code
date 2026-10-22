@@ -2,8 +2,7 @@
 feature: remove-task-gate-reentry
 status: delivered
 updated: 2026-06-08
-branch: feat/remove-task-gate-reentry
-commits: 37c3e1ef..37c3e1ef
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2533
 ---
 
 # Remove TaskGate (re-entry + passive incomplete-task reporting)

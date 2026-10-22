@@ -2,8 +2,7 @@
 feature: memory-prompt-decouple
 status: delivered
 updated: 2026-09-14
-branch: feat/memory-prompt-decouple
-commits: e485a2a..9780b2e
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2389
 ---
 
 # Memory Prompt Decouple From Checkpoint

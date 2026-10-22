@@ -2,8 +2,7 @@
 feature: exec-tool-view
 status: delivered
 updated: 2026-07-27
-branch: feat/exec-tool-view
-commits: 47c8425f..6479a56b
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1941
 ---
 
 # exec Tool View (bash-style collapse)

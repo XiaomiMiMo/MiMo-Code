@@ -2,8 +2,7 @@
 feature: loop-streak-recovery
 status: delivered
 updated: 2026-08-28
-branch: feat/loop-streak-recovery
-commits: f02ee661a6..e5c9ba229b
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2278
 ---
 
 # Loop Streak Recovery

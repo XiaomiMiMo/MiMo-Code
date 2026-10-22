@@ -2,8 +2,7 @@
 feature: provider-local-refresh
 status: delivered
 updated: 2026-10-03
-branch: codex/provider-local-refresh
-commits: 698f0f29..296b24ca
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2603
 ---
 
 # Provider Refresh Without Instance Disposal

@@ -2,8 +2,7 @@
 feature: checkpoint-capture-defect
 status: delivered
 updated: 2026-10-20
-branch: fix/checkpoint-capture-defect
-commits: 115eeee3..6cb88c78
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2690
 ---
 
 # Checkpoint prefix capture defect containment

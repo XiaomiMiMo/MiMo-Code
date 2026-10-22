@@ -2,8 +2,7 @@
 feature: history-index-tool-output-budget
 status: delivered
 updated: 2026-09-16
-branch: feat/history-chunk-large-bodies
-commits: b4cc11cd652195af9a80297ed543218f3172e6c4..HEAD
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2398
 ---
 
 # History FTS Index Budget (tool-output policy)

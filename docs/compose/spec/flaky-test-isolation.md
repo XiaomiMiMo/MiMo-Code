@@ -2,8 +2,7 @@
 feature: flaky-test-isolation
 status: delivered
 updated: 2026-07-27
-branch: fix/flaky-test-isolation
-commits: 028f3178..f4daa79e
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1933
 ---
 
 # Flaky Test Isolation

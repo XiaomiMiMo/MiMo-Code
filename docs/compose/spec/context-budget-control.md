@@ -2,8 +2,7 @@
 feature: context-budget-control
 status: in-progress
 updated: 2026-08-05
-branch: investigate/context-limit-double-rebuild
-commits: 028f3178..3b15062d
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1930
 ---
 
 # Context Budget Control (user-adjustable early compaction)

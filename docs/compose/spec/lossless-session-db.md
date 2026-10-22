@@ -2,8 +2,7 @@
 feature: lossless-session-db
 status: in-progress
 updated: 2026-10-21
-branch: feat/lossless-session-db
-commits: 4e58a80184..e5954afaa8
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2691
 ---
 
 # Lossless Session DB

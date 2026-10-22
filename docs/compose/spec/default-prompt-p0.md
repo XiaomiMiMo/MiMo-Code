@@ -2,8 +2,7 @@
 feature: default-prompt-p0
 status: delivered
 updated: 2026-09-19
-branch: fix/default-prompt-p0
-commits: 50cd7139..ac7bbf66
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2434
 ---
 
 # Default System Prompt P0 Cleanup

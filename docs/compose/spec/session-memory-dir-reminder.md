@@ -2,8 +2,7 @@
 feature: session-memory-dir-reminder
 status: delivered
 updated: 2026-09-28
-branch: feat/remove-recall-reminder
-commits: 4e58a80184..2bfc561e54
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2689
 ---
 
 # Memory Paths Reminder

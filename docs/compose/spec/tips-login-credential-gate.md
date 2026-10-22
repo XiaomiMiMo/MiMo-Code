@@ -2,8 +2,7 @@
 feature: tips-login-credential-gate
 status: delivered
 updated: 2026-02-14
-branch: fix/tips-login-credential-gate
-commits: 67fecf88..9bac0dc6
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2678
 ---
 
 # Tips /login Credential Gate

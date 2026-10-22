@@ -2,8 +2,7 @@
 feature: tui-footer-sticky-last-line
 status: delivered
 updated: 2026-07-11
-branch: fix/tui-footer-sticky-last-line
-commits: 67fecf88..f6246ae4
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2679
 ---
 
 # TUI footer last-line flicker

@@ -2,8 +2,7 @@
 feature: plugin-host-sdk
 status: delivered
 updated: 2026-10-12
-branch: feat/plugin-host-sdk
-commits: 4a5e2140..de9d65c5
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2645
 ---
 
 # Plugin Host SDK

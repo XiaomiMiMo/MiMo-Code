@@ -2,8 +2,7 @@
 feature: skill-multi-injection
 status: delivered
 updated: 2026-07-27
-branch: fix/skill-multi-injection
-commits: 014a2577..5e010a3c
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1929
 ---
 
 # Skill Multi-Injection

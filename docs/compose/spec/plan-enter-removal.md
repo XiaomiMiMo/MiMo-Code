@@ -2,8 +2,7 @@
 feature: plan-enter-removal
 status: delivered
 updated: 2026-08-03
-branch: plan-enter-removal
-commits: ce124cbd..e28331185884
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2018
 ---
 
 # Remove the plan_enter tool

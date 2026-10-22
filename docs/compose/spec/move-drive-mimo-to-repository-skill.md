@@ -2,8 +2,7 @@
 feature: move-drive-mimo-to-repository-skill
 status: delivered
 updated: 2026-08-23
-branch: codex/move-drive-mimo
-commits: b7ff175e..dca3d16f
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2210
 ---
 
 # Move Drive MiMo to a Repository Skill

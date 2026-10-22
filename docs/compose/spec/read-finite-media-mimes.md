@@ -2,8 +2,7 @@
 feature: read-finite-media-mimes
 status: delivered
 updated: 2026-09-12
-branch: fix/read-finite-media-mimes
-commits: 6fbb1732..4b4d5b90
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2388
 ---
 
 # read finite media MIME allowlist

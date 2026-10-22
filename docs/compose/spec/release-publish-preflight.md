@@ -2,8 +2,7 @@
 feature: release-publish-preflight
 status: delivered
 updated: 2026-10-19
-branch: fix/release-preflight-checks
-commits: 135cb231..0adeefc0
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2677
 ---
 
 # Release Publish Preflight

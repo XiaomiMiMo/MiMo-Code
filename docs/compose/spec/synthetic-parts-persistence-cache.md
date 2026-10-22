@@ -2,8 +2,7 @@
 feature: synthetic-parts-persistence-cache
 status: delivered
 updated: 2026-09-27
-branch: analyze/recall-unpersisted-push-cache
-commits: b4cc11cd652195af9a80297ed543218f3172e6c4..73003a620907031d67de979ce357310e10441223
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2403
 ---
 
 # Synthetic Parts Unpersistence and Prompt-Cache Break
