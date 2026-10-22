@@ -19,5 +19,6 @@ Priority order if multiple steps remain
 User preferences or style requirements
 Domain-specific details that aren't obvious
 Any promises made to the user
+Date policy: Do not state the current date. Keep calendar dates only on events explicitly dated in the conversation; do not invent dates. Describe relative times from the time of compaction, without converting them to calendar dates.
 Be concise but complete—err on the side of including information that would prevent duplicate work or repeated mistakes. Write in a way that enables immediate resumption of the task.
 Wrap your summary in <summary></summary> tags.

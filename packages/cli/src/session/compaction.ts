@@ -208,13 +208,20 @@ function compactedToolCalls(messages: MessageV2.WithParts[]) {
   )
 }
 
-export function buildSummaryMessage(summary: string, trigger: CompactionTrigger, hasTail: boolean) {
+export function buildSummaryMessage(
+  summary: string,
+  trigger: CompactionTrigger,
+  hasTail: boolean,
+  compactedAt: Date = new Date(),
+) {
+  const stamped = compactedAt.toISOString()
   return [
-    `<conversation-summary trigger="${trigger}">`,
+    `<conversation-summary trigger="${trigger}" compacted-at="${stamped}">`,
     "The earlier conversation has been compacted into the summary below.",
     hasTail
       ? "Complete API rounds that arrived while compaction was running follow this summary."
       : "No additional API rounds arrived while compaction was running.",
+    `Compacted at ${stamped}. Dates in the summary are not "today" — resolve the current date with \`date\` or the user after resume. Relative times in the summary are relative to this compaction timestamp.`,
     "",
     summary.trim(),
     "</conversation-summary>",
