@@ -44,7 +44,7 @@ import { alignToNonToolResultUser } from "./checkpoint-align"
 import { loadPriorDiscoveredTitles } from "./checkpoint-retry"
 import * as CheckpointContext from "./checkpoint-context"
 import { buildProgressDiff } from "./checkpoint-progress-reconcile"
-import { isBoundaryUser, isRebuildBoundary, renderTailDigest } from "./tail-digest"
+import { isBoundaryUser, isRebuildBoundary, lastStep, renderTailDigest } from "./tail-digest"
 
 const log = Log.create({ service: "session.checkpoint" })
 
@@ -126,18 +126,10 @@ function userMsgText(parts: Array<{ type: string; text?: string; synthetic?: boo
 function autonomousLoopReminder(): string {
   return [
     "<system-reminder>",
-    "You are mid-loop in an autonomous task. The outputs of your latest tool",
-    "calls are not in this context. Continue the work loop from where the",
-    "blocks above leave off, and re-run a call when you need its output.",
-    "</system-reminder>",
-  ].join("\n")
-}
-
-function toolResultContinueReminder(): string {
-  return [
-    "<system-reminder>",
-    "Tool results above are real history from the autonomous loop. Process",
-    "them and continue to the next iteration. Do not pause to summarize.",
+    "You are mid-loop in an autonomous task.",
+    'The tool calls marked "result not seen" or "interrupted" under Recent activity did not return their results to you.',
+    "Continue the work loop from where the blocks above leave off: re-run a read-only call whose result you need,",
+    "and check the current state before repeating a call that changes files or runs commands.",
     "</system-reminder>",
   ].join("\n")
 }
@@ -338,7 +330,12 @@ function conversationAfter(
   return messages.reverse()
 }
 
-export type RebuildTail = { boundary: MessageID; messages: MessageV2.WithParts[] }
+export type RebuildTail = {
+  boundary: MessageID
+  messages: MessageV2.WithParts[]
+  /** The unanswered user messages whose content the boundary carries as copies. */
+  copied: ReadonlySet<MessageID>
+}
 
 /**
  * Everything the newest rebuild boundary of `window` stands for: the stored
@@ -350,10 +347,17 @@ export function readRebuildTail(sessionID: SessionID, window: MessageV2.WithPart
   const boundary = window.findLast((m) => m.info.sessionID === sessionID && isBoundaryUser(m))
   const part = boundary?.parts.find((p): p is MessageV2.CheckpointPart => p.type === "checkpoint")
   if (!boundary || !part) return undefined
-  return {
-    boundary: boundary.info.id,
-    messages: conversationAfter(sessionID, undeliveredInputs(sessionID), part.coveredUpTo, boundary.info.id),
-  }
+  const messages = conversationAfter(sessionID, undeliveredInputs(sessionID), part.coveredUpTo, boundary.info.id)
+  // Users after the digested range were copied at insert time; a deferred
+  // input that ended undelivered sorts there too but was never copied.
+  const answeredUpTo = part.digestUpTo ?? part.coveredUpTo
+  const deferred = new Set(part.deferredInputs ?? [])
+  const copied = new Set(
+    messages
+      .filter((m) => m.info.role === "user" && m.info.id > answeredUpTo && !deferred.has(m.info.id))
+      .map((m) => m.info.id),
+  )
+  return { boundary: boundary.info.id, messages, copied }
 }
 
 /**
@@ -362,13 +366,22 @@ export function readRebuildTail(sessionID: SessionID, window: MessageV2.WithPart
  * turn state. The boundary's tail is placed between the boundary and the
  * messages after it. Tail messages the window already holds (a legacy
  * boundary's tail, delivered inputs placed by the inbox) are not repeated.
+ * `withoutCopies` leaves out the unanswered user messages the boundary
+ * already carries, for the writer; the runLoop keeps them to find the turn's
+ * user message.
  */
-export function withRebuildTail(window: MessageV2.WithParts[], tail: RebuildTail | undefined): MessageV2.WithParts[] {
+export function withRebuildTail(
+  window: MessageV2.WithParts[],
+  tail: RebuildTail | undefined,
+  options?: { withoutCopies?: boolean },
+): MessageV2.WithParts[] {
   if (!tail) return window
   const index = window.findIndex((m) => m.info.id === tail.boundary)
   if (index < 0) return window
   const present = new Set(window.map((m) => m.info.id))
-  const missing = tail.messages.filter((m) => !present.has(m.info.id))
+  const missing = tail.messages.filter(
+    (m) => !present.has(m.info.id) && !(options?.withoutCopies && tail.copied.has(m.info.id)),
+  )
   if (missing.length === 0) return window
   return [...window.slice(0, index + 1), ...missing, ...window.slice(index + 1)]
 }
@@ -770,7 +783,7 @@ export const layer: Layer.Layer<
         contextWatermark: sessionInfo.contextWatermark,
         agentID: "main",
       })
-      const msgs = withRebuildTail(window, readRebuildTail(input.sessionID, window))
+      const msgs = withRebuildTail(window, readRebuildTail(input.sessionID, window), { withoutCopies: true })
       if (msgs.length === 0) {
         log.info("no messages, skipping checkpoint", { sessionID: input.sessionID })
         return "skipped" as const
@@ -1631,26 +1644,13 @@ export const layer: Layer.Layer<
           : "This session is continued from a checkpoint. The blocks above cover earlier history. Resume the last task from the most recent live messages. Do not recap this dump.",
       )
 
-      // Section 11: tail-aware system reminder, chosen from how the tail ends:
-      // a tool step → continue the loop, a tool result → process it. A
-      // finished reply or a user message needs none; the next request is the
-      // user's.
+      // Section 11: tail-aware system reminder. A tail that ends in a tool
+      // step continues the loop; a finished reply or a user message needs
+      // none, as the next request is the user's.
       const info = opts?.lastMessageInfo
-      if (info) {
-        const reminder = (() => {
-          switch (info.role) {
-            case "assistant":
-              return info.finish === "tool-calls" ? autonomousLoopReminder() : ""
-            case "tool":
-              return toolResultContinueReminder()
-            case "user":
-              return ""
-          }
-        })()
-        if (reminder) {
-          lines.push("")
-          lines.push(reminder)
-        }
+      if (info?.role === "assistant" && info.finish === "tool-calls") {
+        lines.push("")
+        lines.push(autonomousLoopReminder())
       }
 
       return { text: lines.join("\n") }
@@ -1720,8 +1720,15 @@ export const layer: Layer.Layer<
       const answered = tail.findLastIndex((m) => m.info.role !== "user") + 1
       const unanswered = tail.slice(answered)
       const digestUpTo = tail[answered - 1]?.info.id
-      const newest = MessageV2.page({ sessionID: input.sessionID, limit: 1 }).items[0]
-      const ending = tail.at(-1) ?? newest
+      const recent = MessageV2.page({ sessionID: input.sessionID, limit: 10 }).items
+      const newest = recent.at(-1)
+      // The closing reminder follows how the tail ends: an unanswered user, or
+      // the last step that reached the model (an empty attempt after it does not
+      // count). An empty tail looks at the newest messages the same way.
+      const ending =
+        (unanswered.length > 0 ? unanswered.at(-1) : lastStep(tail)) ??
+        tail.at(-1) ??
+        (newest?.info.role === "user" ? newest : (lastStep(recent) ?? newest))
       const rendered = yield* renderRebuildContext(input.sessionID, {
         lastMessageInfo: ending ? computeLastMessageInfo([ending.info]) : undefined,
         agentID: input.agentID,

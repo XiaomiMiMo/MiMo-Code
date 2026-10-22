@@ -12,7 +12,7 @@ import type { CheckpointPart, ToolPart, WithParts } from "./message-v2"
 
 const MAX_LINE_CHARS = 240
 const MAX_ARG_CHARS = 80
-const MAX_LINES = 200
+const MAX_LINES = 50
 
 function truncate(text: string, max: number): string {
   const cleaned = text.replace(/\s+/g, " ").trim()
@@ -36,13 +36,20 @@ function formatToolArgs(input: Record<string, unknown> | undefined): string {
     .join(", ")
 }
 
-function toolLine(part: ToolPart): string {
+function toolLine(part: ToolPart, unseen: boolean): string {
   const args = formatToolArgs(part.state.input)
   const call = args ? `${part.tool}(${args})` : `${part.tool}()`
   if (part.state.status === "error") return `- ${call} → error: ${truncate(part.state.error, MAX_ARG_CHARS)}`
   if (part.state.status === "pending" || part.state.status === "running") return `- ${call} → interrupted`
+  if (unseen && !part.metadata?.providerExecuted) return `- ${call} ${UNSEEN_MARK}`
   return `- ${call}`
 }
+
+/**
+ * Marks a completed call that ran but whose result no model request carried:
+ * the calls of the last assistant message, which the rebuild came right after.
+ */
+export const UNSEEN_MARK = "→ ran, result not seen"
 
 export function isBoundaryUser(msg: WithParts): boolean {
   return msg.info.role === "user" && msg.parts.some((p) => p.type === "checkpoint" || p.type === "compaction")
@@ -52,8 +59,24 @@ export function isRebuildBoundary(msg: WithParts): boolean {
   return msg.info.role === "user" && msg.parts.some((p) => p.type === "checkpoint")
 }
 
-function digestLines(tail: readonly WithParts[]): { lines: string[]; interrupted: boolean } {
+/**
+ * The tail's last step that reached the model: its newest assistant message
+ * with content. A request the provider rejected (for example for context
+ * overflow) leaves an assistant message without content after it.
+ */
+export function lastStep(tail: readonly WithParts[]): WithParts | undefined {
+  return tail.findLast(
+    (msg) =>
+      msg.info.role === "assistant" &&
+      msg.parts.some(
+        (p) => p.type === "tool" || ((p.type === "text" || p.type === "reasoning") && p.text.trim().length > 0),
+      ),
+  )
+}
+
+function digestLines(tail: readonly WithParts[]): { lines: string[]; omitted: number; marked: boolean } {
   const lines: string[] = []
+  const last = lastStep(tail)
   for (const msg of tail) {
     // Never re-digest a prior rebuild/compaction boundary — that folds the
     // previous dump into itself on a second rebuild.
@@ -73,24 +96,35 @@ function digestLines(tail: readonly WithParts[]): { lines: string[]; interrupted
         continue
       }
       if (part.type === "tool") {
-        lines.push(toolLine(part))
+        lines.push(toolLine(part, msg === last))
       }
     }
   }
-  const kept = lines.slice(0, MAX_LINES)
-  // Only flag interruption for lines that actually appear — otherwise the
-  // banner can fire for a tool that was dropped by the MAX_LINES cap.
-  return { lines: kept, interrupted: kept.some((line) => line.includes("→ interrupted")) }
+  // Keep the newest lines: the marked calls of the last step come last. The
+  // omitted ones stay readable through the history tool.
+  const kept = lines.slice(-MAX_LINES)
+  // Only open with the note for lines that actually appear.
+  return {
+    lines: kept,
+    omitted: lines.length - kept.length,
+    marked: kept.some((line) => line.includes("→ interrupted") || line.includes(UNSEEN_MARK)),
+  }
 }
 
 /** Section body only (header + lines). Empty string when there is nothing to list. */
 export function renderTailDigest(tail: readonly WithParts[]): string {
-  const { lines, interrupted } = digestLines(tail)
+  const { lines, omitted, marked } = digestLines(tail)
   if (lines.length === 0) return ""
   return [
     "# Recent activity",
     "",
-    ...(interrupted ? ["(tool loop interrupted by rebuild — re-run any tools you still need)", ""] : []),
+    ...(marked
+      ? [
+          "(calls marked below ran or were interrupted before their results reached you — re-run a read-only call whose result you need; check the current state before repeating a call that changes files or runs commands)",
+          "",
+        ]
+      : []),
+    ...(omitted > 0 ? [`(${omitted} earlier activity lines omitted — use the history tool to read them)`] : []),
     ...lines,
   ].join("\n")
 }

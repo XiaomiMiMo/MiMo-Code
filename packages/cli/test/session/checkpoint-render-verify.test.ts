@@ -259,8 +259,8 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
         const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "tool-calls" } })
 
         expect(out).toContain("autonomous task")
-        expect(out).toContain("Continue the work loop")
-        expect(out).toContain("re-run a call when you need its output")
+        expect(out).toContain('marked "result not seen"')
+        expect(out).toContain("check the current state before repeating a call that changes files or runs commands")
       }),
     ),
   )

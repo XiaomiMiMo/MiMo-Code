@@ -215,4 +215,76 @@ describe("checkpoint writer after a rebuild", () => {
         }),
       120_000,
     )
+
+  it.live(
+    "reads an unanswered user message copied onto the boundary exactly once",
+    () =>
+      Effect.gen(function* () {
+        const server = startScriptedLLMServer([
+          { lines: textStopResponse("starting") },
+          {
+            lines: toolCallsResponse(
+              FILES.map((file, index) => ({
+                id: `call-${index}`,
+                name: "read",
+                args: JSON.stringify({ file_path: file }),
+              })),
+            ),
+          },
+          { lines: textStopResponse("checks passed") },
+          { lines: textStopResponse("live reply") },
+          { lines: usageStop(LARGE_REPLY, HIGH_USAGE) },
+          { lines: textStopResponse("ok") },
+        ])
+        yield* Effect.addFinalizer(() => Effect.promise(() => server.stop()))
+        yield* provideTmpdirInstance(
+          (dir) =>
+            Effect.gen(function* () {
+              for (const file of FILES) yield* Effect.promise(() => Bun.write(path.join(dir, file), fileBody(file)))
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const checkpoint = yield* SessionCheckpoint.Service
+              const session = yield* sessions.create({ title: "writer reads copies once" })
+              const say = (value: string) =>
+                prompt.prompt({ sessionID: session.id, agent: "build", parts: [{ type: "text", text: value }] })
+
+              yield* say("start the task")
+              const watermark = (yield* sessions.messages({ sessionID: session.id })).at(-1)!
+              yield* seedCheckpoint(session.id, watermark.info.id)
+              yield* say("run the checks on alpha and beta")
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                noReply: true,
+                parts: [{ type: "text", text: "UNANSWERED-COPIED-ONTO-BOUNDARY" }],
+              })
+              yield* prompt.command({
+                sessionID: session.id,
+                command: Command.Default.REBUILD,
+                arguments: "",
+                agent: "build",
+              })
+              yield* say("after rebuild")
+              yield* say("produce the large step")
+              const before = server.captures.length
+              yield* say("next")
+              const findWriter = () =>
+                server.captures
+                  .slice(before)
+                  .find((capture) => capture.messages.some((message) => text(message).includes(WRITER_MARKER)))
+              for (let attempt = 0; attempt < 200 && !findWriter(); attempt++) yield* Effect.sleep("50 millis")
+              const writer = findWriter()
+              expect(writer).toBeDefined()
+
+              const messages = writer!.messages.filter((message) => message.role !== "system")
+              expect(JSON.stringify(messages).split("UNANSWERED-COPIED-ONTO-BOUNDARY")).toHaveLength(2)
+              expect(text(messages[indexOf(messages, BOUNDARY_LABEL)]!)).toContain("UNANSWERED-COPIED-ONTO-BOUNDARY")
+              expect(indexOf(messages, "alpha.txt body line 299")).toBeGreaterThan(indexOf(messages, BOUNDARY_LABEL))
+              expect(yield* checkpoint.waitForWriter(session.id)).toBe("success")
+            }),
+          { git: true, config: config(server.origin, true) },
+        )
+      }),
+    120_000,
+  )
 })

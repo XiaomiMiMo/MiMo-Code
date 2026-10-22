@@ -189,6 +189,107 @@ describe("renderTailDigest", () => {
     expect(text).not.toContain("prior summary")
     expect(text).not.toContain("read(path=\"old.ts\")")
   })
+
+  const UNSEEN = "→ ran, result not seen"
+  const OPENING = "check the current state before repeating"
+
+  test("marks the completed client-executed calls of the last assistant message as ran without a seen result", () => {
+    const errored = toolPart("a2", "p4", "edit", { path: "c.ts" }, {
+      status: "error",
+      input: { path: "c.ts" },
+      error: "no match",
+      time: { start: 0, end: 1 },
+    })
+    const providerSide = {
+      ...completedTool("a2", "p5", "web_search", { query: "docs" }),
+      metadata: { providerExecuted: true },
+    } as MessageV2.Part
+    const text = renderTailDigest([
+      {
+        info: assistantInfo("a1", "u1"),
+        parts: [completedTool("a1", "p1", "read", { path: "a.ts" })],
+      },
+      {
+        info: assistantInfo("a2", "u1"),
+        parts: [
+          textPart("a2", "p2", "reading b and editing c"),
+          completedTool("a2", "p3", "bash", { command: "bun test" }),
+          errored,
+          providerSide,
+          pendingTool("a2", "p6", "read", { path: "d.ts" }),
+        ],
+      },
+    ])
+    const lines = text.split("\n")
+    expect(lines).toContain('- read(path="a.ts")')
+    expect(lines).toContain(`- bash(command="bun test") ${UNSEEN}`)
+    expect(lines).toContain('- edit(path="c.ts") → error: no match')
+    expect(lines).toContain('- web_search(query="docs")')
+    expect(lines).toContain('- read(path="d.ts") → interrupted')
+    expect(lines.filter((line) => line.includes(UNSEEN))).toHaveLength(1)
+    expect(lines[2]).toContain(OPENING)
+  })
+
+  test("a tail that ends in a finished reply carries no mark and no opening line", () => {
+    const text = renderTailDigest([
+      {
+        info: assistantInfo("a1", "u1"),
+        parts: [completedTool("a1", "p1", "read", { path: "a.ts" })],
+      },
+      {
+        info: { ...assistantInfo("a2", "u1"), finish: "stop" } as MessageV2.Assistant,
+        parts: [textPart("a2", "p2", "a.ts looks fine")],
+      },
+    ])
+    expect(text).not.toContain(UNSEEN)
+    expect(text).not.toContain(OPENING)
+    expect(text).toContain('- read(path="a.ts")')
+  })
+
+  test("calls before trailing user messages are still the last assistant message's", () => {
+    const text = renderTailDigest([
+      {
+        info: assistantInfo("a1", "u1"),
+        parts: [completedTool("a1", "p1", "read", { path: "a.ts" })],
+      },
+      { info: userInfo("u2"), parts: [textPart("u2", "p2", "also check b.ts")] },
+    ])
+    expect(text).toContain(`- read(path="a.ts") ${UNSEEN}`)
+    expect(text).toContain(OPENING)
+  })
+
+  test("a long tail keeps its newest 50 lines, so the marked calls survive, and names how many it omitted", () => {
+    const earlier = Array.from({ length: 300 }, (_, i) => ({
+      info: assistantInfo(`a${String(i).padStart(3, "0")}`, "u1"),
+      parts: [textPart(`a${String(i).padStart(3, "0")}`, `t${i}`, `step ${i} done`)],
+    }))
+    const text = renderTailDigest([
+      ...earlier,
+      { info: assistantInfo("z1", "u1"), parts: [completedTool("z1", "p1", "read", { path: "last.ts" })] },
+    ])
+    expect(text).toContain(`- read(path="last.ts") ${UNSEEN}`)
+    expect(text).toContain(OPENING)
+    expect(text).toContain("(251 earlier activity lines omitted — use the history tool to read them)")
+    expect(text.split("\n").filter((line) => line.startsWith("- "))).toHaveLength(50)
+    expect(text).toContain("- assistant: step 251 done")
+    expect(text).not.toContain("- assistant: step 250 done")
+  })
+
+  test("a tail within the limit names no omitted lines", () => {
+    const text = renderTailDigest([
+      { info: assistantInfo("a1", "u1"), parts: [completedTool("a1", "p1", "read", { path: "a.ts" })] },
+    ])
+    expect(text).not.toContain("omitted")
+  })
+
+  test("an assistant message without content after the last step does not take the mark", () => {
+    const text = renderTailDigest([
+      { info: assistantInfo("a1", "u1"), parts: [completedTool("a1", "p1", "read", { path: "a.ts" })] },
+      { info: assistantInfo("a2", "u1"), parts: [] },
+      { info: assistantInfo("a3", "u1"), parts: [textPart("a3", "p3", "  ")] },
+    ])
+    expect(text).toContain(`- read(path="a.ts") ${UNSEEN}`)
+  })
 })
 
 describe("collapseCheckpointTail", () => {

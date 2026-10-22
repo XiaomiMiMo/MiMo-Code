@@ -206,21 +206,6 @@ describe("renderRebuildContext v3", () => {
     ),
   )
 
-  it.live("appends toolResultContinueReminder when lastMessageInfo is tool", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        const cp = yield* SessionCheckpoint.Service
-        const session = yield* Session.Service
-        const reg = yield* TaskRegistry.Service
-        const sess = yield* session.create({ title: "Test" })
-        yield* reg.create({ session_id: sess.id, summary: "Some task" })
-
-        const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "tool" } })
-        expect(out).toContain("Tool results above are real history")
-      }),
-    ),
-  )
-
   it.live("no reminder when lastMessageInfo is user", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -232,7 +217,7 @@ describe("renderRebuildContext v3", () => {
 
         const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "user" } })
         expect(out).not.toContain("mid-loop in an autonomous task")
-        expect(out).not.toContain("Tool results above are real history")
+        expect(out).not.toContain("<system-reminder>")
       }),
     ),
   )
