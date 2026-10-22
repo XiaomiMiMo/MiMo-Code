@@ -19,10 +19,14 @@ import { forwardRef } from "./permission-forward-ref"
 
 // Legacy env var — maps to permissionAskTimeoutMs initial value for backward
 // compat. When set to a positive integer, new instances start with that timeout.
-// When unset or 0, permissionAskTimeoutMs starts as null (no timeout).
+// Default 60s (docs: "auto-reject after 60s") so unattended asks cannot freeze
+// the TUI forever. Set MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS=0 for no timeout.
+const DEFAULT_ASK_TIMEOUT_MS = 60_000
 const envInitialAskTimeoutMs = (): number | null => {
-  const raw = Number(process.env.MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS)
-  return raw > 0 ? raw : null
+  const raw = process.env.MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS
+  if (raw === undefined || raw === "") return DEFAULT_ASK_TIMEOUT_MS
+  const n = Number(raw)
+  return n > 0 ? n : null
 }
 
 const log = Log.create({ service: "permission" })

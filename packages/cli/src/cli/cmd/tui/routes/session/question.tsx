@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createMemo, createSignal, For, Show, onCleanup } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeybind } from "../../context/keybind"
@@ -141,9 +141,11 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
 
   const dialog = useDialog()
 
+  const [alive, setAlive] = createSignal(true)
+  onCleanup(() => setAlive(false))
   useKeyboard((evt) => {
-    // Skip processing if a dialog (e.g., command palette) is open
-    if (dialog.stack.length > 0) return
+    // Zombie-handler guard (see permission.tsx): ignore keys after unmount.
+    if (!alive() || dialog.stack.length > 0) return
 
     // When editing custom answer textarea
     if (store.editing && !confirm()) {
