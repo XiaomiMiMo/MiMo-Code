@@ -26,7 +26,7 @@
     },
     "packages/cli": {
       "name": "@mimo-ai/cli",
-      "version": "0.1.15",
+      "version": "0.1.16",
       "bin": {
         "mimo": "./mimo.js",
       },
@@ -177,7 +177,7 @@
     },
     "packages/plugin": {
       "name": "@mimo-ai/plugin",
-      "version": "0.1.15",
+      "version": "0.1.16",
       "dependencies": {
         "@mimo-ai/sdk": "workspace:*",
         "effect": "catalog:",
@@ -202,7 +202,7 @@
     },
     "packages/sdk": {
       "name": "@mimo-ai/sdk",
-      "version": "0.1.15",
+      "version": "0.1.16",
       "dependencies": {
         "cross-spawn": "catalog:",
       },
@@ -217,7 +217,7 @@
     },
     "packages/shared": {
       "name": "@mimo-ai/shared",
-      "version": "0.1.15",
+      "version": "0.1.16",
       "bin": {
         "opencode": "./bin/opencode",
       },
