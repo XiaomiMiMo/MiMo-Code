@@ -1143,10 +1143,11 @@ it.live("pending permission prevents instance reload", () =>
   }),
 )
 
-it.live("reply - does nothing for unknown requestID", () =>
+it.live("reply - returns false for unknown requestID (orphaned ask)", () =>
   withDir({ git: true }, () =>
     Effect.gen(function* () {
-      yield* reply({ requestID: PermissionID.make("per_unknown"), reply: "once" })
+      const applied = yield* reply({ requestID: PermissionID.make("per_unknown"), reply: "once" })
+      expect(applied).toBe(false)
       expect(yield* list()).toHaveLength(0)
     }),
   ),

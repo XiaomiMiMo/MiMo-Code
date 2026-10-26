@@ -155,7 +155,149 @@ for (const permission of ["computer", "bash_delete"]) {
       app.renderer.destroy()
     }
   })
+
+  test(`${permission} PermissionPrompt latches after first select`, async () => {
+    const { app, replies } = await mountPermission(permission)
+    try {
+      await app.mockInput.pressKeys(["RETURN", "RETURN", "RETURN"])
+      await app.renderOnce()
+      await waitFor(() => replies.length > 0)
+      await Bun.sleep(20)
+      expect(replies).toEqual([{
+        method: "POST",
+        path: `/permission/per_${permission}/reply`,
+        body: { reply: "once" },
+      }])
+    } finally {
+      app.renderer.destroy()
+    }
+  })
 }
+
+test("PermissionPrompt dismisses when reply reports an orphaned request", async () => {
+  const replies: { method: string; path: string; body: unknown }[] = []
+  const [current] = createSignal(request("bash_delete"))
+  const fetcher = (async (input: Request) => {
+    const url = new URL(input.url)
+    if (url.pathname.startsWith("/permission/")) {
+      replies.push({ method: input.method, path: url.pathname, body: await input.json() })
+      // false = server no longer has this requestID (turn tore the ask down)
+      return Response.json(false)
+    }
+    if (url.pathname === "/path") return Response.json({ directory: "/tmp/permission", worktree: "" })
+    if (url.pathname === "/project/current") return Response.json({ id: "permission-project" })
+    if (url.pathname === "/config/providers") return Response.json({ providers: [], default: {} })
+    if (url.pathname === "/provider") return Response.json({ all: [], default: {}, connected: [], authenticated: [] })
+    if (["/session", "/agent", "/command", "/experimental/workspace", "/experimental/workspace/status", "/lsp", "/formatter"].includes(url.pathname)) {
+      return Response.json([])
+    }
+    return Response.json({})
+  }) as typeof fetch
+  const app = await testRender(() => (
+    <SDKProvider url="http://test" directory="/tmp/permission" fetch={fetcher} events={{ subscribe: async () => () => {} }}>
+      <ProjectProvider>
+        <ArgsProvider>
+          <ExitProvider>
+            <SyncProvider>
+              <KVProvider>
+                <TuiConfigProvider config={{ keybinds: { app_exit: "ctrl+c" } }}>
+                  <ThemeProvider mode="dark">
+                    <LanguageProvider>
+                      <ToastProvider>
+                        <DialogProvider>
+                          <KeybindProvider>
+                            <PermissionPrompt request={current()} />
+                          </KeybindProvider>
+                        </DialogProvider>
+                      </ToastProvider>
+                    </LanguageProvider>
+                  </ThemeProvider>
+                </TuiConfigProvider>
+              </KVProvider>
+            </SyncProvider>
+          </ExitProvider>
+        </ArgsProvider>
+      </ProjectProvider>
+    </SDKProvider>
+  ), { width: 100, height: 24 })
+  try {
+    await waitFor(() => app.captureCharFrame().includes("Permission required"))
+    await app.mockInput.pressKeys(["RETURN"])
+    await waitFor(async () => {
+      await app.renderOnce()
+      return !app.captureCharFrame().includes("Permission required")
+    })
+    expect(replies).toEqual([{
+      method: "POST",
+      path: "/permission/per_bash_delete/reply",
+      body: { reply: "once" },
+    }])
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("PermissionPrompt dismisses when reply fails", async () => {
+  const replies: { method: string; path: string; body: unknown }[] = []
+  const [current] = createSignal(request("bash_delete"))
+  const fetcher = (async (input: Request) => {
+    const url = new URL(input.url)
+    if (url.pathname.startsWith("/permission/")) {
+      replies.push({ method: input.method, path: url.pathname, body: await input.json() })
+      return new Response("gone", { status: 500 })
+    }
+    if (url.pathname === "/path") return Response.json({ directory: "/tmp/permission", worktree: "" })
+    if (url.pathname === "/project/current") return Response.json({ id: "permission-project" })
+    if (url.pathname === "/config/providers") return Response.json({ providers: [], default: {} })
+    if (url.pathname === "/provider") return Response.json({ all: [], default: {}, connected: [], authenticated: [] })
+    if (["/session", "/agent", "/command", "/experimental/workspace", "/experimental/workspace/status", "/lsp", "/formatter"].includes(url.pathname)) {
+      return Response.json([])
+    }
+    return Response.json({})
+  }) as typeof fetch
+  const app = await testRender(() => (
+    <SDKProvider url="http://test" directory="/tmp/permission" fetch={fetcher} events={{ subscribe: async () => () => {} }}>
+      <ProjectProvider>
+        <ArgsProvider>
+          <ExitProvider>
+            <SyncProvider>
+              <KVProvider>
+                <TuiConfigProvider config={{ keybinds: { app_exit: "ctrl+c" } }}>
+                  <ThemeProvider mode="dark">
+                    <LanguageProvider>
+                      <ToastProvider>
+                        <DialogProvider>
+                          <KeybindProvider>
+                            <PermissionPrompt request={current()} />
+                          </KeybindProvider>
+                        </DialogProvider>
+                      </ToastProvider>
+                    </LanguageProvider>
+                  </ThemeProvider>
+                </TuiConfigProvider>
+              </KVProvider>
+            </SyncProvider>
+          </ExitProvider>
+        </ArgsProvider>
+      </ProjectProvider>
+    </SDKProvider>
+  ), { width: 100, height: 24 })
+  try {
+    await waitFor(() => app.captureCharFrame().includes("Permission required"))
+    await app.mockInput.pressKeys(["RETURN"])
+    await waitFor(async () => {
+      await app.renderOnce()
+      return !app.captureCharFrame().includes("Permission required")
+    })
+    expect(replies).toEqual([{
+      method: "POST",
+      path: "/permission/per_bash_delete/reply",
+      body: { reply: "once" },
+    }])
+  } finally {
+    app.renderer.destroy()
+  }
+})
 
 for (const permission of ["bash", "edit"]) {
   test(`${permission} PermissionPrompt preserves always confirmation and reply`, async () => {
