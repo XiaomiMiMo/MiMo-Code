@@ -1,6 +1,6 @@
 ---
 name: claude-code
-description: "Operate Claude Code CLI (v2.1+) via the terminal. Load only when the user explicitly authorizes this skill or names Claude Code / claude-code. Before any command, confirm the `claude` binary is available; if missing, stop and give install or auth guidance. Do not use for general coding or other agent CLIs. Covers print mode (-p), interactive tmux sessions, and background (--bg) orchestration."
+description: "Operate Claude Code CLI (v2.1+) via the terminal. Load only when the user explicitly authorizes this skill or names Claude Code / claude-code. Before any command, confirm the `claude` binary is available; if missing, stop and give install or auth guidance. Covers print mode (-p), interactive tmux sessions, and background (--bg) orchestration."
 version: 2.0.0
 license: MIT
 platforms: [linux, macos, windows]
@@ -9,8 +9,6 @@ platforms: [linux, macos, windows]
 # Claude Code Delegation
 
 Delegate coding work to Claude Code, Anthropic's autonomous coding agent CLI.
-
-**Invocation contract (all three agent-CLI skills):** load only on explicit user authorization or by name; confirm the matching binary exists before running anything; if it is missing, stop and give install/auth guidance; do not use for general coding or other agent CLIs.
 
 **Setup (once):** `npm install -g @anthropic-ai/claude-code && claude auth login` · verify with `claude auth status` / `claude doctor`. CI token: `claude setup-token`. Full auth/install variants → `references/flags.md`.
 

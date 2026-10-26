@@ -35,7 +35,7 @@ describe("builtin skills", () => {
     for (const [name, root] of Object.entries(agentCliRoots)) {
       const skill = await Bun.file(path.join(root, "SKILL.md")).text()
       expect(skill).toContain("Load only when the user explicitly authorizes this skill")
-      expect(skill).toContain("Do not use for general coding or other agent CLIs")
+      expect(skill).not.toContain("Do not use for general coding or other agent CLIs")
       expect(skill).toContain(
         name === "claude-code"
           ? "confirm the `claude` binary is available"

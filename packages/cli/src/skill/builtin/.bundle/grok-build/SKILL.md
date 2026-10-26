@@ -1,13 +1,11 @@
 ---
 name: grok-build
-description: "Operate the Grok Build CLI (`grok`), including interactive and headless runs, authentication, sessions, worktrees, permissions, sandboxing, MCP servers, plugins, inspection, updates, and automation output. Load only when the user explicitly authorizes this skill or names Grok Build / grok-build. Before any command, confirm the `grok` binary is available; if missing, stop and give install or auth guidance. Do not use for general coding or other agent CLIs."
+description: "Operate the Grok Build CLI (`grok`), including interactive and headless runs, authentication, sessions, worktrees, permissions, sandboxing, MCP servers, plugins, inspection, updates, and automation output. Load only when the user explicitly authorizes this skill or names Grok Build / grok-build. Before any command, confirm the `grok` binary is available; if missing, stop and give install or auth guidance."
 ---
 
 # Grok Build CLI
 
 Operate Grok Build from a terminal while keeping execution mode, permissions, sandboxing, session state, and output handling explicit.
-
-**Invocation contract (all three agent-CLI skills):** load only on explicit user authorization or by name; confirm the matching binary exists before running anything; if it is missing, stop and give install/auth guidance; do not use for general coding or other agent CLIs.
 
 ## Start with Local Evidence
 
