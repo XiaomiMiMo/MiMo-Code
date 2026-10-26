@@ -147,7 +147,10 @@ describe("WorkflowRuntime workflow() by name + dataflow", () => {
 })
 
 describe("WorkflowRuntime global concurrency ceiling", () => {
-  it.live("two children of 4 agents each: only the global ceiling reaches the LLM at once", () =>
+  // 2 children × 2 agents is the lightest shape that still falsifies a per-run-only
+  // cap: buggy → 4 in-flight LLM calls (each child admits 2); correct global ceiling
+  // of 2 → exactly 2. 2×1 cannot distinguish (both would show 2).
+  it.live("two children of 2 agents each: only the global ceiling reaches the LLM at once", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const runtime = yield* WorkflowRuntime.Service
@@ -156,20 +159,18 @@ describe("WorkflowRuntime global concurrency ceiling", () => {
           title: "wf global cap",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
-        // DETERMINISTIC concurrency probe (no peak-tracking race): all 8 agents'
-        // replies block on one gate promise. The server counts a request the instant
+        // DETERMINISTIC concurrency probe (no peak-tracking race): every agent
+        // reply blocks on one gate promise. The server counts a request the instant
         // it ARRIVES (hits++ before it blocks on the gate), and hits is monotonic — so
         // while the gate is held, llm.calls is EXACTLY the number of agents that
-        // acquired a permit and reached the LLM. With a global ceiling of 2, exactly 2
-        // arrive and the other 6 wait at the semaphore; a per-run-only cap (the bug)
-        // would let each child run 2 → 4 arrive.
+        // acquired a permit and reached the LLM.
         let release = () => {}
         const gate = new Promise<void>((r) => (release = r))
-        for (let i = 0; i < 8; i++) yield* llm.hold("done", gate)
+        for (let i = 0; i < 4; i++) yield* llm.hold("done", gate)
         const child = [
           `export const meta = { name: "c", description: "d" }`,
           `const ts = []`,
-          `for (let i = 0; i < 4; i++) ts.push(() => agent("x" + i))`,
+          `for (let i = 0; i < 2; i++) ts.push(() => agent("x" + i))`,
           `return (await parallel(ts)).length`,
         ].join("\n")
         const orchestrator = [
@@ -183,16 +184,19 @@ describe("WorkflowRuntime global concurrency ceiling", () => {
           parentActorID: "main",
           model: ref,
         })
-        // Wait until the ceiling is saturated (2 in-flight), then give any
-        // erroneously-unblocked agents ample time to also arrive.
-        yield* llm.wait(2)
-        yield* Effect.sleep("500 millis")
-        expect(yield* llm.calls).toBe(2) // EXACTLY the ceiling — 6 still blocked at the semaphore
-        // Release the gate so every agent drains; the run completes.
-        release()
+        // Wait until the ceiling is saturated (2 in-flight), then a short settle so a
+        // per-run-only bug's extra pair has time to arrive. release() runs even if the
+        // assertion fails, so a red ceiling check does not hang the gated agents.
+        try {
+          yield* llm.wait(2)
+          yield* Effect.sleep("100 millis")
+          expect(yield* llm.calls).toBe(2) // EXACTLY the ceiling — 2 still blocked at the semaphore
+        } finally {
+          release()
+        }
         const outcome = yield* runtime.wait({ runID })
         expect(outcome.status).toBe("completed")
-        expect((outcome as { result: number[] }).result).toEqual([4, 4])
+        expect((outcome as { result: number[] }).result).toEqual([2, 2])
       }),
       // The global ceiling of 2 comes from CONFIG (a pure process/config property),
       // NOT from a per-run start() input — a per-run input could only narrow its own
