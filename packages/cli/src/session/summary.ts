@@ -6,6 +6,8 @@ import { Storage } from "@/storage"
 import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID } from "./schema"
+import { boundPreview, type PreviewSummary, type DiffPreview } from "@/snapshot/preview"
+import { readDiffCache, writeDiffCache } from "./diff-cache"
 
 function unquoteGitPath(input: string) {
   if (!input.startsWith('"')) return input
@@ -66,7 +68,10 @@ function unquoteGitPath(input: string) {
 export interface Interface {
   readonly summarize: (input: { sessionID: SessionID; messageID: MessageID }) => Effect.Effect<void>
   readonly diff: (input: { sessionID: SessionID; messageID?: MessageID }) => Effect.Effect<Snapshot.FileDiff[]>
-  readonly computeDiff: (input: { messages: MessageV2.WithParts[] }) => Effect.Effect<Snapshot.FileDiff[]>
+  readonly computeDiff: (input: {
+    messages: MessageV2.WithParts[]
+    onSummary?: (summary: PreviewSummary) => void
+  }) => Effect.Effect<Snapshot.FileDiff[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionSummary") {}
@@ -79,7 +84,10 @@ export const layer = Layer.effect(
     const storage = yield* Storage.Service
     const bus = yield* Bus.Service
 
-    const computeDiff = Effect.fn("SessionSummary.computeDiff")(function* (input: { messages: MessageV2.WithParts[] }) {
+    const computeDiff = Effect.fn("SessionSummary.computeDiff")(function* (input: {
+      messages: MessageV2.WithParts[]
+      onSummary?: (summary: PreviewSummary) => void
+    }) {
       let from: string | undefined
       let to: string | undefined
       for (const item of input.messages) {
@@ -95,7 +103,7 @@ export const layer = Layer.effect(
           if (part.type === "step-finish" && part.snapshot) to = part.snapshot
         }
       }
-      if (from && to) return yield* snapshot.diffFull(from, to)
+      if (from && to) return yield* snapshot.diffFull(from, to, { onSummary: input.onSummary })
       return []
     })
 
@@ -106,25 +114,39 @@ export const layer = Layer.effect(
       const all = yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" })
       if (!all.length) return
 
-      const diffs = yield* computeDiff({ messages: all })
+      let total: PreviewSummary | undefined
+      const diffs = yield* computeDiff({
+        messages: all,
+        onSummary: (summary) => {
+          total = summary
+        },
+      })
+      const preview = boundPreview(diffs, total)
       yield* sessions.setSummary({
         sessionID: input.sessionID,
         summary: {
-          additions: diffs.reduce((sum, x) => sum + x.additions, 0),
-          deletions: diffs.reduce((sum, x) => sum + x.deletions, 0),
-          files: diffs.length,
+          additions: preview.summary.additions,
+          deletions: preview.summary.deletions,
+          files: preview.summary.files,
         },
       })
-      yield* storage.write(["session_diff", input.sessionID], diffs).pipe(Effect.ignore)
-      yield* bus.publish(Session.Event.Diff, { sessionID: input.sessionID, diff: diffs })
+      yield* writeDiffCache(storage, input.sessionID, preview)
+      yield* bus.publish(Session.Event.Diff, { sessionID: input.sessionID, diff: preview.diffs })
 
       const messages = all.filter(
         (m) => m.info.id === input.messageID || (m.info.role === "assistant" && m.info.parentID === input.messageID),
       )
       const target = messages.find((m) => m.info.id === input.messageID)
       if (!target || target.info.role !== "user") return
-      const msgDiffs = yield* computeDiff({ messages })
-      target.info.summary = { ...target.info.summary, diffs: msgDiffs }
+      let msgTotal: PreviewSummary | undefined
+      const msgDiffs = yield* computeDiff({
+        messages,
+        onSummary: (summary) => {
+          msgTotal = summary
+        },
+      })
+      const msgPreview = boundPreview(msgDiffs, msgTotal)
+      target.info.summary = { ...target.info.summary, diffs: msgPreview.diffs, preview: msgPreview.summary }
       yield* sessions.updateMessage(target.info)
     })
 
@@ -133,28 +155,67 @@ export const layer = Layer.effect(
         const all = yield* sessions.messages({ sessionID: input.sessionID, agentID: "*" })
         const target = all.find((item) => item.info.id === input.messageID)
         if (!target || target.info.role !== "user") return []
-        const diffs =
-          target.info.summary?.diffs ??
-          (yield* computeDiff({
-            messages: all.filter(
-              (item) =>
-                item.info.id === input.messageID ||
-                (item.info.role === "assistant" && item.info.parentID === input.messageID),
-            ),
-          }))
-        return diffs.map((item) => ({ ...item, file: unquoteGitPath(item.file) }))
+        if (target.info.summary?.diffs && !target.info.summary.diffTruncated) {
+          const legacy = !target.info.summary.preview
+          const rows = legacy
+            ? target.info.summary.diffs.map((item) => ({ ...item, file: unquoteGitPath(item.file) }))
+            : target.info.summary.diffs
+          const preview = boundPreview(rows, target.info.summary.preview)
+          if (legacy) {
+            target.info.summary = { ...target.info.summary, diffs: preview.diffs, preview: preview.summary }
+            yield* sessions.updateMessage(target.info)
+          }
+          return preview.diffs
+        }
+        let total: PreviewSummary | undefined
+        const diffs = yield* computeDiff({
+          messages: all.filter(
+            (item) =>
+              item.info.id === input.messageID ||
+              (item.info.role === "assistant" && item.info.parentID === input.messageID),
+          ),
+          onSummary: (summary) => {
+            total = summary
+          },
+        })
+        const preview = boundPreview(diffs, total)
+        target.info.summary = {
+          ...target.info.summary,
+          diffs: preview.diffs,
+          preview: preview.summary,
+          diffTruncated: false,
+        }
+        yield* sessions.updateMessage(target.info)
+        return preview.diffs
       }
-      const diffs = yield* storage
-        .read<Snapshot.FileDiff[]>(["session_diff", input.sessionID])
-        .pipe(Effect.catch(() => Effect.succeed([] as Snapshot.FileDiff[])))
-      const next = diffs.map((item) => {
-        const file = unquoteGitPath(item.file)
-        if (file === item.file) return item
-        return { ...item, file }
-      })
-      const changed = next.some((item, i) => item.file !== diffs[i]?.file)
-      if (changed) yield* storage.write(["session_diff", input.sessionID], next).pipe(Effect.ignore)
-      return next
+      let preview: (DiffPreview & { legacy?: boolean }) | undefined = yield* readDiffCache(storage, input.sessionID)
+      const rebuild = !preview
+      if (!preview) {
+        // Caches are derived data. Rebuild from recorded snapshots, never from
+        // today's working tree: cleaning a repository must not erase history.
+        let total: PreviewSummary | undefined
+        const all = yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" })
+        const diffs = yield* computeDiff({
+          messages: all,
+          onSummary: (summary) => {
+            total = summary
+          },
+        })
+        preview = boundPreview(diffs, total)
+      }
+      if (preview.legacy) preview.diffs = preview.diffs.map((item) => ({ ...item, file: unquoteGitPath(item.file) }))
+      if (rebuild || preview.legacy) {
+        yield* sessions.setSummary({
+          sessionID: input.sessionID,
+          summary: {
+            files: preview.summary.files,
+            additions: preview.summary.additions,
+            deletions: preview.summary.deletions,
+          },
+        })
+        yield* writeDiffCache(storage, input.sessionID, preview)
+      }
+      return preview.diffs
     })
 
     return Service.of({ summarize, diff, computeDiff })

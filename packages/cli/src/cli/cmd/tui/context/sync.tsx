@@ -1,3 +1,4 @@
+import { sidebarDiff, type SidebarDiff } from "../util/sidebar-diff"
 import type {
   Message,
   Agent,
@@ -31,7 +32,6 @@ import { useEvent } from "@tui/context/event"
 import { useSDK } from "@tui/context/sdk"
 import { Binary } from "@mimo-ai/shared/util/binary"
 import { createSimpleContext } from "./helper"
-import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
 import { batch, onMount } from "solid-js"
@@ -255,7 +255,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         [sessionID: string]: SessionGoal
       }
       session_diff: {
-        [sessionID: string]: Snapshot.FileDiff[]
+        [sessionID: string]: SidebarDiff[]
       }
       todo: {
         [sessionID: string]: Todo[]
@@ -517,7 +517,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "session.diff":
-          setStore("session_diff", event.properties.sessionID, event.properties.diff)
+          setStore("session_diff", event.properties.sessionID, sidebarDiff(event.properties.diff))
           break
 
         case "session.deleted": {
@@ -1046,7 +1046,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               for (const message of messages.data ?? []) {
                 draft.part[message.info.id] = message.parts
               }
-              draft.session_diff[sessionID] = diff.data ?? []
+              draft.session_diff[sessionID] = sidebarDiff(diff.data ?? [])
               draft.actor[sessionID] = ((actors.data ?? []) as any[]).map((row): ActorEntry => ({
                 actor_id: row.actorID,
                 session_id: row.sessionID,

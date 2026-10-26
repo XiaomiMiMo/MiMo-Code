@@ -276,6 +276,7 @@ export type TuiState = {
   session: {
     count: () => number
     diff: (sessionID: string) => ReadonlyArray<TuiSidebarFileItem>
+    diffTotal?: (sessionID: string) => number | undefined
     todo: (sessionID: string) => ReadonlyArray<TuiSidebarTodoItem>
     task: (sessionID: string) => ReadonlyArray<TuiSidebarTaskItem>
     messages: (sessionID: string) => ReadonlyArray<Message>

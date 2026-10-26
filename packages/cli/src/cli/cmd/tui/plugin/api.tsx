@@ -149,6 +149,9 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
       count() {
         return sync.data.session.length
       },
+      diffTotal(sessionID) {
+        return sync.data.session.find((session) => session.id === sessionID)?.summary?.files
+      },
       diff(sessionID) {
         return sync.data.session_diff[sessionID] ?? []
       },

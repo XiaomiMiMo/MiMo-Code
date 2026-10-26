@@ -1,0 +1,52 @@
+Issue #2714: bounded diff preview validation
+
+Regression evidence
+- The original snapshot behavior (with only the new metadata schema available
+  for imports) fails both new behavioral checks: a 512 KiB tracked blob produces
+  an unbounded patch, and 510 changed files produce 510 preview rows.
+- The bounded implementation passes these checks. Snapshot/revert still retains
+  the large file's contents and all 510 file paths.
+- Forced cat-file batch failure falls back to individual reads for small blobs
+  only; neither oversized blob is read through the fallback.
+- An oversized legacy cache is rejected before JSON parsing. Historical anchors
+  rebuild the old diff after the worktree changes. Message title, body and text
+  parts survive the legacy summary projection and rebuild.
+
+Synthetic benchmark
+Run in a separate process: bun script/benchmark-diff-preview.ts
+This exercises 100000 changed-file records and the real preview builder/patch
+generation. It is not a measurement of an actual 100000-file repository or Git's
+own memory usage. RSS is sampled, not a universal peak-memory guarantee.
+
+Measured on Windows with Bun 1.3.14:
+  input records: 100000
+  retained rows: 500
+  omitted rows: 99500
+  serialized payload: 151616 bytes
+  elapsed: approximately 19 ms
+  RSS before: 58867712 bytes
+  sampled peak RSS: 92344320 bytes
+
+Terminal evidence
+2714-sidebar.png shows monochrome character frames from the real headless TUI
+renderer, using the same 500-row synthetic fixture for the original component
+and the bounded component. The first 23 rows are shown; the after view reports
+the full synthetic count of 100000. This is fixture evidence, not a live user
+session screenshot.
+
+Checks
+- 21 pass: preview/cache/summary/revert/sidebar tests across seven files.
+- 13 pass: storage tests. 8 pass: sharing tests.
+- 12 pass: existing diffFull cases; 3 pass: targeted ignore/worktree/raw-diff cases.
+- Root typecheck, SDK generation and changed/new helper formatting: pass.
+- Lint: 0 errors; 3494 repository warnings (one unused import removed).
+- Wider snapshot run: 57 pass, 1 skip, 3 failures on Windows (symlink permissions
+  and missing chmod). This is not a claim that the full suite passes.
+
+Reproduction commands (from packages/cli, except root checks):
+  bun test test/snapshot/preview.test.ts test/session/diff-cache.test.ts
+  bun test test/session/summary-main-slice.test.ts test/session/revert-compact.test.ts
+  bun test test/cli/tui/sidebar-diff.test.ts test/cli/tui/sidebar-files.test.tsx
+  bun test test/cli/tui/revert-diff.test.ts test/storage/storage.test.ts
+  bun test test/share/share-next.test.ts
+  bun test test/snapshot/snapshot.test.ts -t diffFull

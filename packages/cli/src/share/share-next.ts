@@ -7,6 +7,7 @@ import { InstanceState } from "@/effect"
 import { Provider } from "@/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Session } from "@/session"
+import { SessionSummary } from "@/session/summary"
 import { MessageV2 } from "@/session/message-v2"
 import type { SessionID } from "@/session/schema"
 import { Database, eq } from "@/storage"
@@ -136,6 +137,7 @@ export const layer = Layer.effect(
     const httpOk = HttpClient.filterStatusOk(http)
     const provider = yield* Provider.Service
     const session = yield* Session.Service
+    const summary = yield* SessionSummary.Service
 
     function sync(sessionID: SessionID, data: Data[]): Effect.Effect<void> {
       return Effect.gen(function* () {
@@ -296,7 +298,7 @@ export const layer = Layer.effect(
     const full = Effect.fn("ShareNext.full")(function* (sessionID: SessionID) {
       log.info("full sync", { sessionID })
       const info = yield* session.get(sessionID)
-      const diffs = yield* session.diff(sessionID)
+      const diffs = yield* summary.diff({ sessionID })
       const messages = yield* Effect.sync(() => Array.from(MessageV2.stream(sessionID, { agentID: "*" })))
       const models = yield* Effect.forEach(
         Array.from(
@@ -400,4 +402,5 @@ export const defaultLayer = layer.pipe(
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(Provider.defaultLayer),
   Layer.provide(Session.defaultLayer),
+  Layer.provide(SessionSummary.defaultLayer),
 )

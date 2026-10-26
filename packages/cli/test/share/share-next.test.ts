@@ -12,6 +12,7 @@ import { Config } from "../../src/config"
 import { Provider } from "../../src/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
+import { SessionSummary } from "../../src/session/summary"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { ShareNext } from "../../src/share"
@@ -48,6 +49,7 @@ function live(client: HttpClient.HttpClient) {
     Layer.provide(http),
     Layer.provide(Provider.defaultLayer),
     Layer.provide(Session.defaultLayer),
+    Layer.provide(SessionSummary.defaultLayer),
   )
 }
 
@@ -66,6 +68,7 @@ function wired(client: HttpClient.HttpClient) {
     Layer.provide(Config.defaultLayer),
     Layer.provide(http),
     Layer.provide(Provider.defaultLayer),
+    Layer.provide(SessionSummary.defaultLayer),
   )
 }
 

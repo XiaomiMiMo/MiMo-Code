@@ -3,6 +3,7 @@ import path from "path"
 import { Global } from "../global"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import z from "zod"
+import { ByteLimitError, readLimited } from "@/util/bounded-stream"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Effect, Exit, Layer, Option, RcMap, Schema, Context, TxReentrantLock } from "effect"
 import { Git } from "@/git"
@@ -22,7 +23,7 @@ export const NotFoundError = NamedError.create(
   }),
 )
 
-export type Error = AppFileSystem.Error | InstanceType<typeof NotFoundError>
+export type Error = AppFileSystem.Error | InstanceType<typeof NotFoundError> | ByteLimitError
 
 const RootFile = Schema.Struct({
   path: Schema.optional(
@@ -58,9 +59,13 @@ const decodeSummary = Schema.decodeUnknownOption(SummaryFile)
 
 export interface Interface {
   readonly remove: (key: string[]) => Effect.Effect<void, AppFileSystem.Error>
-  readonly read: <T>(key: string[]) => Effect.Effect<T, Error>
+  readonly read: <T>(key: string[], options?: { maxBytes?: number }) => Effect.Effect<T, Error>
   readonly update: <T>(key: string[], fn: (draft: T) => void) => Effect.Effect<T, Error>
-  readonly write: <T>(key: string[], content: T) => Effect.Effect<void, AppFileSystem.Error>
+  readonly write: <T>(
+    key: string[],
+    content: T,
+    options?: { compact?: boolean },
+  ) => Effect.Effect<void, AppFileSystem.Error>
   readonly list: (prefix: string[]) => Effect.Effect<string[][], AppFileSystem.Error>
 }
 
@@ -254,8 +259,8 @@ export const layer = Layer.effect(
     const wrap = <A>(target: string, body: Effect.Effect<A, AppFileSystem.Error>) =>
       body.pipe(Effect.catchIf(missing, () => fail(target)))
 
-    const writeJson = Effect.fnUntraced(function* (target: string, content: unknown) {
-      yield* fs.writeWithDirs(target, JSON.stringify(content, null, 2))
+    const writeJson = Effect.fnUntraced(function* (target: string, content: unknown, compact = false) {
+      yield* fs.writeWithDirs(target, JSON.stringify(content, null, compact ? undefined : 2))
     })
 
     const withResolved = <A, E>(
@@ -275,10 +280,22 @@ export const layer = Layer.effect(
       )
     })
 
-    const read: Interface["read"] = <T>(key: string[]) =>
+    const read: Interface["read"] = <T>(key: string[], options?: { maxBytes?: number }) =>
       Effect.gen(function* () {
         const value = yield* withResolved(key, (target, rw) =>
-          TxReentrantLock.withReadLock(rw, wrap(target, fs.readJson(target))),
+          TxReentrantLock.withReadLock(
+            rw,
+            Effect.gen(function* () {
+              if (options?.maxBytes === undefined) return yield* wrap(target, fs.readJson(target))
+              const info = yield* wrap(target, fs.stat(target))
+              if (Number(info.size) > options.maxBytes) return yield* Effect.fail(new ByteLimitError())
+              const bytes = yield* readLimited(fs.stream(target), options.maxBytes)
+              return yield* Effect.try({
+                try: () => JSON.parse(bytes.toString("utf8")) as unknown,
+                catch: (cause) => new AppFileSystem.FileSystemError({ method: "readJson", cause }),
+              })
+            }),
+          ),
         )
         return value as T
       })
@@ -299,9 +316,11 @@ export const layer = Layer.effect(
         return value as T
       })
 
-    const write: Interface["write"] = (key: string[], content: unknown) =>
+    const write: Interface["write"] = (key: string[], content: unknown, options?: { compact?: boolean }) =>
       Effect.gen(function* () {
-        yield* withResolved(key, (target, rw) => TxReentrantLock.withWriteLock(rw, writeJson(target, content)))
+        yield* withResolved(key, (target, rw) =>
+          TxReentrantLock.withWriteLock(rw, writeJson(target, content, options?.compact)),
+        )
       })
 
     const list: Interface["list"] = Effect.fn("Storage.list")(function* (prefix: string[]) {
