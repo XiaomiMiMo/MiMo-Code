@@ -51,7 +51,6 @@ All three `SKILL.md` descriptions state the same rules:
 - Load only when the user explicitly authorizes this skill / names the CLI.
 - Before running anything, confirm the matching binary exists; if not, stop and
   give install/auth guidance.
-- Do not use for general coding or other agent CLIs.
 
 ### S2.4 Drop host-only yaml
 
