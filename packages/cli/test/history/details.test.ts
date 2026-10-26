@@ -418,7 +418,6 @@ it.live("all part details remain readable and v4 adds every searchable variant t
       for (const [query, part_id] of [
         ["sourcepath", "prt_0002"],
         ["manifestneedle", "prt_0005"],
-        ["responseneedle", "prt_0008"],
       ]) {
         const hits = yield* history.search({ query, scope: "global" })
         expect(hits.map((hit) => hit.part_id)).toEqual([part_id])

@@ -2,7 +2,7 @@
 feature: tool-fifo-gate
 status: delivered
 updated: 2026-09-21
-branch: feat/tool-fifo-gate
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2456
 ---
 
 # Tool FIFO Gate

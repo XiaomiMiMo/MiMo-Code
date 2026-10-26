@@ -21,7 +21,7 @@ function harness() {
 
 describe("nextSessionStatus", () => {
   const REBUILT =
-    "Context rebuilt from the latest checkpoint. Recent messages are preserved; earlier context is now summarized."
+    "Context rebuilt from the latest checkpoint. Earlier context is now summarized, and recent activity is listed in its place."
 
   test("a following turn's bare busy status does not inherit the rebuild message", () => {
     const h = harness()

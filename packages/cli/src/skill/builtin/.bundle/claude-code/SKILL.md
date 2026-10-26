@@ -1,6 +1,6 @@
 ---
 name: claude-code
-description: "Operate Claude Code CLI (v2.1+) via the terminal only when the user explicitly requests Claude Code or names this skill. Covers print mode (-p), interactive tmux sessions, and background (--bg) orchestration."
+description: "Operate Claude Code CLI (v2.1+) via the terminal. Load only when the user explicitly authorizes this skill or names Claude Code / claude-code. Before any command, confirm the `claude` binary is available; if missing, stop and give install or auth guidance. Covers print mode (-p), interactive tmux sessions, and background (--bg) orchestration."
 version: 2.0.0
 license: MIT
 platforms: [linux, macos, windows]

@@ -5,6 +5,7 @@ import os from "os"
 import z from "zod"
 import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2, COMPOSE_REMINDER_MARKER } from "./message-v2"
+import { memoryPath, metaDir } from "./checkpoint-paths"
 export { COMPOSE_REMINDER_MARKER }
 import {
   base64ByteSize,
@@ -22,7 +23,7 @@ import { Log, Token } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent, resolveStoredAgent } from "../agent/agent"
-import { decideAskRouting, hasActorTool, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
+import { decideAskRouting, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { makeTerminalNotifier } from "@/actor/notification"
 import { inboxControllerRef, schedulerRef, type Lane } from "@/inbox"
 import { MAX_CLAIM_PER_STEP, type Receipt } from "@/inbox/schema"
@@ -47,12 +48,11 @@ import { InstallationVersion } from "@/installation/version"
 import type { JSONObject, JSONSchema7 } from "@ai-sdk/provider"
 import { SessionPrune } from "./prune"
 import { SessionCheckpoint } from "./checkpoint"
+import { isBoundaryUser, isRebuildBoundary } from "./tail-digest"
 import { SessionCompaction } from "./compaction"
-import { computeLastMessageInfo } from "./last-message-info"
 import { usable, isOverflow as overflowCheck } from "./overflow"
 import { Config } from "@/config"
 import { isMemoryWriteEnabled } from "@/memory/write-gate"
-import { Global } from "@/global"
 import { NotFoundError, Database, eq, and, inArray, isNull } from "@/storage"
 import { InboxTable } from "@/inbox/inbox.sql"
 import * as QueueSync from "@/inbox/sync"
@@ -204,41 +204,53 @@ import { SessionPrefixSnapshot } from "./prefix-snapshot"
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
 
-// Recall-reminder hints, using each tool's JSON invocation shape. `hasActor`
-// false drops the actor line for an agent the tool is masked out for. Exported
-// for unit testing.
-export function recallHintLines(hasActor = true): string[] {
-  return [
-    `- memory({ operation: "search", query: "<keyword>" })`,
-    `- task({ operation: "list" })`,
-    ...(hasActor ? [`- actor({ operation: "status", actor_id: "<id>" })`] : []),
-  ]
-}
-
 // Stable substring markers for user-side synthetic reminders that must be
 // persisted once per message (runLoop reloads msgs from DB every step; bare
 // parts.push re-attaches a new PartID and reorders the user tail → prompt-cache miss).
 // COMPOSE_REMINDER_MARKER re-exported from message-v2 (hydrate promotes it to head).
-export const RECALL_REMINDER_MARKER = "This session has memory at"
 export const LOOP_STREAK_REMINDER_MARKER = "repeating the same action without making progress"
+export const SESSION_MEMORY_DIR_MARKER = "Current session memory directory:"
 
 /** True when `parts` already carries a non-ignored synthetic text reminder containing `marker`. */
 export function hasSyntheticReminder(parts: readonly MessageV2.Part[], marker: string): boolean {
   return parts.some((p) => p.type === "text" && p.synthetic === true && !p.ignored && p.text.includes(marker))
 }
 
-export function buildRecallReminderText(input: { sessMemDir: string; hints: string[] }): string {
+export function buildMemoryPathsReminderText(input: { projectMemoryFile: string; sessionDir: string }): string {
   return [
     "<system-reminder>",
-    `${RECALL_REMINDER_MARKER} ${input.sessMemDir}/. Recall content`,
-    "not in your context with:",
-    input.hints[0],
-    `- read(file_path="${input.sessMemDir}/...")`,
-    ...input.hints.slice(1),
-    "",
-    "Don't ask the user about something memory may already record.",
+    "Memory paths for this conversation — the real values of `<project_id>` and `<session_id>` in the Memory system instructions:",
+    `- Project memory: ${input.projectMemoryFile}`,
+    `- ${SESSION_MEMORY_DIR_MARKER} ${input.sessionDir}/`,
     "</system-reminder>",
   ].join("\n")
+}
+
+// The system prompt keeps `<project_id>` / `<session_id>` literal so it stays
+// byte-identical across projects and sessions; the real paths ride on one user
+// message per context window, deduped by the session directory line.
+// `msgs` starts at the latest checkpoint/compaction boundary, so the
+// first own user message is the session's first message or the boundary.
+// A user message followed by any model reply (compaction summaries excluded)
+// was already sent without the reminder — batched or mid-turn inputs never
+// become a reply's parentID, so position is the test. Rewriting sent history
+// would invalidate the cached prefix, so copied fork history and sessions
+// predating the reminder get it on the newest own user message instead.
+export function memoryPathsReminderTarget(input: {
+  msgs: readonly MessageV2.WithParts[]
+  sessionID: SessionID
+  dir: string
+}): MessageV2.WithParts | undefined {
+  const users = input.msgs.filter((m) => m.info.role === "user" && m.info.sessionID === input.sessionID)
+  if (users.some((m) => hasSyntheticReminder(m.parts, `${SESSION_MEMORY_DIR_MARKER} ${input.dir}/`))) return undefined
+  const unsent = (target: MessageV2.WithParts | undefined) =>
+    target &&
+    !input.msgs
+      .slice(input.msgs.indexOf(target) + 1)
+      .some((m) => m.info.role === "assistant" && !m.info.summary)
+      ? target
+      : undefined
+  return unsent(users.at(0)) ?? unsent(users.at(-1))
 }
 
 export function buildLoopStreakReminderText(threshold: number): string {
@@ -899,17 +911,17 @@ export const layer = Layer.effect(
 
     // Shared rebuild-from-checkpoint step used by BOTH the automatic overflow
     // path in runLoop and the manual `/rebuild` command, so the two can never
-    // drift in logic or boundary conditions. Inserts a checkpoint boundary
-    // marker (never deletes DB messages) at the current watermark so the next
-    // runLoop iteration rebuilds context from the on-disk checkpoint while the
-    // live message tail after the watermark is preserved verbatim. Does NOT
+    // drift in logic or boundary conditions. Appends a checkpoint boundary
+    // marker (never deletes DB messages) after the newest message so the next
+    // runLoop iteration rebuilds context from the on-disk checkpoint; the tail
+    // after the watermark reaches the model only through the boundary's
+    // Recent activity and Recent user input sections. Does NOT
     // block on an in-flight writer (same policy as the auto path — a slightly
     // stale checkpoint now beats a fresh one that never arrives). Returns true
     // iff a boundary was inserted (i.e. a usable checkpoint existed); callers
     // fall back to compaction when it returns false.
     const rebuildFromCheckpoint = Effect.fn("SessionPrompt.rebuildFromCheckpoint")(function* (input: {
       sessionID: SessionID
-      msgs: MessageV2.WithParts[]
       agentID?: string
       agent: string
       model: { providerID: string; id: string }
@@ -924,20 +936,13 @@ export const layer = Layer.effect(
         .pipe(Effect.catch(() => Effect.succeed(undefined)))
       if (!boundary) return false
 
-      const boundaryMsg = input.msgs.find((m) => m.info.id === boundary)
       const inserted = yield* checkpoint
         .insertRebuildBoundary({
           sessionID: input.sessionID,
           boundary,
-          lastMessageInfo: computeLastMessageInfo(input.msgs.map((m) => m.info)),
-          // Freeze the digest range at insert time: only this tail is eligible
-          // for activity-log collapse. Auto rebuild mid-tool-loop keeps later
-          // tool rounds live; manual rebuild digests the whole idle tail.
-          digestUpTo: input.msgs.at(-1)?.info.id,
           agentID: input.agentID,
           agent: input.agent,
           model: { providerID: input.model.providerID, modelID: input.model.id },
-          boundaryCreatedAt: boundaryMsg?.info.time.created,
         })
         .pipe(Effect.catch(() => Effect.succeed(false)))
 
@@ -1007,7 +1012,6 @@ export const layer = Layer.effect(
     // and therefore drops all pre-boundary history with no summary at all.
     const rebuildEnsuringCheckpoint = Effect.fn("SessionPrompt.rebuildEnsuringCheckpoint")(function* (input: {
       sessionID: SessionID
-      msgs: MessageV2.WithParts[]
       agentID?: string
       agent: string
       model: { providerID: string; id: string }
@@ -3890,7 +3894,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         if (msg.info.role !== "assistant") continue
         // Only incomplete assistants are recovery candidates (shared with resume planning via
         // isRecoveryWorthyAssistant). error => not finished => recoverable; abandoned
-        // completed+AbortedError remains retryable.
+        // completed+AbortedError remains retryable. One followed by a rebuild boundary sits in
+        // that boundary's tail, outside the window, and is not offered.
         if (!isRecoveryWorthyAssistant(msg.info, msg.parts)) continue
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
@@ -3904,8 +3909,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
       // [SR-R21 D16f] Trailing user with no following assistant: explicit Resume starts the next
       // turn from that user. Source (manual/notification/synthetic/noReply) is irrelevant — Resume
-      // is the user's intent to run now.
-      const last = msgs.at(-1)
+      // is the user's intent to run now. A rebuild boundary is not that user; the unanswered user
+      // it carries is.
+      const last = msgs.findLast((m) => !isRebuildBoundary(m))
       if (last?.info.role === "user") {
         candidates.push({
           kind: "parent-user",
@@ -3950,6 +3956,39 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           receiptPrompts.delete(receipt.id)
         }
       })
+
+    // Removes the retry records of the user turns this run completed successfully.
+    // Called only at the run loop's success exits, never from failure, abort or
+    // interruption paths, so a failed turn keeps its records next to the error.
+    // `fromUserID` is the first real user message the run worked on; every
+    // assistant answering it or a later user message (synthetic re-entries,
+    // queued prompts admitted into the same run) belongs to completed work. A step
+    // superseded by a newer input holds nothing but its record, so it goes as well.
+    const clearTurnRetryRecords = Effect.fn("SessionPrompt.clearTurnRetryRecords")(function* (
+      sessionID: SessionID,
+      agentID: string,
+      fromUserID: MessageID,
+    ) {
+      for (const part of MessageV2.retryParts(sessionID, agentID, fromUserID)) {
+        yield* sessions.removePart({ sessionID: part.sessionID, messageID: part.messageID, partID: part.id })
+        if (MessageV2.parts(part.messageID).length === 0)
+          yield* sessions.removeMessage({ sessionID: part.sessionID, messageID: part.messageID })
+      }
+    })
+
+    // Completes once the lane holds an accepted input that no run has claimed yet:
+    // a steer or queued prompt the run loop would take at its next step.
+    const awaitNewInput = (lane: Lane) => {
+      const controller = inboxControllerRef.current
+      if (!controller) return undefined
+      return Effect.gen(function* () {
+        let revision = -1
+        for (;;) {
+          if ((yield* controller.listAccepted(lane)).length > 0) return
+          revision = yield* controller.observeInput(lane, revision)
+        }
+      })
+    }
 
     const runLoop: (
       sessionID: SessionID,
@@ -4000,8 +4039,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         let step = 0
         const sessionPrompt = yield* sessions.resolvePrompt({ sessionID })
         const session = yield* sessions.get(sessionID)
-        let lastFinishedForPrune: MessageV2.Assistant | undefined
-        let lastModelForPrune: Provider.Model | undefined
         let outputLengthContinuations = 0
         // Structured-output-only retry: cap comes from lastUser.format.retryCount (default 2).
         // Local to runLoop; resets on the next user turn. Empty/think-only output
@@ -4011,6 +4048,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // prose text instead of a structured tool_use). Local to runLoop so each
         // fresh user turn starts clean.
         let textToolCallRetries = 0
+        // Retry record of an empty step dropped by dropEmptyAssistant, re-attached
+        // to the next step's assistant answering the same user message.
+        let carriedRetry: { part: MessageV2.RetryPart; parentID: MessageID } | undefined
+        // First user message of this run; success exits clear retry records from here on.
+        let runFirstUserID: MessageID | undefined
         const resolvedAgentID = agentID ?? "main"
         // MAIN user turns own the hint token. Child/hook runLoops must not overwrite it
         // (SessionRunState.cancel targets session:main only).
@@ -4539,11 +4581,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // Stale empty / think-only assistant left in history (resume, crash). Drop
         // it and start a fresh step — the new step's process() raises
         // InvalidOutputError on empty output so SessionRetry.policy owns retries.
+        // Its retry record moves to the next step's assistant so the turn's retry
+        // count stays visible.
         const dropEmptyAssistant = Effect.fn("SessionPrompt.dropEmptyAssistant")(function* (input: {
           assistant: MessageV2.Assistant
         }) {
           if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return false
           yield* slog.info("dropping empty assistant", { messageID: input.assistant.id })
+          const record = MessageV2.parts(input.assistant.id).find((part): part is MessageV2.RetryPart => part.type === "retry")
+          if (record) carriedRetry = { part: record, parentID: input.assistant.parentID }
           yield* sessions.removeMessage({
             sessionID: input.assistant.sessionID,
             messageID: input.assistant.id,
@@ -4889,6 +4935,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
         let unprocessedPrompt = (claimOwner?.receipts.length ?? 0) > 0
         const deliveredPrompts = new Set<MessageID>()
+        let rebuildTail: SessionCheckpoint.RebuildTail | undefined
         const recordDelivery = Effect.fn("SessionPrompt.recordDelivery")(function* (
           messageID: MessageID,
           msgs: MessageV2.WithParts[],
@@ -5009,6 +5056,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
+          msgs = SessionCheckpoint.withEndedInputs(sessionID, msgs)
+
+          // A rebuild boundary is appended after its tail, so the user message and
+          // steps of the turn it interrupted sit outside the window. Turn state
+          // (resume parent, last user, last assistant) is read from the window with
+          // that tail restored in front of the later messages; the model still
+          // receives `msgs`. The tail before a boundary does not change, so it is
+          // read once per boundary.
+          const newestUser = msgs.findLast((msg) => msg.info.role === "user")
+          if (newestUser && isBoundaryUser(newestUser) && rebuildTail?.boundary !== newestUser.info.id)
+            rebuildTail = SessionCheckpoint.readRebuildTail(sessionID, msgs)
+          const turnMsgs =
+            newestUser && isBoundaryUser(newestUser) ? SessionCheckpoint.withRebuildTail(msgs, rebuildTail) : msgs
+
           let lastUser: MessageV2.User | undefined
           let lastAssistant: MessageV2.Assistant | undefined
           let lastFinished: MessageV2.Assistant | undefined
@@ -5017,26 +5078,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // The locked parent must still be the last user — a later user would
           // enter the model context while parent stays old. Later assistants are allowed only when
           // plan did not require strict tail (empty-shell siblings); trailing-user is strict.
+          // A boundary parent carries its tail's unanswered users, so it is checked against the window.
           const lockParentOnStep0 = step === 0 && parentUserID !== undefined
           if (lockParentOnStep0) {
-            const lockedIdx = msgs.findIndex((m) => m.info.role === "user" && m.info.id === parentUserID)
+            const lockMsgs = newestUser?.info.id === parentUserID ? msgs : turnMsgs
+            const lockedIdx = lockMsgs.findIndex((m) => m.info.role === "user" && m.info.id === parentUserID)
             if (lockedIdx < 0) {
               throw new Error(
                 `Resume parent user ${parentUserID} is no longer in session slice ${sessionID}`,
               )
             }
-            const laterUser = msgs.slice(lockedIdx + 1).some((m) => m.info.role === "user")
+            const laterUser = lockMsgs.slice(lockedIdx + 1).some((m) => m.info.role === "user")
             if (laterUser) {
               throw new Error(
                 `Resume parent user ${parentUserID} is no longer the last user in ${sessionID}`,
               )
             }
-            if (strictParentTail && msgs.slice(lockedIdx + 1).some((m) => m.info.role === "assistant")) {
+            if (strictParentTail && lockMsgs.slice(lockedIdx + 1).some((m) => m.info.role === "assistant")) {
               throw new Error(
                 `Resume parent user ${parentUserID} is no longer the slice tail in ${sessionID}`,
               )
             }
-            const locked = msgs[lockedIdx]!
+            const locked = lockMsgs[lockedIdx]!
             if (locked.info.role !== "user") {
               throw new Error(
                 `Resume parent user ${parentUserID} is no longer in session slice ${sessionID}`,
@@ -5044,8 +5107,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             lastUser = locked.info
           }
-          for (let i = msgs.length - 1; i >= 0; i--) {
-            const msg = msgs[i]
+          for (let i = turnMsgs.length - 1; i >= 0; i--) {
+            const msg = turnMsgs[i]
             if (!lastUser && msg.info.role === "user") lastUser = msg.info
             if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info
             if (!lastFinished && msg.info.role === "assistant" && msg.info.finish) lastFinished = msg.info
@@ -5056,6 +5119,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           if (!lastUser) {
             throw new Error("No user message found in stream. This should never happen.")
           }
+          runFirstUserID ??= msgs.findLast((msg) =>
+            msg.info.role === "user" && msg.info.id <= lastUser!.id && !msg.parts.every(isSyntheticPart),
+          )?.info.id ?? lastUser.id
           const taskReceipt = claimOwner.receipts.find((receipt) => receipt.inputMessageID === lastUser!.id)
           task_id = taskReceipt
             ? receiptPrompts.get(taskReceipt.id)?.task_id ?? lastUser.task_id
@@ -5094,30 +5160,22 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 msg.parts.some((part) => part.type === "checkpoint" || part.type === "compaction"),
             )
 
-          // Per-user-message active recall reminder. Once the session has
-          // any memory artifacts (memory dir populated OR tasks recorded),
-          // append a brief recall protocol so the agent's reflex to query
-          // memory.search / task / actor / Read stays warm across many
-          // post-rebuild turns. Cost ~120 tokens per turn, conditional on
-          // hasMemoryOrTasks. Persisted + marker-deduped so multi-step turns
-          // do not re-push after reload (prompt-cache stability).
-          const lastUserMsgForRecall = msgs.findLast((m) => m.info.role === "user")
-          if (lastUserMsgForRecall && !hasSyntheticReminder(lastUserMsgForRecall.parts, RECALL_REMINDER_MARKER)) {
-            const hasRecallTarget = yield* checkpoint
-              .hasMemoryOrTasks(sessionID)
-              .pipe(Effect.catch(() => Effect.succeed(false)))
-            if (hasRecallTarget) {
-              const sessMemDir = path.join(Global.Path.data, "memory", "sessions", sessionID)
-              const hints = recallHintLines(hasActorTool(yield* resolveStoredAgent(agents, lastUser.agent)))
+          if (yield* actorRegistry.servesCheckpoint(sessionID, lastUser.agentID)) {
+            const sessionMemoryDir = metaDir(sessionID)
+            const target = memoryPathsReminderTarget({ msgs, sessionID, dir: sessionMemoryDir })
+            if (target) {
               yield* ensurePersistedUserSynthetic({
-                message: lastUserMsgForRecall,
-                marker: RECALL_REMINDER_MARKER,
-                text: buildRecallReminderText({ sessMemDir, hints }),
+                message: target,
+                marker: `${SESSION_MEMORY_DIR_MARKER} ${sessionMemoryDir}/`,
+                text: buildMemoryPathsReminderText({
+                  projectMemoryFile: memoryPath((yield* InstanceState.context).project.id),
+                  sessionDir: sessionMemoryDir,
+                }),
               })
             }
           }
 
-          const lastAssistantMsg = msgs.findLast(
+          const lastAssistantMsg = turnMsgs.findLast(
             (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
           )
           // Some providers return "stop" even when the assistant message contains tool calls.
@@ -5176,6 +5234,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 continue
               }
               if (yield* goalGate(lastUser)) continue
+              if (classification.type === "final" && runFirstUserID)
+                yield* clearTurnRetryRecords(sessionID, resolvedAgentID, runFirstUserID)
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
@@ -5235,8 +5295,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const modelProviderID = modelOverride ? ProviderID.make(modelOverride.providerID) : lastUser.model.providerID
           const modelModelID = modelOverride ? ModelID.make(modelOverride.modelID) : lastUser.model.modelID
           const model = yield* getModel(modelProviderID, modelModelID, sessionID, lastUser)
-          lastModelForPrune = model
-          lastFinishedForPrune = usageRecovered ? undefined : lastFinished
           const task = tasks.pop()
 
           if (task?.type === "subtask") {
@@ -5369,7 +5427,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // logic/boundary conditions can't drift.
             const attempt: RebuildAttempt = yield* rebuildEnsuringCheckpoint({
               sessionID,
-              msgs,
               agentID: lastUser.agentID,
               agent: lastUser.agent,
               model: { providerID: model.providerID, id: model.id },
@@ -5494,11 +5551,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 if (crop.omitted.length > 0) {
                   msgs = crop.kept as typeof msgs
                   // Persist span on the EXISTING parent user (turn-recovery
-                  // shape). ignored+synthetic: not sent to the model, not a
-                  // user-visible bubble, but extractAllCrops still reads it.
+                  // shape), or on the rebuild boundary standing in for it when
+                  // the parent lies in the boundary's tail, so the window that
+                  // extractAllCrops reads holds it. ignored+synthetic: not sent
+                  // to the model, not a user-visible bubble.
+                  const parentMsg =
+                    msgs.findLast((message) => message.info.id === lastUser.id) ??
+                    msgs.findLast((message) => message.info.role === "user")!
                   const spanPart: MessageV2.TextPart = {
                     id: PartID.ascending(),
-                    messageID: lastUser.id,
+                    messageID: parentMsg.info.id,
                     sessionID,
                     type: "text",
                     synthetic: true,
@@ -5507,8 +5569,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     metadata: cropMetadata(span),
                   }
                   yield* sessions.updatePart(spanPart)
-                  const parentMsg = msgs.findLast((message) => message.info.id === lastUser.id)
-                  if (parentMsg) parentMsg.parts.push(spanPart)
+                  parentMsg.parts.push(spanPart)
                   loopStreakCropped = true
                   yield* slog.info("loop streak: cropped from request", {
                     spanFrom: span.fromId,
@@ -5551,13 +5612,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               for (const receipt of claimOwner.receipts) {
                 if (receipt.inputMessageID === message.parentID) receipt.preparedAssistantID = message.id
               }
-            }))),
+            })), Effect.tap((message) => {
+              const carried = carriedRetry
+              carriedRetry = undefined
+              return carried && carried.parentID === message.parentID
+                ? sessions.updatePart({ ...carried.part, id: PartID.ascending(), messageID: message.id })
+                : Effect.void
+            })),
             () => Effect.gen(function* () {
               const handle = yield* processor.create({
                 assistantMessage: msg,
                 sessionID,
                 model,
                 agentMetrics,
+                awaitNewInput: awaitNewInput({ sessionID, agentID: resolvedAgentID }),
               })
 
               const outcome: "break" | "continue" = yield* Effect.gen(function* () {
@@ -5673,7 +5741,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   // having no toolAllowlist (Task 2.6 + agent.test.ts guard). See ForkContext.tools
                   // JSDoc in packages/cli/src/actor/spawn.ts for the full contract.
                   const queryParts =
-                    msgs.findLast((m) => m.info.role === "user" && m.info.id === lastUser.id)?.parts ?? []
+                    turnMsgs.findLast((m) => m.info.role === "user" && m.info.id === lastUser.id)?.parts ?? []
                   const query = userQueryText(queryParts)
                   const preQuery = {
                     cancel: undefined as boolean | undefined,
@@ -5767,6 +5835,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                           .pipe(Effect.ignore),
                       ),
                     )
+
+                  if (result === "superseded") return "continue" as const
 
                   if (
                     result === "continue" &&
@@ -5969,7 +6039,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 }
 
                 const queryParts =
-                  msgs.findLast((m) => m.info.role === "user" && m.info.id === lastUser.id)?.parts ?? []
+                  turnMsgs.findLast((m) => m.info.role === "user" && m.info.id === lastUser.id)?.parts ?? []
                 const query = userQueryText(queryParts)
                 const preQuery = {
                   cancel: undefined as boolean | undefined,
@@ -6064,6 +6134,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ),
                 )
 
+                if (result === "superseded") return "continue" as const
+
                 if (handle.message.time.completed && !handle.message.error) {
                   yield* SessionPrefixSnapshot.advance({
                     sessionID,
@@ -6157,7 +6229,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   // compaction fallback stays ONE condition, not three lookalikes.
                   const attempt2: RebuildAttempt = yield* rebuildEnsuringCheckpoint({
                     sessionID,
-                    msgs,
                     agentID: lastUser.agentID,
                     agent: lastUser.agent,
                     model: { providerID: model.providerID, id: model.id },
@@ -6287,23 +6358,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               continue
             }
             if (yield* goalGate(lastUser)) continue
+            if (structured !== undefined && !handle.message.error && runFirstUserID)
+              yield* clearTurnRetryRecords(sessionID, resolvedAgentID, runFirstUserID)
             break
           }
           continue
         }
 
-        const promptOps = yield* ops()
-        if (lastModelForPrune && lastFinishedForPrune) {
-          yield* prune
-            .prune({
-              sessionID,
-              model: lastModelForPrune,
-              tokens: lastFinishedForPrune.tokens,
-              lastAssistantTime: lastFinishedForPrune.time.completed,
-              promptOps,
-            })
-            .pipe(Effect.ignore, Effect.forkIn(scope))
-        }
         const final = yield* lastAssistant(sessionID, agentID)
         const finalIsError = final.info.role === "assistant" && !!final.info.error
         const lastUserForMetrics = yield* sessions.findMessage(
@@ -6319,6 +6380,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }).pipe(
           Effect.onExit(firePostSession),
           Effect.onExit((exit) => settleClaims({ sessionID, agentID: resolvedAgentID }, claimOwner, exit)),
+          // A record carried off a dropped empty step and never re-attached (the run
+          // ended before the next step's assistant existed) goes back onto the newest
+          // assistant of that user turn, so the turn keeps showing its retries.
+          Effect.onExit(() => Effect.gen(function* () {
+            const carried = carriedRetry
+            carriedRetry = undefined
+            if (!carried) return
+            const owner = (yield* sessions.messages({ sessionID, agentID: resolvedAgentID, limit: 20 }))
+              .findLast((msg) => msg.info.role === "assistant" && msg.info.parentID === carried.parentID)
+            if (owner) yield* sessions.updatePart({ ...carried.part, id: PartID.ascending(), messageID: owner.info.id })
+          })),
           Effect.ensuring(MCP.releaseTurnClients(mcpContext)),
           Effect.orDie,
         )
@@ -6487,9 +6559,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // inserts the legitimate rebuild BOUNDARY (a role:"user" message carrying
       // a `checkpoint` part, via rebuildFromCheckpoint → insertRebuildBoundary)
       // and then lets the session settle — WITHOUT fabricating a second,
-      // standalone user turn. The auto path (~prompt.ts:3205/3778) `continue`s
-      // the runLoop because it has a PENDING user message to answer; a manual
-      // /rebuild is a user-initiated maintenance action with NO pending
+      // standalone user turn. The auto paths in runLoop `continue` the loop,
+      // which then judges the interrupted turn from the boundary's tail: a
+      // finished turn ends there, an unfinished tool loop takes its next step.
+      // A manual /rebuild is a user-initiated maintenance action with NO pending
       // question, so after inserting the boundary it simply returns to idle
       // (no model turn, no auto-reply).
       //
@@ -6519,7 +6592,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const rebuildFailedMsg =
           "A checkpoint was written but the context could not be rebuilt from it. Context is unchanged and nothing was compacted — retry /rebuild, or report this if it repeats."
         const rebuiltMsg =
-          "Context rebuilt from the latest checkpoint. Recent messages are preserved; earlier context is now summarized."
+          "Context rebuilt from the latest checkpoint. Earlier context is now summarized, and recent activity is listed in its place."
 
         // Set busy status so the TUI shows a spinner while we wait on the
         // writer (cases 2/3) or assemble context (case 1).
@@ -6534,7 +6607,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // session produces the first checkpoint on the spot rather than deferring.
         const attempt: RebuildAttempt = yield* rebuildEnsuringCheckpoint({
           sessionID: input.sessionID,
-          msgs,
           agentID: lastUser?.info.agentID ?? "main",
           agent: agentName,
           model: { providerID: model.providerID, id: model.modelID },
@@ -6802,9 +6874,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
 
       // [D16f] Trailing-user resume: re-validate the user is still the slice tail, then re-run from it.
+      // Rebuild boundaries appended after it do not count as later messages.
       if (input.userMessageID) {
         const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
-        const last = msgs.at(-1)
+        const last = msgs.findLast((m) => !isRebuildBoundary(m) || m.info.id === input.userMessageID)
         if (last?.info.role !== "user" || last.info.id !== input.userMessageID) {
           const missing: ResumePlan = {
             action: "reject",
@@ -6900,7 +6973,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* Deferred.fail(admission, err)
           throw err
         }
-        const tailMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
+        // Rebuild boundaries appended after the parent are not part of the turn.
+        const tailMsgs = (yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })).filter(
+          (m) => !isRebuildBoundary(m) || m.info.id === plan.parentMessageID,
+        )
         const parentIdx = tailMsgs.findIndex((m) => m.info.role === "user" && m.info.id === plan.parentMessageID)
         const tail = tailMsgs.at(-1)
         const after = tailMsgs.slice(parentIdx + 1)

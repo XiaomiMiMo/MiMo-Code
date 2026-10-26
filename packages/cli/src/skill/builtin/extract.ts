@@ -5,7 +5,6 @@ import { Flag } from "@/flag/flag"
 import { Path as GlobalPath } from "@/global"
 import { InstallationLocal, InstallationVersion } from "@/installation/version"
 import { Log } from "@/util"
-import { which } from "@/util/which"
 import { loadBuiltinBundle } from "./bundle.macro" with { type: "macro" }
 import { loadBuiltinBundle as loadBuiltinBundleDev } from "./bundle.macro"
 
@@ -17,14 +16,17 @@ export const OFFICIAL_SKILL_NAMES = new Set([
   "html-to-video-pipeline",
 ])
 
-const REQUIRED_COMMANDS = new Map([
-  ["claude-code", "claude"],
-  ["codex", "codex"],
-])
+export const AGENT_CLI_SKILL_NAMES = new Set(["claude-code", "codex", "grok-build"])
 
-export function isBuiltinSkillInstalled(name: string, resolve = which) {
-  const command = REQUIRED_COMMANDS.get(name)
-  return !command || resolve(command) !== null
+export function shouldExtractBuiltinSkill(
+  name: string,
+  opts?: { disableOfficialSkills?: boolean; enableAgentCliSkills?: boolean },
+): boolean {
+  const disableOfficial = opts?.disableOfficialSkills ?? Flag.MIMOCODE_DISABLE_OFFICIAL_SKILLS
+  const enableAgentCli = opts?.enableAgentCliSkills ?? Flag.MIMOCODE_ENABLE_AGENT_CLI_SKILLS
+  if (disableOfficial && OFFICIAL_SKILL_NAMES.has(name)) return false
+  if (!enableAgentCli && AGENT_CLI_SKILL_NAMES.has(name)) return false
+  return true
 }
 
 const DOCUMENT_SKILL_TRIGGERS: Array<{
@@ -108,13 +110,7 @@ export const extractBuiltinBundle = Effect.fn("Skill.extractBuiltinBundle")(func
   const skillsRoot = builtinSkillRoot()
   const root = path.dirname(skillsRoot)
   const marker = path.join(root, ".extracted")
-  const enabled = new Set(
-    Object.keys(BUILTIN_BUNDLE).filter(
-      (name) =>
-        !(Flag.MIMOCODE_DISABLE_OFFICIAL_SKILLS && OFFICIAL_SKILL_NAMES.has(name)) &&
-        isBuiltinSkillInstalled(name),
-    ),
-  )
+  const enabled = new Set(Object.keys(BUILTIN_BUNDLE).filter((name) => shouldExtractBuiltinSkill(name)))
   const markerContent = JSON.stringify({ version: InstallationVersion, skills: Array.from(enabled).toSorted() })
 
   if (

@@ -4,7 +4,7 @@ import { clampStatusMessage, STATUS_MESSAGE_MAX } from "../../../../src/cli/cmd/
 describe("clampStatusMessage", () => {
   test("an over-long status cannot outgrow the footer budget", () => {
     const long =
-      "Context rebuilt from the latest checkpoint. Recent messages are preserved; earlier context is now summarized."
+      "Context rebuilt from the latest checkpoint. Earlier context is now summarized, and recent activity is listed in its place."
     expect(long.length).toBeGreaterThan(STATUS_MESSAGE_MAX)
     const out = clampStatusMessage(long)!
     expect(out.length).toBe(STATUS_MESSAGE_MAX)

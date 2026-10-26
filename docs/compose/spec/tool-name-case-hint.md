@@ -2,8 +2,7 @@
 feature: tool-name-case-hint
 status: delivered
 updated: 2026-09-15
-branch: fix/tool-name-case-hint
-commits: 5198ff54..967ca86f
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2397
 ---
 
 # Tool Name Exact Match

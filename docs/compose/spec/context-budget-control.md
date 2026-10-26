@@ -2,8 +2,7 @@
 feature: context-budget-control
 status: in-progress
 updated: 2026-08-05
-branch: investigate/context-limit-double-rebuild
-commits: 028f3178..3b15062d
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1930
 ---
 
 # Context Budget Control (user-adjustable early compaction)
@@ -141,7 +140,7 @@ Invariants:
 - With no budget configured, the returned value is **byte-identical to today** for every model (the `limit.input` branch keeps `outputReserve = 0`; changing that is PR #1265's scope, not ours).
 - A budget larger than `hardCap` is silently clamped, never applied upward.
 - A budget below `reserved + outputReserve` yields `0`; `isOverflow` then fires on the first turn. Reject such values at the *write* boundary (S2.4) rather than letting the session brick.
-- `pressureLevel` / `contextPressureLevel` inherit the new denominator for free, so checkpoint thresholds (`prune.ts:274-292`) and `preserveRecentBudget` (`compaction.ts:49-54`) follow the budget automatically.
+- Checkpoint thresholds (`fireCheckpoints` in `prune.ts` resolves them against `usable()`) inherit the new denominator, so they follow the budget automatically.
 
 New exported helper for callers that need the numbers without the reserves:
 

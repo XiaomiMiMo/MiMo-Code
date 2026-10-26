@@ -2,8 +2,7 @@
 feature: remove-read-state-gate
 status: delivered
 updated: 2026-09-14
-branch: feat/remove-read-state-gate
-commits: e485a2a5e096a077e381e6df56c332d8150629ae..HEAD
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2390
 ---
 
 # Remove Read-before-Edit Hard Gate

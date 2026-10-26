@@ -5,7 +5,7 @@ import { AppRuntime } from "../../src/effect/app-runtime"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
-import { SessionPrompt } from "../../src/session/prompt"
+import { SessionPrompt, SESSION_MEMORY_DIR_MARKER } from "../../src/session/prompt"
 import { MessageV2 } from "../../src/session/message-v2"
 import { HostModelTransport } from "../../src/provider/host-transport"
 import { SessionStatus } from "../../src/session/status"
@@ -22,6 +22,12 @@ import { tmpdir } from "../fixture/fixture"
 import { startScriptedLLMServer, textStopResponse } from "../lib/scripted-llm-server"
 
 void Log.init({ print: false })
+
+// A resumed user message has not been sent yet, so the runLoop may persist the
+// memory paths reminder on it; every other part must stay untouched.
+function withoutDirReminder(parts: MessageV2.Part[] | undefined) {
+  return parts?.filter((part) => !(part.type === "text" && part.text.includes(SESSION_MEMORY_DIR_MARKER)))
+}
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -231,7 +237,7 @@ for (const target of ["assistant", "parent-user"] as const) {
           yield* runs.assertNotBusy(session.id)
           const after = yield* sessions.messages({ sessionID: session.id })
           expect(after.filter((message) => message.info.role === "user").map((message) => message.info.id)).toEqual([user.id])
-          expect(after.find((message) => message.info.id === user.id)?.parts).toEqual(before.find((message) => message.info.id === user.id)?.parts)
+          expect(withoutDirReminder(after.find((message) => message.info.id === user.id)?.parts)).toEqual(before.find((message) => message.info.id === user.id)?.parts)
           expect(after.filter((message) => message.parts.some((part) => part.type === "text" && part.text === "RESUMED-ONCE"))).toHaveLength(1)
           expect(server.captures).toHaveLength(1)
           expect((yield* request("resume", true)).status).toBe(404)

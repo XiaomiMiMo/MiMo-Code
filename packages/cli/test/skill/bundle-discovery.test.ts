@@ -14,6 +14,8 @@ withEnv({
   MIMOCODE_ENABLE_CODEX_SKILLS: undefined,
   MIMOCODE_ENABLE_OPENCODE_SKILLS: undefined,
   MIMOCODE_DISABLE_BUILTIN_SKILLS: undefined,
+  MIMOCODE_DISABLE_OFFICIAL_SKILLS: undefined,
+  MIMOCODE_ENABLE_AGENT_CLI_SKILLS: undefined,
 })
 
 const it = testEffect(Layer.mergeAll(Skill.defaultLayer, CrossSpawnSpawner.defaultLayer))
@@ -32,7 +34,9 @@ describe("bundled skill discovery", () => {
           const names = new Set(list.map((item) => item.name))
 
           expect(names.has("data-analytics")).toBe(true)
-          expect(names.has("grok-build")).toBe(true)
+          expect(names.has("grok-build")).toBe(false)
+          expect(names.has("claude-code")).toBe(false)
+          expect(names.has("codex")).toBe(false)
           expect(names.has("product-design")).toBe(true)
           expect(names.has("sales")).toBe(true)
           expect(names.has("drive-mimo")).toBe(false)

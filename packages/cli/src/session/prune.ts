@@ -1,4 +1,3 @@
-import * as Session from "./session"
 import { SessionID } from "./schema"
 import { Provider } from "../provider"
 import { MessageV2 } from "./message-v2"
@@ -6,22 +5,14 @@ import { Token } from "../util"
 import { Log } from "../util"
 import { Config } from "@/config"
 import { Flag } from "@/flag/flag"
-import { NotFoundError } from "@/storage"
 import { Effect, Layer, Context } from "effect"
-import { pressureLevel, usable } from "./overflow"
+import { usable } from "./overflow"
 import { SessionCheckpoint } from "./checkpoint"
 import { ActorRegistry } from "@/actor/registry"
 import type { ActorPromptOps } from "@/tool/actor"
 
 const log = Log.create({ service: "session.prune" })
 
-const PRUNE_MINIMUM = 20_000
-const PRUNE_PROTECT = 40_000
-const PRUNE_PROTECTED_TOOLS = ["skill"]
-const SOFT_TRIM_THRESHOLD = 4096
-const SOFT_TRIM_KEEP_HEAD = 1536
-const SOFT_TRIM_KEEP_TAIL = 1536
-const DEFAULT_CACHE_TTL = 300_000
 // Default safety buffer subtracted from windowSize to derive maxAllowed for
 // checkpoint thresholds. Users can override via cfg.checkpoint.reserved.
 const CHECKPOINT_RESERVED = 13_000
@@ -48,13 +39,6 @@ export function defaultThresholdsFor(window: number): readonly string[] {
     return ["10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%"]
   }
   return Array.from({ length: 18 }, (_, i) => `${(i + 1) * 5}%`)
-}
-
-function isCacheCold(model?: Provider.Model, lastAssistantTime?: number): boolean {
-  if (!model) return true
-  const ttl = model.cacheTTL ?? DEFAULT_CACHE_TTL
-  if (!lastAssistantTime) return true
-  return Date.now() - lastAssistantTime > ttl
 }
 
 /**
@@ -134,13 +118,6 @@ export function resolveThresholds(raw: readonly string[], windowSize: number, re
 }
 
 export interface Interface {
-  readonly prune: (input: {
-    sessionID: SessionID
-    model: Provider.Model
-    tokens: MessageV2.Assistant["tokens"]
-    lastAssistantTime?: number
-    promptOps?: ActorPromptOps
-  }) => Effect.Effect<void>
   /**
    * Fire background checkpoint writers for every newly-crossed threshold.
    * Call this at the START of each runLoop iteration so thresholds fire
@@ -162,12 +139,11 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 export const layer: Layer.Layer<
   Service,
   never,
-  Config.Service | Session.Service | SessionCheckpoint.Service | ActorRegistry.Service
+  Config.Service | SessionCheckpoint.Service | ActorRegistry.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
     const config = yield* Config.Service
-    const session = yield* Session.Service
     const checkpoint = yield* SessionCheckpoint.Service
     const actorReg = yield* ActorRegistry.Service
 
@@ -184,56 +160,6 @@ export const layer: Layer.Layer<
     // threshold ladder and the window, and it is dropped the moment it fires.
     // See the arming site below for why that distinction is the whole design.
     const finalRetryAt = new Map<SessionID, number>()
-
-    const stripNonEssential = Effect.fn("SessionPrune.stripNonEssential")(function* (input: {
-      sessionID: SessionID
-      model: Provider.Model
-      lastAssistantTime?: number
-    }) {
-      if (!isCacheCold(input.model, input.lastAssistantTime)) return
-
-      const msgs = yield* session
-        .messages({ sessionID: input.sessionID, agentID: "main" })
-        .pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed(undefined)))
-      if (!msgs) return
-
-      // Protect last 3 turns.
-      let turnCount = 0
-      let boundary = msgs.length
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        if (msgs[i].info.role === "user") turnCount++
-        if (turnCount > 3) {
-          boundary = i
-          break
-        }
-      }
-
-      let stripped = 0
-      for (let i = 0; i < boundary; i++) {
-        const msg = msgs[i]
-        for (const part of msg.parts) {
-          if (part.type === "file" && MessageV2.isMedia(part.mime)) {
-            yield* session.updatePart({
-              ...part,
-              url: "",
-              filename: `[stripped: ${part.filename ?? part.mime}]`,
-            })
-            stripped++
-          }
-          if (part.type === "reasoning" && msg.info.role === "assistant") {
-            yield* session.updatePart({
-              ...part,
-              text: "",
-            })
-            stripped++
-          }
-        }
-      }
-
-      if (stripped > 0) {
-        log.info("stripped non-essential content", { count: stripped })
-      }
-    })
 
     // Fires a checkpoint write for every threshold newly crossed by the
     // current token count. Exposed publicly so runLoop can call it at each
@@ -422,98 +348,6 @@ export const layer: Layer.Layer<
       crossed.set(input.sessionID, already)
     })
 
-    // Each turn end, decide (based on cache-TTL + pressure) whether to soft-trim
-    // old tool outputs, hard-clear them with a compacted timestamp, and/or
-    // strip non-essential content. Checkpoint firing is NOT done here — the
-    // runLoop calls fireCheckpoints() directly each iteration so thresholds
-    // fire mid-turn as tokens grow.
-    const prune = Effect.fn("SessionPrune.prune")(function* (input: {
-      sessionID: SessionID
-      model: Provider.Model
-      tokens: MessageV2.Assistant["tokens"]
-      lastAssistantTime?: number
-      promptOps?: ActorPromptOps
-    }) {
-      const cfg = yield* config.get()
-      if (!cfg.compaction?.prune) return
-
-      if (!isCacheCold(input.model, input.lastAssistantTime)) return
-
-      const pressure = pressureLevel({ cfg, tokens: input.tokens, model: input.model })
-      if (pressure === 0) return
-      const level = pressure >= 2 ? 2 : 1
-      log.info("pruning", { level })
-
-      const msgs = yield* session
-        .messages({ sessionID: input.sessionID, agentID: "main" })
-        .pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed(undefined)))
-      if (!msgs) return
-
-      let total = 0
-      let pruned = 0
-      const toPrune: MessageV2.ToolPart[] = []
-      let turns = 0
-
-      loop: for (let msgIndex = msgs.length - 1; msgIndex >= 0; msgIndex--) {
-        const msg = msgs[msgIndex]
-        if (msg.info.role === "user") turns++
-        if (turns < 2) continue
-        if (msg.info.role === "assistant" && msg.info.summary) break loop
-        for (let partIndex = msg.parts.length - 1; partIndex >= 0; partIndex--) {
-          const part = msg.parts[partIndex]
-          if (part.type === "tool")
-            if (part.state.status === "completed") {
-              if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
-              if (part.state.time.compacted) break loop
-              const estimate = Token.estimate(part.state.output)
-              total += estimate
-              if (total > PRUNE_PROTECT) {
-                pruned += estimate
-                toPrune.push(part)
-              }
-            }
-        }
-      }
-
-      log.info("found", { pruned, total, level })
-
-      if (level === 1) {
-        for (const part of toPrune) {
-          if (part.state.status === "completed") {
-            const output = part.state.output
-            if (output.length > SOFT_TRIM_THRESHOLD) {
-              part.state.output =
-                output.slice(0, SOFT_TRIM_KEEP_HEAD) +
-                "\n\n[... trimmed — kept first and last 1.5K of " +
-                output.length +
-                " chars ...]\n\n" +
-                output.slice(-SOFT_TRIM_KEEP_TAIL)
-              yield* session.updatePart(part)
-            }
-          }
-        }
-        log.info("soft-trimmed", { count: toPrune.length })
-      } else {
-        if (pruned > PRUNE_MINIMUM) {
-          for (const part of toPrune) {
-            if (part.state.status === "completed") {
-              part.state.time.compacted = Date.now()
-              yield* session.updatePart(part)
-            }
-          }
-          log.info("pruned", { count: toPrune.length })
-        }
-      }
-
-      if (level >= 2) {
-        yield* stripNonEssential({
-          sessionID: input.sessionID,
-          model: input.model,
-          lastAssistantTime: input.lastAssistantTime,
-        })
-      }
-    })
-
     const resetThresholds = Effect.fn("SessionPrune.resetThresholds")(function* (sessionID: SessionID) {
       crossed.delete(sessionID)
       // A rebuild re-arms the whole ladder, which supersedes any pending
@@ -522,13 +356,12 @@ export const layer: Layer.Layer<
       finalRetryAt.delete(sessionID)
     })
 
-    return Service.of({ prune, fireCheckpoints, resetThresholds })
+    return Service.of({ fireCheckpoints, resetThresholds })
   }),
 )
 
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
-    Layer.provide(Session.defaultLayer),
     Layer.provide(Config.defaultLayer),
     Layer.provide(SessionCheckpoint.defaultLayer),
     Layer.provide(ActorRegistry.defaultLayer),

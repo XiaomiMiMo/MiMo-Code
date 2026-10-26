@@ -2,8 +2,7 @@
 feature: release-ci
 status: delivered
 updated: 2026-10-12
-branch: feat/release-ci
-commits: f98dcd1c..b8704179
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2639
 ---
 
 # Release CI

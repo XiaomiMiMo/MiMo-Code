@@ -1,9 +1,8 @@
 ---
 feature: mcp-tool-search
-status: completed
+status: delivered
 updated: 2026-10-12
-branch: feature/mcp-tool-search
-commits: c946f4c215aaf326036342a8c3dec6ad12d8772a..HEAD
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1923
 ---
 
 # MCP Tool Lazy Loading

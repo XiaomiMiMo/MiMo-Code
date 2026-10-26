@@ -104,34 +104,3 @@ export function isOverflow(input: { cfg: Config.Info; tokens: MessageV2.Assistan
     input.tokens.total || input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
   return count >= usable(input)
 }
-
-export function pressureLevel(input: {
-  cfg: Config.Info
-  tokens: MessageV2.Assistant["tokens"]
-  model: Provider.Model
-}): 0 | 1 | 2 | 3 {
-  if (input.cfg.compaction?.auto === false) return 0
-  return contextPressureLevel(input)
-}
-
-export function contextPressureLevel(input: {
-  cfg: Config.Info
-  tokens: MessageV2.Assistant["tokens"]
-  model: Provider.Model
-  additionalTokens?: number
-}): 0 | 1 | 2 | 3 {
-  if (input.model.limit.context === 0) return 0
-
-  const count =
-    (input.tokens.total ||
-      input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write) +
-    (input.additionalTokens ?? 0)
-  const limit = usable(input)
-  if (limit === 0) return 0
-
-  const ratio = count / limit
-  if (ratio < 0.50) return 0
-  if (ratio < 0.70) return 1
-  if (ratio < 0.85) return 2
-  return 3
-}

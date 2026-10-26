@@ -13,6 +13,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
@@ -81,6 +82,47 @@ describe("structured-output retry — integration", () => {
                 expect(result.info.structured).toBeDefined()
                 expect((result.info.structured as any).answer).toBe(4)
               }
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  })
+
+  test("a structured-output turn that recovers from a provider error clears its retry record", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let readRecord: (() => number) | undefined
+    let midTurn = 0
+    const stub = startScriptedLLMServer([
+      { lines: [JSON.stringify({ error: { message: "upstream overloaded" } })], status: 503 },
+      {
+        lines: toolCallResponse({ id: "call_1", name: "StructuredOutput", args: JSON.stringify({ answer: 4 }) }),
+        beforeReply: async () => { midTurn = readRecord?.() ?? 0 },
+      },
+    ])
+    try {
+      await writeConfig(tmp.path, stub.origin)
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "structured-retry-record" })
+              readRecord = () => MessageV2.page({ sessionID: session.id, limit: 50 }).items
+                .flatMap((m) => m.parts).filter((p) => p.type === "retry").length
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "What is 2 + 2?" }],
+                format: { type: "json_schema", schema, retryCount: 2 },
+              })
+              expect(result.info.role === "assistant" && result.info.structured).toBeTruthy()
+              expect(midTurn).toBe(1)
+              const parts = (yield* sessions.messages({ sessionID: session.id, agentID: "main" })).flatMap((m) => m.parts)
+              expect(parts.filter((p) => p.type === "retry")).toEqual([])
             }),
           ),
       })

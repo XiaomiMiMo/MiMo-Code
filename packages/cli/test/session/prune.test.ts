@@ -9,21 +9,12 @@ import { Log } from "../../src/util"
 import { Plugin } from "../../src/plugin"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { Session as SessionNs } from "../../src/session"
-import { MessageV2 } from "../../src/session/message-v2"
-import { MessageID, PartID, SessionID } from "../../src/session/schema"
-import { ModelID, ProviderID } from "../../src/provider/schema"
 import type { Provider } from "../../src/provider"
 import { ProviderTest } from "../fake/provider"
-import { testEffect } from "../lib/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { ActorRegistry } from "../../src/actor/registry"
 
 void Log.init({ print: false })
-
-const ref = {
-  providerID: ProviderID.make("test"),
-  modelID: ModelID.make("test-model"),
-}
 
 afterEach(() => {
   mock.restore()
@@ -67,164 +58,6 @@ const deps = Layer.mergeAll(
   Config.defaultLayer,
 )
 
-const env = Layer.mergeAll(
-  SessionNs.defaultLayer,
-  CrossSpawnSpawner.defaultLayer,
-  SessionPrune.layer.pipe(
-    Layer.provide(SessionNs.defaultLayer),
-    Layer.provide(SessionCheckpoint.defaultLayer),
-    Layer.provide(ActorRegistry.defaultLayer),
-    Layer.provideMerge(deps),
-  ),
-)
-
-const it = testEffect(env)
-
-/**
- * Seeds a session that `prune` can act on: one user+assistant turn with a
- * 200k-char tool output, then two follow-up user turns. The 200k output is
- * old enough (separated by later turns) that prune should consider it for
- * trimming, unless the tool name is in the protected list.
- */
-const seedSessionWithOldToolOutput = Effect.fn("PruneTest.seed")(function* (input: {
-  sessionID: SessionID
-  dir: string
-  tool: string
-}) {
-  const ssn = yield* SessionNs.Service
-
-  const user = yield* ssn.updateMessage({
-    id: MessageID.ascending(),
-    role: "user",
-    sessionID: input.sessionID,
-    agent: "build",
-    model: ref,
-    time: { created: Date.now() },
-  })
-  yield* ssn.updatePart({
-    id: PartID.ascending(),
-    messageID: user.id,
-    sessionID: input.sessionID,
-    type: "text",
-    text: "first",
-  })
-  const assistant: MessageV2.Assistant = {
-    id: MessageID.ascending(),
-    role: "assistant",
-    sessionID: input.sessionID,
-    mode: "build",
-    agent: "build",
-    path: { cwd: input.dir, root: input.dir },
-    cost: 0,
-    tokens: { output: 0, input: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    modelID: ref.modelID,
-    providerID: ref.providerID,
-    parentID: user.id,
-    time: { created: Date.now() },
-    finish: "end_turn",
-  }
-  yield* ssn.updateMessage(assistant)
-  yield* ssn.updatePart({
-    id: PartID.ascending(),
-    messageID: assistant.id,
-    sessionID: input.sessionID,
-    type: "tool",
-    callID: crypto.randomUUID(),
-    tool: input.tool,
-    state: {
-      status: "completed",
-      input: {},
-      output: "x".repeat(200_000),
-      title: "done",
-      metadata: {},
-      time: { start: Date.now(), end: Date.now() },
-    },
-  })
-  for (const text of ["second", "third"]) {
-    const msg = yield* ssn.updateMessage({
-      id: MessageID.ascending(),
-      role: "user",
-      sessionID: input.sessionID,
-      agent: "build",
-      model: ref,
-      time: { created: Date.now() },
-    })
-    yield* ssn.updatePart({
-      id: PartID.ascending(),
-      messageID: msg.id,
-      sessionID: input.sessionID,
-      type: "text",
-      text,
-    })
-  }
-})
-
-describe("SessionPrune.prune", () => {
-  it.live(
-    "compacts old completed tool output",
-    provideTmpdirInstance(
-      (dir) =>
-        Effect.gen(function* () {
-          const svc = yield* SessionPrune.Service
-          const ssn = yield* SessionNs.Service
-          const model = createModel({ context: 100_000, output: 32_000 })
-          const info = yield* ssn.create({})
-
-          yield* seedSessionWithOldToolOutput({ sessionID: info.id, dir, tool: "bash" })
-
-          // pressure-based level requires tokens > 0; simulate heavy usage
-          const tokens = { input: 80_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-          yield* svc.prune({ sessionID: info.id, model, tokens })
-
-          const msgs = yield* ssn.messages({ sessionID: info.id })
-          const part = msgs.flatMap((msg) => msg.parts).find((part) => part.type === "tool")
-          expect(part?.type).toBe("tool")
-          expect(part?.state.status).toBe("completed")
-          if (part?.type === "tool" && part.state.status === "completed") {
-            expect(part.state.time.compacted).toBeNumber()
-          }
-        }),
-
-      {
-        config: {
-          compaction: { prune: true },
-        },
-      },
-    ),
-  )
-
-  it.live(
-    "skips protected skill tool output",
-    provideTmpdirInstance(
-      (dir) =>
-        Effect.gen(function* () {
-          const svc = yield* SessionPrune.Service
-          const ssn = yield* SessionNs.Service
-          const model = createModel({ context: 100_000, output: 32_000 })
-          const info = yield* ssn.create({})
-
-          yield* seedSessionWithOldToolOutput({ sessionID: info.id, dir, tool: "skill" })
-
-          const tokens = { input: 80_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-          yield* svc.prune({ sessionID: info.id, model, tokens })
-
-          const msgs = yield* ssn.messages({ sessionID: info.id })
-          const part = msgs.flatMap((msg) => msg.parts).find((part) => part.type === "tool")
-          expect(part?.type).toBe("tool")
-          if (part?.type === "tool" && part.state.status === "completed") {
-            expect(part.state.time.compacted).toBeUndefined()
-          }
-        }),
-
-      {
-        config: {
-          compaction: { prune: true },
-        },
-      },
-    ),
-  )
-})
-
 describe("SessionPrune.fireCheckpoints writer failure is not retried in place", () => {
   // A programmable stub of SessionCheckpoint.Service drives the writer
   // outcomes: tryStartCheckpointWriter always returns "started" (counted in
@@ -255,11 +88,10 @@ describe("SessionPrune.fireCheckpoints writer failure is not retried in place", 
         waitForWriterSettlement: () => Effect.sync(nextSettlement),
         drainWriters: () => Effect.succeed({ drained: 0, timedOut: 0 }),
         hasCheckpoint: () => Effect.succeed(false),
-        hasMemoryOrTasks: () => Effect.succeed(false),
         loadLatest: () => Effect.succeed(undefined),
         loadCheckpoints: () => Effect.succeed([]),
         renderIndex: () => Effect.succeed(""),
-        renderRebuildContext: () => Effect.succeed({ text: "", hasActivity: false }),
+        renderRebuildContext: () => Effect.succeed({ text: "" }),
         lastBoundary: () => Effect.succeed(undefined),
         isWriterRunning: () => Effect.succeed(false),
         insertRebuildBoundary: () => Effect.succeed(false),

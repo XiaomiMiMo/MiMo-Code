@@ -2,8 +2,7 @@
 feature: compaction-replay-keep-media
 status: delivered
 updated: 2026-10-14
-branch: fix/compaction-replay-keep-media
-commits: e27e87de81..eba028f270
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2662
 ---
 
 # Compaction Replay Keeps Media

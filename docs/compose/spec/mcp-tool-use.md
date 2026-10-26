@@ -2,8 +2,7 @@
 feature: mcp-tool-use
 status: delivered
 updated: 2026-10-20
-branch: feat/mcp-tool-use
-commits: 43c9daa20..bfdfd77ee
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2684
 ---
 
 # MCP Tool Use

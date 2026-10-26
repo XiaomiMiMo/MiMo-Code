@@ -2,8 +2,7 @@
 feature: plan-no-continue
 status: delivered
 updated: 2026-07-23
-branch: plan-no-continue
-commits: 29a107adfe76cfb67f73862115f56eebb007f569..5006141ccd8dc0088a8a791295db2160891fc971
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1883
 ---
 
 # Plan mode: non-Yes paths must guide the model to continue planning

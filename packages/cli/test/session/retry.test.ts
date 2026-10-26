@@ -1134,11 +1134,16 @@ describe("retry decision and coordinator budget", () => {
     expect(decide(overflow)).toMatchObject({ retryable: false, kind: "terminal" })
   })
 
-  test("InvalidOutputError is retryable", () => {
+  test("InvalidOutputError retries persistently under the server budget", () => {
     const empty = new MessageV2.InvalidOutputError({ message: "empty output" }).toObject()
-    expect(decide(empty)).toMatchObject({ retryable: true, kind: "unknown" })
+    const decision = decide(empty)
+    expect(decision).toMatchObject({ retryable: true, kind: "server", message: "empty output" })
     expect(isRetryableTransientError(empty)).toBe(true)
-    expect(retryable(empty)).toBeTruthy()
+    expect(retryable(empty)).toBe("empty output")
+    const budget = budgetFor(SessionRetry.resolve(undefined), decision)
+    expect(budget.mode).toBe("persistent")
+    expect(budget.maxRetries).toBeUndefined()
+    expect(budget.maxElapsedMs).toBe(0)
   })
 })
 

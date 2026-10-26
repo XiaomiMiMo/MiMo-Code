@@ -113,7 +113,7 @@ These commands submit a predefined prompt to the agent and may accept trailing a
 | `/goal <condition>` | Set a judge-verified stop condition; `/goal clear` aborts it |
 | `/dream [focus]` | Consolidate durable knowledge from recent work into project memory |
 | `/distill [focus]` | Package repeated workflows into skills, subagents, or commands |
-| `/rebuild` | Rebuild conversation context from the latest checkpoint while keeping recent messages verbatim |
+| `/rebuild` | Rebuild conversation context from the latest checkpoint; messages since the checkpoint are summarized and any unanswered prompt is carried over in full |
 | `/context-limit` | Pick where the current model compacts (`200K`/`300K`/`500K`/`1M`/custom, or the model default); persists per model as `compaction.max_context`. Refuses while a session is running, because the config write reloads the instance |
 | `/deep-research <question>` | Run deep multi-source research; the prompt-command implementation requires the workflow experiment |
 | `/loops [cancel <id>]` | List or cancel scheduled jobs; requires the cron experiment |
@@ -137,4 +137,4 @@ The slash menu also includes commands discovered at runtime:
 ## Notes
 
 - The web command is currently disabled; TUI is the supported interface.
-- Voice ASR (`mimo-v2.5-asr`) is MiMo-platform only; voice control (`mimo-v2.5`) also runs on OpenRouter and compatible relays via the `voice` config (see config.md and the README voice section).
+- Voice ASR (`mimo-v2.5-asr`) is MiMo-platform only; voice control (`mimo-v2.6-flash`) also runs on OpenRouter and compatible relays via the `voice` config (see config.md and the README voice section).

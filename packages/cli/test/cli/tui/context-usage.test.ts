@@ -37,8 +37,8 @@ function user(id: string, opts?: { created?: number }): Message {
 }
 
 // A checkpoint-boundary message: fresh ascending id, and (for the ordering
-// tests) a deliberately backdated time.created — exactly the real shape from
-// checkpoint.ts (`syntheticTime = boundaryCreatedAt + 1`, id = fresh ascending).
+// tests) a deliberately backdated time.created — the shape of legacy boundaries,
+// which were stamped at the watermark's time + 1 ms with a fresh ascending id.
 function boundary(id: string, opts?: { created?: number }): Message {
   return { id, role: "user", time: { created: opts?.created ?? 0 } } as UserMessage
 }

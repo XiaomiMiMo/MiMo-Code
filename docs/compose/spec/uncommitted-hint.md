@@ -2,8 +2,7 @@
 feature: uncommitted-hint
 status: delivered
 updated: 2026-09-18
-branch: wt/stop-hook-soft-hint
-commits: 2bda17944b..ff7dbd8d2f
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2423
 ---
 
 # Uncommitted Hint

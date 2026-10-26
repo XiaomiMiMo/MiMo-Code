@@ -430,7 +430,17 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
                 expect(checkpoints).toHaveLength(1)
                 expect(new Set(checkpoints.map((m) => m.info.id)).size).toBe(1)
                 expect(writerCalls).toBe(1)
+                // The rebuild after the finished high-usage reply ends that turn: the model is not asked
+                // to answer the boundary, and the reply is part of the boundary's digest.
                 expect(llm.calls).toBe(3)
+                const boundaryIndex = after.findIndex((m) => m.info.id === checkpoints[0]!.info.id)
+                expect(after[boundaryIndex - 1]?.parts.some((p) => p.type === "text" && p.text === "high-usage reply")).toBe(
+                  true,
+                )
+                const marker = checkpoints[0]!.parts.find((p) => p.type === "checkpoint")
+                if (marker?.type !== "checkpoint") throw new Error("expected a checkpoint part")
+                expect(marker.digestUpTo).toBe(after[boundaryIndex - 1]!.info.id)
+                expect(after[boundaryIndex + 1]?.parts.some((p) => p.type === "text" && p.text === "continue after the automatic rebuild")).toBe(true)
                 expect(
                   after.some((m) => m.parts.some((p) => p.type === "text" && p.text === "reply after rebuild")),
                 ).toBe(true)

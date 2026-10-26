@@ -106,7 +106,6 @@ export const Flag = {
   // to opt out of POSTing model_call/tool_call/agent_request metrics.
   MIMOCODE_ENABLE_ANALYSIS: !falsy("MIMOCODE_ENABLE_ANALYSIS"),
   MIMOCODE_ALWAYS_NOTIFY_UPDATE: truthy("MIMOCODE_ALWAYS_NOTIFY_UPDATE"),
-  MIMOCODE_DISABLE_PRUNE: truthy("MIMOCODE_DISABLE_PRUNE"),
   MIMOCODE_DISABLE_TERMINAL_TITLE: truthy("MIMOCODE_DISABLE_TERMINAL_TITLE"),
   MIMOCODE_SHOW_TTFD: truthy("MIMOCODE_SHOW_TTFD"),
   MIMOCODE_PERMISSION: process.env["MIMOCODE_PERMISSION"],
@@ -440,6 +439,14 @@ export const Flag = {
   // MIMOCODE_DISABLE_OFFICIAL_SKILLS=true to skip them.
   get MIMOCODE_DISABLE_OFFICIAL_SKILLS() {
     return truthy("MIMOCODE_DISABLE_OFFICIAL_SKILLS")
+  },
+  // Opt-in for bundled skills that operate other agent CLIs (claude-code,
+  // codex, grok-build). Defaults to false so the preinstalled skill surface
+  // stays quiet; set MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true to extract and load
+  // them. Env value alone decides the extract set — binary presence is not
+  // consulted.
+  get MIMOCODE_ENABLE_AGENT_CLI_SKILLS() {
+    return truthy("MIMOCODE_ENABLE_AGENT_CLI_SKILLS")
   },
   get MIMOCODE_DISABLE_PROJECT_CONFIG() {
     return truthy("MIMOCODE_DISABLE_PROJECT_CONFIG")

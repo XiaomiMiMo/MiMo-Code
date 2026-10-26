@@ -229,12 +229,13 @@ MiMoCode bundles the following builtin skills:
 | Skill | Description |
 |-------|-------------|
 | `arxiv` | Search, read, cite, and analyze arXiv papers |
-| `claude-code` | Delegate coding, testing, review, and Git tasks to the Claude Code CLI |
-| `codex` | Run and troubleshoot the Codex CLI in headless automation, CI, containers, and remote environments |
+| `claude-code` | Drive the Claude Code CLI for coding, testing, review, and Git tasks (opt-in: `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`) |
+| `codex` | Drive the Codex CLI in headless automation, CI, containers, and remote environments (opt-in: `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`) |
 | `compose-next` | Spec→ship feature delivery orchestration — clarify, spec, implement, verify, review, finish |
 | `data-analytics` | Analyze product and business data through reusable workflows for data quality, KPIs, dashboards, reports, notebooks, and market sizing |
 | `deep-research` | Produce cited, multi-source research reports with parallel subagents and built-in web tools |
 | `docx-official` | Produce, read, and transform Word (.docx) files |
+| `grok-build` | Operate the Grok Build CLI for interactive and headless agent workflows (opt-in: `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`) |
 | `html-to-video-pipeline` | HTML-to-MP4 rendering via headless browser + ffmpeg |
 | `learn-everything` | Turn documents, URLs, or topics into adaptive courses with exercises, feedback, and progress tracking |
 | `loop` | Schedule recurring prompts on a fixed cadence |
@@ -249,7 +250,7 @@ MiMoCode bundles the following builtin skills:
 | `super-research` | Run long-horizon, auditable research, experiments, benchmarks, diagnostics, reproductions, and citation checks |
 | `xlsx-official` | Build, clean, and transform spreadsheets (.xlsx/.csv) |
 
-`claude-code` and `codex` are exposed only when the `claude` and `codex` executables, respectively, are installed. Other skills may still require task-specific tools described in their instructions.
+The skills `claude-code`, `codex`, and `grok-build` drive other agent CLIs from the terminal. They ship off by default; set `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` to enable them. Other skills may still require task-specific tools described in their instructions.
 
 **Overriding a builtin skill:** Create a skill with the same `name` under the project (`.mimocode/skills/<name>/SKILL.md`) or personal (for example `~/.config/mimocode/skills/<name>/SKILL.md`) MiMoCode skills directory. Open-standard `.agents/skills/` in the project and `~/.agents/skills/` are compatible discovery roots. User skills discovered later in the scan order override builtins with the same name.
 
@@ -260,6 +261,7 @@ MiMoCode bundles the following builtin skills:
 |----------|--------|
 | `MIMOCODE_DISABLE_BUILTIN_SKILLS=true` | Disable all builtin skills |
 | `MIMOCODE_DISABLE_OFFICIAL_SKILLS=true` | Disable only the office/media skills: `docx-official`, `pdf-official`, `pptx-official`, `xlsx-official`, `html-to-video-pipeline` |
+| `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` | Opt in the agent-CLI skills `claude-code`, `codex`, and `grok-build` (default: off) |
 | `MIMOCODE_DISABLE_SLASH_SKILLS=true` | Hide skills from TUI `/` autocomplete without disabling them |
 
 **External skill roots** (default surface is `.mimocode` + open-standard `.agents`):

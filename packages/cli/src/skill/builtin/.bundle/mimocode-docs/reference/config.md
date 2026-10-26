@@ -110,14 +110,13 @@ Prefer a markdown file (`.mimocode/agent/<name>.md`, body = system prompt) for d
 
 ### Context management
 
-As context fills, MiMoCode auto-checkpoints (a background writer distills the conversation into `checkpoint.md`) and, near the limit, **rebuilds**: it inserts a boundary at the last successful checkpoint so earlier messages collapse to the checkpoint summary while recent messages are kept verbatim. If a checkpoint writer is still running when a rebuild is needed, the rebuild waits for it (with a visible "Preparing conversation context…" status) — briefly when a usable checkpoint already exists, longer for the very first one — then proceeds; if no checkpoint can be produced it falls back to lossy compaction. You can trigger a rebuild yourself any time with the `/rebuild` slash command.
+As context fills, MiMoCode auto-checkpoints (a background writer distills the conversation into `checkpoint.md`) and, near the limit, **rebuilds**: it appends a boundary that carries the last successful checkpoint, a list of the activity since it and any unanswered prompt in full, so the next request starts from that boundary. If a checkpoint writer is still running when a rebuild is needed, the rebuild waits for it (with a visible "Preparing conversation context…" status) — briefly when a usable checkpoint already exists, longer for the very first one — then proceeds; if no checkpoint can be produced it falls back to lossy compaction. You can trigger a rebuild yourself any time with the `/rebuild` slash command.
 
 The trigger is the model's prompt capacity (`limit.input` when the provider publishes one, else `limit.context`) minus the reserves, optionally lowered by `compaction.max_context`. `mimo models <provider>` prints the resolved window and the trigger per model, and `/status` shows both plus the current usage. Two things users hit here: a model's usable window depends on the route (ChatGPT/Codex subscription vs direct API key vs a reseller like OpenRouter can all differ for the same model name, and a 1M catalog figure does not mean the route serves 1M), and providers may price very long prompts higher (OpenAI charges 2x input / 1.5x output for GPT-5.6 requests above 272K input) — `compaction.max_context` is the knob for both.
 
 | Key | Purpose |
 |-----|---------|
 | `compaction.auto` | Auto-compact when context full (default true) |
-| `compaction.prune` | Prune old tool outputs (default true) |
 | `compaction.tail_turns` | Recent user turns kept verbatim (default 2) |
 | `compaction.preserve_recent_tokens` | Max recent tokens kept verbatim |
 | `compaction.reserved` | Token buffer to avoid overflow |
@@ -137,7 +136,7 @@ The trigger is the model's prompt capacity (`limit.input` when the provider publ
 | `dream.auto` / `dream.interval_days` | Auto memory consolidation on session start (default true / 7 days) |
 | `distill.auto` / `distill.interval_days` | Auto workflow packaging (default true / 30 days) |
 | `voice.asr_model` | ASR model (default `xiaomi/mimo-v2.5-asr`) |
-| `voice.control_model` | Voice control model (default `xiaomi/mimo-v2.5`) |
+| `voice.control_model` | Voice control model (default `xiaomi/mimo-v2.6-flash`) |
 | `workflow.maxConcurrentAgents` | Process-wide subagent concurrency ceiling (default min(16, 2×cores)) |
 | `workflow.maxDepth` | Max workflow nesting depth (default 8) |
 

@@ -2,8 +2,7 @@
 feature: voice-control-tool-protocol
 status: delivered
 updated: 2026-09-05
-branch: feat/voice-control-tool-protocol
-commits: d17e176b..HEAD
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2308
 ---
 
 # Voice Control Tool Protocol

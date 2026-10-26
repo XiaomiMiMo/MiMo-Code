@@ -509,6 +509,39 @@ describe("session.message-v2.toModelMessage", () => {
     expect(wire[0].content).toStrictEqual([])
   })
 
+  test("retry records never reach the model and do not keep an otherwise empty assistant", async () => {
+    const retry = (messageID: string, id: string): MessageV2.RetryPart => ({
+      ...basePart(messageID, id),
+      type: "retry",
+      attempt: 3,
+      phase: "stream",
+      scope: "live-step",
+      kind: "server",
+      message: "retry-record-marker",
+      next: 1,
+      time: { created: 0, updated: 1 },
+    })
+    const input: MessageV2.WithParts[] = [
+      { info: userInfo("m-user-1"), parts: [{ ...basePart("m-user-1", "u1"), type: "text", text: "first" }] as MessageV2.Part[] },
+      {
+        info: assistantInfo("m-retry-only", "m-user-1"),
+        parts: [retry("m-retry-only", "r1")],
+      },
+      { info: userInfo("m-user-2"), parts: [{ ...basePart("m-user-2", "u2"), type: "text", text: "second" }] as MessageV2.Part[] },
+      {
+        info: assistantInfo("m-retry-answer", "m-user-2"),
+        parts: [
+          retry("m-retry-answer", "r2"),
+          { ...basePart("m-retry-answer", "t2"), type: "text", text: "answer" },
+        ] as MessageV2.Part[],
+      },
+    ]
+    const converted = await MessageV2.toModelMessages(input, model)
+    expect(JSON.stringify(converted)).not.toContain("retry-record-marker")
+    expect(converted.map((message) => message.role)).toEqual(["user", "user", "assistant"])
+    expect(converted.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "answer" }] })
+  })
+
   test("filters out messages with only ignored parts", async () => {
     const messageID = "m-user"
 

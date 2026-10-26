@@ -2,8 +2,7 @@
 feature: memory-prompt-decouple
 status: delivered
 updated: 2026-09-14
-branch: feat/memory-prompt-decouple
-commits: e485a2a..9780b2e
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2389
 ---
 
 # Memory Prompt Decouple From Checkpoint
@@ -66,14 +65,15 @@ write* subsections inside that block, not the block itself.
 **Implementation choke points:**
 
 1. `session/llm.ts` `buildSystemArray` — injection `if` is `servesCheckpoint`
-   only; `buildMemoryInstructions(projectID, memoryRoot)` internal
+   only; `buildMemoryInstructions(memoryRoot)` internal
    `checkpointEnabled` splits ckpt extras.
 2. `buildMemoryInstructions` / injection-site comments state always-on for
    main/peer; flag only narrows content.
 3. `tool/checkpoint-description.ts` — unchanged. Base `memory.txt` stays;
    only `memory.checkpoint.txt` extra stays gated.
-4. Session recall reminder (`session/prompt.ts` `hasMemoryOrTasks`) — already
-   independent of the checkpoint flag; no change.
+4. Memory paths reminder (`session/prompt.ts`
+   `memoryPathsReminderTarget`, see `session-memory-dir-reminder.md`) —
+   gated on `servesCheckpoint`, independent of the checkpoint flag.
 5. `memory.disable_write` remains the write switch (separate axis); this
    feature does not couple prompts to it.
 

@@ -2,8 +2,7 @@
 feature: cron-session-affinity
 status: delivered
 updated: 2026-10-12
-branch: fix/cron-session-affinity
-commits: 3c6e6bb0..4c3a7e46
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2648
 ---
 
 # Cron Session Affinity

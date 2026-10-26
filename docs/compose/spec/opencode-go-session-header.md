@@ -2,8 +2,7 @@
 feature: opencode-go-session-header
 status: delivered
 updated: 2026-10-12
-branch: fix/opencode-session-header
-commits: c7dbd85d..bc0cfd9a
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2655
 ---
 
 # OpenCode Go Session Header

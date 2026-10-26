@@ -11,7 +11,6 @@ import { SessionProcessor } from "./processor"
 import { Agent, resolveStoredAgent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config"
-import { NotFoundError } from "@/storage"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Effect, Layer, Context } from "effect"
 import { InstanceState } from "@/effect"
@@ -37,9 +36,6 @@ export const Event = {
   ),
 }
 
-export const PRUNE_MINIMUM = 20_000
-export const PRUNE_PROTECT = 40_000
-const PRUNE_PROTECTED_TOOLS = ["skill"]
 export const COMPACTION_TAIL_BUDGET = 40_000
 export const COMPACTION_TOOL_RESULT_LIMIT = 8_000
 const FILE_MANIFEST_LIMIT = 5
@@ -230,7 +226,6 @@ export interface Interface {
     tokens: MessageV2.Assistant["tokens"]
     model: Provider.Model
   }) => Effect.Effect<boolean>
-  readonly prune: (input: { sessionID: SessionID; agentID?: string }) => Effect.Effect<void>
   readonly process: (input: {
     parentID: MessageID
     messages: MessageV2.WithParts[]
@@ -277,61 +272,6 @@ export const layer: Layer.Layer<
       model: Provider.Model
     }) {
       return overflow({ cfg: yield* config.get(), tokens: input.tokens, model: input.model })
-    })
-
-    // goes backwards through parts until there are PRUNE_PROTECT tokens worth of tool
-    // calls, then erases output of older tool calls to free context space.
-    // Scoped to (sessionID, agentID): only inspects messages belonging to the
-    // given actor — main-agent messages stay untouched when agentID is set.
-    const prune = Effect.fn("SessionCompaction.prune")(function* (input: {
-      sessionID: SessionID
-      agentID?: string
-    }) {
-      const cfg = yield* config.get()
-      if (!cfg.compaction?.prune) return
-      log.info("pruning", { agentID: input.agentID ?? "main" })
-
-      const msgs = yield* MessageV2.filterCompactedEffect(input.sessionID, { agentID: input.agentID }).pipe(
-        Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed(undefined)),
-      )
-      if (!msgs) return
-
-      let total = 0
-      let pruned = 0
-      const toPrune: MessageV2.ToolPart[] = []
-      let turns = 0
-
-      loop: for (let msgIndex = msgs.length - 1; msgIndex >= 0; msgIndex--) {
-        const msg = msgs[msgIndex]
-        if (msg.info.role === "user") turns++
-        if (turns < 2) continue
-        if (msg.info.role === "assistant" && msg.info.summary) break loop
-        for (let partIndex = msg.parts.length - 1; partIndex >= 0; partIndex--) {
-          const part = msg.parts[partIndex]
-          if (part.type === "tool")
-            if (part.state.status === "completed") {
-              if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
-              if (part.state.time.compacted) break loop
-              const estimate = Token.estimate(part.state.output)
-              total += estimate
-              if (total > PRUNE_PROTECT) {
-                pruned += estimate
-                toPrune.push(part)
-              }
-            }
-        }
-      }
-
-      log.info("found", { pruned, total })
-      if (pruned > PRUNE_MINIMUM) {
-        for (const part of toPrune) {
-          if (part.state.status === "completed") {
-            part.state.time.compacted = Date.now()
-            yield* session.updatePart(part)
-          }
-        }
-        log.info("pruned", { count: toPrune.length })
-      }
     })
 
     const processCompaction = Effect.fn("SessionCompaction.process")(function* (input: {
@@ -535,6 +475,8 @@ export const layer: Layer.Layer<
 
       if (result === "text-repeat") return yield* rollback("Compaction produced repeated text")
       if (result === "stop") return yield* rollback("Compaction failed before producing a summary")
+      // The compaction processor is created without awaitNewInput, so no input supersedes it.
+      if (result === "superseded") return yield* Effect.die(new Error("Compaction step cannot be superseded"))
       if (
         !MessageV2.parts(msg.id).some((part) => part.type === "text" && part.text.trim().length > 0)
       )
@@ -703,7 +645,6 @@ export const layer: Layer.Layer<
 
     return Service.of({
       isOverflow,
-      prune,
       process: processCompaction,
       create,
     })
@@ -726,10 +667,6 @@ const { runPromise } = makeRuntime(Service, defaultLayer)
 
 export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
   return runPromise((svc) => svc.isOverflow(input))
-}
-
-export async function prune(input: { sessionID: SessionID; agentID?: string }) {
-  return runPromise((svc) => svc.prune(input))
 }
 
 export const create = fn(

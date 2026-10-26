@@ -181,7 +181,7 @@ export const layer = Layer.effect(
       }
       commands[Default.REBUILD] = {
         name: Default.REBUILD,
-        description: "rebuild the conversation context now from the latest checkpoint (frees context; keeps recent messages)",
+        description: "rebuild the conversation context now from the latest checkpoint (frees context; recent activity is summarized)",
         source: "command",
         subtask: false,
         get template() {

@@ -397,8 +397,6 @@ export const layer = Layer.effect(
       // captured ForkContext.tools or the prefix cache breaks — see ForkContext
       // JSDoc in actor/spawn.ts. Its real tool authority is the actor.tools
       // whitelist set in tryStartCheckpointWriter, which already omits `actor`.
-      // The condition lives in hasActorTool so prompt surfaces that name the tool
-      // read the same gate.
       if (!hasActorTool(input.agent)) {
         filtered = filtered.filter((tool) => tool.id !== ActorTool.id)
       }

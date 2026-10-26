@@ -155,7 +155,7 @@ function extractRaw(part: MessageV2.Part, messageRole: "user" | "assistant", opt
     case "retry":
       return {
         kind: "retry",
-        body: previewForIndex([part.error.data.message, part.error.data.responseBody].filter(Boolean).join(" ")),
+        body: previewForIndex(part.message),
         tool_name: null,
       }
     case "snapshot":

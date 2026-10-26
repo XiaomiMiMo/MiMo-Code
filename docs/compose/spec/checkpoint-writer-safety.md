@@ -2,8 +2,7 @@
 feature: checkpoint-writer-safety
 status: delivered
 updated: 2026-07-22
-branch: investigate/checkpoint-writer-sandbox
-commits: 0cb81dba827e27549bde6fba794e27509ef1bf65..25f175dd
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1859
 ---
 
 # Checkpoint Writer Safety

@@ -2,8 +2,7 @@
 feature: typecheck-toolchain
 status: delivered
 updated: 2026-09-29
-branch: typecheck/ts7-drop-turbo
-commits: f0293bf8..8c1b5b14
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2575
 ---
 
 # Typecheck Toolchain: Drop Turbo, Upgrade tsgo, Scripts Project

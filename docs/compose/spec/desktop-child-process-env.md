@@ -2,8 +2,7 @@
 feature: desktop-child-process-env
 status: delivered
 updated: 2026-08-17
-branch: fix/desktop-runtime-boundaries
-commits: 17c9cdcb70b27116456f742f2b0d384b76f79108..0d3d0dcadf999cd05cb5ea0ae22e5e43ac1bd305
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2159
 ---
 
 # Desktop Child Process Environment

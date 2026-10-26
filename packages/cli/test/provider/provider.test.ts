@@ -1942,7 +1942,7 @@ test("xiaomi chat streams reasoning_content as reasoning parts", async () => {
   }
 })
 
-test("mimo model ids respect the explicit provider npm in config", async () => {
+test("explicit provider npm is respected for mimo-named model ids", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -1952,13 +1952,22 @@ test("mimo model ids respect the explicit provider npm in config", async () => {
           provider: {
             "my-gateway": {
               name: "My Gateway",
-              npm: "@ai-sdk/openai",
+              npm: "@ai-sdk/anthropic",
               env: [],
               models: {
                 "MiMo-V2.6": { tool_call: true, limit: { context: 8192, output: 2048 } },
                 "alias-model": { id: "vendor/mimo-v2.5", tool_call: true, limit: { context: 8192, output: 2048 } },
                 "gpt-5.4": { tool_call: true, limit: { context: 8192, output: 2048 } },
                 "mimosa-1": { tool_call: true, limit: { context: 8192, output: 2048 } },
+              },
+              options: { apiKey: "test-key", baseURL: "https://example.test/v1" },
+            },
+            "responses-gateway": {
+              name: "Responses Gateway",
+              npm: "@ai-sdk/openai",
+              env: [],
+              models: {
+                "xiaomi/mimo-v2.6-flash": { tool_call: true, limit: { context: 8192, output: 2048 } },
               },
               options: { apiKey: "test-key", baseURL: "https://example.test/v1" },
             },
@@ -1970,18 +1979,19 @@ test("mimo model ids respect the explicit provider npm in config", async () => {
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
-      const models = (await list())[ProviderID.make("my-gateway")].models
-      expect(models["MiMo-V2.6"].api.npm).toBe("@ai-sdk/openai")
-      expect(models["alias-model"].api.npm).toBe("@ai-sdk/openai")
-      expect(models["gpt-5.4"].api.npm).toBe("@ai-sdk/openai")
-      expect(models["mimosa-1"].api.npm).toBe("@ai-sdk/openai")
-      // The provider stays as configured as well.
+      const all = await list()
+      const models = all[ProviderID.make("my-gateway")].models
+      expect(models["MiMo-V2.6"].api.npm).toBe("@ai-sdk/anthropic")
+      expect(models["alias-model"].api.npm).toBe("@ai-sdk/anthropic")
+      expect(models["gpt-5.4"].api.npm).toBe("@ai-sdk/anthropic")
+      expect(models["mimosa-1"].api.npm).toBe("@ai-sdk/anthropic")
       expect(models["MiMo-V2.6"].providerID).toBe(ProviderID.make("my-gateway"))
+      expect(all[ProviderID.make("responses-gateway")].models["xiaomi/mimo-v2.6-flash"].api.npm).toBe("@ai-sdk/openai")
     },
   })
 })
 
-test("mimo model ids are pinned to @ai-sdk/openai-compatible from models.dev", () => {
+test("models.dev npm is used as declared, including for mimo-named ids", () => {
   const model = (id: string, npm?: string) => ({
     id,
     name: id,
@@ -2004,19 +2014,31 @@ test("mimo model ids are pinned to @ai-sdk/openai-compatible from models.dev", (
   } as unknown as ModelsDev.Provider
 
   const models = Provider.fromModelsDevProvider(provider).models
-  expect(models["xiaomi/mimo-v2.5"].api.npm).toBe("@ai-sdk/openai-compatible")
-  expect(models["XiaomiMiMo/MiMo-V2.5-Pro"].api.npm).toBe("@ai-sdk/openai-compatible")
+  expect(models["xiaomi/mimo-v2.5"].api.npm).toBe("@ai-sdk/openai")
+  expect(models["XiaomiMiMo/MiMo-V2.5-Pro"].api.npm).toBe("@ai-sdk/deepinfra")
   expect(models["gpt-5.4"].api.npm).toBe("@ai-sdk/openai")
   expect(models["xiaomi/mimo-v2.5"].providerID).toBe(ProviderID.make("test-provider"))
 })
 
-test("isMimoOrSmartModel matches mimo ids only", () => {
-  for (const id of ["mimo-v2.5", "MiMo-V2.6", "xiaomi/mimo-v2.5", "vendor_mimo-1", "mimo"]) {
-    expect(Provider.isMimoOrSmartModel(id)).toBe(true)
-  }
-  for (const id of ["mimosa-1", "gpt-5.4", "claude-opus-4-6", "xmimo-1"]) {
-    expect(Provider.isMimoOrSmartModel(id)).toBe(false)
-  }
+test("model npm defaults to openai-compatible when nothing is declared", () => {
+  const provider = {
+    id: "test-provider",
+    name: "Test Provider",
+    env: [],
+    api: "https://example.test/v1",
+    models: {
+      "mimo-v2.5": {
+        id: "mimo-v2.5",
+        name: "mimo-v2.5",
+        limit: { context: 8192, output: 2048 },
+        cost: { input: 0, output: 0 },
+        modalities: { input: ["text"], output: ["text"] },
+      },
+    },
+  } as unknown as ModelsDev.Provider
+
+  const models = Provider.fromModelsDevProvider(provider).models
+  expect(models["mimo-v2.5"].api.npm).toBe("@ai-sdk/openai-compatible")
 })
 
 // Edge cases for model configuration

@@ -2,8 +2,7 @@
 feature: npm-fds-launcher
 status: delivered
 updated: 2026-10-13
-branch: feat/npm-fds-launcher
-commits: 8e1df4ab..8884c6fd
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2652
 ---
 
 # npm FDS Launcher

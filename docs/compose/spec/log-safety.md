@@ -2,8 +2,7 @@
 feature: log-safety
 status: delivered
 updated: 2026-07-27
-branch: fix/tui-log-stderr
-commits: 014a2577..aa28c273
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1928
 ---
 
 # Log Safety

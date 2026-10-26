@@ -2,8 +2,7 @@
 feature: permission-skip-and-timeout-decouple
 status: delivered
 updated: 2026-04-02
-branch: permission-skip-and-timeout-decouple
-commits: 9d54ad3c..HEAD
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2151
 ---
 
 # Permission Skip & Timeout Decouple

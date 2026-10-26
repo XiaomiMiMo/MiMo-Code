@@ -1148,16 +1148,6 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
-// Default MiMo catalog entries to the OpenAI-compatible Chat Completions API.
-// Explicit SDK configuration takes precedence so gateways can use other protocols.
-export function isMimoOrSmartModel(id: string) {
-  return /(^|[/_-])mimo(?:-|$)/i.test(id)
-}
-
-function resolveModelNpm(npm: string, ...ids: string[]) {
-  return ids.some(isMimoOrSmartModel) ? OPENAI_COMPATIBLE_NPM : npm
-}
-
 function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
   const base: Model = {
     id: ModelID.make(model.id),
@@ -1167,7 +1157,7 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
     api: {
       id: model.id,
       url: model.provider?.api ?? provider.api ?? "",
-      npm: resolveModelNpm(model.provider?.npm ?? provider.npm ?? OPENAI_COMPATIBLE_NPM, model.id),
+      npm: model.provider?.npm ?? provider.npm ?? OPENAI_COMPATIBLE_NPM,
     },
     status: model.status ?? "active",
     headers: {},
@@ -1329,11 +1319,9 @@ const layer: Layer.Layer<
             const apiNpm =
               model.provider?.npm ??
               provider.npm ??
-              resolveModelNpm(
-                existingModel?.api.npm ?? modelsDev[providerID]?.npm ?? OPENAI_COMPATIBLE_NPM,
-                modelID,
-                apiID,
-              )
+              existingModel?.api.npm ??
+              modelsDev[providerID]?.npm ??
+              OPENAI_COMPATIBLE_NPM
             const name = iife(() => {
               if (model.name) return model.name
               if (model.id && model.id !== modelID) return modelID

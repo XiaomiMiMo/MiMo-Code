@@ -339,10 +339,12 @@ export function decide(
   if (MessageV2.AuthError.isInstance(error)) {
     return { retryable: false, phase, scope, kind: "terminal", message: error.data.message, ...(hostCode ? { hostCode, hostRetryClass: hostClass! } : {}) }
   }
-  // InvalidOutputError = model returned only reasoning or empty body. Transient quality
-  // failure — the request itself succeeded, so a fresh attempt may produce usable output.
+  // InvalidOutputError = model returned only reasoning or empty body. The request was
+  // accepted and the provider failed to deliver, the same recovery class as an
+  // overloaded upstream: one stalled attempt can outlast any wall-clock deadline,
+  // so it waits under the persistent server budget until output or cancellation.
   if (MessageV2.InvalidOutputError.isInstance(error)) {
-    return { retryable: true, phase, scope, kind: "unknown", message: error.data.message || "Empty model output" }
+    return { retryable: true, phase, scope, kind: "server", message: error.data.message || "Empty model output" }
   }
   if (
     !hostCode &&
@@ -413,9 +415,9 @@ export function decide(
   )
     return retry("rate_limit", phase, "Too Many Requests")
   if (isRateLimitMessage(message)) return retry("rate_limit", phase, message)
+  if (retryConstraint(error) === "terminal") return terminal()
   if (signals.code.includes("exhausted") || signals.code.includes("unavailable"))
     return retry("server", phase, "Provider is overloaded")
-  if (retryConstraint(error) === "terminal") return terminal()
   if (status !== undefined && (RETRYABLE_HTTP_STATUS.has(status) || (status >= 500 && status <= 599 && status !== 501 && status !== 505)))
     return retry(status === 429 ? "rate_limit" : "server")
   if (MessageV2.APIError.isInstance(error)) {

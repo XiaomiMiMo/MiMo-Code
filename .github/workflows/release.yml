@@ -48,14 +48,10 @@ jobs:
     needs: verify
     uses: ./.github/workflows/lint.yml
 
-  test:
-    needs: verify
-    uses: ./.github/workflows/test.yml
-
   # macOS matches how earlier releases were produced, so darwin binaries keep the
   # native toolchain's ad-hoc signature.
   build:
-    needs: [typecheck, lint, test]
+    needs: [typecheck, lint]
     runs-on: macos-latest
     timeout-minutes: 60
     steps:

@@ -2,8 +2,7 @@
 feature: actor-drop-context
 status: delivered
 updated: 2026-09-14
-branch: feat/actor-drop-context
-commits: bceb411c..655fa209
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2392
 ---
 
 # Actor tool: drop model-facing context

@@ -175,7 +175,7 @@ describe("renderRebuildContext v3", () => {
     ),
   )
 
-  it.live("appends stopReminder when lastMessageInfo is assistant+stop", () =>
+  it.live("no reminder when lastMessageInfo is assistant+stop (the next request is the user's)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const cp = yield* SessionCheckpoint.Service
@@ -184,9 +184,9 @@ describe("renderRebuildContext v3", () => {
         const sess = yield* session.create({ title: "Test" })
         yield* reg.create({ session_id: sess.id, summary: "Some task" })
 
-        const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "stop" } })
-        expect(out).toContain("The previous assistant turn ended with a stop")
-        expect(out).toContain("progress.md head section")
+        const { text: stopped } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "stop" } })
+        const { text: user } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "user" } })
+        expect(stopped).toBe(user)
       }),
     ),
   )
@@ -232,7 +232,6 @@ describe("renderRebuildContext v3", () => {
 
         const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "user" } })
         expect(out).not.toContain("mid-loop in an autonomous task")
-        expect(out).not.toContain("The previous assistant turn ended with a stop")
         expect(out).not.toContain("Tool results above are real history")
       }),
     ),

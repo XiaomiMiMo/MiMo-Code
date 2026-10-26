@@ -8,9 +8,8 @@ export const SYSTEM_SPAWNED_AGENT_TYPES: ReadonlySet<string> = new Set(["checkpo
 
 /** Whether the `actor` tool is in an agent's schema: subagents don't get it,
  *  because they must not spawn further subagents, and neither does an agent whose
- *  toolAllowlist omits it (dream/distill). Read by ToolRegistry.available (which
- *  applies the mask) and by prompt surfaces that would otherwise name the tool, so
- *  the schema and the prose can't drift apart. Accepts undefined because
+ *  toolAllowlist omits it (dream/distill). Read by ToolRegistry.available, which
+ *  applies the mask. Accepts undefined because
  *  `Agent.Service.get` is typed `Info` but returns `agents[name]`, which is absent
  *  for a name no longer in config; an unresolvable agent keeps the tool, matching
  *  prior behavior.

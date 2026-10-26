@@ -486,12 +486,15 @@ describe("session.llm system prompt — memory-instructions guard", () => {
           .filter((m) => m.role === "system")
           .map((m) => m.content)
           .join("\n")
-        expect(allSys).toContain(path.join(Global.Path.data, "memory", "projects", Instance.current.project.id, "MEMORY.md"))
-        const sessionTemplate = path.join(Global.Path.data, "memory", "sessions", "current_session_id")
+        expect(allSys).toContain(path.join(Global.Path.data, "memory", "projects", "<project_id>", "MEMORY.md"))
+        const sessionTemplate = path.join(Global.Path.data, "memory", "sessions", "<session_id>")
         expect(allSys).toContain(path.join(sessionTemplate, "checkpoint.md"))
         expect(allSys).toContain(path.join(sessionTemplate, "notes.md"))
         expect(allSys).toContain(path.join(sessionTemplate, "tasks", "<id>", "progress.md"))
-        expect(allSys).not.toContain(path.join(Global.Path.data, "memory", "sessions", sessionID))
+        expect(allSys).toContain("Their real paths are given in a system reminder")
+        expect(allSys).not.toContain(sessionID)
+        expect(allSys).not.toContain(Instance.current.project.id)
+        expect(allSys).not.toContain("current_session_id")
         // Global memory is taught (read-side) and points at the canonical path.
         expect(allSys).toContain("# Global memory")
         expect(allSys).toContain(path.join(Global.Path.data, "memory", "global", "MEMORY.md"))
@@ -563,7 +566,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
           expect(allSys).toContain("Notes scratchpad")
           expect(allSys).not.toContain("Subagent return format")
           expect(allSys).toContain(
-            path.join(Global.Path.data, "memory", "projects", Instance.current.project.id, "MEMORY.md"),
+            path.join(Global.Path.data, "memory", "projects", "<project_id>", "MEMORY.md"),
           )
           expect(allSys).toContain(path.join(Global.Path.data, "memory", "global", "MEMORY.md"))
           expect(allSys).toContain("Two file types")
@@ -576,7 +579,8 @@ describe("session.llm system prompt — memory-instructions guard", () => {
           expect(allSys).not.toContain("Active recall protocol")
           expect(allSys).not.toContain("sole curator")
           expect(allSys).not.toContain("Session checkpoint")
-          expect(allSys).not.toContain(path.join(Global.Path.data, "memory", "sessions", "current_session_id", "checkpoint.md"))
+          expect(allSys).toContain(path.join(Global.Path.data, "memory", "sessions", "<session_id>", "notes.md"))
+          expect(allSys).not.toContain(path.join(Global.Path.data, "memory", "sessions", "<session_id>", "checkpoint.md"))
         },
       })
     } finally {

@@ -14,7 +14,7 @@ import {
 import { LSP } from "../lsp"
 import { Snapshot } from "@/snapshot"
 import { SyncEvent } from "../sync"
-import { Database, NotFoundError, and, desc, eq, inArray, lt, or } from "@/storage"
+import { Database, NotFoundError, and, desc, eq, inArray, lt, or, sql } from "@/storage"
 import { MessageTable, PartTable, SessionTable } from "./session.sql"
 import { ProviderError } from "@/provider"
 import { errorMessage } from "@/util/error"
@@ -286,13 +286,18 @@ export const CheckpointPart = PartBase.extend({
   checkpointNumber: z.number(),
   coveredUpTo: MessageID.zod,
   /**
-   * Last message that already existed when this rebuild boundary was inserted.
-   * Post-rebuild activity-log collapse digests only messages after the
-   * checkpoint up to (and including) this id; anything newer stays live so a
-   * mid-turn tool loop is not folded into the log on the next request.
-   * Optional: older boundaries predate the field and skip collapse.
+   * Last tail message before the unanswered user messages at its end; the
+   * boundary's Recent activity digest covers (coveredUpTo, digestUpTo].
+   * Optional: absent when the tail has no such message and on older
+   * boundaries.
    */
   digestUpTo: MessageID.zod.optional(),
+  /**
+   * Inputs the inbox still held undelivered when this boundary was inserted.
+   * They are not part of the tail; one whose receipt later ends without
+   * delivery is placed after the boundary.
+   */
+  deferredInputs: MessageID.zod.array().optional(),
 }).meta({
   ref: "CheckpointPart",
 })
@@ -350,12 +355,21 @@ export const CompactionPart = PartBase.extend({
 })
 export type CompactionPart = z.infer<typeof CompactionPart>
 
+// Durable retry record of one assistant message: upserted on every retry of the
+// step, kept through retry cleanup, removed once the turn succeeds. Never sent
+// to the model.
 export const RetryPart = PartBase.extend({
   type: z.literal("retry"),
   attempt: z.number(),
-  error: APIError.Schema,
+  phase: z.enum(["request", "stream"]),
+  scope: z.enum(["request", "live-step"]),
+  kind: z.enum(["network", "rate_limit", "server", "stream", "unknown"]),
+  message: z.string(),
+  hostCode: z.string().optional(),
+  next: z.number(),
   time: z.object({
     created: z.number(),
+    updated: z.number(),
   }),
 }).meta({
   ref: "RetryPart",
@@ -1413,6 +1427,26 @@ export function* stream(sessionID: SessionID, options?: { agentID?: string }) {
     if (!next.more || !next.cursor) break
     before = next.cursor
   }
+}
+
+/** Retry records of one actor slice on assistants answering `fromUserID` or later, read without loading other parts. */
+export function retryParts(sessionID: SessionID, agentID: string, fromUserID: MessageID): RetryPart[] {
+  const rows = Database.use((db) =>
+    db
+      .select({ id: PartTable.id, message_id: PartTable.message_id, session_id: PartTable.session_id, data: PartTable.data })
+      .from(PartTable)
+      .innerJoin(MessageTable, eq(MessageTable.id, PartTable.message_id))
+      .where(and(
+        eq(PartTable.session_id, sessionID),
+        eq(MessageTable.agent_id, agentID),
+        sql`json_extract(${PartTable.data}, '$.type') = 'retry'`,
+        sql`json_extract(${MessageTable.data}, '$.role') = 'assistant'`,
+        sql`json_extract(${MessageTable.data}, '$.parentID') >= ${fromUserID}`,
+      ))
+      .orderBy(PartTable.id)
+      .all(),
+  )
+  return rows.map((row) => ({ ...row.data, id: row.id, sessionID: row.session_id, messageID: row.message_id }) as RetryPart)
 }
 
 export function parts(message_id: MessageID) {

@@ -2,8 +2,7 @@
 feature: mcp-readiness-hint
 status: delivered
 updated: 2026-10-20
-branch: feat/mcp-readiness-hint
-commits: 113e3192..5d6de390
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2685
 ---
 
 # MCP Readiness Hint

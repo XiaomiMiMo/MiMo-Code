@@ -2,8 +2,7 @@
 feature: default-model-stable-fallback
 status: delivered
 updated: 2026-09-01
-branch: default-model-stable-fallback
-commits: fa69916897..afdd76ec62
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2306
 ---
 
 # Default Model Stable Fallback

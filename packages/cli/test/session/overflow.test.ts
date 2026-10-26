@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { contextPressureLevel, contextWindow, isOverflow, pressureLevel, usable } from "../../src/session/overflow"
+import { contextWindow, isOverflow, usable } from "../../src/session/overflow"
 import { Token } from "../../src/util"
 import { Session as SessionNs } from "../../src/session"
 import type { Provider } from "../../src/provider"
@@ -41,68 +41,6 @@ function createModel(opts: {
   } as Provider.Model
 }
 
-describe("pressureLevel", () => {
-  test("returns 0 when under 50%", () => {
-    const model = createModel({ context: 200_000 })
-    const cfg = mockCfg()
-    const limit = usable({ cfg, model })
-    const tokens = { input: Math.floor(limit * 0.3), output: 0, cache: { read: 0, write: 0 } } as any
-    expect(pressureLevel({ cfg, tokens, model })).toBe(0)
-  })
-
-  test("returns 1 when 50-70%", () => {
-    const model = createModel({ context: 200_000 })
-    const cfg = mockCfg()
-    const limit = usable({ cfg, model })
-    const tokens = { input: Math.floor(limit * 0.6), output: 0, cache: { read: 0, write: 0 } } as any
-    expect(pressureLevel({ cfg, tokens, model })).toBe(1)
-  })
-
-  test("returns 2 when 70-85%", () => {
-    const model = createModel({ context: 200_000 })
-    const cfg = mockCfg()
-    const limit = usable({ cfg, model })
-    const tokens = { input: Math.floor(limit * 0.8), output: 0, cache: { read: 0, write: 0 } } as any
-    expect(pressureLevel({ cfg, tokens, model })).toBe(2)
-  })
-
-  test("returns 3 when over 85%", () => {
-    const model = createModel({ context: 200_000 })
-    const cfg = mockCfg()
-    const limit = usable({ cfg, model })
-    const tokens = { input: Math.floor(limit * 0.9), output: 0, cache: { read: 0, write: 0 } } as any
-    expect(pressureLevel({ cfg, tokens, model })).toBe(3)
-  })
-
-  test("returns 0 when auto compaction disabled", () => {
-    const model = createModel({ context: 200_000 })
-    const cfg = mockCfg({ auto: false })
-    const limit = usable({ cfg, model })
-    const tokens = { input: Math.floor(limit * 0.9), output: 0, cache: { read: 0, write: 0 } } as any
-    expect(pressureLevel({ cfg, tokens, model })).toBe(0)
-    expect(contextPressureLevel({ cfg, tokens, model })).toBe(3)
-  })
-
-  test("uses exact context pressure boundaries independently of compaction policy", () => {
-    const model = createModel({ context: 200_000 })
-    const cfg = mockCfg({ auto: false })
-    const limit = usable({ cfg, model })
-    const tokens = (ratio: number) =>
-      ({ input: limit * ratio, output: 0, cache: { read: 0, write: 0 } }) as any
-
-    expect(contextPressureLevel({ cfg, tokens: tokens(0.5), model })).toBe(1)
-    expect(contextPressureLevel({ cfg, tokens: tokens(0.7), model })).toBe(2)
-    expect(contextPressureLevel({ cfg, tokens: tokens(0.85), model })).toBe(3)
-  })
-
-  test("returns 0 when context limit is 0", () => {
-    const model = createModel({ context: 0 })
-    const cfg = mockCfg()
-    const tokens = { input: 100_000, output: 0, cache: { read: 0, write: 0 } } as any
-    expect(pressureLevel({ cfg, tokens, model })).toBe(0)
-  })
-})
-
 describe("isOverflow", () => {
   test("returns true when token count exceeds usable context", () => {
     const model = createModel({ context: 100_000, output: 32_000 })
@@ -137,7 +75,6 @@ describe("isOverflow", () => {
     const cfg = mockCfg()
     const tokens = { input: 300, output: 400, reasoning: 0, cache: { read: 0, write: 180_000 } } as any
     expect(isOverflow({ cfg, tokens, model })).toBe(true)
-    expect(contextPressureLevel({ cfg, tokens, model })).toBe(3)
   })
 
   test("respects input limit for input caps", () => {
@@ -659,14 +596,6 @@ describe("compaction.max_context", () => {
     expect(contextWindow({ cfg, model })).toEqual({ hard: 0, effective: 0, usable: 0, source: "model" })
     const tokens = { input: 500_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } as any
     expect(isOverflow({ cfg, tokens, model })).toBe(false)
-  })
-
-  test("drives checkpoint pressure off the budget", () => {
-    const model = large()
-    const cfg = mockCfg({ max_context: "300K" })
-    const tokens = { input: 250_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } as any
-    expect(pressureLevel({ cfg, tokens, model })).toBe(3)
-    expect(pressureLevel({ cfg: mockCfg(), tokens, model })).toBe(0)
   })
 })
 

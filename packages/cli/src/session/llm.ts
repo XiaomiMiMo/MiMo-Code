@@ -79,11 +79,14 @@ export function isTransientCapacityError(error: unknown): boolean {
  *   writer-as-curator ownership, Active recall protocol after rebuild dumps.
  *
  * `memoryRoot` is the same absolute root returned by Memory.root(), so these
- * paths match the files used by checkpoint restore and memory/task detection.
+ * paths match the files used by checkpoint restore. The project and session
+ * segments stay the literals `<project_id>` / `<session_id>` so the system
+ * prompt is byte-identical across projects and sessions; the real paths reach
+ * the model through the memory paths reminder (session/prompt.ts).
  */
-function buildMemoryInstructions(projectID: ProjectID, memoryRoot: string): string {
-  const memoryFile = path.join(memoryRoot, "projects", projectID, "MEMORY.md")
-  const sessionMemoryDir = path.join(memoryRoot, "sessions", "current_session_id")
+function buildMemoryInstructions(memoryRoot: string): string {
+  const memoryFile = path.join(memoryRoot, "projects", "<project_id>", "MEMORY.md")
+  const sessionMemoryDir = path.join(memoryRoot, "sessions", "<session_id>")
   const globalMemoryFile = path.join(memoryRoot, "global", "MEMORY.md")
   const notesFile = path.join(sessionMemoryDir, "notes.md")
   const checkpointEnabled = !Flag.MIMOCODE_DISABLE_CHECKPOINT
@@ -104,7 +107,9 @@ function buildMemoryInstructions(projectID: ProjectID, memoryRoot: string): stri
 
 You have a persistent file-based memory system. ${checkpointEnabled ? "Four" : "Two"} file types:
 
-${files.join("\n")}`,
+${files.join("\n")}
+
+\`<project_id>\` and \`<session_id>\` in these paths stand for the current project and session. Their real paths are given in a system reminder in the conversation history; use those real paths in tool calls.`,
     ...(checkpointEnabled
       ? [
           "The checkpoint writer is the sole curator of the structured files. You don't maintain them mid-task — the writer extracts everything from the conversation at checkpoint events.",
@@ -208,6 +213,7 @@ export type StreamInput = {
     next: number
     phase?: "request" | "stream"
     scope?: "request" | "live-step" | "max-candidate" | "max-judge"
+    kind: SessionRetry.RetryKind
     hostCode?: string
   }) => Effect.Effect<void>
 }
@@ -345,9 +351,9 @@ const live: Layer.Layer<
       // flag only narrows which subsections buildMemoryInstructions emits
       // (writer/ckpt/Active-recall extras). Project ID is resolved from the
       // ALS-bound Instance with a safe fallback to `ProjectID.global`
-      // (mirrors session/checkpoint.ts so advertised paths match writer
-      // paths). system-spawned actors (checkpoint-writer et al.) stay out via
-      // servesCheckpoint.
+      // (mirrors session/checkpoint.ts) for the MEMORY.md migration only; the
+      // block itself names no project. system-spawned actors
+      // (checkpoint-writer et al.) stay out via servesCheckpoint.
       if (servesCheckpoint) {
         const projectID =
           (yield* Effect.try({
@@ -361,7 +367,7 @@ const live: Layer.Layer<
         // checkpoint-flow call sites cover the writer/rebuild paths; this covers
         // the "agent edits MEMORY.md before any checkpoint" path. Idempotent.
         yield* Effect.promise(() => migrateProjectMemory(projectID)).pipe(Effect.ignore)
-        system.push(buildMemoryInstructions(projectID, yield* memory.root()))
+        system.push(buildMemoryInstructions(yield* memory.root()))
       }
 
       // Plugins transform the stable base before the caller-controlled tail.
@@ -978,20 +984,19 @@ const live: Layer.Layer<
                     // Recoverable kinds (network / rate_limit / server) use persistent
                     // budgets and the request-phase ladder is often the only waiter the
                     // user can observe — processor stream retries never see the failure.
-                    // Publish session.status{retry} here so Desktop can show the
-                    // reconnect row instead of a dead spinner. Attempts stay on
+                    // The processor records it on the assistant message for every actor
+                    // and publishes session.status{retry} for main, so Desktop can show
+                    // the reconnect row instead of a dead spinner. Attempts stay on
                     // Session.Event.RetryAttempt as well for diagnostics.
                     // The Promise bridge would reattach ambient ALS instead of this fiber's InstanceRef.
-                    const ownsMainStatus = !input.ephemeral && (!input.agentID || input.agentID === "main")
-                    if (ownsMainStatus && input.onRetryStatus) {
-                      // Processor-owned SessionStatus (same map GET /session/status serves),
-                      // so reload/hydrate still shows the reconnect row.
+                    if (!input.ephemeral && input.onRetryStatus) {
                       yield* input.onRetryStatus({
                         attempt: nextAttempt,
                         message: decision.message,
                         next: Date.now() + wait,
                         phase: "request",
                         scope: decision.scope,
+                        kind: decision.kind,
                         hostCode: decision.hostCode,
                       }).pipe(Effect.ignore)
                     }

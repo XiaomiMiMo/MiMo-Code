@@ -133,7 +133,7 @@ describe("history.extract kind classification", () => {
     expect(extract({ type: "patch", hash: "h", files: ["f.ts"] } as any, "assistant")?.kind).toBe("patch")
     expect(extract({ type: "agent", name: "n" } as any, "assistant")?.kind).toBe("agent")
     expect(
-      extract({ type: "retry", error: { data: { message: "m", responseBody: "r" } } } as any, "assistant")?.kind,
+      extract({ type: "retry", message: "m" } as any, "assistant")?.kind,
     ).toBe("retry")
     expect(
       extract({ type: "compaction", projection: { summary: "s", manifest: "m" } } as any, "assistant")?.kind,

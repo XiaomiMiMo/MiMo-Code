@@ -2,8 +2,7 @@
 feature: rename-packages-opencode-to-cli
 status: delivered
 updated: 2026-09-30
-branch: chore/rename-packages-opencode-to-cli
-commits: 327f5b63..afec3965
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2591
 ---
 
 # Rename packages/opencode → packages/cli

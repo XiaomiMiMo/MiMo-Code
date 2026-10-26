@@ -29,7 +29,7 @@ MiMoCode (CLI binary `mimo`) is an agentic coding tool with a terminal UI, built
 | **Scheduled prompts** | Cron/loop: inject a prompt on a schedule or repeating loop (UTC, 5-field) | `cron` tool · `/loop` · `/loops` |
 | **Dynamic Workflow** | JS scripts that orchestrate many subagents deterministically (fan-out, pipelines, nesting); built-ins include `deep-research`, `fact-check`, and `research-experiment` | `.mimocode/workflows/*.js` + `workflow` tool |
 | **Custom skills** | Add reusable task instructions under `.mimocode/skills/` | see the `skill-creator` skill |
-| **Skill discovery** | `/skill-name` slash invocation (2+ in one message auto-load with an orchestration plan); `skill_search` tool matches by exact name/alias + BM25 and auto-loads high-confidence hits; some builtins (`claude-code`, `codex`) only appear when their CLI is installed | `/` autocomplete · automatic |
+| **Skill discovery** | `/skill-name` slash invocation (2+ in one message auto-load with an orchestration plan); `skill_search` tool matches by exact name/alias + BM25 and auto-loads high-confidence hits; agent-CLI skills (`claude-code`, `codex`, `grok-build`) ship off by default and appear only with `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` | `/` autocomplete · automatic |
 | **MCP** | Local & remote Model Context Protocol servers | `mcp` config + `mimo mcp` |
 | **Capability API** | Every session already serves this project's chat models over OpenAI-compatible `/v1` on a loopback port, so a skill or subprocess borrows a model instead of a provider key | `mimo llm-server issue` mints a scoped token and prints the base URL (see @reference/capability-api.md) |
 

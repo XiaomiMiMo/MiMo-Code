@@ -1172,6 +1172,7 @@ export type UserMessage = {
   system?: string
   systemMode?: "append" | "replace-agent"
   harness?: "auto" | "codex" | "default"
+  task_id?: string
   tools?: {
     [key: string]: boolean
   }
@@ -1490,9 +1491,15 @@ export type RetryPart = {
   messageID: string
   type: "retry"
   attempt: number
-  error: ApiError
+  phase: "request" | "stream"
+  scope: "request" | "live-step"
+  kind: "network" | "rate_limit" | "server" | "stream" | "unknown"
+  message: string
+  hostCode?: string
+  next: number
   time: {
     created: number
+    updated: number
   }
 }
 
@@ -1505,6 +1512,7 @@ export type CheckpointPart = {
   checkpointNumber: number
   coveredUpTo: string
   digestUpTo?: string
+  deferredInputs?: Array<string>
 }
 
 export type CompactionPart = {
@@ -2841,10 +2849,6 @@ export type Config = {
      */
     auto?: boolean
     /**
-     * Enable pruning of old tool outputs (default: true)
-     */
-    prune?: boolean
-    /**
      * Deprecated compatibility setting. Projected compaction now keeps only whole API rounds that arrive while compaction is running.
      */
     tail_turns?: number
@@ -2988,7 +2992,7 @@ export type Config = {
      */
     asr_model?: string
     /**
-     * Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.5.
+     * Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.6-flash.
      */
     control_model?: string
   }

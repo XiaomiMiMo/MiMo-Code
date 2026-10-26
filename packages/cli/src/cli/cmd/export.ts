@@ -145,7 +145,7 @@ function part(part: MessageV2.Part): MessageV2.Part {
                   },
       }
     case "retry":
-      return { ...part, error: redactError(part.error, part.id) }
+      return { ...part, message: redact("retry-message", part.id, part.message) }
     case "patch":
       return {
         ...part,
