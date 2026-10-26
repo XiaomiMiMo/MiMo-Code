@@ -22,6 +22,7 @@ import { EffectBridge } from "@/effect"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
 import { inboxControllerRef } from "@/inbox"
 import { Effect, Deferred } from "effect"
+import { isRecord } from "@/util/record"
 
 export interface ActorPromptOps {
   cancel(sessionID: SessionID): void
@@ -632,6 +633,25 @@ export const ActorTool = Tool.define(
       return {
         description: withCheckpointDescription(DESCRIPTION, DESCRIPTION_CHECKPOINT),
         parameters,
+        formatValidationError(error: z.ZodError, input: unknown) {
+          const message = Tool.validationErrorMessage(id, error)
+          if (!isRecord(input) || !isRecord(input.operation)) return message
+          const operation = input.operation
+          const action = operation.action
+          if (action !== "spawn" && action !== "send") return message
+          const field = action === "spawn" ? "subagent_type" : "to_actor_id"
+          if (!Object.hasOwn(input, field) || Object.hasOwn(operation, field)) return message
+          const schema = action === "spawn" ? spawnSchema.shape.subagent_type : sendSchema.shape.to_actor_id
+          if (!schema.safeParse(input[field]).success) return message
+          const root = error.issues.some(
+            (issue) => issue.code === "unrecognized_keys" && issue.path.length === 0 && issue.keys.includes(field),
+          )
+          const nested = error.issues.some(
+            (issue) => issue.path.length === 2 && issue.path[0] === "operation" && issue.path[1] === field,
+          )
+          if (!root || !nested) return message
+          return `${message}\n\nFor actor ${action}, move "${field}" from the top level to "operation.${field}".`
+        },
         execute: (input: z.infer<typeof parameters>, ctx: Tool.Context) => run(input, ctx).pipe(Effect.orDie),
       }
     })
