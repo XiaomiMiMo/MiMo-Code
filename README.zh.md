@@ -20,7 +20,7 @@ MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行�
 
 ## Xiaomi MiMo Desktop
 
-<p align="center"><a href="https://mimo.xiaomimimo.com/desktop/">[国内版]</a> <a href="https://mimo-ai.xiaomimimo.com/desktop/">[International Version]</a></p>
+<p align="center"><a href="https://mimo.xiaomimimo.com/desktop/">国内版下载</a> | <a href="https://mimo-ai.xiaomimimo.com/desktop/">Global Download</a></p>
 
 <p align="center"><img src="assets/readme/mimo-desktop-cn.png" alt="Xiaomi MiMo Desktop 中文界面：会话与研究报告预览" width="900"></p>
 

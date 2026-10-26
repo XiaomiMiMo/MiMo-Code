@@ -22,7 +22,7 @@ MiMoCode supports connecting to any mainstream LLM provider API.
 
 ## Xiaomi MiMo Desktop
 
-<p align="center"><a href="https://mimo.xiaomimimo.com/desktop/">[国内版]</a> <a href="https://mimo-ai.xiaomimimo.com/desktop/">[International Version]</a></p>
+<p align="center"><a href="https://mimo.xiaomimimo.com/desktop/">国内版下载</a> | <a href="https://mimo-ai.xiaomimimo.com/desktop/">Global Download</a></p>
 
 <p align="center"><img src="assets/readme/mimo-desktop-en.png" alt="Xiaomi MiMo Desktop English interface: conversation and research report preview" width="900"></p>
 
