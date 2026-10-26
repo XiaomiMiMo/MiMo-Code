@@ -4,7 +4,6 @@ import os from "os"
 import { Instance } from "../project/instance"
 import { Git } from "@/git"
 import { Shell } from "@/shell/shell"
-import { which } from "@/util/which"
 
 import PROMPT_ANTHROPIC from "./prompt/anthropic.txt"
 import PROMPT_DEFAULT from "./prompt/default.txt"
@@ -103,7 +102,6 @@ export const layer = Layer.effect(
             ` - Shell: ${Shell.name(Shell.preferred())}`,
             ` - OS Version: ${os.type()} ${os.release()}`,
             ` - You are powered by the model named ${model.name}. The exact model ID is ${model.providerID}/${model.api.id}.`,
-            ...(which("claude") ? [` - Claude Code is available as a CLI in the terminal.`] : []),
             ``,
             `gitStatus: This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.`,
             ``,
