@@ -220,13 +220,13 @@ MiMoCode 打包了以下内置技能：
 | 技能 | 说明 |
 |------|------|
 | `arxiv` | 搜索、阅读、引用和分析 arXiv 论文 |
-| `claude-code` | 将编码、测试、审查和 Git 任务委派给 Claude Code CLI |
-| `codex` | 在无头自动化、CI、容器和远程环境中运行及排查 Codex CLI |
+| `claude-code` | 以 CLI 驱动 Claude Code，完成编码、测试、审查和 Git 任务（需 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`） |
+| `codex` | 以 CLI 驱动 Codex，用于无头自动化、CI、容器和远程环境（需 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`） |
 | `compose-next` | spec→ship 功能交付编排——澄清需求、规格、实现、验证、评审、收尾 |
 | `data-analytics` | 通过数据质量、KPI、仪表盘、报告、Notebook 和市场规模测算等工作流分析产品与业务数据 |
 | `deep-research` | 使用并行子智能体和内置 Web 工具生成带引用的多源深度调研报告 |
 | `docx-official` | 生成、读取和转换 Word (.docx) 文件 |
-| `grok-build` | 操作 Grok Build CLI，支持交互式与无头 agent 工作流 |
+| `grok-build` | 操作 Grok Build CLI，支持交互式与无头 agent 工作流（需 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`） |
 | `html-to-video-pipeline` | 通过无头浏览器 + ffmpeg 将 HTML 渲染为 MP4 |
 | `learn-everything` | 将文档、URL 或主题转化为包含练习、反馈和进度追踪的自适应课程 |
 | `loop` | 按固定周期调度循环提示 |

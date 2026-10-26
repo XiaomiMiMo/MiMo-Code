@@ -23,12 +23,20 @@ describe("builtin skills", () => {
 
   test("agent CLI skills extract only when MIMOCODE_ENABLE_AGENT_CLI_SKILLS is on", () => {
     for (const name of AGENT_CLI_SKILL_NAMES) {
-      expect(shouldExtractBuiltinSkill(name, { enableAgentCliSkills: false })).toBe(false)
-      expect(shouldExtractBuiltinSkill(name, { enableAgentCliSkills: true })).toBe(true)
+      expect(shouldExtractBuiltinSkill(name, { enableAgentCliSkills: false, disableOfficialSkills: false })).toBe(
+        false,
+      )
+      expect(shouldExtractBuiltinSkill(name, { enableAgentCliSkills: true, disableOfficialSkills: false })).toBe(true)
     }
-    expect(shouldExtractBuiltinSkill("pdf-official", { enableAgentCliSkills: false })).toBe(true)
-    expect(shouldExtractBuiltinSkill("pdf-official", { disableOfficialSkills: true })).toBe(false)
-    expect(shouldExtractBuiltinSkill("data-analytics", { enableAgentCliSkills: false })).toBe(true)
+    expect(shouldExtractBuiltinSkill("pdf-official", { enableAgentCliSkills: false, disableOfficialSkills: false })).toBe(
+      true,
+    )
+    expect(shouldExtractBuiltinSkill("pdf-official", { enableAgentCliSkills: false, disableOfficialSkills: true })).toBe(
+      false,
+    )
+    expect(shouldExtractBuiltinSkill("data-analytics", { enableAgentCliSkills: false, disableOfficialSkills: true })).toBe(
+      true,
+    )
   })
 
   test("agent CLI skills share an explicit invocation contract", async () => {
@@ -36,6 +44,7 @@ describe("builtin skills", () => {
       const skill = await Bun.file(path.join(root, "SKILL.md")).text()
       expect(skill).toContain("Load only when the user explicitly authorizes this skill")
       expect(skill).not.toContain("Do not use for general coding or other agent CLIs")
+      expect(skill).not.toContain("Invocation contract (all three")
       expect(skill).toContain(
         name === "claude-code"
           ? "confirm the `claude` binary is available"

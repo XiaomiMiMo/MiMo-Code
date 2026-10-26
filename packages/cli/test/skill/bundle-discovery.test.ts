@@ -14,6 +14,8 @@ withEnv({
   MIMOCODE_ENABLE_CODEX_SKILLS: undefined,
   MIMOCODE_ENABLE_OPENCODE_SKILLS: undefined,
   MIMOCODE_DISABLE_BUILTIN_SKILLS: undefined,
+  MIMOCODE_DISABLE_OFFICIAL_SKILLS: undefined,
+  MIMOCODE_ENABLE_AGENT_CLI_SKILLS: undefined,
 })
 
 const it = testEffect(Layer.mergeAll(Skill.defaultLayer, CrossSpawnSpawner.defaultLayer))
