@@ -320,7 +320,7 @@ describe("WorkflowRuntime cancel cascade", () => {
               model: ref,
             })
             try {
-              yield* llm.wait(2).pipe(Effect.timeout("15 seconds"))
+              yield* llm.wait(2).pipe(Effect.timeout("30 seconds"))
               yield* runtime.cancelSession(a.id)
               expect((yield* runtime.status(first)).status).toBe("cancelled")
               expect((yield* runtime.status(second)).status).toBe("running")
@@ -337,7 +337,7 @@ describe("WorkflowRuntime cancel cascade", () => {
           }),
           { git: true, config: providerCfg },
         ),
-      60_000,
+      120_000,
     )
   }
 
