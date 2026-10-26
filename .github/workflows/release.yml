@@ -48,9 +48,6 @@ jobs:
     needs: verify
     uses: ./.github/workflows/lint.yml
 
-  # Tests do not re-run on the tag: the commit is already on origin/main and is
-  # assumed green there. Unit shards are the slow/flaky part of the gate.
-
   # macOS matches how earlier releases were produced, so darwin binaries keep the
   # native toolchain's ad-hoc signature.
   build:

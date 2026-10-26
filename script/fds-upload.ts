@@ -12,7 +12,7 @@
 //
 // Env:
 //   MIMO_FDS_AK / MIMO_FDS_SK            credentials (required to upload)
-//   MIMO_FDS_ENDPOINT                    upload+signing host (default cnbj1 external; override to the intranet host when on corp network)
+//   MIMO_FDS_ENDPOINT                    upload+signing host (default cnbj1 external)
 //   MIMO_FDS_BUCKET / MIMO_FDS_PREFIX    object layout (default mimocode/mimocode)
 //
 // CLI: bun script/fds-upload.ts <localFile> <objectSubPath> [--content-type=...]
