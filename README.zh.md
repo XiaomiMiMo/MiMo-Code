@@ -22,7 +22,7 @@ MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行�
 
 <p align="center"><a href="https://mimo.xiaomimimo.com/desktop/">国内版下载</a> | <a href="https://mimo-ai.xiaomimimo.com/desktop/">Global Download</a></p>
 
-<p align="center"><img src="assets/readme/mimo-desktop-cn.png" alt="Xiaomi MiMo Desktop 中文界面：会话与研究报告预览" width="900"></p>
+<p align="center"><img src="assets/readme/mimo-desktop-cn.jpg" alt="Xiaomi MiMo Desktop 中文界面：会话与研究报告预览" width="900"></p>
 
 Xiaomi MiMo Desktop 面向真实工作场景打造，一个会话即可完成办公、设计、编程和全模态创作；多个会话可自动分工、协作与通信。桌面端以 **MiMo Code 作为核心引擎**，将终端原生的智能能力延伸到桌面工作流。
 

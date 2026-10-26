@@ -24,7 +24,7 @@ MiMoCode supports connecting to any mainstream LLM provider API.
 
 <p align="center"><a href="https://mimo.xiaomimimo.com/desktop/">国内版下载</a> | <a href="https://mimo-ai.xiaomimimo.com/desktop/">Global Download</a></p>
 
-<p align="center"><img src="assets/readme/mimo-desktop-en.png" alt="Xiaomi MiMo Desktop English interface: conversation and research report preview" width="900"></p>
+<p align="center"><img src="assets/readme/mimo-desktop-en.jpg" alt="Xiaomi MiMo Desktop English interface: conversation and research report preview" width="900"></p>
 
 Xiaomi MiMo Desktop is built for real-world work: one conversation can handle office work, design, coding, and multimodal creation, while multiple conversations can divide work and collaborate. The desktop app is powered by **MiMo Code as its core engine**, bringing its terminal-native intelligence to desktop workflows.
 
