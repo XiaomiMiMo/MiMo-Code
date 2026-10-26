@@ -2,7 +2,7 @@
 feature: agent-cli-skills-switch
 status: delivered
 updated: 2026-03-14
-source: feat/agent-cli-skills-switch
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2715
 ---
 
 # Agent CLI Skills Switch
