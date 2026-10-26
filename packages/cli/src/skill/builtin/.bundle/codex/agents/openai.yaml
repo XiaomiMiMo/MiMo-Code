@@ -1,3 +1,0 @@
-interface:
-  display_name: "Codex CLI Headless"
-  short_description: "Run Codex autonomously in scripts, CI, Docker, and Kubernetes"

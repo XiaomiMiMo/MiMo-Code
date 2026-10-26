@@ -249,7 +249,7 @@ MiMoCode bundles the following builtin skills:
 | `super-research` | Run long-horizon, auditable research, experiments, benchmarks, diagnostics, reproductions, and citation checks |
 | `xlsx-official` | Build, clean, and transform spreadsheets (.xlsx/.csv) |
 
-`claude-code` and `codex` are exposed only when the `claude` and `codex` executables, respectively, are installed. Other skills may still require task-specific tools described in their instructions.
+`claude-code`, `codex`, and `grok-build` are not exposed by default; set `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` to include them. Other skills may still require task-specific tools described in their instructions.
 
 **Overriding a builtin skill:** Create a skill with the same `name` under the project (`.mimocode/skills/<name>/SKILL.md`) or personal (for example `~/.config/mimocode/skills/<name>/SKILL.md`) MiMoCode skills directory. Open-standard `.agents/skills/` in the project and `~/.agents/skills/` are compatible discovery roots. User skills discovered later in the scan order override builtins with the same name.
 
@@ -260,6 +260,7 @@ MiMoCode bundles the following builtin skills:
 |----------|--------|
 | `MIMOCODE_DISABLE_BUILTIN_SKILLS=true` | Disable all builtin skills |
 | `MIMOCODE_DISABLE_OFFICIAL_SKILLS=true` | Disable only the office/media skills: `docx-official`, `pdf-official`, `pptx-official`, `xlsx-official`, `html-to-video-pipeline` |
+| `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` | Opt in the agent-CLI skills `claude-code`, `codex`, and `grok-build` (default: off) |
 | `MIMOCODE_DISABLE_SLASH_SKILLS=true` | Hide skills from TUI `/` autocomplete without disabling them |
 
 **External skill roots** (default surface is `.mimocode` + open-standard `.agents`):

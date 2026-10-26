@@ -440,6 +440,14 @@ export const Flag = {
   get MIMOCODE_DISABLE_OFFICIAL_SKILLS() {
     return truthy("MIMOCODE_DISABLE_OFFICIAL_SKILLS")
   },
+  // Opt-in for bundled skills that operate other agent CLIs (claude-code,
+  // codex, grok-build). Defaults to false so the preinstalled skill surface
+  // stays quiet; set MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true to extract and load
+  // them. Env value alone decides the extract set — binary presence is not
+  // consulted.
+  get MIMOCODE_ENABLE_AGENT_CLI_SKILLS() {
+    return truthy("MIMOCODE_ENABLE_AGENT_CLI_SKILLS")
+  },
   get MIMOCODE_DISABLE_PROJECT_CONFIG() {
     return truthy("MIMOCODE_DISABLE_PROJECT_CONFIG")
   },

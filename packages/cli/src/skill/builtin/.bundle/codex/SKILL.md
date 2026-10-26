@@ -1,11 +1,13 @@
 ---
 name: codex
-description: Run, configure, and troubleshoot OpenAI Codex CLI in non-interactive headless environments. Use for Codex automation in Bash or PowerShell, native Windows or WSL2, shell scripts, CI/CD, Docker, Kubernetes, remote servers, agent harnesses, or batch jobs; for constructing `codex exec` commands; selecting sandbox and approval modes; consuming JSONL events or structured output; resuming sessions; passing prompts through stdin; and handling failures caused by unavailable interactive input such as `request_user_input`.
+description: "Operate OpenAI Codex CLI in non-interactive headless environments. Load only when the user explicitly authorizes this skill or names Codex / codex. Before any command, confirm the `codex` binary is available; if missing, stop and give install or auth guidance. Do not use for general coding or other agent CLIs. Covers `codex exec` automation in Bash or PowerShell, native Windows or WSL2, scripts, CI/CD, Docker, Kubernetes, remote servers, agent harnesses, sandbox and approval modes, JSONL events, session resume, and stdin prompts."
 ---
 
 # Codex CLI
 
 Use Codex CLI as a deterministic, non-interactive worker suitable for automation and agent orchestration.
+
+**Invocation contract (all three agent-CLI skills):** load only on explicit user authorization or by name; confirm the matching binary exists before running anything; if it is missing, stop and give install/auth guidance; do not use for general coding or other agent CLIs.
 
 ## Operating Rules
 
