@@ -111,9 +111,9 @@ describe("bin/mimo launcher", () => {
     fs.writeFileSync(path.join(work, binaryName), target.includes("windows") ? "fake-pe" : `#!/bin/sh\necho "downloaded-run:$*"\n`)
     const archivePath = path.join(dir, archiveName)
     if (target.includes("linux")) {
-      expect(Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, binaryName]).exitCode).toBe(0)
+      expect(Bun.spawnSync([launcher.tarCommand(), "-czf", archivePath, "-C", work, binaryName]).exitCode).toBe(0)
     } else {
-      expect(Bun.spawnSync(["tar", "-cf", archivePath, "-C", work, binaryName]).exitCode).toBe(0)
+      expect(Bun.spawnSync([launcher.tarCommand(), "-cf", archivePath, "-C", work, binaryName]).exitCode).toBe(0)
     }
 
     const server = Bun.serve({

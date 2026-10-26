@@ -16,6 +16,7 @@ import {
   DEFAULT_FDS_BASE,
   ensureBinary,
   stageWindowsRunCopy,
+  tarCommand,
 } from "../../launcher.js"
 
 describe("launcher targets", () => {
@@ -92,7 +93,75 @@ describe("launcher targets", () => {
   })
 })
 
+describe("tarCommand", () => {
+  test("uses tar from PATH off Windows", () => {
+    expect(tarCommand({ platform: "linux" })).toBe("tar")
+    expect(tarCommand({ platform: "darwin" })).toBe("tar")
+  })
+
+  test("returns %SystemRoot%\\System32\\tar.exe when it exists", async () => {
+    await using tmp = await tmpdir()
+    const systemTar = path.join(tmp.path, "System32", "tar.exe")
+    fs.mkdirSync(path.dirname(systemTar), { recursive: true })
+    fs.writeFileSync(systemTar, "")
+    expect(tarCommand({ platform: "windows", env: { SystemRoot: tmp.path } })).toBe(systemTar)
+    // Git Bash and MSYS pass the variables upper-case; a plain env object is case-sensitive.
+    expect(tarCommand({ platform: "windows", env: { SYSTEMROOT: tmp.path } })).toBe(systemTar)
+    expect(tarCommand({ platform: "windows", env: { windir: tmp.path } })).toBe(systemTar)
+  })
+
+  test("falls back to tar from PATH when Windows has no system tar", async () => {
+    await using tmp = await tmpdir()
+    expect(tarCommand({ platform: "windows", env: { SystemRoot: tmp.path } })).toBe("tar")
+    expect(tarCommand({ platform: "windows", env: {} })).toBe("tar")
+    expect(tarCommand({ platform: "windows", env: { SystemRoot: "." } })).toBe("tar")
+  })
+})
+
 describe("ensureBinary", () => {
+  // Git for Windows puts GNU tar ahead of System32\tar.exe; GNU tar cannot unpack the release zip.
+  test.skipIf(process.platform !== "win32")("extracts a Windows zip when another tar comes first on PATH", async () => {
+    const systemTar = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
+    if (!fs.existsSync(systemTar)) return
+    await using tmp = await tmpdir()
+    const root = tmp.path
+    const target = "mimocode-windows-x64"
+
+    const work = path.join(root, "build")
+    fs.mkdirSync(work, { recursive: true })
+    fs.writeFileSync(path.join(work, "mimo.exe"), "binary-bytes")
+    const archivePath = path.join(root, `${target}.zip`)
+    expect(Bun.spawnSync([systemTar, "-a", "-cf", archivePath, "-C", work, "mimo.exe"]).exitCode).toBe(0)
+
+    // A tar.exe that cannot extract anything, first on PATH.
+    const shadow = path.join(root, "shadow")
+    fs.mkdirSync(shadow)
+    fs.copyFileSync(path.join(path.dirname(systemTar), "where.exe"), path.join(shadow, "tar.exe"))
+    const previousPath = process.env.PATH
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith(".sha256")) return new Response(null, { status: 404 })
+        return new Response(Bun.file(archivePath))
+      },
+    })
+    try {
+      process.env.PATH = `${shadow}${path.delimiter}${previousPath ?? ""}`
+      const dest = await ensureBinary({
+        root,
+        target,
+        version: "9.9.9",
+        url: `http://127.0.0.1:${server.port}/releases/v9.9.9/${target}.zip`,
+      })
+      expect(dest).toBe(vendorBinaryPath(root, target))
+      expect(fs.readFileSync(dest, "utf8")).toBe("binary-bytes")
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+      await server.stop(true)
+    }
+  })
+
   test("downloads, extracts, and caches a linux archive", async () => {
     await using tmp = await tmpdir()
     const root = tmp.path
@@ -104,7 +173,7 @@ describe("ensureBinary", () => {
     fs.mkdirSync(work, { recursive: true })
     fs.writeFileSync(path.join(work, "mimo"), "#!/bin/sh\necho ok\n")
     const archivePath = path.join(root, "mimocode-linux-x64.tar.gz")
-    const tar = Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, "mimo"])
+    const tar = Bun.spawnSync([tarCommand(), "-czf", archivePath, "-C", work, "mimo"])
     expect(tar.exitCode).toBe(0)
 
     const server = Bun.serve({
@@ -162,7 +231,7 @@ describe("ensureBinary", () => {
     fs.mkdirSync(work, { recursive: true })
     fs.writeFileSync(path.join(work, "mimo"), "binary-bytes")
     const archivePath = path.join(root, "a.tar.gz")
-    Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, "mimo"])
+    Bun.spawnSync([tarCommand(), "-czf", archivePath, "-C", work, "mimo"])
     const bytes = fs.readFileSync(archivePath)
     const good = createHash("sha256").update(bytes).digest("hex")
 
@@ -207,7 +276,7 @@ describe("ensureBinary", () => {
     fs.mkdirSync(work)
     fs.writeFileSync(path.join(work, "mimo"), "binary-bytes")
     const archivePath = path.join(tmp.path, "a.tar.gz")
-    expect(Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, "mimo"]).exitCode).toBe(0)
+    expect(Bun.spawnSync([tarCommand(), "-czf", archivePath, "-C", work, "mimo"]).exitCode).toBe(0)
 
     const app = new Hono()
     app.use("*", basicAuth({ username: "test", password: "test-password" }))
@@ -253,7 +322,7 @@ describe("ensureBinary", () => {
     fs.mkdirSync(work, { recursive: true })
     fs.writeFileSync(path.join(work, "mimo"), "binary-bytes")
     const archivePath = path.join(root, "a.tar.gz")
-    Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, "mimo"])
+    Bun.spawnSync([tarCommand(), "-czf", archivePath, "-C", work, "mimo"])
 
     for (const status of [404, 403, 500] as const) {
       const server = Bun.serve({

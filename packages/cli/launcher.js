@@ -215,15 +215,35 @@ async function verifySha256(filePath, url) {
   return true
 }
 
+/**
+ * The tar that unpacks release archives. On Windows this is the system bsdtar
+ * (`%SystemRoot%\System32\tar.exe`, shipped since Windows 10 1803) rather than
+ * the first `tar` on PATH: Git for Windows puts GNU tar ahead of it in Git Bash
+ * and many developer shells, and GNU tar neither reads zip archives nor accepts
+ * a `C:\…` archive path (it parses `C:` as a remote host). Falls back to PATH
+ * when the system tar is missing or `SystemRoot` is unset or relative.
+ * `options.platform` / `options.env` override detection (tests).
+ */
+export function tarCommand(options = {}) {
+  const platform = options.platform ?? mapPlatform()
+  if (platform !== "windows") return "tar"
+  const env = options.env ?? process.env
+  const systemRoot = env.SystemRoot || env.SYSTEMROOT || env.windir
+  if (!systemRoot || !path.isAbsolute(systemRoot)) return "tar"
+  const systemTar = path.join(systemRoot, "System32", "tar.exe")
+  return fs.existsSync(systemTar) ? systemTar : "tar"
+}
+
 async function extractBinary(archivePath, target, dest) {
   const name = binaryNameFor(target)
   const work = await fs.promises.mkdtemp(path.join(os.tmpdir(), "mimocode-extract-"))
+  const tar = tarCommand()
   try {
     if (target.includes("linux")) {
-      await exec("tar", ["-xzf", archivePath, "-C", work])
+      await exec(tar, ["-xzf", archivePath, "-C", work])
     } else {
       // bsdtar / macOS tar / Windows tar all handle zip.
-      await exec("tar", ["-xf", archivePath, "-C", work])
+      await exec(tar, ["-xf", archivePath, "-C", work])
     }
     const extracted = path.join(work, name)
     if (!fs.existsSync(extracted)) {

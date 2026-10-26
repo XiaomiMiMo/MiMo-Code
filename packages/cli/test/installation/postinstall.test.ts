@@ -3,6 +3,7 @@ import { tmpdir } from "../fixture/fixture"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import { tarCommand } from "../../launcher.js"
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "../../postinstall.mjs")
 const LAUNCHER_PATH = path.join(import.meta.dirname, "../../launcher.js")
@@ -87,10 +88,10 @@ describe("postinstall", () => {
     fs.writeFileSync(path.join(work, binaryName), "FAKE_BINARY")
     const archivePath = path.join(dir, archiveName)
     if (target.includes("linux")) {
-      const pack = Bun.spawnSync(["tar", "-czf", archivePath, "-C", work, binaryName])
+      const pack = Bun.spawnSync([tarCommand(), "-czf", archivePath, "-C", work, binaryName])
       expect(pack.exitCode).toBe(0)
     } else {
-      const pack = Bun.spawnSync(["tar", "-cf", archivePath, "-C", work, binaryName])
+      const pack = Bun.spawnSync([tarCommand(), "-cf", archivePath, "-C", work, binaryName])
       expect(pack.exitCode).toBe(0)
     }
 
