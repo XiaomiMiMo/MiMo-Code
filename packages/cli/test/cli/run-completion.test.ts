@@ -68,22 +68,86 @@ test("started latch: poll-observed idle is ignored before tracker is started", a
   tracker.stop()
 })
 
-test("started latch: any event for matching sessionID auto-starts the tracker", async () => {
-  let calls = 0
+test("started latch: a running status for matching sessionID auto-starts the tracker", async () => {
+  // Any non-idle status means the session is running (no need to call markStarted).
+  for (const type of ["busy", "retry", "notice"]) {
+    const tracker = createCompletionTracker({
+      sessionID: "ses_X",
+      query: async () => undefined, // always idle
+      intervalMs: 20,
+    })
+
+    tracker.onEvent({
+      type: "session.status",
+      properties: { sessionID: "ses_X", status: { type } },
+    })
+
+    // Bounded, so a status that stops starting the tracker fails here rather than by the runner's timeout.
+    await Promise.race([tracker.completion, new Promise((r) => setTimeout(r, 1000))])
+    expect(tracker.done).toBe(true)
+    tracker.stop()
+  }
+})
+
+test("started latch: other session events before the first busy status do not end the run", async () => {
+  // Before its first busy status a session has no status record, which the poll reads as idle. The session's own
+  // events (here session.updated and the user message) arrive in that window and must not start the tracker.
+  let status: { type: "busy" } | undefined
   const tracker = createCompletionTracker({
     sessionID: "ses_X",
-    query: async () => { calls++; return undefined }, // always idle
+    query: async () => status,
     intervalMs: 20,
   })
 
-  // A non-idle event for the matching session should auto-start (no need to call markStarted).
-  tracker.onEvent({
-    type: "message.part.updated",
-    properties: { part: { sessionID: "ses_X" } },
-  })
+  tracker.onEvent({ type: "session.updated", properties: { sessionID: "ses_X" } })
+  tracker.onEvent({ type: "message.part.updated", properties: { part: { sessionID: "ses_X" } } })
+  // Another session running says nothing about this one.
+  tracker.onEvent({ type: "session.status", properties: { sessionID: "ses_Y", status: { type: "busy" } } })
+  await new Promise((r) => setTimeout(r, 100))
+  expect(tracker.done).toBe(false)
 
+  // The session runs, then finishes: its record is gone again, and the next poll completes.
+  status = { type: "busy" }
+  tracker.onEvent({ type: "session.status", properties: { sessionID: "ses_X", status } })
+  await new Promise((r) => setTimeout(r, 60))
+  expect(tracker.done).toBe(false)
+  status = undefined
   await tracker.completion
   expect(tracker.done).toBe(true)
+  tracker.stop()
+})
+
+test("started latch: a poll read before the first busy status but answered after it does not end the run", async () => {
+  let status: { type: "busy" } | undefined
+  let held = false
+  let release = () => {}
+  let inFlight = () => {}
+  const firstPollHeld = new Promise<void>((r) => {
+    inFlight = r
+  })
+  const tracker = createCompletionTracker({
+    sessionID: "ses_X",
+    query: async () => {
+      const snapshot = status
+      if (!held) {
+        held = true
+        inFlight()
+        await new Promise<void>((r) => {
+          release = r
+        })
+      }
+      return snapshot
+    },
+    intervalMs: 20,
+  })
+
+  // The first poll has read "no status" and is still in flight when the session turns busy.
+  await firstPollHeld
+  status = { type: "busy" }
+  tracker.onEvent({ type: "session.status", properties: { sessionID: "ses_X", status } })
+  release()
+  await new Promise((r) => setTimeout(r, 30))
+  expect(tracker.done).toBe(false)
   tracker.stop()
 })
 
