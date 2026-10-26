@@ -249,7 +249,7 @@ MiMoCode bundles the following builtin skills:
 | `super-research` | Run long-horizon, auditable research, experiments, benchmarks, diagnostics, reproductions, and citation checks |
 | `xlsx-official` | Build, clean, and transform spreadsheets (.xlsx/.csv) |
 
-`claude-code`, `codex`, and `grok-build` are not exposed by default; set `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` to include them. Other skills may still require task-specific tools described in their instructions.
+The skills `claude-code`, `codex`, and `grok-build` drive other agent CLIs from the terminal. They ship off by default; set `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` to enable them. Other skills may still require task-specific tools described in their instructions.
 
 **Overriding a builtin skill:** Create a skill with the same `name` under the project (`.mimocode/skills/<name>/SKILL.md`) or personal (for example `~/.config/mimocode/skills/<name>/SKILL.md`) MiMoCode skills directory. Open-standard `.agents/skills/` in the project and `~/.agents/skills/` are compatible discovery roots. User skills discovered later in the scan order override builtins with the same name.
 

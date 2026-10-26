@@ -240,7 +240,7 @@ MiMoCode 打包了以下内置技能：
 | `super-research` | 执行长周期、可审计的研究、实验、评测、诊断、论文复现和引用校验 |
 | `xlsx-official` | 构建、清洗和转换电子表格 (.xlsx/.csv) |
 
-`claude-code`、`codex` 与 `grok-build` 默认不提供；设置 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` 后才会加载。其他技能也可能需要其说明中列出的任务专用工具。
+`claude-code`、`codex` 与 `grok-build` 用于从终端以 CLI 方式驱动其他 agent。它们默认不开启，需设置 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` 才会加载。其他技能也可能需要其说明中列出的任务专用工具。
 
 **覆盖内置技能：** 在项目的 `.mimocode/skills/<name>/SKILL.md`，或个人技能目录（例如 `~/.config/mimocode/skills/<name>/SKILL.md`）里放同名技能即可。项目 `.agents/skills/` 与 `~/.agents/skills/` 这两处开放标准目录同样会扫到。扫描顺序靠后的用户技能会覆盖同名内置技能。
 
