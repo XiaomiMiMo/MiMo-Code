@@ -223,6 +223,16 @@ async function mountQuestionTui() {
     { width: 100, height: 25 },
   )
   trace("native TUI mounted")
+  async function unmount() {
+    // Destruction may wait for an active render; Solid's destroy listener also
+    // schedules nextTick node cleanup. Finish both before tmpdir forces GC.
+    const destroyed = new Promise<void>((resolve) => app.renderer.once("destroy", resolve))
+    app.renderer.destroy()
+    await destroyed
+    trace("cleanup native destroy event observed")
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    trace("cleanup post-destroy node tasks flushed")
+  }
   try {
     await ready
     trace("providers ready")
@@ -233,10 +243,7 @@ async function mountQuestionTui() {
   } catch (error) {
     await transport.close()
     await server.stop(false)
-    // OpenTUI defers removed-node destruction to nextTick; flush it before
-    // destroying the renderer and forcing GC during temporary-dir cleanup.
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    app.renderer.destroy()
+    await unmount()
     await Instance.disposeAll()
     await tmp[Symbol.asyncDispose]()
     throw error
@@ -298,11 +305,7 @@ async function mountQuestionTui() {
       trace("cleanup SSE transport stopped")
       await server.stop(false)
       trace("cleanup HTTP server stopped")
-      // OpenTUI defers removed-node destruction to nextTick; flush it before
-      // destroying the renderer and forcing GC during temporary-dir cleanup.
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      trace("cleanup removed-node tasks flushed")
-      app.renderer.destroy()
+      await unmount()
       trace("cleanup native renderer destroyed")
       await Instance.disposeAll()
       trace("cleanup instance disposed")
