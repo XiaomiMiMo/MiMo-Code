@@ -22,6 +22,62 @@ afterEach(() => { loadHostErrorCatalog({ protocolVersion: 2, rules: [] }) })
 
 const providerID = ProviderID.make("test")
 
+// [TP-RUN-QUOTA-01] Desktop turn-execution: real SDK response, not a synthetic retry flag.
+describe("provider-independent quota response", () => {
+  for (const provider of ["xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp", "test"]) {
+    test(`${provider} quota exhaustion ends request and stream retries`, () => {
+      const responseBody = JSON.stringify({ error: { code: "429", message: "quota exhausted", type: "limitation" } })
+      const error = MessageV2.fromLiveError(new APICallError({
+        message: "Too Many Requests", url: "https://example.test/v1/chat/completions", requestBodyValues: {},
+        statusCode: 429, responseBody, isRetryable: true,
+      }), { providerID: ProviderID.make(provider) })
+      expect(error.data).toMatchObject({ statusCode: 429, responseBody, isRetryable: true })
+      for (const phase of ["request", "stream"] as const) {
+        expect(decide(error, phase)).toMatchObject({ retryable: false, kind: "terminal", message: "quota exhausted", statusCode: 429 })
+        expect(decide(JSON.parse(JSON.stringify(error)), phase).retryable).toBe(false)
+      }
+    })
+  }
+
+  test("normalized quota errors remain terminal without provider metadata", () => {
+    const error = new MessageV2.APIError({
+      message: "quota exhausted", statusCode: 429, isRetryable: true,
+      responseBody: JSON.stringify({ error: { code: "429", type: "limitation", message: "quota exhausted" } }),
+    }).toObject()
+    expect(decide(error, "request")).toMatchObject({ retryable: false, kind: "terminal", message: "quota exhausted" })
+    expect(decide(error, "stream").retryable).toBe(false)
+  })
+
+  test("only complete quota signals terminate and raw SDK errors use the same decision", () => {
+    const body = { error: { code: "429", type: "limitation", message: "quota exhausted" } }
+    const raw = (responseBody: string, statusCode = 429) => new APICallError({
+      message: "Too Many Requests", url: "https://example.test", requestBodyValues: {}, statusCode,
+      responseBody, isRetryable: true,
+    })
+    expect(decide(raw(JSON.stringify(body)), "request")).toMatchObject({ retryable: false, kind: "terminal" })
+    expect(decide(raw(JSON.stringify({ error: { ...body.error, code: 429 } })), "request").retryable).toBe(false)
+    for (const candidate of [
+      raw(JSON.stringify(body), 503), raw("<html>quota exhausted</html>"),
+      raw(JSON.stringify({ error: { ...body.error, type: "rate_limit_error" } })),
+      raw(JSON.stringify({ error: { ...body.error, code: "500" } })),
+      raw(JSON.stringify({ error: { ...body.error, message: "Too many requests" } })),
+      raw(JSON.stringify({ error: { ...body.error, message: "quota exhausted flag is false" } })),
+    ]) expect(decide(candidate, "request").retryable).toBe(true)
+  })
+
+  test("ordinary limitation retains persistent rate-limit recovery for all providers", () => {
+    for (const [provider, message] of [["xiaomi-token-plan-cn", "Too many requests"], ["test", "Too many requests"]]) {
+      const error = MessageV2.fromLiveError(new APICallError({
+        message, url: "https://example.test", requestBodyValues: {}, statusCode: 429,
+        responseBody: JSON.stringify({ error: { code: "429", message, type: "limitation" } }), isRetryable: true,
+      }), { providerID: ProviderID.make(provider) })
+      const decision = decide(error, "request")
+      expect(decision).toMatchObject({ retryable: true, kind: "rate_limit" })
+      expect(SessionRetry.budgetFor(SessionRetry.resolve(undefined), decision).mode).toBe("persistent")
+    }
+  })
+})
+
 function apiError(headers?: Record<string, string>): MessageV2.APIError {
   return new MessageV2.APIError({
     message: "boom",

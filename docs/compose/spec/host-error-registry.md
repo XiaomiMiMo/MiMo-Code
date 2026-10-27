@@ -21,6 +21,10 @@ The catalog is data only. The engine matches at the LLM API boundary using the p
 
 Only SDK API failures and structured provider error events are eligible. Tool errors, invalid output, aborts, programming errors and filesystem errors do not acquire host codes. Native transport failures without an API response remain on the engine's network path.
 
+### Native provider quota responses
+
+SessionRetry.decide is the only quota-exhaustion interception point. HTTP429 with error code429, type limitation and the exact message quota exhausted ends the retry decision before generic rate-limit backoff, regardless of provider identity or metadata. Provider normalization and SDK retry flags remain unchanged; the original error and response body remain diagnostic facts. Ordinary429 failures and explicit host decisions retain their existing policy.
+
 ### Catalog v2
 
 This replaces unpublished v1; no birth-identity compatibility layer is retained.

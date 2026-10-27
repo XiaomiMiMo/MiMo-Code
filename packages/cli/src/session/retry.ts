@@ -397,6 +397,11 @@ export function decide(
   }
   if (status === 401) return terminal()
 
+  if (
+    status === 429 && signals.code === "429" && signals.type === "limitation" &&
+    signals.message.trim().toLowerCase() === "quota exhausted"
+  ) return terminal(signals.message.trim())
+
   if (signals.code === "FreeUsageLimitError" || responseBody?.includes("FreeUsageLimitError"))
     return terminal("Usage limit reached", GO_UPSELL_MESSAGE)
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
