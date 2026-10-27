@@ -34,7 +34,7 @@ import { createSimpleContext } from "./helper"
 import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, onMount } from "solid-js"
+import { batch, onCleanup, onMount } from "solid-js"
 import { Log } from "@/util"
 import { isDirectoryDeniedError } from "@/server/routes/instance/access"
 import { useToastOptional } from "../ui/toast"
@@ -390,6 +390,50 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     }
     let syncedWorkspace = project.workspace.current()
     let syncedDirectory = sdk.directory
+    let questionRevision = 0
+    let questionSync = 0
+    let closed = false
+
+    async function refreshQuestions() {
+      const generation = ++questionSync
+      const client = sdk.client
+      const workspace = project.workspace.current()
+      // Client identity also rejects an old directory's response after A -> B -> A.
+      const stale = () =>
+        closed || generation !== questionSync || sdk.client !== client || project.workspace.current() !== workspace
+      try {
+        while (!stale()) {
+          const revision = questionRevision
+          const response = await client.question.list({ workspace }, { throwOnError: true })
+          if (stale()) return
+          // A live event can be newer than the captured server snapshot. Read
+          // again instead of removing a new question or resurrecting a closed one.
+          if (revision !== questionRevision) continue
+          if (!Array.isArray(response.data)) return
+          const questions: Record<string, QuestionRequest[]> = {}
+          for (const request of response.data.toSorted((a, b) => a.id.localeCompare(b.id))) {
+            ;(questions[request.sessionID] ??= []).push(request)
+          }
+          setStore("question", reconcile(questions))
+          return
+        }
+      } catch (error) {
+        if (stale()) return
+        Log.Default.warn("tui question sync failed", {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    // Connected packets have no directory and are filtered out by useEvent.
+    const stopQuestionSync = sdk.event.on("event", (event) => {
+      if (event.payload.type === "server.connected") void refreshQuestions()
+    })
+    onCleanup(() => {
+      closed = true
+      questionSync += 1
+      stopQuestionSync()
+    })
 
     event.subscribe((event) => {
       switch (event.type) {
@@ -435,6 +479,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
         case "question.replied":
         case "question.rejected": {
+          questionRevision += 1
           const requests = store.question[event.properties.sessionID]
           if (!requests) break
           const match = Binary.search(requests, event.properties.requestID, (r) => r.id)
@@ -450,6 +495,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "question.asked": {
+          questionRevision += 1
           const request = event.properties
           const requests = store.question[request.sessionID]
           if (!requests) {
@@ -914,6 +960,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (store.status !== "complete") setStore("status", "partial")
           // non-blocking
           void Promise.all([
+            refreshQuestions(),
             ...(args.continue
               ? []
               : [guard(sessionListPromise, (sessions) => applySessions(sessions))]),
