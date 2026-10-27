@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test"
 import path from "node:path"
 
-// Keep native TUI + live HTTP/SSE resources in a fresh process, without
-// top-level dynamic imports in the test entry point (oven-sh/bun#32178).
+// Keep native TUI and live HTTP/SSE resources in a fresh process.
 test("question prompts recover across real HTTP/SSE reconnects", async () => {
   const child = Bun.spawn([process.execPath, "test", path.join(import.meta.dir, "question-reconnect.fixture.tsx")], {
     timeout: 100_000,
