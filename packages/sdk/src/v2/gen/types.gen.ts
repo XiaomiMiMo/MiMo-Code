@@ -5129,6 +5129,42 @@ export type SessionUpdateResponses = {
 
 export type SessionUpdateResponse = SessionUpdateResponses[keyof SessionUpdateResponses]
 
+export type SessionCostData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/cost"
+}
+
+export type SessionCostErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionCostError = SessionCostErrors[keyof SessionCostErrors]
+
+export type SessionCostResponses = {
+  /**
+   * Session cost in USD
+   */
+  200: {
+    cost: number
+  }
+}
+
+export type SessionCostResponse = SessionCostResponses[keyof SessionCostResponses]
+
 export type SessionChildrenData = {
   body?: never
   path: {
