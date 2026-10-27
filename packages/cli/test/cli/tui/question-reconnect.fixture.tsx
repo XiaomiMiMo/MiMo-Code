@@ -43,22 +43,29 @@ function faultTransport() {
   let disconnect: (() => void) | undefined
   let connections = 0
   let stopped = false
+  let pendingHttp = 0
   const controllers = new Set<AbortController>()
-  const pumps = new Set<Promise<void>>()
 
   const fetcher = Object.assign(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init)
       const pathname = new URL(request.url).pathname
       if (pathname !== "/global/event") {
-        const response = await fetch(request)
-        requests.push({
-          method: request.method,
-          path: pathname,
-          status: response.status,
-          ...(pathname.startsWith("/question") ? { result: await response.clone().json() } : {}),
-        })
-        return response
+        pendingHttp += 1
+        try {
+          const response = await fetch(request)
+          const copy = response.clone()
+          const result = pathname.startsWith("/question") ? await copy.json() : await copy.arrayBuffer()
+          requests.push({
+            method: request.method,
+            path: pathname,
+            status: response.status,
+            ...(pathname.startsWith("/question") ? { result } : {}),
+          })
+          return response
+        } finally {
+          pendingHttp -= 1
+        }
       }
 
       if (blocked)
@@ -68,48 +75,12 @@ function faultTransport() {
       if (stopped) throw new DOMException("Test transport stopped", "AbortError")
       const controller = new AbortController()
       controllers.add(controller)
-      const upstream = await fetch(
-        new Request(request, {
-          signal: AbortSignal.any([request.signal, controller.signal]),
-        }),
-      )
-      const reader = upstream.body!.getReader()
+      const signal = AbortSignal.any([request.signal, controller.signal])
+      signal.addEventListener("abort", () => controllers.delete(controller), { once: true })
+      const response = await fetch(new Request(request, { signal }))
       connections += 1
-      let closed = false
-      const stream = new ReadableStream<Uint8Array>({
-        start(output) {
-          const close = () => {
-            if (closed) return
-            closed = true
-            output.close()
-          }
-          disconnect = () => {
-            close()
-            controller.abort()
-          }
-          const pump = (async () => {
-            try {
-              while (true) {
-                const next = await reader.read()
-                if (next.done || closed) break
-                output.enqueue(next.value)
-              }
-            } catch (error) {
-              if (!controller.signal.aborted && !request.signal.aborted && !closed) output.error(error)
-            } finally {
-              close()
-              controllers.delete(controller)
-            }
-          })()
-          pumps.add(pump)
-          void pump.finally(() => pumps.delete(pump))
-        },
-        cancel() {
-          closed = true
-          controller.abort()
-        },
-      })
-      return new Response(stream, { status: upstream.status, headers: upstream.headers })
+      disconnect = () => controller.abort()
+      return response
     },
     { preconnect: fetch.preconnect },
   ) as typeof fetch
@@ -129,11 +100,18 @@ function faultTransport() {
       unblock?.()
       unblock = undefined
     },
-    async close() {
+    async idleHttp() {
+      await waitFor(async () => {
+        if (pendingHttp !== 0) return false
+        // Flush SDK response parsing and any follow-up bootstrap requests.
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        return pendingHttp === 0
+      }, "HTTP requests finish before SDK cleanup")
+    },
+    close() {
       stopped = true
       this.resume()
       for (const controller of controllers) controller.abort()
-      await Promise.all(pumps)
     },
   }
 }
@@ -214,12 +192,13 @@ async function mountQuestionTui() {
     { width: 100, height: 25 },
   )
   async function unmount() {
-    // Dispose native nodes while their renderer is still alive.
+    const destroyed = new Promise<void>((resolve) => app.renderer.once("destroy", resolve))
+    // Stop client requests while the server is alive, then release native nodes.
     setActive(false)
+    transport.close()
     await new Promise<void>((resolve) => setImmediate(resolve))
     // Destruction may wait for an active render; Solid's destroy listener also
     // schedules nextTick node cleanup. Finish both before tmpdir forces GC.
-    const destroyed = new Promise<void>((resolve) => app.renderer.once("destroy", resolve))
     app.renderer.destroy()
     await destroyed
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -230,9 +209,8 @@ async function mountQuestionTui() {
     await waitFor(() => transport.connections >= 1, "initial real SSE connection")
     await waitFor(() => sync.status === "complete", "real HTTP bootstrap")
   } catch (error) {
-    await transport.close()
-    await server.stop(false)
     await unmount()
+    await server.stop(false)
     await Instance.disposeAll()
     await tmp[Symbol.asyncDispose]()
     throw error
@@ -284,9 +262,9 @@ async function mountQuestionTui() {
       transport.resume()
       for (const request of await pending()) await wire(`/question/${questionID(request.id)}/reject`)
       await Promise.all(askResults)
-      await transport.close()
-      await server.stop(false)
+      await transport.idleHttp()
       await unmount()
+      await server.stop(false)
       await Instance.disposeAll()
       await tmp[Symbol.asyncDispose]()
     },
@@ -301,6 +279,18 @@ test("an actual pending modal survives HTTP instance dispose and remains answera
     expect((await h.pending()).map((q) => q.id)).toEqual([question.id])
     expect(h.sync.data.question[h.session.id]?.[0]?.id).toBe(question.id)
     h.app.mockInput.pressEnter()
+    await waitFor(
+      () =>
+        h.transport.requests.some(
+          (r) =>
+            r.method === "POST" && r.path === `/question/${question.id}/reply` && r.status === 200 && r.result === true,
+        ),
+      "answer HTTP response completes before teardown",
+    )
+    await waitFor(
+      () => h.receivedEvents.includes("server.instance.disposed"),
+      "deferred disposal triggers the TUI bootstrap",
+    )
     await waitFor(async () => (await h.pending()).length === 0, "valid answer removes backend request")
     await waitFor(() => !h.sync.data.question[h.session.id]?.length, "valid answer closes actual modal")
     await h.app.renderOnce()
