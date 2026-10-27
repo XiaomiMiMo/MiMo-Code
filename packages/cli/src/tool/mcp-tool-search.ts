@@ -7,6 +7,27 @@ import * as Tool from "./tool"
 
 export const MCP_TOOL_SEARCH_ID = "mcp_tool_search"
 export const MCP_TOOL_USE_ID = "mcp_tool_use"
+
+/** Flattened MCP catalog name for a server-local tool (`sanitize(server)_sanitize(tool)`). */
+export function mcpCatalogToolName(server: string, tool: string) {
+  const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_")
+  return sanitize(server) + "_" + sanitize(tool)
+}
+
+/**
+ * Catalog keys the MCP config marks as always-direct (`alwaysDirectTools` per server).
+ * Those tools skip the deferred mcp_tool_search / mcp_tool_use catalog and join activeTools.
+ */
+export function alwaysDirectMcpToolKeys(
+  mcp: Record<string, { alwaysDirectTools?: readonly string[] | undefined }>,
+): Set<string> {
+  const keys = new Set<string>()
+  for (const [server, info] of Object.entries(mcp)) {
+    for (const tool of info.alwaysDirectTools ?? []) keys.add(mcpCatalogToolName(server, tool))
+  }
+  return keys
+}
+
 export const MCP_TOOL_SEARCH_DEFAULT_LIMIT = 5
 export const MCP_TOOL_SEARCH_MAX_LIMIT = 20
 export const MCP_TOOL_CATALOG_MAX_TOKENS = 20_000

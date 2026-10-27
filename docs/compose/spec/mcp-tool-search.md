@@ -28,7 +28,7 @@ When deferral applies, at least one effective MCP tool exists, and the model sup
 
 The catalog (built from `MCP.tools()`, i.e. each server's tool listing) is announced to the model as a synthetic `<system-reminder>` text part appended to the last user message, never as a new user message, inside a tool result, or in the system prompt. The first announcement lists every deferred tool as `- name: description preview`; later ones carry only additions and removals relative to what earlier reminders announced. Each reminder part persists its delta in `metadata.mcpDeferredTools`, and the announced set is replayed from those parts, so compaction (which drops them) triggers a full re-announcement. Announcements are budgeted to 10% of the usable input window (capped at 20,000 tokens), falling back to names only and then to a truncated list; search always covers the complete catalog. System prompts declare that `<system-reminder>` content is harness-injected environment information.
 
-The catalog contains only tools that survive request disables, permissions, agent allowlists, actor whitelists, executable checks, and local-name collision handling. External text — MCP names, descriptions, schemas, and MCP tool results — has `<system-reminder>`, `<functions>`, `<function>`, and `<available-deferred-tools>` tags escaped so it cannot forge harness content.
+The catalog contains only tools that survive request disables, permissions, agent allowlists, actor whitelists, executable checks, and local-name collision handling. Tools listed in `mcp.<server>.alwaysDirectTools` are excluded from this catalog and from announcements; they join `activeTools` as top-level tools instead (see `always-direct-mcp-tools`). External text — MCP names, descriptions, schemas, and MCP tool results — has `<system-reminder>`, `<functions>`, `<function>`, and `<available-deferred-tools>` tags escaped so it cannot forge harness content.
 
 `mcp_tool_search` accepts `query` and optional `max_results` (default 5, max 20):
 
@@ -40,15 +40,15 @@ The result returns the matched tools' complete JSON Schema definitions inside a 
 
 ## [S4] Conversation-Scoped Loading
 
-A successful search persists validated matched names in ordinary tool-result metadata. On every subsequent outer-loop step, MiMoCode scans completed searches across the conversation (newest first, bounded at 32 tools) and exposes those MCP definitions through the AI SDK `activeTools` subset. A loaded tool stays callable across user turns as long as it is still request-authorized; compaction drops older searches together with their messages. Model-visible output is never trusted as activation state.
+Searched tools do not rejoin `activeTools`. The provider-facing tool list stays the fixed `mcp_tool_search` / `mcp_tool_use` pair (plus config-declared always-direct tools and local tools); a searched tool is callable through `mcp_tool_use` in the same step without a prior search. Compaction does not change that contract. Model-visible output is never trusted as activation state.
 
 ## [S5] Execution Safety
 
-All MCP executors remain in the full local tool map so existing permission checks, actor whitelists, plugin hooks, metrics, result normalization, truncation, attachments, cancellation, and MCP client dispatch are preserved. Before any side effect, the MCP wrapper rejects a call to an unauthorized tool, and — while deferral applies — a call to a tool not yet loaded, instructing the model to use `mcp_tool_search`. Search matches become callable only on the next outer-loop step. Local tools win on callable-name collisions.
+All MCP executors remain in the full local tool map so existing permission checks, actor whitelists, plugin hooks, metrics, result normalization, truncation, attachments, cancellation, and MCP client dispatch are preserved. Before any side effect, the MCP wrapper rejects a call to an unauthorized tool, and — while deferral applies — a direct call to a deferred tool, instructing the model to use `mcp_tool_use`. Config-declared always-direct tools skip that rejection and are never registered on `mcp_tool_use`. Local tools win on callable-name collisions.
 
 ## [S6] Provider And ToolScript Behavior
 
-The mechanism uses an ordinary function tool and does not depend on OpenAI provider tools or `defer_loading`. Models without function calling receive neither MCP discovery nor MCP definitions. In Codex mode the outer surface stays `exec`; exec scripts reach every request-authorized MCP tool through `ALL_TOOLS` without a search round-trip, and `mcp_tool_search` is excluded from scripts.
+The mechanism uses an ordinary function tool and does not depend on OpenAI provider tools or `defer_loading`. Models without function calling receive neither MCP discovery nor MCP definitions. In Codex mode the outer surface stays `exec` for ordinary tools; config-declared always-direct tools are also top-level there, and exec scripts reach every request-authorized MCP tool through `ALL_TOOLS` without a search round-trip. `mcp_tool_search` is excluded from scripts.
 
 ## [S7] Testing Boundaries
 

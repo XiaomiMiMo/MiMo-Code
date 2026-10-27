@@ -68,6 +68,10 @@ deferred MCP call through one fixed dispatcher tool.
     (Full JSON Schema validation is left to the MCP server; no new validator dependency.)
 - **Direct calls in deferred mode.** A direct call to a deferred MCP tool name is rejected with an error
   telling the model to call it through `mcp_tool_use`.
+- **Always-direct MCP tools.** Config (`mcp.<server>.alwaysDirectTools`) can mark server-local tools as
+  never deferred and never in the `mcp_tool_use` catalog: they sit in `activeTools` as ordinary top-level
+  tools on every toolset (including GPT) and reject `mcp_tool_use` dispatch as an unknown deferred name.
+  See `always-direct-mcp-tools`.
 - **Guidance text.** The `mcp_tool_search` description, the deferred-tools `<system-reminder>`, and the
   search result tell the model to call tools via `mcp_tool_use` with `{ name, arguments }`.
 - **Provider filter.** `llm.ts` `resolveTools` exempts `mcp_tool_use` from permission-disabled filtering

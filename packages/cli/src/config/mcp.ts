@@ -28,6 +28,10 @@ export class Local extends Schema.Class<Local>("McpLocalConfig")({
     description: "Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified.",
   }),
   sampling: samplingField,
+  alwaysDirectTools: Schema.optional(Schema.Array(Schema.String)).annotate({
+    description:
+      "Tool names from this server that skip deferred mcp_tool_search/mcp_tool_use and join activeTools as top-level tools.",
+  }),
 }) {
   static readonly zod = zod(this)
 }
@@ -63,6 +67,10 @@ export class Remote extends Schema.Class<Remote>("McpRemoteConfig")({
     description: "Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified.",
   }),
   sampling: samplingField,
+  alwaysDirectTools: Schema.optional(Schema.Array(Schema.String)).annotate({
+    description:
+      "Tool names from this server that skip deferred mcp_tool_search/mcp_tool_use and join activeTools as top-level tools.",
+  }),
 }) {
   static readonly zod = zod(this)
 }

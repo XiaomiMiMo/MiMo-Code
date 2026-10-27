@@ -591,6 +591,20 @@ function restrictedAgentProviderCfg(url: string) {
   }
 }
 
+/** Config-declared always-direct tools (engine does not hardcode product tool names). */
+function alwaysDirectProviderCfg(url: string) {
+  return {
+    ...providerCfg(url),
+    mcp: {
+      sandbox: {
+        type: "local" as const,
+        command: ["fake-sandbox"],
+        alwaysDirectTools: ["run", "reset"],
+      },
+    },
+  }
+}
+
 function mediaProviderCfg(url: string) {
   const config = providerCfg(url)
   return {
@@ -3413,6 +3427,192 @@ mcpIt.live(
         expect(use?.state.output.length).toBeGreaterThan(0)
       }),
       { git: true, config: providerCfg },
+    ),
+  30_000,
+)
+
+const alwaysDirectMcpIt = testEffect(
+  makeHttp(
+    mcpLayer(
+      () => ({
+        sandbox_run: dynamicTool({
+          description: "Run a script in the sandbox",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: { code: { type: "string" }, title: { type: "string" } },
+            additionalProperties: false,
+          }),
+          execute: async () => ({ content: [{ type: "text", text: "cell ok" }] }),
+        }),
+        sandbox_reset: dynamicTool({
+          description: "Reset the sandbox kernel",
+          inputSchema: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
+          execute: async () => ({ content: [{ type: "text", text: "reset ok" }] }),
+        }),
+        mcp_ordinary: dynamicTool({
+          description: "An ordinary deferred MCP tool",
+          inputSchema: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
+          execute: async () => ({ content: [{ type: "text", text: "ordinary ok" }] }),
+        }),
+      }),
+      () => ({}),
+      () => ({
+        configured: true,
+        servers: [
+          {
+            name: "sandbox",
+            status: "connected" as const,
+            toolCount: 3,
+            tools: [
+              { name: "sandbox_run", description: "Run a script in the sandbox" },
+              { name: "sandbox_reset", description: "Reset the sandbox kernel" },
+              { name: "mcp_ordinary", description: "An ordinary deferred MCP tool" },
+            ],
+          },
+        ],
+      }),
+    ),
+  ),
+)
+
+alwaysDirectMcpIt.live(
+  "keeps config-declared tools top-level in deferred mode and out of mcp_tool_use",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({
+          title: "Always-direct sandbox tools",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          model: ref,
+          noReply: true,
+          parts: [{ type: "text", text: "run a sandbox script" }],
+        })
+        yield* llm.tool("sandbox_run", { code: "print(1)" })
+        yield* llm.tool("mcp_ordinary", {})
+        yield* llm.tool("mcp_tool_use", { name: "sandbox_run", arguments: { code: "1" } })
+        yield* llm.text("done")
+        yield* prompt.loop({ sessionID: session.id })
+
+        const requests = yield* llm.inputs
+        const names = (index: number) => (requests[index].tools as Array<Record<string, unknown>>).map(wireToolName)
+        expect(names(0)).toContain("sandbox_run")
+        expect(names(0)).toContain("sandbox_reset")
+        expect(names(0)).toContain("mcp_tool_search")
+        expect(names(0)).toContain("mcp_tool_use")
+        expect(names(0)).not.toContain("mcp_ordinary")
+        expect(JSON.stringify(requests[0].tools)).not.toContain("ordinary deferred MCP tool")
+
+        const firstUser = (requests[0].messages as Array<{ role: string; content: unknown }>).findLast(
+          (message) => message.role === "user",
+        )
+        const firstUserText = JSON.stringify(firstUser?.content)
+        expect(firstUserText).toContain("- mcp_ordinary: An ordinary deferred MCP tool")
+        expect(firstUserText).not.toContain("- sandbox_run:")
+
+        const parts = (yield* MessageV2.filterCompactedEffect(session.id)).flatMap((message) => message.parts)
+        const direct = parts.find(
+          (part): part is CompletedToolPart =>
+            part.type === "tool" && part.tool === "sandbox_run" && part.state.status === "completed",
+        )
+        expect(direct?.state.output).toContain("cell ok")
+        const ordinary = parts.find(
+          (part): part is ErrorToolPart =>
+            part.type === "tool" && part.tool === "mcp_ordinary" && part.state.status === "error",
+        )
+        expect(ordinary?.state.error).toContain("deferred and cannot be called directly")
+        const dispatched = parts.find(
+          (part): part is ErrorToolPart =>
+            part.type === "tool" && part.tool === "mcp_tool_use" && part.state.status === "error",
+        )
+        expect(dispatched?.state.error).toContain("not an available deferred MCP tool")
+      }),
+      { git: true, config: alwaysDirectProviderCfg },
+    ),
+  30_000,
+)
+
+alwaysDirectMcpIt.live(
+  "exposes config-declared tools top-level on GPT while ordinary MCP stays deferred",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({
+          title: "GPT always-direct sandbox",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          model: mcpRef,
+          noReply: true,
+          parts: [{ type: "text", text: "run a sandbox script" }],
+        })
+        yield* llm.tool("sandbox_run", { code: "print(2)" })
+        yield* llm.text("done")
+        yield* prompt.loop({ sessionID: session.id })
+
+        const tools = (yield* llm.inputs)[0].tools as Array<Record<string, unknown>>
+        const names = tools.map(wireToolName)
+        expect(names).toContain("exec")
+        expect(names).toContain("sandbox_run")
+        expect(names).toContain("sandbox_reset")
+        expect(names).not.toContain("mcp_ordinary")
+        expect(JSON.stringify(tools)).not.toContain("An ordinary deferred MCP tool")
+
+        const parts = (yield* MessageV2.filterCompactedEffect(session.id)).flatMap((message) => message.parts)
+        const direct = parts.find(
+          (part): part is CompletedToolPart =>
+            part.type === "tool" && part.tool === "sandbox_run" && part.state.status === "completed",
+        )
+        expect(direct?.state.output).toContain("cell ok")
+      }),
+      { git: true, config: alwaysDirectProviderCfg },
+    ),
+  30_000,
+)
+
+alwaysDirectMcpIt.live(
+  "lets exec scripts call config-declared tools as request-authorized tools",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({
+          title: "exec guest always-direct",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          model: mcpRef,
+          noReply: true,
+          parts: [{ type: "text", text: "run the cell from a script" }],
+        })
+        yield* llm.tool("exec", { code: "return await tools.sandbox_run({ code: '1 + 1' })" })
+        yield* llm.text("done")
+        yield* prompt.loop({ sessionID: session.id })
+
+        const tool = (yield* MessageV2.filterCompactedEffect(session.id))
+          .flatMap((message) => message.parts)
+          .find(
+            (part): part is CompletedToolPart =>
+              part.type === "tool" && part.tool === "exec" && part.state.status === "completed",
+          )
+        expect(tool?.state.output).toContain("cell ok")
+      }),
+      { git: true, config: alwaysDirectProviderCfg },
     ),
   30_000,
 )

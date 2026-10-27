@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { Token } from "../../src/util"
 import {
   announcedMcpReminders,
+  alwaysDirectMcpToolKeys,
   checkMcpToolArguments,
+  mcpCatalogToolName,
   MCP_TOOL_USE_ID,
   createMcpToolSearchCatalog,
   mcpReminderMarker,
@@ -71,6 +73,19 @@ const entries: McpToolSearchEntry[] = [
 ]
 
 describe("MCP Tool Search", () => {
+  test("always-direct keys come from config and flatten server-local tool names", () => {
+    expect(mcpCatalogToolName("sandbox", "run")).toBe("sandbox_run")
+    expect(mcpCatalogToolName("my.server", "run/reset")).toBe("my_server_run_reset")
+    expect(
+      alwaysDirectMcpToolKeys({
+        sandbox: { alwaysDirectTools: ["run", "reset"] },
+        other: {},
+      }),
+    ).toEqual(new Set(["sandbox_run", "sandbox_reset"]))
+    expect(alwaysDirectMcpToolKeys({})).toEqual(new Set())
+    expect(alwaysDirectMcpToolKeys({ sandbox: { alwaysDirectTools: [] } })).toEqual(new Set())
+  })
+
   test("scales catalog budgets and distinguishes unknown from exhausted windows", () => {
     expect(mcpToolCatalogBudget({ usable: 100_000, context: 120_000 })).toBe(10_000)
     expect(mcpToolCatalogBudget({ usable: 500_000, context: 520_000 })).toBe(20_000)
