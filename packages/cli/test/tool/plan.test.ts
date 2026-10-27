@@ -1,6 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
+import { Config } from "../../src/config"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Instance } from "../../src/project/instance"
 import { Provider } from "../../src/provider"
@@ -24,6 +25,7 @@ const it = testEffect(
     Truncate.defaultLayer,
     Agent.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
+    Config.defaultLayer,
   ),
 )
 
@@ -128,6 +130,27 @@ describe("tool.plan", () => {
         expect(Exit.isFailure(exit)).toBe(true)
         expect(JSON.stringify(exit)).toContain("QuestionRejectedError")
       }),
+    ),
+  )
+
+  it.live("plan.exit_prompt false skips the approval dialog and does not switch", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const question = yield* Question.Service
+          const info = yield* sessions.create({ title: "Test" })
+          const tool = yield* (yield* PlanExitTool).init()
+
+          const result = yield* tool.execute({}, ctx(info.id, "plan"))
+          expect(result.title).toBe("Plan ready")
+          expect(result.metadata).toMatchObject({ switched: false, feedback: "" })
+          expect(result.output).toContain("no approval dialog")
+          expect(result.output).toContain("Do NOT switch agents yourself")
+          expect(yield* question.list()).toEqual([])
+          expect(yield* sessions.messages({ sessionID: info.id })).toEqual([])
+        }).pipe(Effect.timeout("5 seconds")),
+      { config: { plan: { exit_prompt: false } } },
     ),
   )
 })
