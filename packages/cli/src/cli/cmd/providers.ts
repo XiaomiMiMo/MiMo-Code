@@ -4,6 +4,7 @@ import { cmd } from "./cmd"
 import * as prompts from "@clack/prompts"
 import { UI } from "../ui"
 import { ModelsDev } from "../../provider"
+import { saveCredential } from "../../provider/auth"
 import { map, pipe, sortBy, values } from "remeda"
 import path from "path"
 import os from "os"
@@ -15,7 +16,7 @@ import { Instance } from "../../project/instance"
 import type { Hooks } from "@mimo-ai/plugin"
 import { Log, Process } from "../../util"
 import { PROVIDER_PRIORITY } from "../../util/provider-priority"
-import { XIAOMI_API_PROVIDER_ID, XIAOMI_CREDENTIAL_PROVIDER_IDS, legacyXiaomiAliasTarget } from "../../provider/xiaomi-family"
+import { XIAOMI_API_PROVIDER_ID, XIAOMI_CREDENTIAL_PROVIDER_IDS } from "../../provider/xiaomi-family"
 import { text } from "node:stream/consumers"
 import { Effect } from "effect"
 import * as readline from "readline"
@@ -26,11 +27,7 @@ const put = (key: string, info: Auth.Info) =>
   AppRuntime.runPromise(
     Effect.gen(function* () {
       const auth = yield* Auth.Service
-      const legacy = yield* auth.get(XIAOMI_API_PROVIDER_ID)
-      yield* auth.set(key, info)
-      // 分键写入 Token Plan 档时清掉同档旧 CLI 形态（`xiaomi` 键 + base_url 指该档），
-      // 避免同一凭据双挂；API 档与 oauth 条目不受影响。
-      if (legacy && legacyXiaomiAliasTarget(legacy) === key) yield* auth.remove(XIAOMI_API_PROVIDER_ID)
+      yield* saveCredential(auth, key, info)
     }),
   )
 

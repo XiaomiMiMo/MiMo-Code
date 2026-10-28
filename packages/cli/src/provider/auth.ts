@@ -97,6 +97,20 @@ export type Error =
 
 type Hook = NonNullable<Hooks["auth"]>
 
+/**
+ * 落盘一条 provider 凭据（mimoLogin 与 OAuth callback 两条驱动共用）。
+ * 分键写入 Token Plan 档时清掉同档旧 CLI 形态（`xiaomi` 键 + base_url 指该档），
+ * 避免同一凭据双挂；API 档与 oauth 条目不受影响。
+ */
+export const saveCredential = (auth: Auth.Interface, providerID: string, info: Auth.Info) =>
+  Effect.gen(function* () {
+    const legacy = yield* auth.get(XIAOMI_API_PROVIDER_ID)
+    yield* auth.set(providerID, info)
+    if (legacy && legacyXiaomiAliasTarget(legacy) === providerID) {
+      yield* auth.remove(XIAOMI_API_PROVIDER_ID)
+    }
+  })
+
 export interface Interface {
   readonly methods: () => Effect.Effect<Methods>
   readonly authorize: (
@@ -211,7 +225,7 @@ export const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> =
       const saveProvider = ProviderID.make(result.provider ?? input.providerID)
 
       if ("key" in result) {
-        yield* auth.set(saveProvider, {
+        yield* saveCredential(auth, saveProvider, {
           type: "api",
           key: result.key,
           ...("metadata" in result && result.metadata ? { metadata: result.metadata } : {}),
@@ -220,20 +234,13 @@ export const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> =
 
       if ("refresh" in result) {
         const { type: _t, provider: _p, refresh, access, expires, ...extra } = result
-        yield* auth.set(saveProvider, {
+        yield* saveCredential(auth, saveProvider, {
           type: "oauth",
           access,
           refresh,
           expires,
           ...extra,
         })
-      }
-
-      // 分键写入 Token Plan 档时清掉同档旧 CLI 形态（`xiaomi` 键 + base_url 指该档），
-      // 避免同一凭据双挂；API 档与 oauth 条目不受影响。
-      const legacy = yield* auth.get(ProviderID.make(XIAOMI_API_PROVIDER_ID))
-      if (legacy && legacyXiaomiAliasTarget(legacy) === saveProvider) {
-        yield* auth.remove(ProviderID.make(XIAOMI_API_PROVIDER_ID))
       }
     })
 

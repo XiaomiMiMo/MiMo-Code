@@ -24,7 +24,19 @@ const DEFAULT_BASE_URL_BY_PROVIDER: Record<string, string> = {
 }
 
 /** Token Plan 档在前，API 档收尾——与桌面端语音回退次序一致。 */
-export const XIAOMI_CREDENTIAL_PROVIDER_IDS = [XIAOMI_TOKEN_PLAN_CN, XIAOMI_TOKEN_PLAN_AMS, XIAOMI_TOKEN_PLAN_SGP, XIAOMI_API_PROVIDER_ID] as const
+export const XIAOMI_CREDENTIAL_PROVIDER_IDS = [
+  XIAOMI_TOKEN_PLAN_CN,
+  XIAOMI_TOKEN_PLAN_AMS,
+  XIAOMI_TOKEN_PLAN_SGP,
+  XIAOMI_API_PROVIDER_ID,
+] as const
+
+/** 登出清族内全部凭据键（API 与 Token Plan 分键存放，只清 `xiaomi` 会留下 Token Plan 条目）。 */
+export async function removeXiaomiFamilyCredentials(remove: (providerID: string) => Promise<unknown> | unknown) {
+  for (const providerID of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
+    await remove(providerID)
+  }
+}
 
 export function xiaomiProviderForEndpoint(url?: string): string {
   if (!url) return XIAOMI_API_PROVIDER_ID

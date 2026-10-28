@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
+import type { AuthOAuthResult, Hooks } from "@mimo-ai/plugin"
 import { tmpdir } from "../fixture/fixture"
 import { encryptToPk as encrypt } from "../fixture/mimo-encrypt"
 import { Instance } from "../../src/project/instance"
 import { Auth } from "../../src/auth"
+import { Plugin } from "../../src/plugin"
 import { ProviderAuth } from "../../src/provider"
 import { ProviderID } from "../../src/provider/schema"
 
@@ -130,5 +132,111 @@ describe("ProviderAuth.callback xiaomi-family writes", () => {
     })
     expect(stored.xiaomi).toMatchObject({ type: "api", key: "sk-api-keep" })
     expect(stored.tokenPlanCn).toMatchObject({ type: "api", key: "sk-token-plan-3" })
+  }, 30000)
+})
+
+const SOURCE_ID = ProviderID.make("test-oauth-source")
+
+type AutoCallback = Extract<AuthOAuthResult, { method: "auto" }>["callback"]
+
+function oauthHook(result: AutoCallback): Hooks {
+  return {
+    auth: {
+      provider: "test-oauth-source",
+      methods: [
+        {
+          type: "oauth",
+          label: "test",
+          authorize: async () => ({
+            url: "https://example.test/authorize",
+            method: "auto" as const,
+            instructions: "",
+            callback: result,
+          }),
+        },
+      ],
+    },
+  }
+}
+
+async function callbackWithHook(directory: string, hook: Hooks) {
+  const layer = ProviderAuth.layer.pipe(
+    Layer.provide(Auth.defaultLayer),
+    Layer.provide(Layer.mock(Plugin.Service)({ list: () => Effect.succeed([hook]) })),
+  )
+  await Instance.provide({
+    directory,
+    fn: () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const svc = yield* ProviderAuth.Service
+          yield* svc.authorize({ providerID: SOURCE_ID, method: 0 })
+          yield* svc.callback({ providerID: SOURCE_ID, method: 0 })
+        }).pipe(Effect.provide(layer)),
+      ),
+  })
+  return Instance.provide({
+    directory,
+    fn: () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const auth = yield* Auth.Service
+          return {
+            source: yield* auth.get(SOURCE_ID),
+            tokenPlanCn: yield* auth.get(TOKEN_PLAN_CN),
+          }
+        }).pipe(Effect.provide(Auth.defaultLayer)),
+      ),
+  })
+}
+
+describe("ProviderAuth.callback save-target redirect", () => {
+  test("stores an oauth result under the plugin-declared provider", async () => {
+    await using tmp = await tmpdir({})
+    await clearFamily(tmp.path)
+    const stored = await callbackWithHook(
+      tmp.path,
+      oauthHook(async () => ({
+        type: "success",
+        provider: "xiaomi-token-plan-cn",
+        refresh: "refresh-1",
+        access: "access-1",
+        expires: 123456,
+      })),
+    )
+    expect(stored.tokenPlanCn).toMatchObject({
+      type: "oauth",
+      refresh: "refresh-1",
+      access: "access-1",
+      expires: 123456,
+    })
+    expect(stored.source).toBeUndefined()
+  }, 30000)
+
+  test("defaults an oauth result without provider to the requested provider", async () => {
+    await using tmp = await tmpdir({})
+    await clearFamily(tmp.path)
+    const stored = await callbackWithHook(
+      tmp.path,
+      oauthHook(async () => ({
+        type: "success",
+        refresh: "refresh-2",
+        access: "access-2",
+        expires: 654321,
+      })),
+    )
+    expect(stored.source).toMatchObject({ type: "oauth", refresh: "refresh-2", access: "access-2" })
+    expect(stored.tokenPlanCn).toBeUndefined()
+  }, 30000)
+
+  test("defaults an api result without provider to the requested provider", async () => {
+    await using tmp = await tmpdir({})
+    await clearFamily(tmp.path)
+    const stored = await callbackWithHook(
+      tmp.path,
+      oauthHook(async () => ({ type: "success", key: "sk-default" })),
+    )
+    expect(stored.source).toMatchObject({ type: "api", key: "sk-default" })
+    expect(stored.tokenPlanCn).toBeUndefined()
   }, 30000)
 })

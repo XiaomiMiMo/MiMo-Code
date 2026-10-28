@@ -55,19 +55,36 @@ export function initial(
 
 const PREFERRED_DEFAULT: Selection = { providerID: "xiaomi", modelID: "mimo-v2.6-pro" }
 
+function hasCredential(provider: Provider | undefined) {
+  return Boolean(provider?.key || (provider?.options?.apiKey as string | undefined))
+}
+
+/**
+ * 族内已登录（API 与 Token Plan 分键存放）的默认模型：按 Token Plan 三档 → xiaomi API
+ * 取第一个有凭据且有模型的 provider，模型优先 pro、否则取第一个。
+ */
+export function familyDefaultModel(list: Provider[] | undefined): Selection | undefined {
+  for (const providerID of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
+    const provider = list?.find((p) => p.id === providerID)
+    const models = provider ? Object.keys(provider.models) : []
+    if (!provider || !hasCredential(provider) || models.length === 0) continue
+    const modelID = "mimo-v2.6-pro" in provider.models ? "mimo-v2.6-pro" : models[0]!
+    return { providerID, modelID }
+  }
+  return undefined
+}
+
 /**
  * When argument/recent/configured all miss: prefer the signed-in xiaomi pro
  * model (login required), else the first provider's default/first model.
  * API 与 Token Plan 凭据分键存放后，已登录族内按 Token Plan 三档 → xiaomi API
- * 选各自档位的 pro 模型；未登录仍回落 xiaomi 的登录引导。
+ * 选各自档位的默认模型；未登录仍回落 xiaomi 的登录引导。
  */
 export function fallback(
   list: Provider[] | undefined,
   providerDefault: Record<string, string> = {},
 ): Selection | undefined {
-  const signedIn = XIAOMI_CREDENTIAL_PROVIDER_IDS.map(
-    (id): Selection => ({ providerID: id, modelID: PREFERRED_DEFAULT.modelID }),
-  ).find((sel) => get(list, sel.providerID, sel.modelID) && list?.find((p) => p.id === sel.providerID)?.key)
+  const signedIn = familyDefaultModel(list)
   if (signedIn) return signedIn
   const preferred = get(list, PREFERRED_DEFAULT.providerID, PREFERRED_DEFAULT.modelID)
   if (preferred) return PREFERRED_DEFAULT

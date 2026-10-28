@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Provider } from "@mimo-ai/sdk/v2"
-import { fallback, initial } from "../../../src/cli/cmd/tui/util/model"
+import { fallback, familyDefaultModel, initial } from "../../../src/cli/cmd/tui/util/model"
 
 const providers = [
   {
@@ -98,12 +98,12 @@ describe("fallback model", () => {
     expect(fallback(list, {})).toEqual({ providerID: "xiaomi-token-plan-sgp", modelID: "mimo-v2.6-pro" })
   })
 
-  test("skips signed-in family members without the pro model", () => {
+  test("uses the first model when the signed-in member has no pro model", () => {
     const list = [
       { id: "xiaomi", models: { "mimo-v2.6-pro": {} } },
       { id: "xiaomi-token-plan-cn", key: "sk-cn", models: { "mimo-v2.5": {} } },
     ] as unknown as Provider[]
-    expect(fallback(list, {})).toEqual({ providerID: "xiaomi", modelID: "mimo-v2.6-pro" })
+    expect(fallback(list, {})).toEqual({ providerID: "xiaomi-token-plan-cn", modelID: "mimo-v2.5" })
   })
 
   test("falls back to the first provider default when xiaomi pro is absent", () => {
@@ -123,5 +123,29 @@ describe("fallback model", () => {
   test("returns undefined with no providers", () => {
     expect(fallback(undefined)).toBeUndefined()
     expect(fallback([])).toBeUndefined()
+  })
+})
+
+describe("familyDefaultModel", () => {
+  test("prefers the pro model of the first signed-in family member", () => {
+    const list = [
+      { id: "xiaomi-token-plan-cn", key: "sk-cn", models: { "mimo-v2.5": {}, "mimo-v2.6-pro": {} } },
+      { id: "xiaomi", key: "sk-api", models: { "mimo-v2.6-pro": {} } },
+    ] as unknown as Provider[]
+    expect(familyDefaultModel(list)).toEqual({ providerID: "xiaomi-token-plan-cn", modelID: "mimo-v2.6-pro" })
+  })
+
+  test("treats options.apiKey as a credential", () => {
+    const list = [
+      { id: "xiaomi-token-plan-ams", options: { apiKey: "sk-ams" }, models: { "mimo-v2.6-pro": {} } },
+    ] as unknown as Provider[]
+    expect(familyDefaultModel(list)).toEqual({ providerID: "xiaomi-token-plan-ams", modelID: "mimo-v2.6-pro" })
+  })
+
+  test("returns undefined when no family member holds credentials and models", () => {
+    const keyedWithoutModels = [{ id: "xiaomi-token-plan-cn", key: "sk-cn", models: {} }] as unknown as Provider[]
+    expect(familyDefaultModel(keyedWithoutModels)).toBeUndefined()
+    expect(familyDefaultModel(withXiaomiPro)).toBeUndefined()
+    expect(familyDefaultModel(undefined)).toBeUndefined()
   })
 })

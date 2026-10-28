@@ -6,6 +6,7 @@ import {
   XIAOMI_TOKEN_PLAN_SGP,
   isXiaomiFamilyProvider,
   legacyXiaomiAliasTarget,
+  removeXiaomiFamilyCredentials,
   xiaomiDefaultBaseUrl,
   xiaomiProviderForEndpoint,
 } from "../../src/provider/xiaomi-family"
@@ -76,5 +77,15 @@ describe("legacyXiaomiAliasTarget", () => {
     expect(legacyXiaomiAliasTarget(null)).toBeUndefined()
     expect(legacyXiaomiAliasTarget("xiaomi")).toBeUndefined()
     expect(legacyXiaomiAliasTarget([])).toBeUndefined()
+  })
+})
+
+describe("removeXiaomiFamilyCredentials", () => {
+  test("removes all four family credential keys", async () => {
+    const removed: string[] = []
+    await removeXiaomiFamilyCredentials((providerID) => {
+      removed.push(providerID)
+    })
+    expect(removed).toEqual([XIAOMI_TOKEN_PLAN_CN, XIAOMI_TOKEN_PLAN_AMS, XIAOMI_TOKEN_PLAN_SGP, XIAOMI_API_PROVIDER_ID])
   })
 })

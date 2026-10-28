@@ -10,7 +10,7 @@ import { DialogSelect } from "@tui/ui/dialog-select"
 import { DialogPrompt } from "../ui/dialog-prompt"
 import { useToast } from "../ui/toast"
 import * as Clipboard from "@tui/util/clipboard"
-import { XIAOMI_CREDENTIAL_PROVIDER_IDS } from "@/provider/xiaomi-family"
+import { familyDefaultModel } from "@tui/util/model"
 import { useRenderer } from "@opentui/solid"
 import os from "os"
 import path from "path"
@@ -193,15 +193,11 @@ function MimoOAuthFlow(props: { url: string; instructions: string }) {
   async function onLoginSuccess() {
     await sdk.client.instance.dispose()
     await sync.bootstrap()
-    // API 与 Token Plan 凭据分键存放：在族内有凭据的 provider 中挑默认模型，
-    // 回落次序与语音回退一致（Token Plan 三档 → xiaomi API）。
-    const lit = XIAOMI_CREDENTIAL_PROVIDER_IDS.map((id) => sync.data.provider.find((p) => p.id === id)).find(
-      (p) => p && p.key && Object.keys(p.models).length > 0,
-    )
-    const defaultModel =
-      lit && "mimo-v2.6-pro" in lit.models ? "mimo-v2.6-pro" : lit ? Object.keys(lit.models)[0] : undefined
-    if (lit && defaultModel) {
-      local.model.set({ providerID: lit.id, modelID: defaultModel }, { recent: true })
+    // API 与 Token Plan 凭据分键存放：在族内有凭据的 provider 中挑默认模型
+    //（回落次序与语音回退一致：Token Plan 三档 → xiaomi API）。
+    const picked = familyDefaultModel(sync.data.provider)
+    if (picked) {
+      local.model.set(picked, { recent: true })
     }
     dialog.clear()
   }
