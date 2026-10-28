@@ -133,6 +133,51 @@ describe("voice", () => {
       )
       expect(result).toEqual({ apiKey: "sk-x", baseUrl: "https://api.xiaomimimo.com/v1" })
     })
+
+    test("falls back to the cluster default URL for token-plan providers", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("xiaomi-token-plan-cn", { key: "sk-cn" })],
+        { providerID: "xiaomi-token-plan-cn", model: "mimo-v2.5-asr" },
+      )
+      expect(result).toEqual({ apiKey: "sk-cn", baseUrl: "https://token-plan-cn.xiaomimimo.com/v1" })
+    })
+
+    test("uses the configured family provider when it has a key", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("xiaomi", { key: "sk-api" }), makeProvider("xiaomi-token-plan-cn", { key: "sk-cn" })],
+        { providerID: "xiaomi", model: "mimo-v2.5-asr" },
+      )
+      expect(result).toEqual({ apiKey: "sk-api", baseUrl: "https://api.xiaomimimo.com/v1" })
+    })
+
+    test("walks the family when the configured family provider has no key", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("xiaomi", { baseURL: "https://unused.example.com/v1" }), makeProvider("xiaomi-token-plan-cn", { key: "sk-cn" })],
+        { providerID: "xiaomi", model: "mimo-v2.5-asr" },
+      )
+      expect(result).toEqual({ apiKey: "sk-cn", baseUrl: "https://token-plan-cn.xiaomimimo.com/v1" })
+    })
+
+    test("prefers token-plan clusters over the API key when walking the family", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("xiaomi", { key: "sk-api" }), makeProvider("xiaomi-token-plan-sgp", { key: "sk-sgp" })],
+        { providerID: "xiaomi-token-plan-ams", model: "mimo-v2.5-asr" },
+      )
+      expect(result).toEqual({ apiKey: "sk-sgp", baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1" })
+    })
+
+    test("returns no_key when no family member has a key", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("xiaomi", { baseURL: "https://api.xiaomimimo.com/v1" })],
+        { providerID: "xiaomi", model: "mimo-v2.5-asr" },
+      )
+      expect(result).toEqual({ error: "no_key", providerID: "xiaomi", model: "mimo-v2.5-asr" })
+    })
   })
 
   describe("encodeWav", () => {

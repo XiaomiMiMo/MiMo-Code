@@ -1,5 +1,6 @@
 import type { AssistantMessage, Config, Message, Model, Provider } from "@mimo-ai/sdk/v2"
 import { contextWindow as overflowWindow } from "@/session/overflow"
+import { XIAOMI_CREDENTIAL_PROVIDER_IDS } from "@/provider/xiaomi-family"
 import { Locale, Token } from "@/util"
 
 type Selection = {
@@ -57,11 +58,17 @@ const PREFERRED_DEFAULT: Selection = { providerID: "xiaomi", modelID: "mimo-v2.6
 /**
  * When argument/recent/configured all miss: prefer the signed-in xiaomi pro
  * model (login required), else the first provider's default/first model.
+ * API 与 Token Plan 凭据分键存放后，已登录族内按 Token Plan 三档 → xiaomi API
+ * 选各自档位的 pro 模型；未登录仍回落 xiaomi 的登录引导。
  */
 export function fallback(
   list: Provider[] | undefined,
   providerDefault: Record<string, string> = {},
 ): Selection | undefined {
+  const signedIn = XIAOMI_CREDENTIAL_PROVIDER_IDS.map(
+    (id): Selection => ({ providerID: id, modelID: PREFERRED_DEFAULT.modelID }),
+  ).find((sel) => get(list, sel.providerID, sel.modelID) && list?.find((p) => p.id === sel.providerID)?.key)
+  if (signedIn) return signedIn
   const preferred = get(list, PREFERRED_DEFAULT.providerID, PREFERRED_DEFAULT.modelID)
   if (preferred) return PREFERRED_DEFAULT
   const provider = list?.[0]

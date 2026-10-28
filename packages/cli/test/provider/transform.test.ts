@@ -172,6 +172,16 @@ describe("ProviderTransform.maxOutputTokens", () => {
     ).toBe(128_000)
   })
 
+  test("uses 128K for token-plan provider models", () => {
+    expect(
+      ProviderTransform.maxOutputTokens({
+        ...baseModel,
+        id: ModelID.make("neutral-model"),
+        providerID: ProviderID.make("xiaomi-token-plan-cn"),
+      }),
+    ).toBe(128_000)
+  })
+
   test("uses 128K for claude models", () => {
     expect(
       ProviderTransform.maxOutputTokens({

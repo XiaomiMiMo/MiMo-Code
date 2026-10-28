@@ -6,6 +6,7 @@ import type * as Provider from "./provider"
 import type * as ModelsDev from "./models"
 import { iife } from "@/util/iife"
 import { Flag } from "@/flag/flag"
+import { isXiaomiFamilyProvider } from "./xiaomi-family"
 import {
   compressImage,
   canonicalImageMime,
@@ -31,7 +32,8 @@ export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 3
 export const LARGE_MODEL_OUTPUT_TOKEN_MAX = 128_000
 
 export function usesLargeModelDefaults(model: { id: string; providerID: string; api: { id: string } }) {
-  if (["mimo", "xiaomi"].includes(model.providerID.toLowerCase())) return true
+  const providerID = model.providerID.toLowerCase()
+  if (providerID === "mimo" || isXiaomiFamilyProvider(providerID)) return true
   return [model.id, model.api.id].some((id) =>
     ["claude", "gpt", "mimo"].some((name) => id.toLowerCase().includes(name)),
   )

@@ -28,6 +28,7 @@ import { type ToolContext as PluginToolContext, type ToolDefinition } from "@mim
 import z from "zod"
 import { Plugin } from "../plugin"
 import { Provider } from "../provider"
+import { isXiaomiFamilyProvider } from "../provider/xiaomi-family"
 import { Worktree } from "../worktree"
 import { Git } from "../git"
 import { ProviderID, type ModelID } from "../provider/schema"
@@ -348,7 +349,7 @@ export const layer = Layer.effect(
           if (tool.id === WebSearchTool.id) {
             return (
               input.providerID === ProviderID.opencode ||
-              input.providerID === "xiaomi" ||
+              isXiaomiFamilyProvider(input.providerID) ||
               Flag.MIMOCODE_ENABLE_EXA
             )
           }

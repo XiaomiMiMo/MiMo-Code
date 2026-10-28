@@ -268,4 +268,24 @@ describe("ToolRegistry.tools: toolset selection", () => {
     ),
   )
 
+  it.live("exposes websearch for xiaomi family providers only", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const reg = yield* ToolRegistry.Service
+        const agents = yield* Agent.Service
+        const build = yield* agents.get("build")
+        const ids = (providerID: string) =>
+          reg
+            .tools({ providerID: ProviderID.make(providerID), modelID: ModelID.make("mimo-v2.6"), agent: build })
+            .pipe(Effect.map((tools) => tools.map((tool) => tool.id)))
+        const family = yield* ids("xiaomi-token-plan-cn")
+        const api = yield* ids("xiaomi")
+        const other = yield* ids("openai")
+        expect(family).toContain("websearch")
+        expect(api).toContain("websearch")
+        expect(other).not.toContain("websearch")
+      }),
+    ),
+  )
+
 })

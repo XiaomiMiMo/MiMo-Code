@@ -30,6 +30,7 @@ import { withStatics } from "@/util/schema"
 
 import * as ProviderTransform from "./transform"
 import { ModelID, ProviderID } from "./schema"
+import { isXiaomiFamilyProvider } from "./xiaomi-family"
 
 const log = Log.create({ service: "provider" })
 const DEFAULT_CONTEXT_WINDOW = 1_000_000
@@ -1116,7 +1117,7 @@ interface State {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Provider") {}
 
 export function sortVisionModels(models: Model[]): Model[] {
-  const inHouse = (m: Model) => m.providerID === "mimo" || m.providerID === "xiaomi"
+  const inHouse = (m: Model) => m.providerID === "mimo" || isXiaomiFamilyProvider(m.providerID)
   return [...models].sort((a, b) => {
     if (inHouse(a) !== inHouse(b)) return inHouse(a) ? -1 : 1
     if (a.cost.input !== b.cost.input) return a.cost.input - b.cost.input

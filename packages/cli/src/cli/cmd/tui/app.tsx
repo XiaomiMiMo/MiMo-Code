@@ -16,6 +16,7 @@ import {
 } from "solid-js"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { Flag } from "@/flag/flag"
+import { XIAOMI_CREDENTIAL_PROVIDER_IDS } from "@/provider/xiaomi-family"
 import { isSystemSession } from "@/session/auto-dream"
 import semver from "semver"
 import { DialogProvider, useDialog } from "@tui/ui/dialog"
@@ -725,7 +726,10 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
         name: "logout",
       },
       onSelect: async () => {
-        await sdk.client.auth.remove({ providerID: "xiaomi" })
+        // 登出清族内全部凭据键（API 与 Token Plan 分键存放，只清 xiaomi 会留下 Token Plan 条目）。
+        for (const providerID of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
+          await sdk.client.auth.remove({ providerID })
+        }
         await sdk.client.instance.dispose()
         await sync.bootstrap()
         toast.show({ message: t("tui.command.logout.toast"), variant: "info" })
