@@ -2,7 +2,7 @@
 feature: xiaomi-auth-provider-split
 status: delivered
 updated: 2026-10-28
-source: feat/xiaomi-auth-provider-split
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2739
 ---
 
 # Xiaomi 凭据按 Provider 分键落盘
