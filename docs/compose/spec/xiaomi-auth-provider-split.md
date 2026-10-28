@@ -5,82 +5,82 @@ updated: 2026-10-28
 source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2739
 ---
 
-# Xiaomi 凭据按 Provider 分键落盘
+# Xiaomi Credential Provider Split
 
 ## Report
 
-**What was built** — MiMo 开放平台登录凭据按端点分键落盘：API Key 写 `xiaomi`，Token Plan 写 `xiaomi-token-plan-cn|ams|sgp`（与 models.dev 目录一致），两类可共存。派生逻辑单源在 `xiaomi-family.ts`；`MimoAuthPlugin` 回调返回 `result.provider`，`ProviderAuth.callback` 与 CLI `mimoLogin` 经共享的 `saveCredential` 落盘（含同档旧 CLI 形态清理）。消费端按 `xiaomi-*` 族识别：websearch 路由与密钥、WebSearchTool 门、inHouse 排序、大模型默认值、TUI 登出清族、登录默认模型与 fallback、语音凭据族回退（Token Plan 三档 → API）。旧 CLI 形态条目不迁移、继续可读。
+**What was built** — Platform login credentials now land under separate providers in `auth.json`: the API key under `xiaomi`, token-plan keys under `xiaomi-token-plan-cn|ams|sgp` (matching the models.dev catalog). The two kinds may coexist. Endpoint → provider derivation lives in `xiaomi-family.ts`; `MimoAuthPlugin` returns the derived `result.provider`, and `ProviderAuth.callback` plus CLI `mimoLogin` share `saveCredential` (including same-cluster legacy-alias cleanup). Consumers recognize the `xiaomi-*` family: websearch routing and key lookup, the WebSearchTool gate, in-house ordering, large-model defaults, TUI logout, login default model and fallback (`familyDefaultModel`), and voice credential fallback (token-plan clusters before the API key). Legacy single-key entries keep working; only a same-cluster re-login drops them.
 
-**Verification** — 相关范围（packages/cli）：`bun test test/provider/xiaomi-family.test.ts test/provider/provider-auth-write.test.ts test/plugin/mimo.test.ts test/cli/plugin-auth-picker.test.ts test/cli/tui/voice.test.ts test/cli/tui/model.test.ts test/provider/transform.test.ts test/tool/websearch.test.ts test/tool/registry-toolset.test.ts test/auth` → 385 pass / 4 pre-existing skip / 0 fail。工作树根 `bun run typecheck`（全 workspace）PASS。全量测试按指示不跑（仓内有预存红测）。
+**Verification** — Related scope (packages/cli): `bun test test/provider/xiaomi-family.test.ts test/provider/provider-auth-write.test.ts test/plugin/mimo.test.ts test/cli/plugin-auth-picker.test.ts test/cli/tui/voice.test.ts test/cli/tui/model.test.ts test/provider/transform.test.ts test/tool/websearch.test.ts test/tool/registry-toolset.test.ts test/auth` → 385 pass / 4 pre-existing skip / 0 fail. Root `bun run typecheck` (all workspaces) PASS. Full suite intentionally skipped (repo has pre-existing failures).
 
 ## [S1] Problem
 
-MiMo 开放平台登录（浏览器授权 / 粘贴 Code）返回 `{sk, uid, url}`，其中 `url` 既可能是计费网关（API Key）也可能是 Token Plan 集群。当前实现把两类凭据都写进 `auth.json` 的同一个 `xiaomi` 键，仅靠 `metadata.base_url` 区分：
+Platform login (browser authorize / pasted code) returns `{sk, uid, url}`, where `url` is either the billing gateway (API key) or a token-plan cluster. Both kinds were written under the single `xiaomi` key in `auth.json`, distinguished only by `metadata.base_url`:
 
-- `packages/cli/src/plugin/mimo.ts` 的授权回调只返回 `key + metadata`，不声明目标 provider；
-- `packages/cli/src/provider/auth.ts` 的 `callback` 把 api / oauth 两种凭据都写进 `input.providerID`，并把结果里的 `provider` 重定向字段解构丢弃（`cli/cmd/providers.ts` 的 `handlePluginAuth` 反而支持该字段）；
-- `packages/cli/src/cli/cmd/providers.ts` 的 `mimoLogin()` 硬编码 `put("xiaomi", ...)`。
+- `packages/cli/src/plugin/mimo.ts` returned `key + metadata` and never declared the target provider.
+- `packages/cli/src/provider/auth.ts` `callback` wrote api/oauth results to `input.providerID` and discarded the result's `provider` redirect field (which `handlePluginAuth` in `cli/cmd/providers.ts` does honor).
+- `mimoLogin()` in `cli/cmd/providers.ts` hardcoded `put("xiaomi", ...)`.
 
-这与 models.dev 目录的分类不符：目录把 API 与 Token Plan 三集群登记为**四个 provider**（`xiaomi` → `https://api.xiaomimimo.com/v1`；`xiaomi-token-plan-cn|ams|sgp` → `https://token-plan-*.xiaomimimo.com/v1`），API Key 与 Token Plan 凭据应存放在不同 provider 下，且可以共存。现状导致：二次登录互相覆盖、Token Plan 用户的凭据无法按目录 provider 直接命中，一批特判 `providerID === "xiaomi"` 的消费点（X-Mimo-Source 头、websearch、TUI 登出/whoami/默认模型等）也不认识 `xiaomi-token-plan-*`。
+That contradicts the models.dev catalog, which registers API and the three token-plan clusters as four providers (`xiaomi` → `https://api.xiaomimimo.com/v1`; `xiaomi-token-plan-cn|ams|sgp` → `https://token-plan-*.xiaomimimo.com/v1`). Consequences: re-logins overwrote each other, token-plan credentials could not hit their catalog provider directly, and every consumer special-casing `providerID === "xiaomi"` (X-Mimo-Source header, websearch, TUI logout/whoami/default model) ignored `xiaomi-token-plan-*`.
 
 ## [S2] Design
 
-### S2.1 Provider 派生（单源）
+### S2.1 Provider derivation (single source)
 
-新增 `packages/cli/src/provider/xiaomi-family.ts`：
+New `packages/cli/src/provider/xiaomi-family.ts`:
 
-- 常量：`XIAOMI_API_PROVIDER_ID = "xiaomi"`；Token Plan 三档 id `xiaomi-token-plan-cn|ams|sgp` 与默认端点表（与 models.dev 一致）。
-- `xiaomiProviderForEndpoint(url?: string): string`：按 URL 的 **hostname** 精确归类——`api.xiaomimimo.com` → `xiaomi`；`token-plan-cn|ams|sgp.xiaomimimo.com` → 对应三档 id；解析失败或未知主机 → 回落 `xiaomi`（保持旧行为：凭据进 `xiaomi` 并保留 `metadata.base_url`，由插件 loader 重定向）。
-- `isXiaomiFamilyProvider(id?: string): boolean`：`id === "xiaomi" || id.startsWith("xiaomi-")`，与 `provider/error.ts` 现有网关族判据同形。
+- Constants: `XIAOMI_API_PROVIDER_ID = "xiaomi"`; token-plan ids `xiaomi-token-plan-cn|ams|sgp` with their default endpoints (models.dev-aligned).
+- `xiaomiProviderForEndpoint(url?: string): string`: classify by URL **hostname** — `api.xiaomimimo.com` → `xiaomi`; `token-plan-cn|ams|sgp.xiaomimimo.com` → matching cluster id; unparseable or unknown host → fall back to `xiaomi` (preserves prior behavior: credential under `xiaomi` with `metadata.base_url`, redirected by the plugin loader).
+- `isXiaomiFamilyProvider(id?: string): boolean`: `id === "xiaomi" || id.startsWith("xiaomi-")`, mirroring the gateway-family rule already used in `provider/error.ts`.
 
-### S2.2 通用 OAuth 回调落盘尊重 `result.provider`
+### S2.2 Generic OAuth callback honors `result.provider`
 
-`packages/cli/src/provider/auth.ts` `callback`：api（`key`）与 oauth（`refresh`）两种写入统一使用 `result.provider ?? input.providerID` 作为落盘键。这样插件可以按端点把凭据写进不同 provider，CLI 与 TUI/服务端两条登录路径行为一致。
+`packages/cli/src/provider/auth.ts` `callback`: both api (`key`) and oauth (`refresh`) writes use `result.provider ?? input.providerID` as the store key, so plugins can direct credentials to different providers and the CLI and TUI/server login paths behave alike.
 
-### S2.3 MimoAuthPlugin 声明目标 provider
+### S2.3 MimoAuthPlugin declares the target provider
 
-`packages/cli/src/plugin/mimo.ts` 授权回调（本地 server 与粘贴 Code 两个分支）在 success 结果里返回 `provider: xiaomiProviderForEndpoint(result.url)`。`metadata.uid` / `metadata.base_url` 照旧写入，不改加密协议。`chat.headers` 的 `X-Mimo-Source` 门改为 `isXiaomiFamilyProvider(model.providerID)`。
+Both success branches of the authorize callback (local server and pasted code) return `provider: xiaomiProviderForEndpoint(result.url)`. `metadata.uid` / `metadata.base_url` are still written; the encrypted payload is unchanged. The `X-Mimo-Source` gate in `chat.headers` uses `isXiaomiFamilyProvider(model.providerID)`.
 
-### S2.4 CLI 登录与 whoami
+### S2.4 CLI login and whoami
 
-`mimoLogin()` 落盘键改为 `result.provider ?? "xiaomi"`。落盘经共享的 `saveCredential`（`provider/auth.ts` 导出，`ProviderAuth.callback` 同用）：写入 Token Plan 档时，若 `xiaomi` 现存条目是旧 CLI 形态（`type:"api"` 且 `metadata.base_url` 归类为同一 Token Plan 档），同一写入内删除该旧键，避免同一凭据双挂。`providers whoami` 遍历族内四键（`xiaomi` + 三档），逐条展示已登录条目。
+`mimoLogin()` stores under `result.provider ?? "xiaomi"`. Writes go through shared `saveCredential` (exported from `provider/auth.ts`, also used by `ProviderAuth.callback`): a token-plan write removes a legacy `xiaomi` entry (`type: "api"` whose `metadata.base_url` maps to that same cluster) so one credential cannot hang under two keys. `providers whoami` walks the four family keys and lists each signed-in entry.
 
-### S2.5 引擎消费端族识别
+### S2.5 Engine consumers
 
-- `tool/websearch/index.ts`：走 MiMo 网关分支的判据改为族判据；密钥按 `model.providerID` 取（不再硬编码 `auth.get("xiaomi")`），端点继续用 `model.api.url`。
-- `tool/registry.ts`：WebSearchTool 可用性判据改族判据。
-- `provider/provider.ts` `inHouse` 排序、`provider/transform.ts` `usesLargeModelDefaults`：`mimo` 或小米族。
-- `provider/error.ts` 已按 `xiaomi-*` 族工作，不动。
+- `tool/websearch/index.ts`: the MiMo gateway branch uses the family predicate; the key comes from `model.providerID` (no more hardcoded `auth.get("xiaomi")`); the endpoint stays `model.api.url`.
+- `tool/registry.ts`: WebSearchTool availability uses the family predicate.
+- `provider/provider.ts` `inHouse` ordering and `provider/transform.ts` `usesLargeModelDefaults`: `mimo` or the xiaomi family.
+- `provider/error.ts` already works per `xiaomi-*` and is unchanged.
 
-### S2.6 TUI 消费端
+### S2.6 TUI consumers
 
-- 登出（`app.tsx` provider.logout）：经 `removeXiaomiFamilyCredentials` 移除族内四键。
-- 登录成功（`dialog-mimo-login.tsx` `onLoginSuccess`）：经 `familyDefaultModel`（`util/model.ts` 导出，登录对话框与 `fallback` 共用）在族内有凭据（`key` 或 `options.apiKey`）且有模型的 provider 中选默认模型（优先 `mimo-v2.6-pro`，否则首个模型），不再假定 `xiaomi`；`fallback` 对已登录族内同规则优先，未登录仍回落 xiaomi 登录引导。
-- 语音（`tui/util/voice.ts`）：`resolveCredentials` 在配置的族内 provider 缺 key 时按 `xiaomi-token-plan-cn → ams → sgp → xiaomi` 顺序回退到族内第一个有 key 的 provider（与桌面端语音回退次序一致）；缺省 baseURL 回落补全覆盖族内四档默认端点。
+- Logout (`app.tsx`): `removeXiaomiFamilyCredentials` clears all four family keys.
+- Login success (`dialog-mimo-login.tsx` `onLoginSuccess`): `familyDefaultModel` (exported from `util/model.ts`, shared with `fallback`) picks the default model from the first family provider holding credentials (`key` or `options.apiKey`) and models, preferring `mimo-v2.6-pro`; `fallback` prefers the same signed-in family default and keeps the xiaomi login guidance when signed out.
+- Voice (`tui/util/voice.ts`): `resolveCredentials` falls back along `xiaomi-token-plan-cn → ams → sgp → xiaomi` to the first family provider with a key when the configured one has none (same order as the desktop voice fallback); the default baseURL map covers all four endpoints.
 
-### S2.7 兼容
+### S2.7 Compatibility
 
-旧条目（`xiaomi` 键 + Token Plan `metadata.base_url` 的 CLI 形态）继续可读可用：插件 loader 的 baseURL 重定向与桌面端消费（其语音用例 TP-R7-07 明示兼容该形态）均不受影响。不做主动迁移；仅 S2.4 的同档重登清理。
+Legacy entries (CLI form: `xiaomi` key + token-plan `metadata.base_url`) remain readable and usable via the plugin loader's baseURL redirect and the desktop's consumers (its voice case TP-R7-07 explicitly supports the form). No proactive migration; only the same-cluster re-login cleanup from S2.4.
 
 ## [S3] Out of Scope
 
-- 桌面端（mimo-desktop）自身的 auth.json 写入路径不在本次范围；其消费侧已兼容分键与旧形态。
-- 不改平台加密载荷契约（仍为 `{sk, uid, url}`）。
-- 不为 `xiaomi-token-plan-*` 增加插件 auth hook/loader（目录 api.url 已提供正确端点）。
-- 不改 `provider-priority.ts` 登录列表排序、不迁移历史条目。
+- The desktop app's own `auth.json` write path; its consumers already accept both layouts.
+- The platform's encrypted payload contract (`{sk, uid, url}`) — unchanged.
+- Plugin auth hooks/loaders for `xiaomi-token-plan-*` (catalog `api.url` already provides the endpoint).
+- `provider-priority.ts` login-list ordering and bulk migration of historical entries.
 
 ## Tasks
 
-- [x] T1: 新增 `xiaomi-family.ts` 派生与族判据 — acceptance: 单测覆盖四端点归类、未知 URL 回落 `xiaomi`、族判据真/假样例 (covers: S2.1)
-- [x] T2: `provider/auth.ts` callback 落盘键尊重 `result.provider` — acceptance: 单测证明 api 与 oauth 两种结果都按重定向键落盘，缺省仍为 `input.providerID` (covers: S2.2)
-- [x] T3: `plugin/mimo.ts` 回调返回派生 provider + `chat.headers` 族门 — acceptance: 单测证明 Token Plan 回调返回对应 provider、`X-Mimo-Source` 对 `xiaomi-token-plan-*` 生效 (covers: S2.3)
-- [x] T4: `mimoLogin` 分键落盘 + 旧形态同档清理 + whoami 族遍历 — acceptance: 单测证明 Token Plan 登录写入 `xiaomi-token-plan-*`、旧 `xiaomi` 同档条目被清、API 登录写 `xiaomi`、两类可共存 (covers: S2.4)
-- [x] T5: 引擎消费端族识别（websearch/registry/inHouse/transform） — acceptance: 单测证明 `xiaomi-token-plan-cn` 模型走 MiMo websearch 且按自身 provider 取 key、WebSearchTool 可用 (covers: S2.5)
-- [x] T6: TUI 消费端（登出清族、登录默认模型、语音族回退） — acceptance: 单测证明登出移除族内四键、语音在配置档缺 key 时回退族内有 key 档 (covers: S2.6)
+- [x] T1: Add `xiaomi-family.ts` derivation and family predicate — acceptance: unit tests cover all four endpoints, unknown-URL fallback to `xiaomi`, and family predicate true/false samples (covers: S2.1)
+- [x] T2: `provider/auth.ts` callback stores under `result.provider` — acceptance: tests prove api and oauth results honor the redirect and the default remains `input.providerID` (covers: S2.2)
+- [x] T3: `plugin/mimo.ts` returns the derived provider and gates `chat.headers` by family — acceptance: tests prove token-plan callbacks return the cluster provider and `X-Mimo-Source` applies to `xiaomi-token-plan-*` (covers: S2.3)
+- [x] T4: `mimoLogin` split writes + same-cluster legacy cleanup + family whoami — acceptance: tests prove token-plan logins write `xiaomi-token-plan-*`, the stale `xiaomi` alias is cleared, API logins write `xiaomi`, and both kinds coexist (covers: S2.4)
+- [x] T5: Engine consumers recognize the family (websearch/registry/inHouse/transform) — acceptance: tests prove `xiaomi-token-plan-cn` models use MiMo websearch with their own provider key and expose WebSearchTool (covers: S2.5)
+- [x] T6: TUI consumers (family logout, login default model, voice fallback) — acceptance: tests prove logout removes all four family keys and voice falls back to a keyed family member when the configured cluster has none (covers: S2.6)
 
 ## Journey log
 
-- 凭据写入有两条驱动（CLI `mimoLogin` / TUI 服务端 `ProviderAuth.callback`），策略必须单源：首轮实现各留一份旧键清理，评审指出未测路径会漂移，收敛为共享 `saveCredential` 后两条路径同一实现、同一组集成测试覆盖。
-- `auth.json` 旧 CLI 形态（`xiaomi` 键 + Token Plan `metadata.base_url`）必须继续可读：桌面端语音用例 TP-R7-07 明示兼容该形态；分键只是新写入的归属，不做主动迁移（同档重登时清旧键）。
-- `xiaomi-*` 前缀族判据（行为门）与四键凭据清单（落盘槽位）是两个集合：`xiaomi-mimo-*` 等 BYOK 克隆需要网关行为（headers/websearch），但凭据在 mimocode.json、不进 auth.json 族槽，登出/whoami/清理只认 models.dev 四键。
-- 被驳回的评审项留档：`provider: ""` 空串回退（`??` 与 `handlePluginAuth` 一致，非真实载荷形态）；插件本地 server 回调分支不测（端口不对外暴露，两分支共用同一派生表达式）。「success 结果既无 key 也无 refresh 时不清理旧键」为类型层面不可达边缘，未单测。
+- Two drivers persist plugin credentials (CLI `mimoLogin` / server `ProviderAuth.callback`). The policy must live in one place: the first cut kept two copies of the legacy-alias cleanup, review flagged drift risk on the untested path, and both now share `saveCredential`.
+- The legacy single-key CLI form must keep working: the desktop voice suite (TP-R7-07) explicitly covers it. The split only changes where new writes land; only a same-cluster re-login drops the stale key.
+- The `xiaomi-*` prefix predicate (behavior gates) and the four-id credential list (store slots) are deliberately different sets: `xiaomi-mimo-*` BYOK clones need gateway behavior but hold credentials in `mimocode.json`, so logout/whoami/cleanup only touch the four models.dev ids.
+- Review items rejected with reasons: empty-string `provider` fallback (`??` matches `handlePluginAuth`; not a real payload shape); the plugin's local-server callback branch is untested (port not exposed to tests; both branches share one derivation expression); the "success with neither key nor refresh keeps the alias" edge is unreachable by type and untested.

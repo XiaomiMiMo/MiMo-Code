@@ -193,8 +193,6 @@ function MimoOAuthFlow(props: { url: string; instructions: string }) {
   async function onLoginSuccess() {
     await sdk.client.instance.dispose()
     await sync.bootstrap()
-    // API 与 Token Plan 凭据分键存放：在族内有凭据的 provider 中挑默认模型
-    //（回落次序与语音回退一致：Token Plan 三档 → xiaomi API）。
     const picked = familyDefaultModel(sync.data.provider)
     if (picked) {
       local.model.set(picked, { recent: true })

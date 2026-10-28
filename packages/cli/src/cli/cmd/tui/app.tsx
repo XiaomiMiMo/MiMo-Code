@@ -726,7 +726,7 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
         name: "logout",
       },
       onSelect: async () => {
-        // 登出清族内全部凭据键（API 与 Token Plan 分键存放，只清 xiaomi 会留下 Token Plan 条目）。
+        // Logout must clear every family key; token-plan entries survive a `xiaomi`-only removal.
         await removeXiaomiFamilyCredentials((providerID) => sdk.client.auth.remove({ providerID }))
         await sdk.client.instance.dispose()
         await sync.bootstrap()

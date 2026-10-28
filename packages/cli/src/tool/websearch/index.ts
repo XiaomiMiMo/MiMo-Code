@@ -63,8 +63,8 @@ export const WebSearchTool = Tool.define(
           const model = (ctx.extra as { model?: Provider.Model })?.model
           const timeout = params.timeout === undefined ? undefined : Math.min(params.timeout * 1000, MAX_TIMEOUT)
 
-          // MiMo 族（xiaomi 与 xiaomi-token-plan-* 等）走网关 websearch，密钥按模型自身的
-          // provider 取——API 与 Token Plan 凭据分键存放后不能再写死 `xiaomi`。
+          // API and token-plan credentials are stored separately, so the key must
+          // come from the model's own provider rather than a hardcoded `xiaomi`.
           const gatewayModel = model && isXiaomiFamilyProvider(model.providerID) ? model : undefined
           const result =
             gatewayModel

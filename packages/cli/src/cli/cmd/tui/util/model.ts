@@ -59,10 +59,7 @@ function hasCredential(provider: Provider | undefined) {
   return Boolean(provider?.key || (provider?.options?.apiKey as string | undefined))
 }
 
-/**
- * 族内已登录（API 与 Token Plan 分键存放）的默认模型：按 Token Plan 三档 → xiaomi API
- * 取第一个有凭据且有模型的 provider，模型优先 pro、否则取第一个。
- */
+/** First family provider holding credentials and models (token-plan clusters → xiaomi), pro model preferred. */
 export function familyDefaultModel(list: Provider[] | undefined): Selection | undefined {
   for (const providerID of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
     const provider = list?.find((p) => p.id === providerID)
@@ -75,10 +72,9 @@ export function familyDefaultModel(list: Provider[] | undefined): Selection | un
 }
 
 /**
- * When argument/recent/configured all miss: prefer the signed-in xiaomi pro
- * model (login required), else the first provider's default/first model.
- * API 与 Token Plan 凭据分键存放后，已登录族内按 Token Plan 三档 → xiaomi API
- * 选各自档位的默认模型；未登录仍回落 xiaomi 的登录引导。
+ * When argument/recent/configured all miss: prefer the signed-in family default
+ * (familyDefaultModel), else the xiaomi pro model (login required), else the
+ * first provider's default/first model.
  */
 export function fallback(
   list: Provider[] | undefined,

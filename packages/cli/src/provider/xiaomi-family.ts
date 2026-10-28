@@ -1,8 +1,7 @@
-// MiMo 开放平台凭据的 provider 归属（models.dev 目录 id）。
-// API Key 与 Token Plan 是不同 provider，凭据分键存放、可共存；
-// 落盘键按平台回调返回的端点 hostname 归类，未知端点回落 `xiaomi` 并保留
-// metadata.base_url（插件 loader 重定向），兼容旧 CLI 形态条目。
-// 族判据与 provider/error.ts 的网关族规则同形（`xiaomi` + `xiaomi-*`）。
+// Credential placement for Xiaomi MiMo platform keys (models.dev provider ids).
+// API keys and token-plan keys live under different providers and may coexist.
+// Endpoint hostname selects the store key; unknown endpoints fall back to `xiaomi`
+// so legacy single-key entries keep working via the plugin loader's baseURL redirect.
 
 export const XIAOMI_API_PROVIDER_ID = "xiaomi"
 export const XIAOMI_TOKEN_PLAN_CN = "xiaomi-token-plan-cn"
@@ -23,7 +22,7 @@ const DEFAULT_BASE_URL_BY_PROVIDER: Record<string, string> = {
   [XIAOMI_TOKEN_PLAN_SGP]: "https://token-plan-sgp.xiaomimimo.com/v1",
 }
 
-/** Token Plan 档在前，API 档收尾——与桌面端语音回退次序一致。 */
+/** Token-plan clusters first, API last — same walk order as the desktop voice fallback. */
 export const XIAOMI_CREDENTIAL_PROVIDER_IDS = [
   XIAOMI_TOKEN_PLAN_CN,
   XIAOMI_TOKEN_PLAN_AMS,
@@ -31,7 +30,7 @@ export const XIAOMI_CREDENTIAL_PROVIDER_IDS = [
   XIAOMI_API_PROVIDER_ID,
 ] as const
 
-/** 登出清族内全部凭据键（API 与 Token Plan 分键存放，只清 `xiaomi` 会留下 Token Plan 条目）。 */
+/** Clears every family credential key (removing only `xiaomi` would leave token-plan entries). */
 export async function removeXiaomiFamilyCredentials(remove: (providerID: string) => Promise<unknown> | unknown) {
   for (const providerID of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
     await remove(providerID)
@@ -57,9 +56,9 @@ export function isXiaomiFamilyProvider(providerID: string | undefined): boolean 
 }
 
 /**
- * 旧 CLI 形态：凭据写在 `xiaomi` 键下、靠 `metadata.base_url` 指向 Token Plan 档。
- * 返回它实际归属的 Token Plan provider id；不是该形态（或归 API 档）返回 undefined。
- * 分键写入 Token Plan 档时据此清掉同一档的旧键，避免同一凭据双挂。
+ * Legacy CLI form: a `xiaomi` api entry whose metadata.base_url points at a
+ * token-plan cluster. Returns that cluster's id so a split write can drop the
+ * stale key. Never matches oauth entries — those hold refresh tokens.
  */
 export function legacyXiaomiAliasTarget(entry: unknown): string | undefined {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined

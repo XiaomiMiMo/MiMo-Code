@@ -36,8 +36,7 @@ export function resolveCredentials(
     if (!baseUrl) return { error: "no_url", providerID: config.providerID, model: config.model }
     return { apiKey: configuredKey, baseUrl }
   }
-  // 配置的族内 provider 缺 key 时按 Token Plan 三档 → xiaomi 回退到族内第一个有 key 的
-  // provider（API 与 Token Plan 凭据分键存放，与桌面端语音回退次序一致）。
+  // A keyless family config falls back along token-plan clusters → xiaomi (desktop order).
   if (isXiaomiFamilyProvider(config.providerID)) {
     for (const id of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
       const provider = find(id)
