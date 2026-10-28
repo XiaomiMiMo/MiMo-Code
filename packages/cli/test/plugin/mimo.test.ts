@@ -1,33 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import crypto from "crypto"
 import { MimoAuthPlugin } from "../../src/plugin/mimo"
+import { encryptToPk as encrypt } from "../fixture/mimo-encrypt"
 import type { PluginInput } from "@mimo-ai/plugin"
-
-function encrypt(recipientPkBase64: string, payload: string): string {
-  const recipientPublicKey = crypto.createPublicKey({
-    key: Buffer.from(recipientPkBase64, "base64url"),
-    format: "der",
-    type: "spki",
-  })
-
-  const ephemeral = crypto.generateKeyPairSync("x25519", {
-    publicKeyEncoding: { type: "spki", format: "der" },
-    privateKeyEncoding: { type: "pkcs8", format: "der" },
-  })
-  const ephemeralPub = ephemeral.publicKey.subarray(ephemeral.publicKey.length - 32)
-
-  const ephemeralPrivateKey = crypto.createPrivateKey({ key: ephemeral.privateKey, format: "der", type: "pkcs8" })
-  const sharedSecret = crypto.diffieHellman({ privateKey: ephemeralPrivateKey, publicKey: recipientPublicKey })
-  const derivedKey = crypto.createHash("sha256").update(sharedSecret).digest()
-
-  const nonce = crypto.randomBytes(12)
-  const cipher = crypto.createCipheriv("aes-256-gcm", derivedKey, nonce)
-  const ciphertext = Buffer.concat([cipher.update(payload, "utf-8"), cipher.final()])
-  const tag = cipher.getAuthTag()
-
-  const encrypted = Buffer.concat([ephemeralPub, nonce, ciphertext, tag])
-  return encrypted.toString("base64url")
-}
 
 const fakeInput = {
   client: {},
@@ -218,6 +192,41 @@ describe("MimoAuthPlugin", () => {
       expect(callbackResult.type).toBe("success")
       expect(callbackResult.metadata.base_url).toBeUndefined()
     })
+
+    test("derives the save provider from the endpoint cluster", async () => {
+      const cases: Array<[string, string]> = [
+        ["https://api.xiaomimimo.com/v1", "xiaomi"],
+        ["https://token-plan-cn.xiaomimimo.com/v1", "xiaomi-token-plan-cn"],
+        ["https://token-plan-ams.xiaomimimo.com/v1", "xiaomi-token-plan-ams"],
+        ["https://token-plan-sgp.xiaomimimo.com/v1", "xiaomi-token-plan-sgp"],
+        ["https://gateway.example.com/v1", "xiaomi"],
+      ]
+      for (const [url, provider] of cases) {
+        const hooks = await MimoAuthPlugin(fakeInput)
+        const method = hooks.auth!.methods[0]
+        const result = (await method.authorize!()) as any
+
+        const pk = new URL(result.url).searchParams.get("pk")!
+        const code = encrypt(pk, JSON.stringify({ sk: "sk-p", uid: "u-p", url }))
+
+        const callbackResult = await result.callback(code)
+        expect(callbackResult.type).toBe("success")
+        expect(callbackResult.provider).toBe(provider)
+      }
+    })
+
+    test("derives the API provider when payload has no url", async () => {
+      const hooks = await MimoAuthPlugin(fakeInput)
+      const method = hooks.auth!.methods[0]
+      const result = (await method.authorize!()) as any
+
+      const pk = new URL(result.url).searchParams.get("pk")!
+      const code = encrypt(pk, JSON.stringify({ sk: "sk-n", uid: "u-n" }))
+
+      const callbackResult = await result.callback(code)
+      expect(callbackResult.type).toBe("success")
+      expect(callbackResult.provider).toBe("xiaomi")
+    })
   })
 
   describe("chat.headers hook", () => {
@@ -228,9 +237,18 @@ describe("MimoAuthPlugin", () => {
       expect(output.headers["X-Mimo-Source"]).toBe("mimocode-cli")
     })
 
+    test("adds X-Mimo-Source header for token-plan providers", async () => {
+      const hooks = await MimoAuthPlugin(fakeInput)
+      for (const providerID of ["xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp"]) {
+        const output = { headers: {} as Record<string, string> }
+        await hooks["chat.headers"]!({ model: { providerID } } as any, output as any)
+        expect(output.headers["X-Mimo-Source"]).toBe("mimocode-cli")
+      }
+    })
+
     test("does not add header for other providers", async () => {
       const hooks = await MimoAuthPlugin(fakeInput)
-      const providers = ["anthropic", "openai", "google"]
+      const providers = ["anthropic", "openai", "google", "mimo", "mimo-desktop"]
       for (const providerID of providers) {
         const output = { headers: {} as Record<string, string> }
         await hooks["chat.headers"]!({ model: { providerID } } as any, output as any)

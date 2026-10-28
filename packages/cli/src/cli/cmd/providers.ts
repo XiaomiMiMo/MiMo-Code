@@ -15,6 +15,7 @@ import { Instance } from "../../project/instance"
 import type { Hooks } from "@mimo-ai/plugin"
 import { Log, Process } from "../../util"
 import { PROVIDER_PRIORITY } from "../../util/provider-priority"
+import { XIAOMI_API_PROVIDER_ID, XIAOMI_CREDENTIAL_PROVIDER_IDS, legacyXiaomiAliasTarget } from "../../provider/xiaomi-family"
 import { text } from "node:stream/consumers"
 import { Effect } from "effect"
 import * as readline from "readline"
@@ -25,7 +26,11 @@ const put = (key: string, info: Auth.Info) =>
   AppRuntime.runPromise(
     Effect.gen(function* () {
       const auth = yield* Auth.Service
+      const legacy = yield* auth.get(XIAOMI_API_PROVIDER_ID)
       yield* auth.set(key, info)
+      // 分键写入 Token Plan 档时清掉同档旧 CLI 形态（`xiaomi` 键 + base_url 指该档），
+      // 避免同一凭据双挂；API 档与 oauth 条目不受影响。
+      if (legacy && legacyXiaomiAliasTarget(legacy) === key) yield* auth.remove(XIAOMI_API_PROVIDER_ID)
     }),
   )
 
@@ -244,7 +249,7 @@ async function mimoLogin() {
 
     if (raceResult.source === "browser") {
       if (raceResult.data.type === "success" && "key" in raceResult.data) {
-        await put("xiaomi", {
+        await put(raceResult.data.provider ?? XIAOMI_API_PROVIDER_ID, {
           type: "api",
           key: raceResult.data.key,
           ...(raceResult.data.metadata ? { metadata: raceResult.data.metadata } : {}),
@@ -260,7 +265,7 @@ async function mimoLogin() {
 
     const callbackResult = await authorize.callback(raceResult.input)
     if (callbackResult.type === "success" && "key" in callbackResult) {
-      await put("xiaomi", {
+      await put(callbackResult.provider ?? XIAOMI_API_PROVIDER_ID, {
         type: "api",
         key: callbackResult.key,
         ...(callbackResult.metadata ? { metadata: callbackResult.metadata } : {}),
@@ -635,22 +640,28 @@ export const ProvidersWhoamiCommand = cmd({
   async handler(_args) {
     UI.empty()
     prompts.intro("Current user")
-    const info = await AppRuntime.runPromise(
+    const entries = await AppRuntime.runPromise(
       Effect.gen(function* () {
         const auth = yield* Auth.Service
-        return yield* auth.get("xiaomi")
+        const found: Array<[string, Auth.Info]> = []
+        for (const id of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
+          const info = yield* auth.get(id)
+          if (info) found.push([id, info])
+        }
+        return found
       }),
     )
-    if (!info) {
+    if (entries.length === 0) {
       prompts.log.error("Not logged in. Run `mimo auth login` to log in.")
       return
     }
-    if (info.type === "api" && info.metadata) {
-      prompts.log.info(`Provider: MiMo`)
-      prompts.log.info(`User ID: ${info.metadata.uid ?? "unknown"}`)
-    } else {
-      prompts.log.info(`Provider: MiMo`)
-      prompts.log.info(`Type: ${info.type}`)
+    for (const [id, info] of entries) {
+      prompts.log.info(`Provider: MiMo (${id})`)
+      if (info.type === "api" && info.metadata) {
+        prompts.log.info(`User ID: ${info.metadata.uid ?? "unknown"}`)
+      } else {
+        prompts.log.info(`Type: ${info.type}`)
+      }
     }
     prompts.outro("")
   },

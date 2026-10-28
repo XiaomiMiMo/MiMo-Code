@@ -6,6 +6,7 @@ import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
 import { Plugin } from "../plugin"
 import { ProviderID } from "./schema"
+import { XIAOMI_API_PROVIDER_ID, legacyXiaomiAliasTarget } from "./xiaomi-family"
 import { Array as Arr, Effect, Layer, Record, Result, Context, Schema } from "effect"
 import z from "zod"
 
@@ -205,8 +206,12 @@ export const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> =
       )
       if (!result || result.type !== "success") return yield* Effect.fail(new OauthCallbackFailed({}))
 
+      // 插件可以按端点把凭据写进不同 provider（如 xiaomi API 与 Token Plan 分键）；
+      // 缺省仍写调用方请求的 provider。
+      const saveProvider = ProviderID.make(result.provider ?? input.providerID)
+
       if ("key" in result) {
-        yield* auth.set(input.providerID, {
+        yield* auth.set(saveProvider, {
           type: "api",
           key: result.key,
           ...("metadata" in result && result.metadata ? { metadata: result.metadata } : {}),
@@ -214,14 +219,21 @@ export const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> =
       }
 
       if ("refresh" in result) {
-        const { type: _, provider: __, refresh, access, expires, ...extra } = result
-        yield* auth.set(input.providerID, {
+        const { type: _t, provider: _p, refresh, access, expires, ...extra } = result
+        yield* auth.set(saveProvider, {
           type: "oauth",
           access,
           refresh,
           expires,
           ...extra,
         })
+      }
+
+      // 分键写入 Token Plan 档时清掉同档旧 CLI 形态（`xiaomi` 键 + base_url 指该档），
+      // 避免同一凭据双挂；API 档与 oauth 条目不受影响。
+      const legacy = yield* auth.get(ProviderID.make(XIAOMI_API_PROVIDER_ID))
+      if (legacy && legacyXiaomiAliasTarget(legacy) === saveProvider) {
+        yield* auth.remove(ProviderID.make(XIAOMI_API_PROVIDER_ID))
       }
     })
 

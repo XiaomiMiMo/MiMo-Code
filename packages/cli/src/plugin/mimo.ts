@@ -6,6 +6,7 @@ import { exec } from "child_process"
 import { Global } from "../global"
 import path from "path"
 import fs from "fs"
+import { isXiaomiFamilyProvider, xiaomiProviderForEndpoint } from "../provider/xiaomi-family"
 import { childProcessEnv } from "@/util/child-process-env"
 
 const log = Log.create({ service: "plugin.mimo" })
@@ -174,7 +175,7 @@ export async function MimoAuthPlugin(_input: PluginInput): Promise<Hooks> {
                     server.close()
                     const metadata: Record<string, string> = { uid: result.uid }
                     if (result.url) metadata.base_url = result.url
-                    return { type: "success" as const, key: result.sk ?? "", metadata }
+                    return { type: "success" as const, key: result.sk ?? "", provider: xiaomiProviderForEndpoint(result.url), metadata }
                   } catch {
                     return { type: "failed" as const }
                   }
@@ -184,7 +185,7 @@ export async function MimoAuthPlugin(_input: PluginInput): Promise<Hooks> {
                   server.close()
                   const metadata: Record<string, string> = { uid: result.uid }
                   if (result.url) metadata.base_url = result.url
-                  return { type: "success" as const, key: result.sk ?? "", metadata }
+                  return { type: "success" as const, key: result.sk ?? "", provider: xiaomiProviderForEndpoint(result.url), metadata }
                 } catch {
                   server.close()
                   return { type: "failed" as const }
@@ -196,7 +197,7 @@ export async function MimoAuthPlugin(_input: PluginInput): Promise<Hooks> {
       ],
     },
     "chat.headers": async (input, output) => {
-      if (input.model.providerID !== "xiaomi") return
+      if (!isXiaomiFamilyProvider(input.model.providerID)) return
       output.headers["X-Mimo-Source"] = "mimocode-cli"
     },
   }
