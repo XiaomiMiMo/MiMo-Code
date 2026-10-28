@@ -59,7 +59,7 @@ function hasCredential(provider: Provider | undefined) {
   return Boolean(provider?.key || (provider?.options?.apiKey as string | undefined))
 }
 
-/** First family provider holding credentials and models (token-plan clusters → xiaomi), pro model preferred. */
+/** Post-login pick: first family provider holding credentials and models (token-plan clusters → xiaomi), pro preferred. */
 export function familyDefaultModel(list: Provider[] | undefined): Selection | undefined {
   for (const providerID of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
     const provider = list?.find((p) => p.id === providerID)
@@ -72,16 +72,13 @@ export function familyDefaultModel(list: Provider[] | undefined): Selection | un
 }
 
 /**
- * When argument/recent/configured all miss: prefer the signed-in family default
- * (familyDefaultModel), else the xiaomi pro model (login required), else the
- * first provider's default/first model.
+ * When argument/recent/configured all miss: prefer the xiaomi pro model
+ * (always listed in the catalog), else the first provider's default/first model.
  */
 export function fallback(
   list: Provider[] | undefined,
   providerDefault: Record<string, string> = {},
 ): Selection | undefined {
-  const signedIn = familyDefaultModel(list)
-  if (signedIn) return signedIn
   const preferred = get(list, PREFERRED_DEFAULT.providerID, PREFERRED_DEFAULT.modelID)
   if (preferred) return PREFERRED_DEFAULT
   const provider = list?.[0]
