@@ -4,50 +4,29 @@
 // so legacy single-key entries keep working via the plugin loader's baseURL redirect.
 
 export const XIAOMI_API_PROVIDER_ID = "xiaomi"
-export const XIAOMI_TOKEN_PLAN_CN = "xiaomi-token-plan-cn"
-export const XIAOMI_TOKEN_PLAN_AMS = "xiaomi-token-plan-ams"
-export const XIAOMI_TOKEN_PLAN_SGP = "xiaomi-token-plan-sgp"
 
-const PROVIDER_BY_HOST: Record<string, string> = {
-  "api.xiaomimimo.com": XIAOMI_API_PROVIDER_ID,
-  "token-plan-cn.xiaomimimo.com": XIAOMI_TOKEN_PLAN_CN,
-  "token-plan-ams.xiaomimimo.com": XIAOMI_TOKEN_PLAN_AMS,
-  "token-plan-sgp.xiaomimimo.com": XIAOMI_TOKEN_PLAN_SGP,
-}
-
-const DEFAULT_BASE_URL_BY_PROVIDER: Record<string, string> = {
-  [XIAOMI_API_PROVIDER_ID]: "https://api.xiaomimimo.com/v1",
-  [XIAOMI_TOKEN_PLAN_CN]: "https://token-plan-cn.xiaomimimo.com/v1",
-  [XIAOMI_TOKEN_PLAN_AMS]: "https://token-plan-ams.xiaomimimo.com/v1",
-  [XIAOMI_TOKEN_PLAN_SGP]: "https://token-plan-sgp.xiaomimimo.com/v1",
-}
-
-/** Token-plan clusters first, API last — same walk order as the desktop voice fallback. */
-export const XIAOMI_CREDENTIAL_PROVIDER_IDS = [
-  XIAOMI_TOKEN_PLAN_CN,
-  XIAOMI_TOKEN_PLAN_AMS,
-  XIAOMI_TOKEN_PLAN_SGP,
-  XIAOMI_API_PROVIDER_ID,
+// hostname → provider id. Order is the credential fallback walk: token-plan clusters before API.
+const GATEWAYS = [
+  ["token-plan-cn.xiaomimimo.com", "xiaomi-token-plan-cn"],
+  ["token-plan-ams.xiaomimimo.com", "xiaomi-token-plan-ams"],
+  ["token-plan-sgp.xiaomimimo.com", "xiaomi-token-plan-sgp"],
+  ["api.xiaomimimo.com", XIAOMI_API_PROVIDER_ID],
 ] as const
 
-/** Clears every family credential key (removing only `xiaomi` would leave token-plan entries). */
-export async function removeXiaomiFamilyCredentials(remove: (providerID: string) => Promise<unknown> | unknown) {
-  for (const providerID of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
-    await remove(providerID)
-  }
-}
+export const XIAOMI_CREDENTIAL_PROVIDER_IDS = GATEWAYS.map(([, id]) => id)
 
 export function xiaomiProviderForEndpoint(url?: string): string {
-  if (!url) return XIAOMI_API_PROVIDER_ID
   try {
-    return PROVIDER_BY_HOST[new URL(url).hostname.toLowerCase()] ?? XIAOMI_API_PROVIDER_ID
+    const host = url ? new URL(url).hostname.toLowerCase() : ""
+    return GATEWAYS.find((gateway) => gateway[0] === host)?.[1] ?? XIAOMI_API_PROVIDER_ID
   } catch {
     return XIAOMI_API_PROVIDER_ID
   }
 }
 
 export function xiaomiDefaultBaseUrl(providerID: string): string | undefined {
-  return DEFAULT_BASE_URL_BY_PROVIDER[providerID]
+  const gateway = GATEWAYS.find(([, id]) => id === providerID)
+  return gateway ? `https://${gateway[0]}/v1` : undefined
 }
 
 export function isXiaomiFamilyProvider(providerID: string | undefined): boolean {
@@ -68,4 +47,11 @@ export function legacyXiaomiAliasTarget(entry: unknown): string | undefined {
   if (typeof base !== "string" || !base) return undefined
   const target = xiaomiProviderForEndpoint(base)
   return target !== XIAOMI_API_PROVIDER_ID ? target : undefined
+}
+
+/** Clears every family credential key (removing only `xiaomi` would leave token-plan entries). */
+export async function removeXiaomiFamilyCredentials(remove: (providerID: string) => Promise<unknown> | unknown) {
+  for (const providerID of XIAOMI_CREDENTIAL_PROVIDER_IDS) {
+    await remove(providerID)
+  }
 }

@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test"
 import {
   XIAOMI_API_PROVIDER_ID,
-  XIAOMI_TOKEN_PLAN_AMS,
-  XIAOMI_TOKEN_PLAN_CN,
-  XIAOMI_TOKEN_PLAN_SGP,
+  XIAOMI_CREDENTIAL_PROVIDER_IDS,
   isXiaomiFamilyProvider,
   legacyXiaomiAliasTarget,
   removeXiaomiFamilyCredentials,
   xiaomiDefaultBaseUrl,
   xiaomiProviderForEndpoint,
 } from "../../src/provider/xiaomi-family"
+
+const XIAOMI_TOKEN_PLAN_CN = "xiaomi-token-plan-cn"
+const XIAOMI_TOKEN_PLAN_AMS = "xiaomi-token-plan-ams"
+const XIAOMI_TOKEN_PLAN_SGP = "xiaomi-token-plan-sgp"
 
 describe("xiaomiProviderForEndpoint", () => {
   test("maps the four trusted gateways to their catalog provider ids", () => {
