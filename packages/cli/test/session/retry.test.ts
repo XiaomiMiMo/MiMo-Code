@@ -682,6 +682,22 @@ describe("session.message-v2.fromError", () => {
     expect(retryable).toBe("Connection reset by server")
   })
 
+  test("upstream connection closed before response retries despite HTTP 400", () => {
+    const error = new MessageV2.APIError({
+      message: "Request failed: Connection prematurely closed BEFORE response",
+      statusCode: 400,
+      isRetryable: false,
+    }).toObject() as MessageV2.APIError
+
+    expect(SessionRetry.decide(error)).toMatchObject({ retryable: true, kind: "network" })
+    const invalid = new MessageV2.APIError({
+      message: "Invalid request parameters:",
+      statusCode: 400,
+      isRetryable: false,
+    }).toObject() as MessageV2.APIError
+    expect(SessionRetry.decide(invalid).retryable).toBe(false)
+  })
+
   test("marks OpenAI 404 status codes as retryable", () => {
     const error = new APICallError({
       message: "boom",

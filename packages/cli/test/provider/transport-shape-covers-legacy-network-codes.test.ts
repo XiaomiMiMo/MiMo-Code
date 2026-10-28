@@ -35,6 +35,7 @@ const LEGACY_NETWORK_MESSAGES = [
   "connection refused",
   "connection reset",
   "connection closed by server",
+  "Request failed: Connection prematurely closed BEFORE response",
   "network connection",
   "network error",
   "response body terminated",

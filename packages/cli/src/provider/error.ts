@@ -51,7 +51,7 @@ const TRANSPORT_MESSAGE_PATTERNS = [
   /socket hang up/i,
   /response body (?:terminated|closed)/i,
   /other side closed/i,
-  /connection (?:reset|closed|refused|aborted|timed ?out|terminated)/i,
+  /connection (?:prematurely )?(?:reset|closed|refused|aborted|timed ?out|terminated)/i,
   /network (?:error|connection|unreachable)/i,
   /\b(?:getaddrinfo|ENOTFOUND|EAI_[A-Z]+|ECONN[A-Z]*|ENET[A-Z]*|EHOST[A-Z]*|EPIPE|ETIMEDOUT|UND_ERR_[A-Z0-9_]+)\b/i,
   /cannot connect to (?:the )?api/i,
