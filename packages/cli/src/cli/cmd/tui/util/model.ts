@@ -72,13 +72,17 @@ export function familyDefaultModel(list: Provider[] | undefined): Selection | un
 }
 
 /**
- * When argument/recent/configured all miss: prefer the xiaomi pro model
- * (always listed in the catalog), else the first provider's default/first model.
+ * When argument/recent/configured all miss: prefer the model of the family
+ * provider holding credentials (token-plan cluster → xiaomi API). With no
+ * family credential, use the catalog-listed xiaomi pro model, then the first
+ * provider's default/first model.
  */
 export function fallback(
   list: Provider[] | undefined,
   providerDefault: Record<string, string> = {},
 ): Selection | undefined {
+  const keyed = familyDefaultModel(list)
+  if (keyed) return keyed
   const preferred = get(list, PREFERRED_DEFAULT.providerID, PREFERRED_DEFAULT.modelID)
   if (preferred) return PREFERRED_DEFAULT
   const provider = list?.[0]

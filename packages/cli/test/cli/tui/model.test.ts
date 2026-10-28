@@ -82,6 +82,22 @@ describe("fallback model", () => {
     })
   })
 
+  test("switches to the keyed family member over the keyless xiaomi default", () => {
+    const list = [
+      { id: "xiaomi", models: { "mimo-v2.6-pro": {} } },
+      { id: "xiaomi-token-plan-cn", key: "sk-cn", models: { "mimo-v2.6-pro": {} } },
+    ] as unknown as Provider[]
+    expect(fallback(list, {})).toEqual({ providerID: "xiaomi-token-plan-cn", modelID: "mimo-v2.6-pro" })
+  })
+
+  test("walks keyed family members in fallback order (token-plan before API)", () => {
+    const list = [
+      { id: "xiaomi", key: "sk-api", models: { "mimo-v2.6-pro": {} } },
+      { id: "xiaomi-token-plan-sgp", key: "sk-sgp", models: { "mimo-v2.6-pro": {} } },
+    ] as unknown as Provider[]
+    expect(fallback(list, {})).toEqual({ providerID: "xiaomi-token-plan-sgp", modelID: "mimo-v2.6-pro" })
+  })
+
   test("falls back to the first provider default when xiaomi pro is absent", () => {
     expect(fallback(providers, { openai: "gpt-5.6-sol" })).toEqual({
       providerID: "openai",
