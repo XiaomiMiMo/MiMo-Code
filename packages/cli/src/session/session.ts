@@ -216,6 +216,14 @@ export const ManualTitle = z.string().trim().min(1).transform(value => Array.fro
 
 export const CreateInput = z
   .object({
+    // Caller-supplied identity. Embedding hosts that render a conversation before
+    // the engine has created its session bring their own `ses_` id so the row is
+    // never rewritten after the fact. Shape: `ses_` + 16 lowercase hex + 10 base62,
+    // the same payload `Identifier.descending("session")` emits, including the
+    // absence of the v2 sort marker. An id that already exists is rejected rather
+    // than merged. Omitted → the engine generates one, which is what every
+    // in-repo caller does.
+    id: SessionID.zod.optional(),
     parentID: SessionID.zod.optional(),
     contextFrom: SessionID.zod.optional(),
     contextWatermark: MessageID.zod.optional(),
@@ -460,6 +468,7 @@ export class BusyError extends Error {
 
 export interface Interface {
   readonly create: (input?: {
+    id?: SessionID
     parentID?: SessionID
     contextFrom?: SessionID
     contextWatermark?: MessageID
@@ -563,6 +572,15 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       prompt?: PromptConfig
     }) {
       const ctx = yield* InstanceState.context
+      // A caller-supplied id is a promise about identity, not a request to merge.
+      // The `Created` projection inserts without a conflict clause, so an existing
+      // row would otherwise fail as a raw primary-key error raised from inside the
+      // event projection. Reject up front and name the id. The generated path
+      // cannot collide, so it pays no lookup.
+      if (input.id) {
+        const taken = yield* db((d) => d.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, input.id!)).get())
+        if (taken) throw new Error(`Session ${input.id} already exists`)
+      }
       const result: Info = {
         id: SessionID.descending(input.id),
         slug: Slug.create(),
@@ -768,6 +786,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
     })
 
     const create = Effect.fn("Session.create")(function* (input?: {
+      id?: SessionID
       parentID?: SessionID
       contextFrom?: SessionID
       contextWatermark?: MessageID
@@ -783,6 +802,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       const directory = input?.directory ?? (yield* InstanceState.directory)
       const workspace = yield* InstanceState.workspaceID
       return yield* createNext({
+        id: input?.id,
         parentID: input?.parentID,
         contextFrom: input?.contextFrom,
         contextWatermark: input?.contextWatermark,
