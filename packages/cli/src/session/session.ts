@@ -214,24 +214,13 @@ export type GlobalInfo = z.output<typeof GlobalInfo>
 
 export const ManualTitle = z.string().trim().min(1).transform(value => Array.from(value).slice(0, 80).join(""))
 
-// A caller-supplied id is the one session id that does not come from `Identifier`, so
-// bound it to the shape the engine itself emits: `ses_` + 26 base62 characters
-// (v2 = 16 hex + 10 base62; v1 = 12 hex + 14 base62). The prefix-only `SessionID`
-// schema cannot be tightened — stored ids predate the shape, and internal callers are
-// trusted — but this entry point is host-facing and the id ends up as a filesystem
-// path segment (`checkpoint-paths.metaDir`), where a value such as `ses_../../../tmp`
-// would climb out of the session directory.
+// Host-supplied ids also name the session's memory directory, so they must match the
+// engine's own payload (26 base62 characters) rather than only the `ses` prefix.
 const SUPPLIED_SESSION_ID = /^ses_[0-9A-Za-z]{26}$/
 
 export const CreateInput = z
   .object({
-    // Caller-supplied identity. Embedding hosts that render a conversation before
-    // the engine has created its session bring their own `ses_` id so the row is
-    // never rewritten after the fact. Shape: `ses_` + 16 lowercase hex + 10 base62,
-    // the same payload `Identifier.descending("session")` emits, including the
-    // absence of the v2 sort marker. An id that already exists is rejected rather
-    // than merged. Omitted → the engine generates one, which is what every
-    // in-repo caller does.
+    // The bound stays on the input side of the pipe: a `.refine` on SessionID.zod is lost to OpenAPI.
     id: z
       .string()
       .regex(SUPPLIED_SESSION_ID, "Session id must be `ses_` followed by 26 base62 characters")
@@ -585,11 +574,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       prompt?: PromptConfig
     }) {
       const ctx = yield* InstanceState.context
-      // A caller-supplied id is a promise about identity, not a request to merge.
-      // The `Created` projection inserts without a conflict clause, so an existing
-      // row would otherwise fail as a raw primary-key error raised from inside the
-      // event projection. Reject up front and name the id. The generated path
-      // cannot collide, so it pays no lookup.
+      // Rows are inserted without a conflict clause; fail with the id rather than a
+      // raw primary-key error from the projection.
       if (input.id) {
         const taken = yield* db((d) => d.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, input.id!)).get())
         if (taken) throw new Error(`Session ${input.id} already exists`)
