@@ -2,7 +2,7 @@
 feature: client-supplied-session-id
 status: delivered
 updated: 2026-10-28
-source: feat/session-id-from-client
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2738
 ---
 
 # Client-Supplied Session ID
