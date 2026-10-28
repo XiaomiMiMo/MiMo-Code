@@ -1,13 +1,26 @@
 ---
 feature: client-supplied-session-id
-status: designed
-updated: 2026-02-20
+status: delivered
+updated: 2026-10-28
 source: feat/session-id-from-client
 ---
 
 # Client-Supplied Session ID
 
 ## Report
+
+**What was built** — `POST /session` accepts an optional caller-supplied `id`.
+The id must be `ses_` plus 26 base62 characters, the shape the engine itself
+emits (v1 and v2). A supplied id is persisted verbatim; a duplicate is rejected
+with an error naming it. Omitting the field generates an id exactly as before.
+The SDK types expose the field and the generated OpenAPI publishes the pattern.
+
+**Verification** (at 9404cccc) — `bun run typecheck` PASS (all workspaces);
+`bun test test/session/client-supplied-id.test.ts` PASS 4/4; `bun test
+test/session/` PASS 1417, 0 fail, 13 skip, 1 todo; `bun test test/server/` PASS
+249, 0 fail; `bun run lint` on the touched files PASS 0 errors (7 pre-existing
+warnings); `git diff --check` clean; OpenAPI generation publishes
+`^ses_[0-9A-Za-z]{26}$` for `requestBody.id`.
 
 ## [S1] Problem
 
@@ -35,9 +48,10 @@ below the surface that needs it.
 
 ### S2.1 Public create accepts an optional id
 
-`Session.CreateInput` gains `id: SessionID.zod.optional()`. `Session.create`
-forwards it to `createNext`. `SessionShare.create` already forwards the whole
-`CreateInput`, so no change is needed there.
+`Session.CreateInput` gains an optional `id`, bounded to the documented shape
+(`ses_` plus 26 base62 characters — see S2.2). `Session.create` forwards it to
+`createNext`. `SessionShare.create` already forwards the whole `CreateInput`, so
+no change is needed there.
 
 An id supplied through the HTTP `POST /session` body reaches the persisted row
 unchanged. An omitted id keeps today's behavior exactly: the engine generates one.
@@ -115,11 +129,11 @@ separately.
 
 ## Tasks
 
-- [ ] T1: `Session.CreateInput` accepts an optional `id` and `create` forwards it to `createNext` — acceptance: `POST /session` with a well-formed `ses_` id persists a session under exactly that id; omitting it still generates one (covers: S2.1)
-- [ ] T2: A supplied id that already exists fails with an explicit error naming the id, before any row is written — acceptance: creating twice with the same supplied id yields one session and a named error on the second call (covers: S2.3)
-- [ ] T3: Shape agreement is pinned by tests on the engine side — acceptance: an engine-generated session id and the documented shape agree; a supplied id outside the documented shape (wrong prefix, wrong length, path separators) is rejected (covers: S2.2)
-- [ ] T4: Regenerate the SDK types so `CreateInput` exposes `id` — acceptance: the generated `types.gen.ts` carries the optional field and `bun run typecheck` stays green (covers: S2.1)
-- [ ] T5: Document the host-facing contract — acceptance: the shape, the duplicate contract and the omitted-id fallback are stated where an embedding host will look (covers: S2.1, S2.2, S2.3)
+- [x] T1: `Session.CreateInput` accepts an optional `id` and `create` forwards it to `createNext` — acceptance: `POST /session` with a well-formed `ses_` id persists a session under exactly that id; omitting it still generates one (covers: S2.1)
+- [x] T2: A supplied id that already exists fails with an explicit error naming the id, before any row is written — acceptance: creating twice with the same supplied id yields one session and a named error on the second call (covers: S2.3)
+- [x] T3: Shape agreement is pinned by tests on the engine side — acceptance: an engine-generated session id and the documented shape agree; a supplied id outside the documented shape (wrong prefix, wrong length, path separators) is rejected (covers: S2.2)
+- [x] T4: Regenerate the SDK types so `CreateInput` exposes `id` — acceptance: the generated `types.gen.ts` carries the optional field and `bun run typecheck` stays green (covers: S2.1)
+- [x] T5: Document the host-facing contract — acceptance: the shape, the duplicate contract and the omitted-id fallback are stated where an embedding host will look (covers: S2.1, S2.2, S2.3)
 
 ## Journey log
 
@@ -127,3 +141,7 @@ separately.
   as a path segment. The create boundary now enforces the engine's own shape
   (26 base62 characters) instead of accepting any `ses`-prefixed string; the
   generic `SessionID` schema and the path helpers are unchanged.
+- The bound first sat in a `refine` on the piped `SessionID` schema, which the
+  OpenAPI generator ignores — the published pattern stayed permissive. It is now
+  a regex on the input side of the pipe, so the machine-readable contract and
+  the runtime check agree.
