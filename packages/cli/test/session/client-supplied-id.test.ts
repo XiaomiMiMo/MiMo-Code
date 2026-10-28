@@ -63,9 +63,20 @@ describe("client-supplied session id", () => {
     for (let i = 0; i < 20; i++) expect(Identifier.descending("session")).toMatch(SESSION_ID_SHAPE)
   })
 
-  test("rejects a supplied id without the session prefix", () => {
-    // The body schema is what the HTTP route validates against.
+  test("rejects a supplied id outside the documented shape", () => {
+    // The body schema is what the HTTP route validates against, and the id later
+    // becomes a session directory — so this is the boundary that keeps a host from
+    // walking out of it.
+    const generated = SessionID.descending()
+    expect(Session.CreateInput.parse({ id: generated })).toEqual({ id: generated })
+
+    // Wrong prefix.
     expect(() => Session.CreateInput.parse({ id: "msg_" + "a".repeat(26) })).toThrow()
-    expect(() => Session.CreateInput.parse({ id: SessionID.descending() })).not.toThrow()
+    // Path separators and dot segments: `ses_../../../tmp/pwn` must never reach metaDir.
+    expect(() => Session.CreateInput.parse({ id: "ses_../../../../tmp/pwn" })).toThrow()
+    expect(() => Session.CreateInput.parse({ id: "ses_" + "a".repeat(25) + "/" })).toThrow()
+    // The payload is exactly 26 characters.
+    expect(() => Session.CreateInput.parse({ id: "ses_" + "a".repeat(24) })).toThrow()
+    expect(() => Session.CreateInput.parse({ id: "ses_" + "a".repeat(27) })).toThrow()
   })
 })

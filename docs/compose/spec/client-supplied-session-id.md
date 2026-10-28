@@ -67,16 +67,20 @@ the host keeps its own generator. Both are pinned by tests against the same
 documented shape, so a drift in either side fails a test rather than producing
 ids the other side rejects.
 
-`SessionID.descending(given)` validates only the `ses` prefix. That is
-intentional and unchanged: the engine does not need to police the payload, and a
-stricter validator would reject ids that already exist in the wild.
+`SessionID` itself still validates only the `ses` prefix: ids already in storage
+predate this shape (v1 is 12 hex plus 14 base62, also 26 base62 characters), and
+internal callers are trusted. The one entry point that takes an id from outside —
+`CreateInput.id` — is bounded to the documented shape instead. Prefix-only
+validation there is not safe: the id names the session's memory directory
+(`memory/sessions/<id>/`), so a caller-chosen `ses_../../../tmp/x` would climb out
+of it. Bounding the payload to 26 base62 characters rejects nothing the engine
+emits and closes that path.
 
 ### S2.3 Duplicate ids are rejected, not silently resolved
 
 `Session.Event.Created` projects through a bare `db.insert`. A supplied id that
-already exists would otherwise surface as a primary-key constraint failure from
-inside the sync projection, after the `created` event has already been
-announced.
+already exists would otherwise surface as a raw primary-key constraint failure
+from inside the sync projection.
 
 `createNext` therefore checks for an existing row before it builds `Info`, and
 fails with an explicit error naming the id. The check runs for supplied ids
@@ -100,8 +104,10 @@ separately.
   or the deferred navigation boundary.
 - Removing the existing local-id mechanism, or migrating conversations that
   already carry one.
-- Validating the full id payload (length, charset, timestamp component) on the
-  engine side.
+- Hardening the path helpers themselves, or ids that arrive through other
+  channels (sync restore): this change bounds the new host-facing create only.
+- Validating the timestamp component of a supplied id. Length and charset are
+  bounded by `CreateInput`; the payload beyond that stays opaque.
 - Changing how session lists order, or making ordering depend on the id.
 - Exposing a dedicated id-allocation endpoint.
 - Fork, spawn, import and workspace-restore paths; they keep generating ids
@@ -111,8 +117,13 @@ separately.
 
 - [ ] T1: `Session.CreateInput` accepts an optional `id` and `create` forwards it to `createNext` — acceptance: `POST /session` with a well-formed `ses_` id persists a session under exactly that id; omitting it still generates one (covers: S2.1)
 - [ ] T2: A supplied id that already exists fails with an explicit error naming the id, before any row is written — acceptance: creating twice with the same supplied id yields one session and a named error on the second call (covers: S2.3)
-- [ ] T3: Shape agreement is pinned by tests on the engine side — acceptance: an engine-generated session id and the documented shape agree; a supplied id with the wrong prefix is rejected (covers: S2.2)
+- [ ] T3: Shape agreement is pinned by tests on the engine side — acceptance: an engine-generated session id and the documented shape agree; a supplied id outside the documented shape (wrong prefix, wrong length, path separators) is rejected (covers: S2.2)
 - [ ] T4: Regenerate the SDK types so `CreateInput` exposes `id` — acceptance: the generated `types.gen.ts` carries the optional field and `bun run typecheck` stays green (covers: S2.1)
 - [ ] T5: Document the host-facing contract — acceptance: the shape, the duplicate contract and the omitted-id fallback are stated where an embedding host will look (covers: S2.1, S2.2, S2.3)
 
 ## Journey log
+
+- Review caught that a prefix-only `CreateInput.id` reaches `memory/sessions/<id>/`
+  as a path segment. The create boundary now enforces the engine's own shape
+  (26 base62 characters) instead of accepting any `ses`-prefixed string; the
+  generic `SessionID` schema and the path helpers are unchanged.

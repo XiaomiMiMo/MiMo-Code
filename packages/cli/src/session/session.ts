@@ -214,6 +214,15 @@ export type GlobalInfo = z.output<typeof GlobalInfo>
 
 export const ManualTitle = z.string().trim().min(1).transform(value => Array.from(value).slice(0, 80).join(""))
 
+// A caller-supplied id is the one session id that does not come from `Identifier`, so
+// bound it to the shape the engine itself emits: `ses_` + 26 base62 characters
+// (v2 = 16 hex + 10 base62; v1 = 12 hex + 14 base62). The prefix-only `SessionID`
+// schema cannot be tightened — stored ids predate the shape, and internal callers are
+// trusted — but this entry point is host-facing and the id ends up as a filesystem
+// path segment (`checkpoint-paths.metaDir`), where a value such as `ses_../../../tmp`
+// would climb out of the session directory.
+const SUPPLIED_SESSION_ID = /^ses_[0-9A-Za-z]{26}$/
+
 export const CreateInput = z
   .object({
     // Caller-supplied identity. Embedding hosts that render a conversation before
@@ -223,7 +232,7 @@ export const CreateInput = z
     // absence of the v2 sort marker. An id that already exists is rejected rather
     // than merged. Omitted → the engine generates one, which is what every
     // in-repo caller does.
-    id: SessionID.zod.optional(),
+    id: SessionID.zod.refine((id) => SUPPLIED_SESSION_ID.test(id), "Session id must be `ses_` followed by 26 base62 characters").optional(),
     parentID: SessionID.zod.optional(),
     contextFrom: SessionID.zod.optional(),
     contextWatermark: MessageID.zod.optional(),
