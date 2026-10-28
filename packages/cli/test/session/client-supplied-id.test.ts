@@ -69,6 +69,9 @@ describe("client-supplied session id", () => {
     // walking out of it.
     const generated = SessionID.descending()
     expect(Session.CreateInput.parse({ id: generated })).toEqual({ id: generated })
+    // v1 ids (12 hex + 14 base62) are also 26 base62 characters — they stay accepted.
+    const v1 = SessionID.zod.parse("ses_" + "0123456789ab" + "A".repeat(14))
+    expect(Session.CreateInput.parse({ id: v1 })).toEqual({ id: v1 })
 
     // Wrong prefix.
     expect(() => Session.CreateInput.parse({ id: "msg_" + "a".repeat(26) })).toThrow()

@@ -232,7 +232,11 @@ export const CreateInput = z
     // absence of the v2 sort marker. An id that already exists is rejected rather
     // than merged. Omitted → the engine generates one, which is what every
     // in-repo caller does.
-    id: SessionID.zod.refine((id) => SUPPLIED_SESSION_ID.test(id), "Session id must be `ses_` followed by 26 base62 characters").optional(),
+    id: z
+      .string()
+      .regex(SUPPLIED_SESSION_ID, "Session id must be `ses_` followed by 26 base62 characters")
+      .pipe(SessionID.zod)
+      .optional(),
     parentID: SessionID.zod.optional(),
     contextFrom: SessionID.zod.optional(),
     contextWatermark: MessageID.zod.optional(),
