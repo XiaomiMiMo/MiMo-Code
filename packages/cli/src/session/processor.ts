@@ -649,6 +649,24 @@ export const layer: Layer.Layer<
             if (ctx.assistantMessage.summary) {
               throw new Error(`Tool call not allowed while generating summary: ${value.toolName}`)
             }
+            // The SDK has already rejected these arguments against the tool's
+            // schema. Persist that rejection without granting execution proof.
+            if (!value.providerExecuted && "invalid" in value && value.invalid === true) {
+              yield* updateToolCall(value.toolCallId, (match) => match.state.status !== "pending" ? match : ({
+                ...match,
+                tool: value.toolName,
+                state: {
+                  status: "error",
+                  input: isRecord(value.input) ? value.input : {},
+                  inputComplete: true,
+                  error: "Tool arguments do not match the declared JSON Schema. No tool was executed.",
+                  metadata: { recoverable: true, invalidArguments: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              }))
+              yield* Deferred.succeed(toolReady(value.toolCallId), undefined)
+              return
+            }
             // A tool call may already have caused an external side effect before
             // the provider stream fails. Replaying the whole model step is unsafe.
             ctx.retrySafe = false

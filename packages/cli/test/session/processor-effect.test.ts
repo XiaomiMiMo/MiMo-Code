@@ -30,6 +30,8 @@ import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { raw, reply, TestLLMServer } from "../lib/llm-server"
 import { resetAllMonitors } from "../../src/session/try-best-detector"
+import { convertMcpTool } from "../../src/mcp"
+import { ManagedClient } from "../../src/mcp/managed-client"
 
 void Log.init({ print: false })
 
@@ -191,6 +193,37 @@ const boot = Effect.fn("test.boot")(function* () {
   const provider = yield* Provider.Service
   return { processors, session, provider }
 })
+
+it.live("malformed MCP root arguments become tool feedback rather than a persistence failure", () =>
+  provideTmpdirServer(({ dir, llm }) => Effect.gen(function* () {
+    const { processors, session, provider } = yield* boot()
+    const client = new ManagedClient({ name: "test", version: "1" })
+    const converted = convertMcpTool({ name: "read", inputSchema: { type: "object", properties: {} } }, client)
+    yield* llm.push(raw({ chunks: [{
+      id: "chatcmpl-test", object: "chat.completion.chunk",
+      choices: [{ delta: { role: "assistant", tool_calls: [{ index: 0, id: "call-test", type: "function",
+        function: { name: "fixture_read", arguments: JSON.stringify("not an object") } }] } }],
+    }, {
+      id: "chatcmpl-test", object: "chat.completion.chunk",
+      choices: [{ delta: {}, finish_reason: "tool_calls" }],
+    }] }))
+    const chat = yield* session.create({})
+    const parent = yield* user(chat.id, "Use the test tool")
+    const msg = yield* assistant(chat.id, parent.id, dir)
+    const model = yield* provider.getModel(ref.providerID, ref.modelID)
+    const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model })
+    const result = yield* handle.process({
+      user: parent, sessionID: chat.id, model, agent: agent(), system: [],
+      messages: [{ role: "user", content: "Use the test tool" }], tools: { fixture_read: converted },
+    })
+    expect(msg.error).toBeUndefined()
+    expect(result).toBe("continue")
+    const parts = MessageV2.parts(msg.id).filter((part) => part.type === "tool")
+    expect(parts).toHaveLength(1)
+    expect(parts[0]).toMatchObject({ state: { status: "error", input: {}, metadata: { recoverable: true } } })
+    expect(parts[0]?.state.status === "error" && parts[0].state.error).toContain("declared JSON Schema")
+  }), { git: true, config: (url) => providerCfg(url) }),
+)
 
 // [TP-SR-R21-32]
 it.live("execution proof precedes effects, rejects duplicate execution, and survives stale writes", () =>

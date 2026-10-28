@@ -2,6 +2,8 @@ import { toolPresentationProgress } from "./tool-progress"
 import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
 import { childProcessEnv } from "@/util/child-process-env"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation"
+import { toolInputValidator } from "./tool-schema"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
@@ -366,20 +368,28 @@ const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_")
 
 // Convert MCP tool definition to AI SDK Tool type
 export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, context?: TurnContext): Tool {
-  const inputSchema = mcpTool.inputSchema
-
-  // Spread first, then override type to ensure it's always "object"
-  const schema: JSONSchema7 = {
-    ...(inputSchema as JSONSchema7),
-    type: "object",
-    properties: (inputSchema.properties ?? {}) as JSONSchema7["properties"],
-    additionalProperties: false,
-  }
+  const schema = mcpTool.inputSchema as JSONSchema7
+  // Use each server's declared schema without coercing values, stripping
+  // fields, or overriding its additionalProperties policy.
+  const validate = toolInputValidator(
+    mcpTool.inputSchema as JsonSchemaType,
+  )
 
   return dynamicTool({
     description: mcpTool.description ?? "",
-    inputSchema: jsonSchema(schema),
+    inputSchema: jsonSchema<Record<string, unknown>>(schema, {
+      validate: (value) => {
+        const checked = validate(value)
+        return checked.valid
+          ? { success: true, value: checked.data }
+          : { success: false, error: new Error(`MCP tool arguments do not match the declared JSON Schema: ${checked.errorMessage}. No tool was executed.`) }
+      },
+    }),
     execute: async (args: unknown, options) => {
+      const checked = validate(args)
+      if (!checked.valid) {
+        throw new Error(`MCP tool arguments do not match the declared JSON Schema: ${checked.errorMessage}. No tool was executed.`)
+      }
       const metadata =
         context && supportsTurnLifecycle(client) ? { _meta: { [TURN_LIFECYCLE_CAPABILITY]: context } } : {}
       // Recorded before the call so a `sampling/createMessage` arriving WHILE
@@ -391,7 +401,7 @@ export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?:
         return await client.callTool(
           {
             name: mcpTool.name,
-            arguments: (args || {}) as Record<string, unknown>,
+            arguments: checked.data,
             ...metadata,
           },
           CallToolResultSchema,
