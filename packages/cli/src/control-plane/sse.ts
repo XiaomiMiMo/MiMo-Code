@@ -6,6 +6,7 @@ export async function parseSSE(
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buf = ""
+  let skipLF = false
   let last = ""
   let retry = 1000
 
@@ -20,8 +21,14 @@ export async function parseSSE(
       const chunk = await reader.read().catch(() => ({ done: true, value: undefined as Uint8Array | undefined }))
       if (chunk.done) break
 
-      buf += decoder.decode(chunk.value, { stream: true })
-      buf = buf.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+      let text = decoder.decode(chunk.value, { stream: true })
+      if (text.length > 0) {
+        // A CR is a line ending immediately, but a following LF belongs to it,
+        // even when it arrives in a later network chunk.
+        if (skipLF && text.startsWith("\n")) text = text.slice(1)
+        skipLF = text.endsWith("\r")
+        buf += text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+      }
 
       const chunks = buf.split("\n\n")
       buf = chunks.pop() ?? ""
