@@ -2287,10 +2287,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* input.processor.completeToolCall(opts.toolCallId, output)
               }
               return output
-            }).pipe((body) =>
-              // Only model-facing calls join this batch. Exec guest calls keep
-              // the same execution pipeline with script-controlled concurrency.
-              batch ? input.processor.executeTool(batch, opts.toolCallId, body, { signal: opts.abortSignal }) : body,
+            }).pipe(
+              // The Promise bridge captures the caller's context, which need not
+              // expose SessionPrompt's internal services for App call bookkeeping.
+              Effect.provideService(Storage.Service, storage),
+              Effect.provideService(Bus.Service, bus),
+              (body) =>
+                // Only model-facing calls join this batch. Exec guest calls keep
+                // the same execution pipeline with script-controlled concurrency.
+                batch ? input.processor.executeTool(batch, opts.toolCallId, body, { signal: opts.abortSignal }) : body,
             ),
           )
         }

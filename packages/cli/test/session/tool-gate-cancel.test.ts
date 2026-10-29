@@ -15,6 +15,7 @@ import { InboxTable } from "../../src/inbox/inbox.sql"
 import { Database, eq } from "../../src/storage"
 import { Bus } from "../../src/bus"
 import { Question } from "../../src/question"
+import { AppToolStarted, AppToolCompleted, appCallSnapshot } from "../../src/mcp/app-calls"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ToolGate } from "../../src/tool/gate"
 import * as Tool from "../../src/tool/tool"
@@ -309,7 +310,8 @@ function settlementConfig(origin: string): Partial<Config.Info> {
   }
 }
 
-// [TP-SR-R21-32]
+// [TP-SR-R21-32] [TP-R2-15]
+// SessionPrompt must supply App bookkeeping services even when its caller has no Storage service.
 for (const isError of [false, true]) {
   it.live(`Stop in MCP after hook retains the actual result and attachments (isError=${isError})`, () => Effect.gen(function* () {
     // The scripted model calls the MCP tool directly; tool-search deferral would
@@ -359,6 +361,16 @@ export default async () => ({
       const prompt = yield* SessionPrompt.Service
       const runs = yield* SessionRunState.Service
       const session = yield* sessions.create({ title: "MCP after settlement" })
+      const bus = yield* Bus.Service
+      const events: { type: string; callID: string; callOrder: number }[] = []
+      for (const event of [AppToolStarted, AppToolCompleted]) {
+        const unsubscribe = yield* bus.subscribeCallback(event, (value) => {
+          if (value.properties.sessionID === session.id) {
+            events.push({ type: value.type, callID: value.properties.callID, callOrder: value.properties.callOrder })
+          }
+        })
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe))
+      }
       yield* Effect.addFinalizer(() => prompt.cancel(session.id))
       yield* Effect.addFinalizer(() => Effect.promise(() => Bun.write(release, "yes")))
       const running = yield* prompt.prompt({ sessionID: session.id, agent: "build", harness: "default",
@@ -367,6 +379,11 @@ export default async () => ({
         while (!(await Bun.file(entered).exists())) await Bun.sleep(10)
       }).pipe(Effect.timeout("10 seconds"))
       expect(calls).toBe(1)
+      expect(events).toEqual([
+        { type: AppToolStarted.type, callID: "mcp-call", callOrder: expect.any(Number) },
+        { type: AppToolCompleted.type, callID: "mcp-call", callOrder: events[0]?.callOrder },
+      ])
+      expect(appCallSnapshot(session.id).inflight).toEqual([])
       let stopped = false
       const stopping = yield* prompt.cancel(session.id).pipe(
         Effect.tap(() => Effect.sync(() => { stopped = true })), Effect.forkChild,
