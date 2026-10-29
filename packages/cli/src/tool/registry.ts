@@ -344,9 +344,7 @@ export const layer = Layer.effect(
       const useGPTTools = usesGPTToolset(input.modelID, input.harness, input.apiModelID, input.family)
       let filtered = (yield* all()).filter((tool) => {
         if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
-        if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
-          return input.providerID === ProviderID.opencode || Flag.MIMOCODE_ENABLE_EXA
-        }
+        if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) return Flag.MIMOCODE_ENABLE_EXA
 
         if (tool.id === ApplyPatchTool.id || tool.id === ViewImageTool.id) return useGPTTools
         if (

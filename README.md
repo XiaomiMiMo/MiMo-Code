@@ -453,7 +453,7 @@ To declare which input modalities a custom model supports (image, audio, video, 
 
 MiMoCode does not ship a search service for Xiaomi MiMo models: the platform's web-search plugin is billed per call against a pay-as-you-go API key and is not part of Token Plan. Pick one of the options below; the agent uses whatever search tool is available and otherwise falls back to `webfetch`.
 
-**Built-in `websearch` tool (Exa).** Set `MIMOCODE_ENABLE_EXA=1` to offer the `websearch` tool to every model (it is already on for the `opencode` provider). It calls Exa's public MCP endpoint; set `EXA_API_KEY` for higher rate limits.
+**Built-in `websearch` tool (Exa).** Search tools are off by default for every provider. Set `MIMOCODE_ENABLE_EXA=1` to offer the `websearch` and `codesearch` tools; they call Exa's public MCP endpoint, and `EXA_API_KEY` raises its rate limits.
 
 **A search MCP server.** Add one under `mcp`; keys can come from environment variables through `{env:VAR}`:
 

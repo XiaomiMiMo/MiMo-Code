@@ -9,11 +9,11 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2744
 
 ## Report
 
-**What was built** — Xiaomi-family providers no longer get the `websearch` tool; it is offered only for the `opencode` provider or when `MIMOCODE_ENABLE_EXA` is set, and always searches through Exa. The Xiaomi gateway client and its plugin-console messages are gone; an empty result now points at `webfetch` and at configuring a search MCP server. `fact-check` falls back from `websearch` to a search MCP tool and then to `webfetch` on DuckDuckGo HTML. README and the bundled `mimocode-docs` guide document Exa, Tavily and Volcengine Doubao Search setups, and the `xiaomi-auth-provider-split` doc no longer claims family websearch routing.
+**What was built** — `websearch` and `codesearch` are off for every provider (Xiaomi family and `opencode` included) unless `MIMOCODE_ENABLE_EXA` is set; `websearch` always searches through Exa. The Xiaomi gateway client and its plugin-console messages are gone; an empty result now points at `webfetch` and at configuring a search MCP server. `fact-check` falls back from `websearch` to a search MCP tool and then to `webfetch` on DuckDuckGo HTML. README and the bundled `mimocode-docs` guide document Exa, Tavily and Volcengine Doubao Search setups, and the `xiaomi-auth-provider-split` doc no longer claims family websearch routing.
 
 **Verification**
 - `bun run typecheck` (packages/cli): PASS.
-- `bun test test/tool/registry-toolset.test.ts test/workflow/builtin.test.ts test/skill/mimocode-docs.test.ts test/skill/builtin.test.ts`: 22 pass, 0 fail; the new registry case fails on the base commit.
+- `bun test test/tool/registry-toolset.test.ts test/workflow/builtin.test.ts test/skill/mimocode-docs.test.ts test/skill/builtin.test.ts`: all pass; the new registry case fails on the base commit.
 - Full suite and lint: delegated to CI on the PR (local `oxlint` cannot run inside a nested `.worktrees` checkout).
 ## [S1] Problem
 
@@ -25,7 +25,7 @@ MiMoCode no longer ships this first-party search. Users who want web search conf
 
 ### S2.1 Tool availability
 
-`websearch` is offered only when `MIMOCODE_ENABLE_EXA` is on or the model's provider is `opencode` (both unchanged). Xiaomi-family providers no longer enable it.
+`websearch` and `codesearch` are offered only when `MIMOCODE_ENABLE_EXA` is on, for every provider. Xiaomi-family providers no longer enable `websearch`, and the `opencode` provider no longer enables either tool by default: it reached the same keyless public Exa endpoint, so it gets the same explicit opt-in.
 
 ### S2.2 Execution
 
@@ -47,7 +47,7 @@ README gains a "Web search" section: enabling the built-in Exa channel, and `mcp
 
 ## Tasks
 
-- [x] T1: Drop the Xiaomi websearch gate and gateway client — acceptance: Xiaomi-family providers no longer get `websearch`; `opencode` and `MIMOCODE_ENABLE_EXA` still do; `tool/websearch/mimo.ts` is gone and the fallback text no longer mentions the Xiaomi plugin console (covers: S2.1, S2.2)
+- [x] T1: Drop the Xiaomi websearch gate and gateway client — acceptance: no provider gets `websearch` or `codesearch` without `MIMOCODE_ENABLE_EXA`; `tool/websearch/mimo.ts` is gone and the fallback text no longer mentions the Xiaomi plugin console (covers: S2.1, S2.2)
 - [x] T2: `fact-check` search fallback — acceptance: the search prompt names the MCP and `webfetch` fallbacks when `websearch` is unavailable (covers: S2.3)
 - [x] T3: README "Web search" section and `xiaomi-auth-provider-split` correction — acceptance: the four configuration paths are documented with valid `mcp` entries; the old spec no longer claims family websearch routing (covers: S2.4)
 
