@@ -131,7 +131,7 @@ Inspect/manage with `mimo mcp`. Request timeout defaults to 5000ms (`timeout` pe
 
 ### Web search
 
-There is no built-in search service for Xiaomi MiMo models. To give the agent web search, either set `MIMOCODE_ENABLE_EXA=1` (offers the `websearch` tool backed by Exa's public endpoint; `EXA_API_KEY` raises its limits) or add a search MCP server, for example:
+There is no built-in search service for Xiaomi MiMo models, and search tools are off by default for every provider. To give the agent web search, either set `MIMOCODE_ENABLE_EXA=1` (offers the `websearch` and `codesearch` tools backed by Exa's public endpoint; `EXA_API_KEY` raises its limits) or add a search MCP server, for example:
 
 ```jsonc
 {

@@ -438,6 +438,38 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
 
 要声明自定义模型支持哪些输入模态（图片、音频、视频、PDF），在 TUI 中运行 `/modalities`——多选对话框会把设置持久化到配置，无需手动编辑。
 
+### 联网搜索
+
+MiMoCode 不为 Xiaomi MiMo 模型内置搜索服务：平台的联网服务插件按调用次数从按量付费 API Key 扣费，不包含在 Token Plan 中。可从以下方式中任选一种；Agent 会使用当前可用的搜索工具，没有时回落到 `webfetch`。
+
+**内置 `websearch` 工具（Exa）。** 所有 Provider 默认都不提供搜索工具。设置 `MIMOCODE_ENABLE_EXA=1` 后会提供 `websearch` 和 `codesearch` 工具；它们调用 Exa 的公开 MCP 端点，设置 `EXA_API_KEY` 可提高频率上限。
+
+**搜索 MCP 服务。** 在 `mcp` 下添加；密钥可通过 `{env:VAR}` 从环境变量读取：
+
+```jsonc
+{
+  "mcp": {
+    // Exa，远程（Key 可选）
+    "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp" },
+    // Tavily，远程（在 https://app.tavily.com 获取 API Key）
+    "tavily": {
+      "type": "remote",
+      "url": "https://mcp.tavily.com/mcp/",
+      "headers": { "Authorization": "Bearer {env:TAVILY_API_KEY}" }
+    },
+    // 火山引擎豆包搜索，本地（需要 uv 与 Python 3.12/3.13；
+    // 在 https://console.volcengine.com/search-infinity/api-key 开通服务并创建 Key）
+    "doubao-search": {
+      "type": "local",
+      "command": ["uvx", "--from", "mcp-server-askecho-search-infinity>=0.2.0", "mcp-server-askecho-search-infinity"],
+      "environment": { "ASK_ECHO_SEARCH_INFINITY_API_KEY": "{env:ASK_ECHO_SEARCH_INFINITY_API_KEY}" }
+    }
+  }
+}
+```
+
+运行 `mimo mcp` 检查服务是否连接成功。
+
 ### 主要选项
 
 - Provider 和模型选择
