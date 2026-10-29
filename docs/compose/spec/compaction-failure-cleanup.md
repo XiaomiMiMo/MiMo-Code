@@ -2,7 +2,7 @@
 feature: compaction-failure-cleanup
 status: delivered
 updated: 2026-10-29
-source: fix/compaction-failure-cleanup
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2743
 ---
 
 # Compaction Failure Cleanup
