@@ -9,7 +9,7 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2744
 
 ## Report
 
-**What was built** — `websearch` and `codesearch` are off for every provider (Xiaomi family and `opencode` included) unless `MIMOCODE_ENABLE_EXA` is set; `websearch` always searches through Exa. The Xiaomi gateway client and its plugin-console messages are gone; an empty result now points at `webfetch` and at configuring a search MCP server. `fact-check` falls back from `websearch` to a search MCP tool and then to `webfetch` on DuckDuckGo HTML. A "Web search" FAQ entry in README (English and Chinese) and the bundled `mimocode-docs` guide explain how to enable search: the Exa tools, or an Exa, Tavily or Volcengine Doubao Search MCP server, and the `xiaomi-auth-provider-split` doc no longer claims family websearch routing.
+**What was built** — `websearch` and `codesearch` are off for every provider (Xiaomi family and `opencode` included) unless `MIMOCODE_ENABLE_EXA` is set; `websearch` always searches through Exa. The Xiaomi gateway client and its plugin-console messages are gone; an empty result now points at `webfetch` and at configuring a search MCP server. `fact-check` and `deep-research` use `websearch` or a search MCP tool and, without one, read named primary sources and public APIs instead of scraping search-engine pages. A "Web search" FAQ entry in README (English and Chinese) and the bundled `mimocode-docs` guide explain how to enable search: the Exa tools, or an Exa, Tavily or Volcengine Doubao Search MCP server, and the `xiaomi-auth-provider-split` doc no longer claims family websearch routing.
 
 **Verification**
 - `bun run typecheck` (packages/cli): PASS.
@@ -33,7 +33,7 @@ MiMoCode no longer ships this first-party search. Users who want web search conf
 
 ### S2.3 Built-in workflows
 
-`fact-check` searches with `websearch` when it is available, otherwise with any configured search MCP tool, otherwise via `webfetch` on DuckDuckGo HTML — the same fallback `deep-research` already documents.
+`fact-check` and `deep-research` search with the `websearch` tool or a configured search MCP tool. Without either they do not scrape search-engine result pages: they `webfetch` primary sources they can name directly and use free public APIs (arXiv, GitHub search, …); `fact-check` returns no hits when that finds nothing, and `deep-research` states that web search was not configured.
 
 ### S2.4 Documentation
 
@@ -48,7 +48,7 @@ README (English and Chinese) gains a collapsible "Web search" FAQ entry that onl
 ## Tasks
 
 - [x] T1: Drop the Xiaomi websearch gate and gateway client — acceptance: no provider gets `websearch` or `codesearch` without `MIMOCODE_ENABLE_EXA`; `tool/websearch/mimo.ts` is gone and the fallback text no longer mentions the Xiaomi plugin console (covers: S2.1, S2.2)
-- [x] T2: `fact-check` search fallback — acceptance: the search prompt names the MCP and `webfetch` fallbacks when `websearch` is unavailable (covers: S2.3)
+- [x] T2: `fact-check` and `deep-research` search fallback — acceptance: both workflow prompts name `websearch` or a search MCP tool and, without one, only primary sources and public APIs — no search-engine scraping (covers: S2.3)
 - [x] T3: README "Web search" section and `xiaomi-auth-provider-split` correction — acceptance: the FAQ entry documents the configuration paths with valid `mcp` entries and no Xiaomi-specific wording; the old spec no longer claims family websearch routing (covers: S2.4)
 
 ## Journey log
