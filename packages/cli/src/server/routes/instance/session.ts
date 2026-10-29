@@ -679,11 +679,14 @@ export const SessionRoutes = lazy(() =>
           const compact = yield* SessionCompaction.Service
           const prompt = yield* SessionPrompt.Service
           const agent = yield* Agent.Service
+          const provider = yield* Provider.Service
 
+          // Reject an unusable model before a boundary exists.
+          yield* provider.getModel(body.providerID, body.modelID)
           yield* revert.cleanup(yield* session.get(sessionID))
           const currentAgent = yield* resolveCurrentAgent(sessionID, yield* agent.defaultAgent())
 
-          yield* compact.create({
+          const boundaryID = yield* compact.create({
             sessionID,
             agent: currentAgent,
             model: {
@@ -694,6 +697,12 @@ export const SessionRoutes = lazy(() =>
             agentID: "main",
           })
           yield* prompt.loop({ sessionID })
+          // A failed compaction removes its boundary; only a projection proves success.
+          const completed = MessageV2.parts(boundaryID).some((part) => part.type === "compaction" && part.projection)
+          if (!completed)
+            return yield* Effect.fail(
+              new SessionCompaction.FailedError({ sessionID, message: "Compaction did not produce a summary" }),
+            )
           return true
         }),
     )

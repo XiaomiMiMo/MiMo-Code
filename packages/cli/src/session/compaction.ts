@@ -12,11 +12,13 @@ import { Agent, resolveStoredAgent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { Effect, Layer, Context } from "effect"
+import { Cause, Effect, Exit, Layer, Context } from "effect"
 import { InstanceState } from "@/effect"
 import { isOverflow as overflow } from "./overflow"
 import { makeRuntime } from "@/effect/run-service"
 import { fn } from "@/util/fn"
+import { errorMessage } from "@/util/error"
+import { NamedError } from "@mimo-ai/shared/util/error"
 import path from "path"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
 
@@ -35,6 +37,14 @@ export const Event = {
     }),
   ),
 }
+
+export const FailedError = NamedError.create(
+  "SessionCompactionFailedError",
+  z.object({
+    sessionID: SessionID.zod,
+    message: z.string(),
+  }),
+)
 
 export const COMPACTION_TAIL_BUDGET = 40_000
 export const COMPACTION_TOOL_RESULT_LIMIT = 8_000
@@ -241,7 +251,7 @@ export interface Interface {
     auto: boolean
     overflow?: boolean
     agentID?: string
-  }) => Effect.Effect<void>
+  }) => Effect.Effect<MessageID>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionCompaction") {}
@@ -274,20 +284,29 @@ export const layer: Layer.Layer<
       return overflow({ cfg: yield* config.get(), tokens: input.tokens, model: input.model })
     })
 
-    const processCompaction = Effect.fn("SessionCompaction.process")(function* (input: {
+    type ProcessInput = {
       parentID: MessageID
       messages: MessageV2.WithParts[]
       sessionID: SessionID
       auto: boolean
       overflow?: boolean
       agentID?: string
-    }) {
+    }
+    // What a compaction step has committed so far; the exit backstop reads it.
+    type Progress = {
+      boundary: boolean
+      projected: boolean
+      summary?: () => MessageV2.Assistant
+    }
+
+    const runCompaction = Effect.fnUntraced(function* (input: ProcessInput, progress: Progress) {
       const snapshotLen = input.messages.length
       const parentIdx = input.messages.findLastIndex((m) => m.info.id === input.parentID)
       const parent = parentIdx >= 0 ? input.messages[parentIdx] : undefined
       if (!parent || parent.info.role !== "user") {
         throw new Error(`Compaction parent must be a user message: ${input.parentID}`)
       }
+      const boundaryUser = parent.info
       const promptConfig = yield* session.resolvePrompt({ sessionID: input.sessionID })
       const userMessage = {
         ...parent.info,
@@ -299,6 +318,7 @@ export const layer: Layer.Layer<
         harness: promptConfig.harness,
       }
       const compactionPart = parent.parts.find((part): part is MessageV2.CompactionPart => part.type === "compaction")
+      progress.boundary = compactionPart !== undefined
 
       // Reuse the effective conversation before this synthetic boundary without
       // restoring raw history removed by an earlier compaction or checkpoint.
@@ -345,7 +365,18 @@ export const layer: Layer.Layer<
         return "stop" as const
       }
       const parentAgent = yield* resolveStoredAgent(agents, requestUser.info.agent)
-      const parentModel = yield* provider.getModel(requestUser.info.model.providerID, requestUser.info.model.modelID)
+      // The boundary carries the model the caller asked to compact with; the
+      // turns after it run on that model too, so it drives the summary, the
+      // prefix-snapshot lookup and the tail budget.
+      const baseRef = compactionPart ? boundaryUser.model : requestUser.info.model
+      const parentModel = yield* provider.getModel(baseRef.providerID, baseRef.modelID)
+      const sameModelAsRequest =
+        requestUser.info.model.providerID === parentModel.providerID && requestUser.info.model.modelID === parentModel.id
+      const summaryModelRef = {
+        providerID: parentModel.providerID,
+        modelID: parentModel.id,
+        variant: sameModelAsRequest ? requestUser.info.model.variant : baseRef.variant,
+      }
       const parentSession = yield* session.get(input.sessionID)
       const profileKey = SessionPrefixSnapshot.profileKey({
         providerID: parentModel.providerID,
@@ -401,7 +432,7 @@ export const layer: Layer.Layer<
         agentID: input.agentID ?? undefined,
         mode: "compaction",
         agent: "compaction",
-        variant: requestUser.info.model.variant,
+        variant: summaryModelRef.variant,
         summary: true,
         path: {
           cwd: ctx.directory,
@@ -421,11 +452,13 @@ export const layer: Layer.Layer<
         },
       }
       yield* session.updateMessage(msg)
+      progress.summary = () => msg
       const processor = yield* processors.create({
         assistantMessage: msg,
         sessionID: input.sessionID,
         model,
       })
+      progress.summary = () => processor.message
       const summaryRequest = {
         role: "user" as const,
         content: [{ type: "text" as const, text: prompt }],
@@ -433,6 +466,7 @@ export const layer: Layer.Layer<
       const result = yield* processor.process({
         user: {
           ...requestUser.info,
+          model: summaryModelRef,
           system: promptConfig.system,
           systemMode: promptConfig.systemMode,
           harness: promptConfig.harness,
@@ -511,6 +545,7 @@ export const layer: Layer.Layer<
             compacted_tool_calls: compactedToolCalls(tail),
           },
         })
+        progress.projected = true
       }
 
       if (result === "continue" && input.auto) {
@@ -606,6 +641,51 @@ export const layer: Layer.Layer<
       return result
     })
 
+    // A failed compaction leaves no boundary. `rollback` covers the outcomes
+    // the step decides itself; this covers every other exit (typed failure,
+    // defect, interruption) that happens before the projection is written.
+    const abandon = Effect.fnUntraced(function* (input: ProcessInput, progress: Progress, cause: Cause.Cause<unknown>) {
+      if (!progress.boundary || progress.projected) return
+      const summary = progress.summary?.()
+      if (summary && !summary.error) {
+        summary.error = Cause.hasInterruptsOnly(cause)
+          ? new MessageV2.AbortedError({ message: "Compaction was interrupted" }).toObject()
+          : new MessageV2.InvalidOutputError({
+              message: `Compaction failed: ${errorMessage(Cause.squash(cause))}`,
+            }).toObject()
+        summary.finish = "error"
+        summary.time.completed ??= Date.now()
+        yield* session.updateMessage(summary)
+      }
+      yield* session.removeMessage({ sessionID: input.sessionID, messageID: input.parentID })
+      log.warn("compaction abandoned; boundary removed", {
+        sessionID: input.sessionID,
+        boundary: input.parentID,
+        cause: Cause.pretty(cause),
+      })
+    })
+
+    const processCompaction = Effect.fn("SessionCompaction.process")(function* (input: ProcessInput) {
+      const progress: Progress = { boundary: false, projected: false }
+      return yield* runCompaction(input, progress).pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : abandon(input, progress, exit.cause).pipe(
+                Effect.catchCause((cleanup) =>
+                  Effect.sync(() =>
+                    log.error("compaction cleanup failed", {
+                      sessionID: input.sessionID,
+                      boundary: input.parentID,
+                      cause: Cause.pretty(cleanup),
+                    }),
+                  ),
+                ),
+              ),
+        ),
+      )
+    })
+
     const create = Effect.fn("SessionCompaction.create")(function* (input: {
       sessionID: SessionID
       agent: string
@@ -641,6 +721,7 @@ export const layer: Layer.Layer<
         sessionID: input.sessionID,
         ...(input.agentID ? { agentID: input.agentID } : {}),
       })
+      return msg.id
     })
 
     return Service.of({

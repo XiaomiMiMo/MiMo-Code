@@ -2153,6 +2153,128 @@ it.live("empty compaction removes its boundary without calling the model", () =>
   ),
 )
 
+const removedModel = {
+  providerID: ProviderID.make("test"),
+  modelID: ModelID.make("removed-model"),
+}
+
+const seedUserTurn = Effect.fnUntraced(function* (input: {
+  sessionID: SessionID
+  model: { providerID: ProviderID; modelID: ModelID }
+  text: string
+}) {
+  const sessions = yield* Session.Service
+  const user = yield* sessions.updateMessage({
+    id: MessageID.ascending(),
+    role: "user" as const,
+    sessionID: input.sessionID,
+    agentID: "main",
+    agent: "build",
+    model: input.model,
+    time: { created: Date.now() },
+  })
+  yield* sessions.updatePart({
+    id: PartID.ascending(),
+    messageID: user.id,
+    sessionID: input.sessionID,
+    type: "text",
+    text: input.text,
+  })
+})
+
+function compactionParts(messages: MessageV2.WithParts[]) {
+  return messages.flatMap((message) => message.parts).filter((part) => part.type === "compaction")
+}
+
+it.live("compaction that fails before summarizing removes its boundary and re-raises", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const sessions = yield* Session.Service
+      const compaction = yield* SessionCompaction.Service
+      const chat = yield* sessions.create({ title: "Failed compaction" })
+      yield* seedUserTurn({ sessionID: chat.id, model: ref, text: "context that must survive" })
+      yield* compaction.create({ sessionID: chat.id, agent: "build", model: removedModel, auto: false, agentID: "main" })
+      const snapshot = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+
+      const exit = yield* compaction
+        .process({ parentID: snapshot.at(-1)!.info.id, messages: snapshot, sessionID: chat.id, auto: false, agentID: "main" })
+        .pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("ProviderModelNotFoundError")
+      const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+      expect(compactionParts(after)).toEqual([])
+      expect(after.some((message) => message.info.role === "assistant")).toBe(false)
+      expect(JSON.stringify(MessageV2.filterCompacted([...after].reverse()))).toContain("context that must survive")
+      expect(yield* llm.calls).toBe(0)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("interrupted compaction removes its boundary and fails its summary message", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const sessions = yield* Session.Service
+      const compaction = yield* SessionCompaction.Service
+      const chat = yield* sessions.create({ title: "Interrupted compaction" })
+      yield* seedUserTurn({ sessionID: chat.id, model: ref, text: "context that must survive" })
+      yield* compaction.create({ sessionID: chat.id, agent: "build", model: ref, auto: false, agentID: "main" })
+      const snapshot = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+      yield* llm.hang
+
+      const processing = yield* compaction
+        .process({ parentID: snapshot.at(-1)!.info.id, messages: snapshot, sessionID: chat.id, auto: false, agentID: "main" })
+        .pipe(Effect.forkChild)
+      yield* llm.wait(1)
+      yield* Fiber.interrupt(processing)
+
+      const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+      expect(compactionParts(after)).toEqual([])
+      const summaries = after.filter((message) => message.info.role === "assistant")
+      expect(summaries).toHaveLength(1)
+      const summary = summaries[0].info
+      expect(summary.role === "assistant" && summary.error?.name).toBe("MessageAbortedError")
+      expect(JSON.stringify(MessageV2.filterCompacted([...after].reverse()))).toContain("context that must survive")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("compaction summarizes with the boundary model when the previous model is gone", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const sessions = yield* Session.Service
+      const compaction = yield* SessionCompaction.Service
+      const chat = yield* sessions.create({ title: "Compaction onto a new model" })
+      yield* seedUserTurn({ sessionID: chat.id, model: removedModel, text: "context from the removed model" })
+      yield* compaction.create({ sessionID: chat.id, agent: "build", model: mcpRef, auto: false, agentID: "main" })
+      const snapshot = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+      yield* llm.text("summary on the requested model")
+
+      expect(
+        yield* compaction.process({
+          parentID: snapshot.at(-1)!.info.id,
+          messages: snapshot,
+          sessionID: chat.id,
+          auto: false,
+          agentID: "main",
+        }),
+      ).toBe("continue")
+
+      const request = (yield* llm.inputs)[0]
+      expect(request.model).toBe(mcpRef.modelID)
+      expect(JSON.stringify(request)).toContain("context from the removed model")
+      const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+      const [part] = compactionParts(after)
+      expect(part?.type === "compaction" && part.projection?.summary).toContain("summary on the requested model")
+      const summary = after.find((message) => message.info.role === "assistant")!.info
+      expect(summary.role === "assistant" && summary.modelID).toBe(mcpRef.modelID)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("compaction preserves the parent's appended turn context", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {
