@@ -1,3 +1,7 @@
+import { appEventResult, appIdentity, appTool } from "@/mcp/apps"
+import { appOutcome, settleAppCall, startAppCall } from "@/mcp/app-calls"
+import { appContextMessages, readAppContext } from "@/mcp/app-context"
+import * as Storage from "@/storage/storage"
 import { HostModelTransport } from "../provider/host-transport"
 import { bindScopedRef } from "../effect/scoped-ref"
 import path from "path"
@@ -711,6 +715,7 @@ export const layer = Layer.effect(
     const actorRegistry = yield* ActorRegistry.Service
     const inbox = yield* Inbox.Service
     const executions = yield* ActorExecution.Service
+    const storage = yield* Storage.Service
     const notifyTerminal = makeTerminalNotifier({ inbox, registry: actorRegistry, sessions })
 
     // Track sessions that have already shown the "loaded instructions" toast so we
@@ -2178,6 +2183,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 }
               }
               yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
+              const app = appTool(item)
+              // Issue order is taken here: target resolved, hooks and permission admitted, about to call the Client.
+              const appCall = app ? yield* startAppCall({ ...app, sessionID: input.session.id,
+                messageID: input.processor.message.id, callID, arguments: mcpBeforeOutput.args }) : undefined
+              // Messages keep only the public identity; the recoverable input/result lives in one slot per Server.
+              const appFact = appCall ? appIdentity(appCall) : undefined
+              if (appFact) yield* ctx.metadata({ metadata: { mcpApp: appFact } })
               const normalizeResult = (result: Awaited<ReturnType<NonNullable<typeof execute>>>) => Effect.gen(function* () {
                 const normalized = normalizeToolResult(result)
                 const truncated = yield* truncate.output(
@@ -2187,6 +2199,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 )
                 const metadata = {
                   ...normalized.metadata,
+                  ...(appFact ? { mcpApp: appFact } : {}),
                   truncated: truncated.truncated,
                   ...(truncated.truncated && { outputPath: truncated.outputPath }),
                 }
@@ -2216,7 +2229,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                       input.processor.updateToolCall(opts.toolCallId, (part) => {
                         if (part.state.status !== "running") return part
                         return { ...part, state: { ...part.state, metadata: {
-                          ...part.state.metadata, mcp: { _meta: meta },
+                          ...part.state.metadata, ...(appFact ? { mcpApp: appFact } : {}), mcp: { _meta: meta },
                         } } }
                       }),
                     ),
@@ -2227,7 +2240,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   yield* ToolSettlement.record(opts.toolCallId, normalizeResult(result).pipe(Effect.map(({ output }) => output)))
                   return result
                 }),
-              ).pipe(Effect.catch((error) => Effect.gen(function* () {
+              ).pipe(Effect.onExit((exit) => appCall
+                ? settleAppCall(appCall, Exit.isSuccess(exit)
+                  ? { result: appEventResult(exit.value) }
+                  : appOutcome(Cause.squash(exit.cause), !!opts.abortSignal?.aborted || Cause.hasInterrupts(exit.cause)), "row")
+                : Effect.void), Effect.catch((error) => Effect.gen(function* () {
                 // Catch SDK execution failures here, before direct/exec paths persist
                 // or forward them. Successful results (including diffs) never enter.
                 if (opts.abortSignal?.aborted) return yield* Effect.fail(error)
@@ -5700,6 +5717,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
                 const format = lastUser.format ?? { type: "text" as const }
 
+                // Open MCP Apps' current state for this session. Read once per step so
+                // max-mode candidates share it; placed after history and before any
+                // trailing control prompt, and never persisted (the latest value supersedes).
+                const appContext = appContextMessages(
+                  yield* readAppContext(sessionID).pipe(Effect.provideService(Storage.Service, storage)),
+                )
+
                 // Determine if this iteration is for a fork agent (contextMode === "full").
                 // Fork agents use the frozen ForkContext snapshot captured at spawn time
                 // (system + inheritedMessages) rather than recomputing from their own
@@ -5816,7 +5840,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                       parentSessionID: session.parentID,
                       system: additions,
                       prebuiltSystem,
-                      messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
+                      messages: [...modelMsgs, ...appContext, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
                       mergeTurnContextIntoLastUser: true,
                       tools,
                       activeTools,
@@ -6043,7 +6067,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   parentSessionID: session.parentID,
                   system: [],
                   prebuiltSystem,
-                  messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
+                  messages: [...modelMsgs, ...appContext, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
                   mergeTurnContextIntoLastUser: true,
                   tools,
                   activeTools,
@@ -7646,7 +7670,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     yield* bindScopedRef(defaultModelRef, defaultModelResolver)
     return impl
   }),
-).pipe(Layer.provide(ActorExecution.layer))
+).pipe(Layer.provide(ActorExecution.layer), Layer.provide(Storage.defaultLayer))
 
 /** App composition variant with MCP supplied by the process-wide layer. */
 export const appLayer = Layer.suspend(() =>
