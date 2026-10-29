@@ -449,6 +449,38 @@ Put user-wide settings in `~/.config/mimocode/mimocode.jsonc` (or `mimocode.json
 
 To declare which input modalities a custom model supports (image, audio, video, PDF), run `/modalities` in the TUI — a multi-select dialog that persists the setting to config without hand-editing.
 
+### Web Search
+
+MiMoCode does not ship a search service for Xiaomi MiMo models: the platform's web-search plugin is billed per call against a pay-as-you-go API key and is not part of Token Plan. Pick one of the options below; the agent uses whatever search tool is available and otherwise falls back to `webfetch`.
+
+**Built-in `websearch` tool (Exa).** Set `MIMOCODE_ENABLE_EXA=1` to offer the `websearch` tool to every model (it is already on for the `opencode` provider). It calls Exa's public MCP endpoint; set `EXA_API_KEY` for higher rate limits.
+
+**A search MCP server.** Add one under `mcp`; keys can come from environment variables through `{env:VAR}`:
+
+```jsonc
+{
+  "mcp": {
+    // Exa, remote (key optional)
+    "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp" },
+    // Tavily, remote (API key from https://app.tavily.com)
+    "tavily": {
+      "type": "remote",
+      "url": "https://mcp.tavily.com/mcp/",
+      "headers": { "Authorization": "Bearer {env:TAVILY_API_KEY}" }
+    },
+    // Volcengine Doubao Search, local (needs uv and Python 3.12/3.13;
+    // enable the service and create a key at https://console.volcengine.com/search-infinity/api-key)
+    "doubao-search": {
+      "type": "local",
+      "command": ["uvx", "--from", "mcp-server-askecho-search-infinity>=0.2.0", "mcp-server-askecho-search-infinity"],
+      "environment": { "ASK_ECHO_SEARCH_INFINITY_API_KEY": "{env:ASK_ECHO_SEARCH_INFINITY_API_KEY}" }
+    }
+  }
+}
+```
+
+Run `mimo mcp` to check that the server connects.
+
 ### Key Options
 
 - Provider and model selection

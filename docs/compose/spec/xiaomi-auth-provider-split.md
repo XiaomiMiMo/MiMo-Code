@@ -1,7 +1,7 @@
 ---
 feature: xiaomi-auth-provider-split
 status: delivered
-updated: 2026-10-28
+updated: 2026-10-29
 source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2739
 ---
 
@@ -9,7 +9,7 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2739
 
 ## Report
 
-**What was built** — Platform login credentials now land under separate providers in `auth.json`: the API key under `xiaomi`, token-plan keys under `xiaomi-token-plan-cn|ams|sgp` (matching the models.dev catalog). The two kinds may coexist. Endpoint → provider derivation lives in `xiaomi-family.ts`; `MimoAuthPlugin` returns the derived `result.provider`, and `ProviderAuth.callback` plus CLI `mimoLogin` share `saveCredential` (including same-cluster legacy-alias cleanup). Consumers recognize the `xiaomi-*` family: websearch routing and key lookup, the WebSearchTool gate, in-house ordering, large-model defaults, TUI logout, default-model selection (post-login pick and the credential switch in `fallback`), and voice credential fallback (token-plan clusters before the API key). Legacy single-key entries keep working; only a same-cluster re-login drops them.
+**What was built** — Platform login credentials now land under separate providers in `auth.json`: the API key under `xiaomi`, token-plan keys under `xiaomi-token-plan-cn|ams|sgp` (matching the models.dev catalog). The two kinds may coexist. Endpoint → provider derivation lives in `xiaomi-family.ts`; `MimoAuthPlugin` returns the derived `result.provider`, and `ProviderAuth.callback` plus CLI `mimoLogin` share `saveCredential` (including same-cluster legacy-alias cleanup). Consumers recognize the `xiaomi-*` family: in-house ordering, large-model defaults, TUI logout, default-model selection (post-login pick and the credential switch in `fallback`), and voice credential fallback (token-plan clusters before the API key). Legacy single-key entries keep working; only a same-cluster re-login drops them.
 
 **Verification** — Related scope (packages/cli): `bun test test/provider/xiaomi-family.test.ts test/provider/provider-auth-write.test.ts test/plugin/mimo.test.ts test/cli/plugin-auth-picker.test.ts test/cli/tui/voice.test.ts test/cli/tui/model.test.ts test/provider/transform.test.ts test/tool/websearch.test.ts test/tool/registry-toolset.test.ts test/auth` → 385 pass / 4 pre-existing skip / 0 fail. Root `bun run typecheck` (all workspaces) PASS. Full suite intentionally skipped (repo has pre-existing failures).
 
@@ -47,8 +47,7 @@ Both success branches of the authorize callback (local server and pasted code) r
 
 ### S2.5 Engine consumers
 
-- `tool/websearch/index.ts`: the MiMo gateway branch uses the family predicate; the key comes from `model.providerID` (no more hardcoded `auth.get("xiaomi")`); the endpoint stays `model.api.url`.
-- `tool/registry.ts`: WebSearchTool availability uses the family predicate.
+- Websearch does not depend on the family: Xiaomi models get no built-in search (see `remove-xiaomi-websearch`).
 - `provider/provider.ts` `inHouse` ordering and `provider/transform.ts` `usesLargeModelDefaults`: `mimo` or the xiaomi family.
 - `provider/error.ts` already works per `xiaomi-*` and is unchanged.
 
@@ -75,7 +74,7 @@ Legacy entries (CLI form: `xiaomi` key + token-plan `metadata.base_url`) remain 
 - [x] T2: `provider/auth.ts` callback stores under `result.provider` — acceptance: tests prove api and oauth results honor the redirect and the default remains `input.providerID` (covers: S2.2)
 - [x] T3: `plugin/mimo.ts` returns the derived provider and gates `chat.headers` by family — acceptance: tests prove token-plan callbacks return the cluster provider and `X-Mimo-Source` applies to `xiaomi-token-plan-*` (covers: S2.3)
 - [x] T4: `mimoLogin` split writes + same-cluster legacy cleanup + family whoami — acceptance: tests prove token-plan logins write `xiaomi-token-plan-*`, the stale `xiaomi` alias is cleared, API logins write `xiaomi`, and both kinds coexist (covers: S2.4)
-- [x] T5: Engine consumers recognize the family (websearch/registry/inHouse/transform) — acceptance: tests prove `xiaomi-token-plan-cn` models use MiMo websearch with their own provider key and expose WebSearchTool (covers: S2.5)
+- [x] T5: Engine consumers recognize the family (inHouse/transform) — acceptance: tests prove `xiaomi-token-plan-*` models get large-model defaults (covers: S2.5)
 - [x] T6: TUI consumers (family logout, login default model, voice fallback) — acceptance: tests prove logout removes all four family keys and voice falls back to a keyed family member when the configured cluster has none (covers: S2.6)
 
 ## Journey log

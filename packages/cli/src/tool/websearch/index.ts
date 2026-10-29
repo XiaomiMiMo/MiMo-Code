@@ -3,14 +3,10 @@ import { Effect } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import * as Tool from "../tool"
 import * as McpExa from "../mcp-exa"
-import * as MimoWebsearch from "./mimo"
-import { Auth } from "@/auth"
-import { Provider } from "@/provider"
-import { isXiaomiFamilyProvider } from "@/provider/xiaomi-family"
 import DESCRIPTION from "./websearch.txt"
 
-const WEBFETCH_FALLBACK =
-  "Web search unavailable. Use `webfetch` with a relevant URL instead, or enable the Web Search plugin at https://platform.xiaomimimo.com/console/plugin."
+const NO_RESULTS =
+  "Web search returned no results. Use `webfetch` with a relevant URL, or configure a search MCP server (see the Web search section of the MiMoCode README)."
 const MAX_TIMEOUT = 120 * 1000 // 2 minutes
 
 const Parameters = z.object({
@@ -37,7 +33,6 @@ export const WebSearchTool = Tool.define(
   "websearch",
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
-    const auth = yield* Auth.Service
 
     return {
       get description() {
@@ -60,45 +55,23 @@ export const WebSearchTool = Tool.define(
             },
           })
 
-          const model = (ctx.extra as { model?: Provider.Model })?.model
           const timeout = params.timeout === undefined ? undefined : Math.min(params.timeout * 1000, MAX_TIMEOUT)
-
-          // API and token-plan credentials are stored separately, so the key must
-          // come from the model's own provider rather than a hardcoded `xiaomi`.
-          const gatewayModel = model && isXiaomiFamilyProvider(model.providerID) ? model : undefined
-          const result =
-            gatewayModel
-              ? yield* Effect.catchCause(
-                  Effect.gen(function* () {
-                    const info = yield* auth.get(gatewayModel.providerID)
-                    if (!info || info.type !== "api") return undefined
-                    return yield* MimoWebsearch.call(
-                      http,
-                      gatewayModel.api.url,
-                      info.key,
-                      params.query,
-                      gatewayModel.api.id,
-                      timeout ?? "30 seconds",
-                    )
-                  }),
-                  () => Effect.succeed(undefined),
-                )
-              : yield* McpExa.call(
-                  http,
-                  "web_search_exa",
-                  McpExa.SearchArgs,
-                  {
-                    query: params.query,
-                    type: params.type || "auto",
-                    numResults: params.numResults || 8,
-                    livecrawl: params.livecrawl || "fallback",
-                    contextMaxCharacters: params.contextMaxCharacters,
-                  },
-                  timeout ?? "25 seconds",
-                )
+          const result = yield* McpExa.call(
+            http,
+            "web_search_exa",
+            McpExa.SearchArgs,
+            {
+              query: params.query,
+              type: params.type || "auto",
+              numResults: params.numResults || 8,
+              livecrawl: params.livecrawl || "fallback",
+              contextMaxCharacters: params.contextMaxCharacters,
+            },
+            timeout ?? "25 seconds",
+          )
 
           return {
-            output: result ?? WEBFETCH_FALLBACK,
+            output: result ?? NO_RESULTS,
             title: `Web search: ${params.query}`,
             metadata: {},
           }

@@ -129,6 +129,26 @@ Add servers under the `mcp` key. Two kinds:
 
 Inspect/manage with `mimo mcp`. Request timeout defaults to 5000ms (`timeout` per server, or `experimental.mcp_timeout` globally).
 
+### Web search
+
+There is no built-in search service for Xiaomi MiMo models. To give the agent web search, either set `MIMOCODE_ENABLE_EXA=1` (offers the `websearch` tool backed by Exa's public endpoint; `EXA_API_KEY` raises its limits) or add a search MCP server, for example:
+
+```jsonc
+{
+  "mcp": {
+    "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp" },
+    "tavily": { "type": "remote", "url": "https://mcp.tavily.com/mcp/", "headers": { "Authorization": "Bearer {env:TAVILY_API_KEY}" } },
+    "doubao-search": {
+      "type": "local",
+      "command": ["uvx", "--from", "mcp-server-askecho-search-infinity>=0.2.0", "mcp-server-askecho-search-infinity"],
+      "environment": { "ASK_ECHO_SEARCH_INFINITY_API_KEY": "{env:ASK_ECHO_SEARCH_INFINITY_API_KEY}" }
+    }
+  }
+}
+```
+
+Doubao Search (Volcengine) needs `uv` with Python 3.12/3.13 and a key from https://console.volcengine.com/search-infinity/api-key.
+
 ## Compose mode
 
 Use the `compose-next` skill for end-to-end feature delivery:
