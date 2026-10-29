@@ -110,7 +110,7 @@ mimo attach http://127.0.0.1:4096
 </details>
 
 <details>
-<summary><strong>联网搜索</strong></summary>
+<summary><strong>如何配置联网搜索</strong></summary>
 
 如需让 Agent 联网搜索，可以设置 `MIMOCODE_ENABLE_EXA=1` 启用内置的 `websearch` 和 `codesearch` 工具（基于 Exa，设置 `EXA_API_KEY` 可提高频率上限），或在配置的 `mcp` 下添加一个搜索 MCP 服务。密钥可通过 `{env:VAR}` 从环境变量读取：
 
