@@ -1,6 +1,6 @@
 ---
 feature: compaction-failure-cleanup
-status: in-progress
+status: delivered
 updated: 2026-10-29
 source: fix/compaction-failure-cleanup
 ---
@@ -9,6 +9,13 @@ source: fix/compaction-failure-cleanup
 
 ## Report
 
+**What was built** — A compaction step that exits before writing its projection (typed failure, defect, or interruption) now marks its unfinished summary message failed, removes the boundary, and re-raises; the existing rollback outcomes are unchanged. `/summarize` resolves the session, then rejects an unknown model with 400 before writing a boundary; after the loop it removes a boundary the loop never processed and fails with `SessionCompactionFailedError` (500) unless the boundary has a projection, otherwise it answers `true`. Compaction summarizes with the boundary's own model, so a session whose previous model was removed compacts onto the requested model; an unchanged model still reuses the prefix snapshot.
+
+**Verification**
+- `bun run typecheck` (packages/cli): PASS.
+- New tests — `test/session/prompt-effect.test.ts` (failure before summarizing, interruption, compaction onto a new model) and `test/server/summarize-route-outcome.test.ts` (unknown model 400, rollback 500, success `true`): PASS; the route failure cases fail on the base commit.
+- All 60 test files mentioning compaction/summarize/filterCompacted plus `test/server` (80 files): 1478 pass, 0 fail.
+- Full `bun test --timeout 30000`: 6168 pass / 68 fail. 47 failures reproduce with identical names on base 3e92e0d8 (MCP, worktree, git, project-id) — PRE-EXISTING; the rest pass when their files are rerun in isolation with and without the change (load flakes).
 ## [S1] Problem
 
 A manual `/compact` on a session whose last-used model was deleted fails with `ProviderModelNotFoundError`, yet the compaction boundary stays in the session forever without a `projection`. Clients render it as "compacting" indefinitely, and `filterCompacted` treats the orphan boundary as a cut point, so every later turn sees only an empty `Summary of previous conversation:` — the history is effectively lost.
@@ -55,8 +62,12 @@ The compaction step's base model is the boundary message's own `model` — the m
 
 ## Tasks
 
-- [ ] T1: Backstop cleanup in `SessionCompaction.process` — acceptance: a compaction step that fails, dies or is interrupted before writing the projection removes the boundary, leaves no unfinished summary message, re-raises the original exit, and `filterCompacted` no longer cuts at it; the five controlled rollback outcomes behave as before (covers: S2.1)
-- [ ] T2: `/summarize` validates the model and reports failure — acceptance: an unknown request model answers 400 with no boundary written; a rollback answers a non-2xx `SessionCompactionFailedError`; a successful compaction still answers `true` (covers: S2.2, depends: T1)
-- [ ] T3: Compaction runs on the boundary's model — acceptance: a session whose previous model no longer exists compacts successfully onto the requested model and writes a projection; an unchanged model still reuses the prefix snapshot (covers: S2.3)
+- [x] T1: Backstop cleanup in `SessionCompaction.process` — acceptance: a compaction step that fails, dies or is interrupted before writing the projection removes the boundary, leaves no unfinished summary message, re-raises the original exit, and `filterCompacted` no longer cuts at it; the five controlled rollback outcomes behave as before (covers: S2.1)
+- [x] T2: `/summarize` validates the model and reports failure — acceptance: an unknown request model answers 400 with no boundary written; a rollback answers a non-2xx `SessionCompactionFailedError`; a successful compaction still answers `true` (covers: S2.2, depends: T1)
+- [x] T3: Compaction runs on the boundary's model — acceptance: a session whose previous model no longer exists compacts successfully onto the requested model and writes a projection; an unchanged model still reuses the prefix snapshot (covers: S2.3)
 
 ## Journey log
+
+- Review found that the step's first suspension point (`resolvePrompt`, which waits on the prompt lock) ran before the boundary was marked, so an interrupt there escaped the backstop; the boundary is now marked before any `yield*`.
+- `process` cannot see a boundary the loop never reaches: a `/summarize` request cancelled while queued behind another run, or a model-resolution failure in the runLoop before the compaction branch. The route therefore removes its own unfinished boundary after the loop. Runner work is forked into the runner's scope and its exit handlers finish before callers wake, so this cannot overlap the route's own run. Accepted residual race: after a cancel, another caller that wins the runner lock within milliseconds and starts processing the same boundary can have it removed underneath it. These route-level paths have no dedicated test because they need a cancel or a model removal timed between `create` and the loop.
+- Processor interruptions already persist `MessageAbortedError` on the summary message (without `finish`), the same convention as aborted turns; the backstop keeps an existing error and only fills one in when none was written.
