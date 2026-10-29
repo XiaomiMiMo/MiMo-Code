@@ -1,18 +1,10 @@
 # Free source endpoints (no API key)
 
-Default tools are WebSearch + WebFetch. For specific angle types, these free endpoints give better structured results. All are keyless; on 429/5xx back off once, then continue without that source.
+Search with the `websearch` tool or a configured search MCP tool, and read pages with WebFetch. For specific angle types, these free endpoints give better structured results. All are keyless; on 429/5xx back off once, then continue without that source.
 
-## General web search (fallback when WebSearch tool is unavailable)
+## When no search tool is available
 
-If the WebSearch tool is missing or errors, use DuckDuckGo HTML via WebFetch — verified to return full SERP results:
-
-```
-WebFetch https://html.duckduckgo.com/html/?q=<url-encoded query>
-```
-
-- Result links are wrapped as `//duckduckgo.com/l/?uddg=<url-encoded real URL>` — decode `uddg` to get the actual URL before fetching it.
-- Supports operators: `site:github.com`, `"exact phrase"`, and `df=y` (past year) / `df=m` (past month) as query params.
-- For Chinese-language topics, also try Bing: `WebFetch https://www.bing.com/search?q=<query>&setlang=zh` (works without key, quality varies).
+Do not scrape search-engine result pages (DuckDuckGo, Bing, Google and similar). Use the endpoints below and primary sources you can name directly (official sites, documentation, repositories), and state in your findings that web search was not configured.
 
 
 ## Academic / papers

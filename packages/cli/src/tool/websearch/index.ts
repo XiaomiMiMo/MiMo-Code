@@ -6,7 +6,7 @@ import * as McpExa from "../mcp-exa"
 import DESCRIPTION from "./websearch.txt"
 
 const NO_RESULTS =
-  "Web search returned no results. Use `webfetch` with a relevant URL, or configure a search MCP server (see the Web search section of the MiMoCode README)."
+  "Web search returned no results. Try a different query, or use `webfetch` with a relevant URL."
 const MAX_TIMEOUT = 120 * 1000 // 2 minutes
 
 const Parameters = z.object({

@@ -318,7 +318,7 @@ export const ReadTool = Tool.define(
       // The active model is carried on ctx.extra.model (set on both the
       // agent-call path and the @file resolution path, which passes messages: []).
       // Fall back to resolving the last user message's model for any caller that
-      // doesn't populate extra. Mirrors tool/websearch/index.ts.
+      // doesn't populate extra.
       const extraModel = (ctx.extra as { model?: Provider.Model } | undefined)?.model
       const messageModelRef = extraModel
         ? undefined

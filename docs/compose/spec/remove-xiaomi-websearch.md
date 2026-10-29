@@ -9,12 +9,12 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2744
 
 ## Report
 
-**What was built** — `websearch` and `codesearch` are off for every provider (Xiaomi family and `opencode` included) unless `MIMOCODE_ENABLE_EXA` is set; `websearch` always searches through Exa. The Xiaomi gateway client and its plugin-console messages are gone; an empty result now points at `webfetch` and at configuring a search MCP server. `fact-check` and `deep-research` use `websearch` or a search MCP tool and, without one, read named primary sources and public APIs instead of scraping search-engine pages. A "Web search" FAQ entry in README (English and Chinese) and the bundled `mimocode-docs` guide explain how to enable search: the Exa tools, or an Exa, Tavily or Volcengine Doubao Search MCP server, and the `xiaomi-auth-provider-split` doc no longer claims family websearch routing.
+**What was built** — `websearch` and `codesearch` are off for every provider (Xiaomi family and `opencode` included) unless `MIMOCODE_ENABLE_EXA` is set; `websearch` always searches through Exa. The Xiaomi gateway client and its plugin-console messages are gone; an empty result now points at `webfetch` and at configuring a search MCP server. `fact-check`, `deep-research` and the bundled `deep-research` skill use `websearch` or a search MCP tool and, without one, read named primary sources and public APIs instead of scraping search-engine pages. A "How to set up web search" FAQ entry in README (English and Chinese) and the bundled `mimocode-docs` guide explain how to enable search: the Exa tools, or an Exa, Tavily or Volcengine Doubao Search MCP server, and the `xiaomi-auth-provider-split` doc no longer claims family websearch routing.
 
 **Verification**
 - `bun run typecheck` (packages/cli): PASS.
-- `bun test test/tool/registry-toolset.test.ts test/workflow/builtin.test.ts test/skill/mimocode-docs.test.ts test/skill/builtin.test.ts`: all pass; the new registry case fails on the base commit.
-- Full suite and lint: delegated to CI on the PR (local `oxlint` cannot run inside a nested `.worktrees` checkout).
+- `bun test test/tool/registry-toolset.test.ts test/workflow/builtin.test.ts test/workflow/deep-research-cluster.test.ts test/skill/builtin.test.ts test/skill/search.test.ts test/skill/skill.test.ts test/skill/skill-description.test.ts test/tool/skill-search.test.ts test/skill/mimocode-docs.test.ts`: all pass; the new registry case fails on the base commit. The flag-on case is not unit-tested: `Flag.MIMOCODE_ENABLE_EXA` is read once at import.
+- GitHub CI (lint, typecheck, unit shards 1-4): pass.
 ## [S1] Problem
 
 The built-in `websearch` tool is offered to every Xiaomi-family model and, for those models, searches through the Xiaomi MiMo web-search plugin. That plugin is billed per call against a pay-as-you-go API key and is not part of Token Plan, so it can only work for the `xiaomi` API-key channel with the plugin enabled and a supported model; Token Plan sessions (and legacy `xiaomi` entries holding a token-plan key) get a tool that always answers a misleading "enable the plugin" fallback. Even where it works, it returns only a few short source snippets per call while billing both per-search fees and the side request's tokens.
@@ -33,11 +33,11 @@ MiMoCode no longer ships this first-party search. Users who want web search conf
 
 ### S2.3 Built-in workflows
 
-`fact-check` and `deep-research` search with the `websearch` tool or a configured search MCP tool. Without either they do not scrape search-engine result pages: they `webfetch` primary sources they can name directly and use free public APIs (arXiv, GitHub search, …); `fact-check` returns no hits when that finds nothing, and `deep-research` states that web search was not configured.
+`fact-check`, `deep-research` and the bundled `deep-research` skill search with the `websearch` tool or a configured search MCP tool. Without either they do not scrape search-engine result pages: they `webfetch` primary sources they can name directly and use free public APIs (arXiv, GitHub search, …); `fact-check` returns no hits when that finds nothing, and `deep-research` states that web search was not configured.
 
 ### S2.4 Documentation
 
-README (English and Chinese) gains a collapsible "Web search" FAQ entry that only explains how to enable search: the built-in Exa tools, and `mcp` configuration examples for Exa (remote), Tavily (remote, API key header or keyless header) and Volcengine Doubao Search (official `mcp-server-askecho-search-infinity`, local via `uvx`, `ASK_ECHO_SEARCH_INFINITY_API_KEY`). Keys use `{env:VAR}` substitution. The `xiaomi-auth-provider-split` feature doc is corrected: Xiaomi-family models no longer route websearch.
+README (English and Chinese) gains a collapsible "How to set up web search" FAQ entry that only explains how to enable search: the built-in Exa tools, and `mcp` configuration examples for Exa (remote), Tavily (remote, API key header or keyless header) and Volcengine Doubao Search (official `mcp-server-askecho-search-infinity`, local via `uvx`, `ASK_ECHO_SEARCH_INFINITY_API_KEY`). Keys use `{env:VAR}` substitution. The `xiaomi-auth-provider-split` feature doc is corrected: Xiaomi-family models no longer route websearch.
 
 ## [S3] Out of Scope
 
@@ -48,8 +48,8 @@ README (English and Chinese) gains a collapsible "Web search" FAQ entry that onl
 ## Tasks
 
 - [x] T1: Drop the Xiaomi websearch gate and gateway client — acceptance: no provider gets `websearch` or `codesearch` without `MIMOCODE_ENABLE_EXA`; `tool/websearch/mimo.ts` is gone and the fallback text no longer mentions the Xiaomi plugin console (covers: S2.1, S2.2)
-- [x] T2: `fact-check` and `deep-research` search fallback — acceptance: both workflow prompts name `websearch` or a search MCP tool and, without one, only primary sources and public APIs — no search-engine scraping (covers: S2.3)
-- [x] T3: README "Web search" section and `xiaomi-auth-provider-split` correction — acceptance: the FAQ entry documents the configuration paths with valid `mcp` entries and no Xiaomi-specific wording; the old spec no longer claims family websearch routing (covers: S2.4)
+- [x] T2: research workflows and skill search fallback — acceptance: the `fact-check` and `deep-research` workflow prompts and the bundled `deep-research` skill name `websearch` or a search MCP tool and, without one, only primary sources and public APIs — no search-engine scraping (covers: S2.3)
+- [x] T3: README "How to set up web search" entry and `xiaomi-auth-provider-split` correction — acceptance: the FAQ entry documents the configuration paths with valid `mcp` entries and no Xiaomi-specific wording; the old spec no longer claims family websearch routing (covers: S2.4)
 
 ## Journey log
 

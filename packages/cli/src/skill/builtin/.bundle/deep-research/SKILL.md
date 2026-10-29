@@ -1,6 +1,6 @@
 ---
 name: deep-research
-description: Deep research on any topic using parallel sub-agents and built-in tools only (WebSearch/WebFetch + free APIs, no keys). Use when the user asks for a thorough multi-source investigation with a cited report — "深度调研X"、"deep research"、"帮我全面研究一下"、"多方求证"、"写一份调研报告". NOT for simple lookups (single WebSearch suffices) and NOT for academic literature surveys (use auto-research skill instead).
+description: Deep research on any topic using parallel sub-agents, the available search tool (websearch or a search MCP server), WebFetch and free APIs. Use when the user asks for a thorough multi-source investigation with a cited report — "深度调研X"、"deep research"、"帮我全面研究一下"、"多方求证"、"写一份调研报告". NOT for simple lookups (a single search suffices) and NOT for academic literature surveys (use auto-research skill instead).
 ---
 
 # Deep Research
@@ -11,7 +11,7 @@ Orchestrate parallel research sub-agents, then write one coherent cited report. 
 
 1. Run `date +%Y-%m-%d` via Bash. Never assume the current year from training data.
 2. Triage:
-   - Answerable with 1-2 searches? → STOP, just use WebSearch directly. Do not use this skill.
+   - Answerable with 1-2 searches? → STOP, just search directly. Do not use this skill.
    - Enumeration task (N items × M fields, e.g. "compare 20 frameworks")? → still this skill, but use table-oriented decomposition (one sub-agent per item batch).
    - Open-ended investigation? → continue below.
 3. Pick depth (default **standard**; user can override with words like "quick"/"exhaustive"):
@@ -53,7 +53,7 @@ List angles in `brief.md` under `## Angles`. For deep mode or contested topics, 
 
 Spawn one sub-agent per angle **in a single message** (parallel). Build each prompt from the locked template in [reference/subagent-prompt.md](reference/subagent-prompt.md) — reproduce it verbatim, replacing only the `{variables}`. Each sub-agent:
 
-- researches ONE angle only, using WebSearch/WebFetch and the free endpoints in [reference/sources.md](reference/sources.md)
+- researches ONE angle only, using the available search tool, WebFetch and the free endpoints in [reference/sources.md](reference/sources.md)
 - writes structured findings to `findings/F<n>.md` (claim / quote / URL / date / confidence per item)
 - returns only a 3-5 line summary to you — raw page content must never enter your context
 
