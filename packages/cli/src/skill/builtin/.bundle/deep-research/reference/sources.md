@@ -1,10 +1,10 @@
 # Free source endpoints (no API key)
 
-Default tools are WebSearch (when enabled) + WebFetch. For specific angle types, these free endpoints give better structured results. All are keyless; on 429/5xx back off once, then continue without that source.
+Search with the `websearch` tool or a configured search MCP tool, and read pages with WebFetch. For specific angle types, these free endpoints give better structured results. All are keyless; on 429/5xx back off once, then continue without that source.
 
-## General web search (fallback when WebSearch tool is unavailable)
+## General web search (fallback when no search tool is available)
 
-If the WebSearch tool is missing or errors, use DuckDuckGo HTML via WebFetch — verified to return full SERP results:
+If neither the `websearch` tool nor a search MCP tool is available, or they error, use DuckDuckGo HTML via WebFetch — verified to return full SERP results:
 
 ```
 WebFetch https://html.duckduckgo.com/html/?q=<url-encoded query>
