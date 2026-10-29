@@ -112,7 +112,7 @@ describe("POST /session/:id/summarize reports the real outcome", () => {
 
       const response = await http.post(`/session/${session.id}/summarize`, model)
 
-      expect(response.status).toBeGreaterThanOrEqual(400)
+      expect(response.status).toBe(500)
       expect(((await response.json()) as { name: string }).name).toBe("SessionCompactionFailedError")
       expect(await http.compactionParts(session.id)).toEqual([])
     }), 30_000)

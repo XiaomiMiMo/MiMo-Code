@@ -307,6 +307,8 @@ export const layer: Layer.Layer<
         throw new Error(`Compaction parent must be a user message: ${input.parentID}`)
       }
       const boundaryUser = parent.info
+      const compactionPart = parent.parts.find((part): part is MessageV2.CompactionPart => part.type === "compaction")
+      progress.boundary = compactionPart !== undefined
       const promptConfig = yield* session.resolvePrompt({ sessionID: input.sessionID })
       const userMessage = {
         ...parent.info,
@@ -317,8 +319,6 @@ export const layer: Layer.Layer<
         systemMode: undefined,
         harness: promptConfig.harness,
       }
-      const compactionPart = parent.parts.find((part): part is MessageV2.CompactionPart => part.type === "compaction")
-      progress.boundary = compactionPart !== undefined
 
       // Reuse the effective conversation before this synthetic boundary without
       // restoring raw history removed by an earlier compaction or checkpoint.

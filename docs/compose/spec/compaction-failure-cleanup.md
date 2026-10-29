@@ -33,7 +33,7 @@ Because this sits inside `process`, it covers every entry: the `/summarize` rout
 
 - Before touching the session, the route resolves the requested model. An unknown provider or model fails with `Provider.ModelNotFoundError` (HTTP 400) and no boundary is written.
 - `SessionCompaction.create` returns the boundary message ID.
-- After `prompt.loop` returns, the route reads that boundary. If the boundary is gone or its compaction part has no `projection`, the route fails with a new named error `SessionCompactionFailedError` (HTTP 500 through the default named-error mapping). Otherwise it returns `true` as today.
+- After `prompt.loop` ends — normally or not — the route reads that boundary. If it still exists without a `projection`, the loop ended without running the compaction step (cancelled while queued, or a failure before the step) and the route removes it. If the boundary is gone or unfinished, the route fails with a new named error `SessionCompactionFailedError` (HTTP 500 through the default named-error mapping). Otherwise it returns `true` as today.
 - Failures raised inside the loop keep propagating with their own error and status.
 
 The success response shape is unchanged, so clients that already treat a non-2xx response as failure need no change.

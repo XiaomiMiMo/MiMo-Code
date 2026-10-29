@@ -5336,8 +5336,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               agentID: lastUser.agentID,
             })
             // cron-sentinel cache is invalidated via a SessionCompaction.Event
-            // .Compacted bus subscription inside cron-bridge — see
-            // `compaction.ts:468` publish + `cron-bridge.ts` subscribe pair.
+            // .Compacted bus subscription inside cron-bridge — see the
+            // publish in `SessionCompaction.process` + `cron-bridge.ts` subscribe pair.
             // Covers this user-`/compact` path plus the overflow-boundary
             // path in compaction.create.
             if (result === "stop") break
