@@ -109,6 +109,36 @@ mimo attach http://127.0.0.1:4096
 注意这是系统级 Beta 开关，可能导致部分老的非 Unicode 程序显示异常，建议作为临时方案。
 </details>
 
+<details>
+<summary><strong>联网搜索</strong></summary>
+
+如需让 Agent 联网搜索，可以设置 `MIMOCODE_ENABLE_EXA=1` 启用内置的 `websearch` 和 `codesearch` 工具（基于 Exa，设置 `EXA_API_KEY` 可提高频率上限），或在配置的 `mcp` 下添加一个搜索 MCP 服务。密钥可通过 `{env:VAR}` 从环境变量读取：
+
+```jsonc
+{
+  "mcp": {
+    // Exa（Key 可选）
+    "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp" },
+    // Tavily（在 https://app.tavily.com 获取 API Key）
+    "tavily": {
+      "type": "remote",
+      "url": "https://mcp.tavily.com/mcp/",
+      "headers": { "Authorization": "Bearer {env:TAVILY_API_KEY}" }
+    },
+    // 火山引擎豆包搜索（需要 uv 与 Python 3.12/3.13；
+    // 在 https://console.volcengine.com/search-infinity/api-key 获取 Key）
+    "doubao-search": {
+      "type": "local",
+      "command": ["uvx", "--from", "mcp-server-askecho-search-infinity>=0.2.0", "mcp-server-askecho-search-infinity"],
+      "environment": { "ASK_ECHO_SEARCH_INFINITY_API_KEY": "{env:ASK_ECHO_SEARCH_INFINITY_API_KEY}" }
+    }
+  }
+}
+```
+
+运行 `mimo mcp` 检查服务是否连接成功。
+</details>
+
 ---
 
 ## MiMo 生态
@@ -437,38 +467,6 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
 全局配置请写入 `~/.config/mimocode/mimocode.jsonc`（或同目录的 `mimocode.json`），仅项目生效的配置请写入 `.mimocode/mimocode.jsonc`（或 `.json`），并与已有内容合并。`apiKey` 会以明文保存在配置中，请确保文件仅当前用户可读，且不要提交到版本库。可运行 `mimo models` 或使用 TUI 模型选择器验证配置结果。
 
 要声明自定义模型支持哪些输入模态（图片、音频、视频、PDF），在 TUI 中运行 `/modalities`——多选对话框会把设置持久化到配置，无需手动编辑。
-
-### 联网搜索
-
-MiMoCode 不为 Xiaomi MiMo 模型内置搜索服务：平台的联网服务插件按调用次数从按量付费 API Key 扣费，不包含在 Token Plan 中。可从以下方式中任选一种；Agent 会使用当前可用的搜索工具，没有时回落到 `webfetch`。
-
-**内置 `websearch` 工具（Exa）。** 所有 Provider 默认都不提供搜索工具。设置 `MIMOCODE_ENABLE_EXA=1` 后会提供 `websearch` 和 `codesearch` 工具；它们调用 Exa 的公开 MCP 端点，设置 `EXA_API_KEY` 可提高频率上限。
-
-**搜索 MCP 服务。** 在 `mcp` 下添加；密钥可通过 `{env:VAR}` 从环境变量读取：
-
-```jsonc
-{
-  "mcp": {
-    // Exa，远程（Key 可选）
-    "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp" },
-    // Tavily，远程（在 https://app.tavily.com 获取 API Key）
-    "tavily": {
-      "type": "remote",
-      "url": "https://mcp.tavily.com/mcp/",
-      "headers": { "Authorization": "Bearer {env:TAVILY_API_KEY}" }
-    },
-    // 火山引擎豆包搜索，本地（需要 uv 与 Python 3.12/3.13；
-    // 在 https://console.volcengine.com/search-infinity/api-key 开通服务并创建 Key）
-    "doubao-search": {
-      "type": "local",
-      "command": ["uvx", "--from", "mcp-server-askecho-search-infinity>=0.2.0", "mcp-server-askecho-search-infinity"],
-      "environment": { "ASK_ECHO_SEARCH_INFINITY_API_KEY": "{env:ASK_ECHO_SEARCH_INFINITY_API_KEY}" }
-    }
-  }
-}
-```
-
-运行 `mimo mcp` 检查服务是否连接成功。
 
 ### 主要选项
 

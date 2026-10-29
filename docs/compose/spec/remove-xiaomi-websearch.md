@@ -9,7 +9,7 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2744
 
 ## Report
 
-**What was built** — `websearch` and `codesearch` are off for every provider (Xiaomi family and `opencode` included) unless `MIMOCODE_ENABLE_EXA` is set; `websearch` always searches through Exa. The Xiaomi gateway client and its plugin-console messages are gone; an empty result now points at `webfetch` and at configuring a search MCP server. `fact-check` falls back from `websearch` to a search MCP tool and then to `webfetch` on DuckDuckGo HTML. README (English and Chinese) and the bundled `mimocode-docs` guide document Exa, Tavily and Volcengine Doubao Search setups, and the `xiaomi-auth-provider-split` doc no longer claims family websearch routing.
+**What was built** — `websearch` and `codesearch` are off for every provider (Xiaomi family and `opencode` included) unless `MIMOCODE_ENABLE_EXA` is set; `websearch` always searches through Exa. The Xiaomi gateway client and its plugin-console messages are gone; an empty result now points at `webfetch` and at configuring a search MCP server. `fact-check` falls back from `websearch` to a search MCP tool and then to `webfetch` on DuckDuckGo HTML. A "Web search" FAQ entry in README (English and Chinese) and the bundled `mimocode-docs` guide explain how to enable search: the Exa tools, or an Exa, Tavily or Volcengine Doubao Search MCP server, and the `xiaomi-auth-provider-split` doc no longer claims family websearch routing.
 
 **Verification**
 - `bun run typecheck` (packages/cli): PASS.
@@ -37,7 +37,7 @@ MiMoCode no longer ships this first-party search. Users who want web search conf
 
 ### S2.4 Documentation
 
-README gains a "Web search" section: enabling the built-in Exa channel, and `mcp` configuration examples for Exa (remote), Tavily (remote, API key header or keyless header) and Volcengine Doubao Search (official `mcp-server-askecho-search-infinity`, local via `uvx`, `ASK_ECHO_SEARCH_INFINITY_API_KEY`). Keys use `{env:VAR}` substitution. The `xiaomi-auth-provider-split` feature doc is corrected: Xiaomi-family models no longer route websearch.
+README (English and Chinese) gains a collapsible "Web search" FAQ entry that only explains how to enable search: the built-in Exa tools, and `mcp` configuration examples for Exa (remote), Tavily (remote, API key header or keyless header) and Volcengine Doubao Search (official `mcp-server-askecho-search-infinity`, local via `uvx`, `ASK_ECHO_SEARCH_INFINITY_API_KEY`). Keys use `{env:VAR}` substitution. The `xiaomi-auth-provider-split` feature doc is corrected: Xiaomi-family models no longer route websearch.
 
 ## [S3] Out of Scope
 
@@ -49,7 +49,7 @@ README gains a "Web search" section: enabling the built-in Exa channel, and `mcp
 
 - [x] T1: Drop the Xiaomi websearch gate and gateway client — acceptance: no provider gets `websearch` or `codesearch` without `MIMOCODE_ENABLE_EXA`; `tool/websearch/mimo.ts` is gone and the fallback text no longer mentions the Xiaomi plugin console (covers: S2.1, S2.2)
 - [x] T2: `fact-check` search fallback — acceptance: the search prompt names the MCP and `webfetch` fallbacks when `websearch` is unavailable (covers: S2.3)
-- [x] T3: README "Web search" section and `xiaomi-auth-provider-split` correction — acceptance: the four configuration paths are documented with valid `mcp` entries; the old spec no longer claims family websearch routing (covers: S2.4)
+- [x] T3: README "Web search" section and `xiaomi-auth-provider-split` correction — acceptance: the FAQ entry documents the configuration paths with valid `mcp` entries and no Xiaomi-specific wording; the old spec no longer claims family websearch routing (covers: S2.4)
 
 ## Journey log
 
