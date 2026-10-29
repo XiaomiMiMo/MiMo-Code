@@ -112,12 +112,12 @@ mimo attach http://127.0.0.1:4096
 <details>
 <summary><strong>如何配置联网搜索</strong></summary>
 
-如需让 Agent 联网搜索，可以设置 `MIMOCODE_ENABLE_EXA=1` 启用内置的 `websearch` 和 `codesearch` 工具（基于 Exa，设置 `EXA_API_KEY` 可提高频率上限），或在配置的 `mcp` 下添加一个搜索 MCP 服务。密钥可通过 `{env:VAR}` 从环境变量读取：
+如需让 Agent 联网搜索，可以设置 `MIMOCODE_ENABLE_EXA=1` 启用内置的 `websearch` 和 `codesearch` 工具（基于 Exa；如需更高频率上限，在 https://dashboard.exa.ai/api-keys 创建 Key 并设置 `EXA_API_KEY`），或在配置的 `mcp` 下添加一个搜索 MCP 服务。密钥可通过 `{env:VAR}` 从环境变量读取：
 
 ```jsonc
 {
   "mcp": {
-    // Exa（Key 可选）
+    // Exa（Key 可选：在 https://dashboard.exa.ai/api-keys 创建后，在 URL 末尾加 ?exaApiKey=<key>）
     "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp" },
     // Tavily（在 https://app.tavily.com 获取 API Key）
     "tavily": {

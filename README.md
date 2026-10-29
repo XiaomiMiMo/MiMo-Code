@@ -115,14 +115,14 @@ some older non-Unicode programs to display incorrectly, so treat it as a workaro
 </details>
 
 <details>
-<summary><strong>How do I set up web search?</strong></summary>
+<summary><strong>How to set up web search</strong></summary>
 
-To let the agent search the web, either set `MIMOCODE_ENABLE_EXA=1` to enable the built-in `websearch` and `codesearch` tools (backed by Exa; set `EXA_API_KEY` for higher rate limits), or add a search MCP server under `mcp` in your config. Keys can come from environment variables through `{env:VAR}`:
+To let the agent search the web, either set `MIMOCODE_ENABLE_EXA=1` to enable the built-in `websearch` and `codesearch` tools (backed by Exa; for higher rate limits set `EXA_API_KEY`, created at https://dashboard.exa.ai/api-keys), or add a search MCP server under `mcp` in your config. Keys can come from environment variables through `{env:VAR}`:
 
 ```jsonc
 {
   "mcp": {
-    // Exa (key optional)
+    // Exa (key optional: create one at https://dashboard.exa.ai/api-keys and append ?exaApiKey=<key> to the URL)
     "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp" },
     // Tavily (API key from https://app.tavily.com)
     "tavily": {

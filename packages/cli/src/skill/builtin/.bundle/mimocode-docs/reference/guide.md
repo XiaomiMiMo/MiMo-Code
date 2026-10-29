@@ -131,11 +131,12 @@ Inspect/manage with `mimo mcp`. Request timeout defaults to 5000ms (`timeout` pe
 
 ### Web search
 
-To give the agent web search, either set `MIMOCODE_ENABLE_EXA=1` (enables the built-in `websearch` and `codesearch` tools backed by Exa; `EXA_API_KEY` raises its limits) or add a search MCP server, for example:
+To give the agent web search, either set `MIMOCODE_ENABLE_EXA=1` (enables the built-in `websearch` and `codesearch` tools backed by Exa; an `EXA_API_KEY` from https://dashboard.exa.ai/api-keys raises its limits) or add a search MCP server, for example:
 
 ```jsonc
 {
   "mcp": {
+    // Exa key optional: https://dashboard.exa.ai/api-keys, appended as ?exaApiKey=<key>
     "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp" },
     "tavily": { "type": "remote", "url": "https://mcp.tavily.com/mcp/", "headers": { "Authorization": "Bearer {env:TAVILY_API_KEY}" } },
     "doubao-search": {
