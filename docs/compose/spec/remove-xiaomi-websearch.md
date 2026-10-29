@@ -2,7 +2,7 @@
 feature: remove-xiaomi-websearch
 status: delivered
 updated: 2026-10-29
-source: fix/remove-xiaomi-websearch
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2744
 ---
 
 # Remove Xiaomi Gateway Websearch
