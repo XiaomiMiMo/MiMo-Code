@@ -16,6 +16,16 @@ runs:
         restore-keys: |
           ${{ runner.os }}-bun-
 
+    # Native addons need node-gyp when no prebuild matches.
+    # Expose npm's bundled node-gyp without changing the project lockfile.
+    - name: Expose node-gyp for native dependencies
+      run: |
+        native_build_modules="$(npm root --global)/npm/node_modules"
+        native_build_node_path="$native_build_modules${NODE_PATH:+:$NODE_PATH}"
+        NODE_PATH="$native_build_node_path" node -p 'require("node-gyp/package.json").version'
+        echo "NODE_PATH=$native_build_node_path" >> "$GITHUB_ENV"
+      shell: bash
+
     - name: Install dependencies
       run: bun ci
       shell: bash
