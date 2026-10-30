@@ -1,7 +1,7 @@
 // packages/cli/test/cli/run-completion.test.ts
 import { test, expect } from "bun:test"
 import { Effect, Layer } from "effect"
-import { createCompletionTracker } from "../../src/cli/cmd/run-completion"
+import { createCompletionTracker, type StatusInfo } from "../../src/cli/cmd/run-completion"
 import { Bus } from "../../src/bus"
 import { SessionStatus } from "../../src/session/status"
 import { SessionID } from "../../src/session/schema"
@@ -28,17 +28,17 @@ test("event path: session.status idle event for matching sessionID resolves comp
   tracker.stop()
 })
 
-test("poll fallback: query returning idle (absent record) resolves completion when no event arrives", async () => {
+test("poll fallback: a live status then an absent record resolves completion", async () => {
   let calls = 0
   const tracker = createCompletionTracker({
     sessionID: "ses_X",
     query: async () => {
       calls++
-      return calls >= 2 ? undefined : { type: "busy" } // absent on/after 2nd call = idle
+      return calls >= 2 ? undefined : { type: "busy" } // idle deletes the record, so it goes absent
     },
     intervalMs: 30,
   })
-  tracker.markStarted() // bypass started latch (covered separately in Task 3)
+  tracker.markStarted()
 
   await tracker.completion
 
@@ -47,43 +47,84 @@ test("poll fallback: query returning idle (absent record) resolves completion wh
   tracker.stop()
 })
 
-test("started latch: poll-observed idle is ignored before tracker is started", async () => {
+test("started latch: poll-observed absent status is ignored before tracker is started", async () => {
+  let status: StatusInfo | undefined
   let calls = 0
   const tracker = createCompletionTracker({
     sessionID: "ses_X",
-    query: async () => { calls++; return undefined }, // always idle
+    query: async () => { calls++; return status }, // never a record while unstarted
     intervalMs: 20,
   })
 
-  // Without start, several poll ticks must NOT complete.
+  // Without a start, several poll ticks must NOT complete the tracker.
   await new Promise((r) => setTimeout(r, 80))
   expect(tracker.done).toBe(false)
   expect(calls).toBeGreaterThan(0)
 
-  // Now start; next poll tick completes.
+  // Starting alone is not a completion signal either: the session has not been
+  // observed live yet.
   tracker.markStarted()
+  await new Promise((r) => setTimeout(r, 60))
+  expect(tracker.done).toBe(false)
+
+  status = { type: "busy" }
+  await new Promise((r) => setTimeout(r, 60))
+  expect(tracker.done).toBe(false)
+
+  status = undefined
   await tracker.completion
   expect(tracker.done).toBe(true)
 
   tracker.stop()
 })
 
-test("started latch: any event for matching sessionID auto-starts the tracker", async () => {
+test("an event that is not a status does not let an absent record end the run", async () => {
+  let status: StatusInfo | undefined
   let calls = 0
   const tracker = createCompletionTracker({
     sessionID: "ses_X",
-    query: async () => { calls++; return undefined }, // always idle
+    query: async () => { calls++; return status }, // no record until the session turns busy
     intervalMs: 20,
   })
 
-  // A non-idle event for the matching session should auto-start (no need to call markStarted).
-  tracker.onEvent({
-    type: "message.part.updated",
-    properties: { part: { sessionID: "ses_X" } },
-  })
+  // The run was submitted and the session announced itself, but it has not
+  // turned busy yet. Ending here would drop the output and never answer a
+  // permission request.
+  tracker.markStarted()
+  tracker.onEvent({ type: "session.updated", properties: { sessionID: "ses_X" } })
+  await new Promise((r) => setTimeout(r, 80))
+  expect(tracker.done).toBe(false)
+  expect(calls).toBeGreaterThan(0)
 
+  // A live status event arms the absent record, without any poll having seen it.
+  tracker.onEvent({
+    type: "session.status",
+    properties: { sessionID: "ses_X", status: { type: "busy" } },
+  })
   await tracker.completion
   expect(tracker.done).toBe(true)
+
+  tracker.stop()
+})
+
+test("a status for another session does not arm the absent record", async () => {
+  let calls = 0
+  const tracker = createCompletionTracker({
+    sessionID: "ses_X",
+    query: async () => { calls++; return undefined },
+    intervalMs: 20,
+  })
+
+  tracker.markStarted()
+  tracker.onEvent({ type: "session.updated", properties: { sessionID: "ses_other" } })
+  tracker.onEvent({
+    type: "session.status",
+    properties: { sessionID: "ses_other", status: { type: "busy" } },
+  })
+
+  await new Promise((r) => setTimeout(r, 80))
+  expect(tracker.done).toBe(false)
+  expect(calls).toBeGreaterThan(0)
   tracker.stop()
 })
 
