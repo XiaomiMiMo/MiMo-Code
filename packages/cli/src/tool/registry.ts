@@ -13,6 +13,7 @@ import { ViewImageTool } from "./view-image"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"
 import { CronTool } from "./cron"
+import { McpEventsTool } from "./mcp-events"
 import { WorkflowTool } from "./workflow"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -164,6 +165,7 @@ export const layer = Layer.effect(
     const memorytool = yield* MemoryTool
     const tasktool = yield* TaskTool
     const crontool = yield* CronTool
+    const mcpeventstool = yield* McpEventsTool
     const workflowtool = yield* WorkflowTool
     const toolscript = yield* ToolScriptTool
     const agent = yield* Agent.Service
@@ -249,6 +251,7 @@ export const layer = Layer.effect(
           history: Tool.init(historytool),
           task: Tool.init(tasktool),
           cron: Tool.init(crontool),
+          mcpevents: Tool.init(mcpeventstool),
           workflow: Tool.init(workflowtool),
           toolscript: Tool.init(toolscript),
         })
@@ -271,6 +274,7 @@ export const layer = Layer.effect(
             tool.search,
             tool.code,
             tool.mcptoolsearch,
+            ...(process.env.MIMOCODE_EXPERIMENTAL_MCP_EVENTS === "1" ? [tool.mcpevents] : []),
             tool.skillsearch,
             tool.skill,
             tool.patch,

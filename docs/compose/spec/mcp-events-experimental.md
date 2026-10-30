@@ -1,0 +1,9 @@
+# Experimental MCP Events
+
+The experimental local client supports the unmerged SEP-3415 `2026-07-28` event stream proposal over stdio only. Enable `MIMOCODE_EXPERIMENTAL_MCP_EVENTS=1` before starting MiMoCode. Configure a local MCP server as usual, then ask the agent to subscribe the current session with `mcp_events`. The user must explicitly approve the server, event, arguments and session. Subscription does not grant approval for subsequent tool calls.
+
+For example, with a configured local server `mail`, request: `Subscribe this session to mail's mail.created event`. The agent should call `mcp_events` with `operation: "subscribe"`, `server: "mail"`, and `event: "mail.created"`. To stop, request the same operation with `unsubscribe` and the same event arguments. Event notices are labelled as external and contain no payload; inspect details using the server's tools. External agent requests cannot override user rules.
+
+Each subscription starts a separate local server process and remains active only while the owning MiMoCode instance is running. The grant is not persisted, and after restarting the instance the user must explicitly subscribe again. A disconnected or terminated stream is not automatically reconnected; events may be missed. The current implementation does not support remote Streamable HTTP, OAuth, poll, webhook delivery, persistent cursors, durable event replay, or OpenAI's earlier Events dialect. Do not describe it as complete interoperability with MCP Events or as a Desktop integration: the Desktop host must separately include and expose the shared engine feature.
+
+Experimental events can trigger model/tool usage and cost. Test with an isolated session and a trusted event source first. Avoid granting unnecessary tool permissions. There is no claim of exactly-once processing; the inbox's event ID deduplication is limited by its retention policy.

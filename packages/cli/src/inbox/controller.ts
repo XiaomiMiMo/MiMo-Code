@@ -323,7 +323,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         }
         yield* publish(receipt)
         if (!guard?.deferKick && !input.legacyInboxID) yield* maybeKick(input.lane)
-      } else if (!guard && !input.legacyInboxID && (receipt.state === "accepted" || receipt.state === "claimed")) {
+      } else if (!guard?.deferKick && !input.legacyInboxID && (receipt.state === "accepted" || receipt.state === "claimed")) {
         yield* maybeKick(input.lane)
       }
       return receipt
