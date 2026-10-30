@@ -16,7 +16,10 @@ const money = new Intl.NumberFormat("en-US", {
 export function ContextSidebar(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
   const msg = createMemo(() => props.api.state.session.messages(props.session_id))
-  const cost = createMemo(() => msg().reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0))
+  const costLabel = createMemo(() => {
+    const cost = props.api.state.session.cost?.(props.session_id)
+    return cost == null ? "—" : money.format(cost)
+  })
 
   const [tick, setTick] = createSignal(Date.now())
 
@@ -103,7 +106,7 @@ export function ContextSidebar(props: { api: TuiPluginApi; session_id: string })
         )}
       </Show>
       <Show when={tpsLabel()}>{(label) => <text fg={theme().textMuted}>{label()}</text>}</Show>
-      <text fg={theme().textMuted}>{money.format(cost())} spent</text>
+      <text fg={theme().textMuted}>{costLabel()} spent</text>
     </box>
   )
 }

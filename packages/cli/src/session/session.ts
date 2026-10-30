@@ -15,6 +15,7 @@ import { PartTable, SessionTable, MessageTable } from "./session.sql"
 import { InboxTable } from "../inbox/inbox.sql"
 import { monotonicFactory } from "ulid"
 import { ExecutionOwnership } from "./execution-ownership"
+import { readSessionCost } from "./cost"
 import * as QueueSync from "../inbox/sync"
 import { ActorRegistryTable } from "../actor/actor.sql"
 import { ProjectTable } from "../project/project.sql"
@@ -481,6 +482,7 @@ export interface Interface {
   readonly fork: (input: { sessionID: SessionID; messageID?: MessageID }) => Effect.Effect<Info>
   readonly touch: (sessionID: SessionID) => Effect.Effect<void>
   readonly get: (id: SessionID) => Effect.Effect<Info>
+  readonly cost: (id: SessionID) => Effect.Effect<number, InstanceType<typeof NotFoundError>>
   readonly setTitle: (input: SetTitleInput) => Effect.Effect<TitleSnapshot>
   readonly setTitleIfDefault: (input: AutoTitleInput) => Effect.Effect<boolean>
   readonly setGeneratedTitle: (input: SetTitleInput) => Effect.Effect<TitleSnapshot | false>
@@ -634,6 +636,12 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       const row = yield* db((d) => d.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
       if (!row) throw new NotFoundError({ message: `Session not found: ${id}` })
       return fromRow(row)
+    })
+
+    const cost = Effect.fn("Session.cost")(function* (id: SessionID) {
+      const row = yield* db((d) => readSessionCost(d, id))
+      if (!row) return yield* Effect.fail(new NotFoundError({ message: `Session not found: ${id}` }))
+      return row.cost
     })
 
     const children = Effect.fn("Session.children")(function* (parentID: SessionID, options?: { visible?: boolean }) {
@@ -1077,6 +1085,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       fork,
       touch,
       get,
+      cost,
       setTitle,
       setTitleIfDefault,
       setGeneratedTitle,

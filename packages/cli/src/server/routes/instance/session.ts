@@ -182,6 +182,33 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .get(
+      "/:sessionID/cost",
+      describeRoute({
+        summary: "Get session cost",
+        description: "Get the stored assistant cost across all agents in this session.",
+        operationId: "session.cost",
+        responses: {
+          200: {
+            description: "Session cost in USD",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ cost: z.number() })),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        return jsonRequest("SessionRoutes.cost", c, function* () {
+          const session = yield* Session.Service
+          return { cost: yield* session.cost(sessionID) }
+        })
+      },
+    )
+    .get(
       "/:sessionID/children",
       describeRoute({
         summary: "Get session children",
