@@ -4,6 +4,8 @@ import * as Tool from "./tool"
 import { Config } from "@/config"
 import { EffectBridge, InstanceState } from "@/effect"
 import { Log } from "@/util"
+import { Bus } from "@/bus"
+import { TuiEvent } from "@/cli/cmd/tui/event"
 import { startLocalEvents } from "@/mcp/events-runtime"
 
 const parameters = z.object({
@@ -20,6 +22,7 @@ export const McpEventsTool = Tool.define(
   "mcp_events",
   Effect.gen(function* () {
     const config = yield* Config.Service
+    const bus = yield* Bus.Service
     const connections = yield* InstanceState.make(
       Effect.fn("McpEventsTool.connections")(function* () {
         const active = new Map<string, () => Promise<void>>()
@@ -61,7 +64,16 @@ export const McpEventsTool = Tool.define(
             server: input.server, config: server, cwd,
             subscriptions: [{ name: input.event, sessionID: ctx.sessionID, arguments: input.arguments }], bridge,
             onError: (error) => log.warn("MCP event subscription error", { server: input.server, error: error.message }),
-            onClose: () => { ended = true; active.delete(key) },
+            onClose: () => {
+              ended = true
+              active.delete(key)
+              void bridge.promise(bus.publish(TuiEvent.ToastShow, {
+                title: "MCP event subscription stopped",
+                message: `Subscription for ${input.server} ended; events may be missed. Subscribe again to resume.`,
+                variant: "warning",
+                duration: 8000,
+              }).pipe(Effect.ignore)).catch(() => {})
+            },
           }),
           catch: (error) => error instanceof Error ? error : new Error(String(error)),
         }).pipe(Effect.tapError(() => Effect.sync(() => { active.delete(key) })), Effect.orDie)
