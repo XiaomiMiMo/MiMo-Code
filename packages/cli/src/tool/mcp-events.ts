@@ -54,6 +54,9 @@ export const McpEventsTool = Tool.define(
           throw new Error("An enabled local MCP server is required; remote MCP Events are not supported yet")
         // Do not silently grant event-triggered model/tool execution based on an MCP config.
         yield* ctx.ask({ permission: "mcp_events", patterns: [`${input.server}:${input.event}:${ctx.sessionID}`], always: [], metadata: { server: input.server, event: input.event, sessionID: ctx.sessionID, arguments: input.arguments ?? {} } })
+        const latest = yield* config.get()
+        const currentServer = HostMcp.get()[input.server] ?? latest.mcp?.[input.server]
+        if (JSON.stringify(currentServer) !== JSON.stringify(server)) throw new Error("MCP server configuration changed during approval; subscribe again")
         if (active.has(key)) return { title: "MCP event subscribed", output: "Subscription already active.", metadata: {} }
         const bridge = yield* EffectBridge.make()
         const cwd = yield* InstanceState.directory
