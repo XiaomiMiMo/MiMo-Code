@@ -27,7 +27,7 @@ import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import open from "open"
-import { Deferred, Effect, Exit, Layer, Option, Context, Stream, Semaphore } from "effect"
+import { Cause, Deferred, Effect, Exit, Layer, Option, Context, Stream, Semaphore } from "effect"
 import { HostMcp } from "./host"
 import { ManagedClient } from "./managed-client"
 import { EffectBridge } from "@/effect"
@@ -362,6 +362,8 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCP.Info {
   return typeof entry === "object" && entry !== null && "type" in entry
 }
 
+import { bindAppTool, visibleTo, mcpRequestTimeout } from "./apps"
+
 const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_")
 
 // Convert MCP tool definition to AI SDK Tool type
@@ -480,6 +482,9 @@ interface State {
 }
 
 export interface Interface {
+  readonly appTimeout?: (server: string) => Effect.Effect<number>
+  readonly appTools?: (server: string) => Effect.Effect<MCPToolDef[]>
+  readonly callAppTool?: (server: string, name: string, args: Record<string, unknown>, context: TurnContext, signal?: AbortSignal) => Effect.Effect<unknown, Error>
   readonly status: () => Effect.Effect<Record<string, Status>>
   readonly clients: (context?: TurnContext) => Effect.Effect<Record<string, MCPClient>>
   readonly tools: (context?: TurnContext) => Effect.Effect<Record<string, Tool>>
@@ -525,7 +530,12 @@ export const layer = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const auth = yield* McpAuth.Service
     const bus = yield* Bus.Service
-    const createClient = () => new ManagedClient({ name: "mimocode", version: InstallationVersion }, CLIENT_OPTIONS)
+    const createClient = () => new ManagedClient({ name: "mimocode", version: InstallationVersion }, {
+      ...CLIENT_OPTIONS,
+      capabilities: { ...CLIENT_OPTIONS.capabilities,
+        ...(process.env.MIMO_MCP_APPS === "1" ? { extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } } } : {}),
+      },
+    })
 
     type Transport = ObservingStdioTransport | StreamableHTTPClientTransport | SSEClientTransport
 
@@ -1239,14 +1249,12 @@ export const layer = Layer.effect(
           if (!retained.has(client)) retained.set(client, { name: clientName, release: client.retain() })
           turnClients.set(context, retained)
         }
-        const timeout = entry?.timeout ?? defaultTimeout
+        const timeout = mcpRequestTimeout(entry?.timeout, defaultTimeout)
         for (const mcpTool of listed) {
-          result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(
-            mcpTool,
-            client,
-            timeout,
-            context,
-          )
+          if (!visibleTo(mcpTool, "model")) continue
+          result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = bindAppTool(convertMcpTool(
+            mcpTool, client, timeout, context,
+          ), clientName, mcpTool, timeout)
         }
       }
       return result
@@ -1266,7 +1274,7 @@ export const layer = Layer.effect(
         const listed = s.defs[name] ?? []
         const tools =
           current.status === "connected"
-            ? listed.map((mcpTool) => ({
+            ? listed.filter(tool => visibleTo(tool, "model")).map((mcpTool) => ({
                 name: sanitize(name) + "_" + sanitize(mcpTool.name),
                 description: mcpTool.description ?? "",
               }))
@@ -1358,6 +1366,46 @@ export const layer = Layer.effect(
       return yield* withClient(clientName, (client) => client.readResource({ uri: resourceUri }), "readResource", {
         resourceUri,
       })
+    })
+
+    const appTools = Effect.fn("MCP.appTools")(function* (server: string) {
+      const s = yield* InstanceState.get(state)
+      yield* refreshHost(s)
+      return (s.defs[server] ?? []).filter(tool => visibleTo(tool, "app"))
+    })
+    const appTimeout = Effect.fn("MCP.appTimeout")(function* (server: string) {
+      const cfg = yield* cfgSvc.get()
+      const entry = { ...cfg.mcp, ...HostMcp.get() }[server]
+      return mcpRequestTimeout(entry && isMcpConfigured(entry) ? entry.timeout : undefined, cfg.experimental?.mcp_timeout)
+    })
+    const callAppTool = Effect.fn("MCP.callAppTool")(function* (server: string, name: string, args: Record<string, unknown>, context: TurnContext, signal?: AbortSignal) {
+      const s = yield* InstanceState.get(state)
+      yield* refreshHost(s)
+      const client = s.clients[server]
+      const tool = s.defs[server]?.find(tool => tool.name === name && visibleTo(tool, "app"))
+      if (!client || !tool || s.status[server]?.status !== "connected") return yield* Effect.fail(new Error("MCP App tool unavailable"))
+      const timeout = yield* appTimeout(server)
+      const release = client.retain()
+      return yield* Effect.tryPromise({
+        try: () => Promise.resolve(convertMcpTool(tool, client, timeout, context).execute!(args, {
+          toolCallId: `app-${crypto.randomUUID()}`, messages: [], abortSignal: signal,
+        })),
+        catch: error => error instanceof Error ? error : new Error(String(error)),
+      }).pipe(
+        // Page calls never enter a runLoop, so close their own turn on the client that served it.
+        Effect.onExit((exit) =>
+          notifyTurnLifecycle(
+            { [server]: client },
+            context,
+            Exit.isSuccess(exit)
+              ? "completed"
+              : signal?.aborted || Cause.hasInterrupts(exit.cause)
+                ? "cancelled"
+                : "error",
+          ),
+        ),
+        Effect.ensuring(Effect.sync(release)),
+      )
     })
 
     const getMcpConfig = Effect.fnUntraced(function* (mcpName: string) {
@@ -1583,6 +1631,9 @@ export const layer = Layer.effect(
     })
 
     return Service.of({
+      appTools,
+      appTimeout,
+      callAppTool,
       status,
       clients,
       tools,

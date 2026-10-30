@@ -21,6 +21,7 @@ interface MockClientState {
   toolCalls: Array<Record<string, unknown>>
   toolCallSignals: Array<AbortSignal | undefined>
   toolCallHangs: boolean
+  toolCallError?: string
   toolCallAbortCount: number
   notifications: Array<Record<string, unknown>>
   notificationCalls: number
@@ -183,6 +184,7 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
     ) {
       this._state?.toolCalls.push(params)
       this._state?.toolCallSignals.push(options?.signal)
+      if (this._state?.toolCallError) throw new Error(this._state.toolCallError)
       if (this._state?.toolCallHangs) {
         await new Promise<void>((_resolve, reject) => {
           const signal = options?.signal
@@ -473,6 +475,41 @@ test(
     }),
   ),
 )
+
+for (const outcome of ["completed", "cancelled", "error"] as const) {
+  test(
+    `[TP-R2-09] App page tool call closes its own turn with ${outcome} on the client that served it`,
+    withInstance({}, (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "app-server"
+        const serverState = getOrCreateClientState("app-server")
+        serverState.serverCapabilities = {
+          experimental: { "com.xiaomi.mimo/turn-lifecycle": { version: 1 } },
+        }
+        serverState.toolCallHangs = outcome === "cancelled"
+        if (outcome === "error") serverState.toolCallError = "server exploded"
+        yield* mcp.add("app-server", { type: "local", command: ["echo", "test"] })
+
+        const context = { sessionId: "ses_app", turnId: "app-call-1" }
+        const controller = new AbortController()
+        const fiber = yield* Effect.forkChild(
+          Effect.exit(mcp.callAppTool!("app-server", "test_tool", {}, context, controller.signal)),
+        )
+        if (outcome === "cancelled") {
+          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 10)))
+          controller.abort(new Error("page closed"))
+        }
+        const exit = yield* Fiber.join(fiber)
+        expect(exit._tag).toBe(outcome === "completed" ? "Success" : "Failure")
+
+        expect(serverState.toolCalls[0]?._meta).toEqual({ "com.xiaomi.mimo/turn-lifecycle": context })
+        expect(serverState.notifications).toEqual([
+          { method: "notifications/com.xiaomi.mimo/turn-lifecycle", params: { ...context, status: outcome } },
+        ])
+      }),
+    ),
+  )
+}
 
 test(
   "turn lifecycle notifications carry each terminal status only for v1 servers",

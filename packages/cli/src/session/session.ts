@@ -19,6 +19,7 @@ import * as QueueSync from "../inbox/sync"
 import { ActorRegistryTable } from "../actor/actor.sql"
 import { ProjectTable } from "../project/project.sql"
 import { Storage } from "@/storage"
+import { clearAppCalls } from "@/mcp/app-calls"
 import { Log } from "../util"
 import { updateSchema } from "../util/update-schema"
 import { MessageV2 } from "./message-v2"
@@ -694,6 +695,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
           forwardRef.clearParentGrants(sessionID)
           promptLocks.delete(sessionID)
         })
+        yield* Effect.gen(function* () {
+          const appContexts = yield* storage.list(["mcp-app-context", sessionID])
+          yield* Effect.forEach(appContexts, key => storage.remove(key), { discard: true })
+          yield* clearAppCalls(sessionID).pipe(Effect.provideService(Storage.Service, storage))
+        }).pipe(Effect.catch(error => Effect.sync(() => log.error("App context cleanup failed", { sessionID, error }))))
         // uncommitted-hint episode state is process-local; drop it when the session dies.
         yield* Effect.promise(async () => {
           try {
