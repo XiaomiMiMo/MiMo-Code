@@ -7,6 +7,7 @@ import { Log } from "@/util"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import { startLocalEvents } from "@/mcp/events-runtime"
+import { HostMcp } from "@/mcp/host"
 
 const parameters = z.object({
   operation: z.enum(["subscribe", "unsubscribe"]),
@@ -48,7 +49,7 @@ export const McpEventsTool = Tool.define(
           return { title: "MCP event unsubscribed", output: close ? "Subscription stopped." : "No active subscription.", metadata: {} }
         }
         const cfg = yield* config.get()
-        const server = cfg.mcp?.[input.server]
+        const server = HostMcp.get()[input.server] ?? cfg.mcp?.[input.server]
         if (!server || !("type" in server) || server.type !== "local" || server.enabled === false)
           throw new Error("An enabled local MCP server is required; remote MCP Events are not supported yet")
         // Do not silently grant event-triggered model/tool execution based on an MCP config.
@@ -59,14 +60,15 @@ export const McpEventsTool = Tool.define(
         const pending = () => Promise.resolve()
         active.set(key, pending)
         let ended = false
+        let closeHandle: (() => Promise<void>) | undefined
         const close = yield* Effect.tryPromise({
           try: () => startLocalEvents({
             server: input.server, config: server, cwd,
             subscriptions: [{ name: input.event, sessionID: ctx.sessionID, arguments: input.arguments }], bridge,
-            onError: (error) => log.warn("MCP event subscription error", { server: input.server, error: error.message }),
+            onError: () => log.warn("MCP event subscription failed", { server: input.server }),
             onClose: () => {
               ended = true
-              active.delete(key)
+              if (active.get(key) === pending || active.get(key) === closeHandle) active.delete(key)
               void bridge.promise(bus.publish(TuiEvent.ToastShow, {
                 title: "MCP event subscription stopped",
                 message: `Subscription for ${input.server} ended; events may be missed. Subscribe again to resume.`,
@@ -76,7 +78,8 @@ export const McpEventsTool = Tool.define(
             },
           }),
           catch: (error) => error instanceof Error ? error : new Error(String(error)),
-        }).pipe(Effect.tapError(() => Effect.sync(() => { active.delete(key) })), Effect.orDie)
+        }).pipe(Effect.tapError(() => Effect.sync(() => { if (active.get(key) === pending) active.delete(key) })), Effect.orDie)
+        closeHandle = close
         if (ended || active.get(key) !== pending) {
           yield* Effect.promise(close)
           throw new Error("Subscription ended during setup")
