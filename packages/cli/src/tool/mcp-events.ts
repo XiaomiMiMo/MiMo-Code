@@ -48,12 +48,14 @@ export const McpEventsTool = Tool.define(
           if (close) yield* Effect.promise(close)
           return { title: "MCP event unsubscribed", output: close ? "Subscription stopped." : "No active subscription.", metadata: {} }
         }
+        if (ctx.abort.aborted) throw new Error("MCP event subscription cancelled")
         const cfg = yield* config.get()
         const server = HostMcp.get()[input.server] ?? cfg.mcp?.[input.server]
         if (!server || !("type" in server) || server.type !== "local" || server.enabled === false)
           throw new Error("An enabled local MCP server is required; remote MCP Events are not supported yet")
         // Do not silently grant event-triggered model/tool execution based on an MCP config.
         yield* ctx.ask({ permission: "mcp_events", patterns: [`${input.server}:${input.event}:${ctx.sessionID}`], always: [], metadata: { server: input.server, event: input.event, sessionID: ctx.sessionID, arguments: input.arguments ?? {} } })
+        if (ctx.abort.aborted) throw new Error("MCP event subscription cancelled")
         const latest = yield* config.get()
         const currentServer = HostMcp.get()[input.server] ?? latest.mcp?.[input.server]
         if (JSON.stringify(currentServer) !== JSON.stringify(server)) throw new Error("MCP server configuration changed during approval; subscribe again")
@@ -83,9 +85,10 @@ export const McpEventsTool = Tool.define(
           catch: (error) => error instanceof Error ? error : new Error(String(error)),
         }).pipe(Effect.tapError(() => Effect.sync(() => { if (active.get(key) === pending) active.delete(key) })), Effect.orDie)
         closeHandle = close
-        if (ended || active.get(key) !== pending) {
+        if (ctx.abort.aborted || ended || active.get(key) !== pending) {
           yield* Effect.promise(close)
-          throw new Error("Subscription ended during setup")
+          if (active.get(key) === pending) active.delete(key)
+          throw new Error("Subscription was cancelled or ended during setup")
         }
         active.set(key, close)
         return { title: "MCP event subscribed", output: "Subscription active for this session. It stops when the process exits; reconnect and re-authorize after restart.", metadata: {} }
