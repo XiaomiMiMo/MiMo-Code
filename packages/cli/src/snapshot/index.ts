@@ -1,7 +1,8 @@
 import { Cause, Duration, Effect, Layer, Schedule, Semaphore, Context, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
-import { formatPatch, structuredPatch } from "diff"
+import { PreviewBuilder, PreviewLimits, boundPreview, type PreviewSummary } from "./preview"
 import path from "path"
+import { readLimited } from "@/util/bounded-stream"
 import z from "zod"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { InstanceState } from "@/effect"
@@ -17,18 +18,8 @@ export const Patch = z.object({
 })
 export type Patch = z.infer<typeof Patch>
 
-export const FileDiff = z
-  .object({
-    file: z.string(),
-    patch: z.string(),
-    additions: z.number(),
-    deletions: z.number(),
-    status: z.enum(["added", "deleted", "modified"]).optional(),
-  })
-  .meta({
-    ref: "SnapshotFileDiff",
-  })
-export type FileDiff = z.infer<typeof FileDiff>
+export { FileDiff, PreviewStats } from "./schema"
+import type { FileDiff } from "./schema"
 
 const log = Log.create({ service: "snapshot" })
 const prune = "7.days"
@@ -40,6 +31,7 @@ interface GitResult {
   readonly code: ChildProcessSpawner.ExitCode
   readonly text: string
   readonly stderr: string
+  readonly bytes?: Uint8Array
 }
 
 type State = Omit<Interface, "init">
@@ -51,8 +43,12 @@ export interface Interface {
   readonly patch: (hash: string) => Effect.Effect<Patch>
   readonly restore: (snapshot: string) => Effect.Effect<void>
   readonly revert: (patches: Patch[]) => Effect.Effect<void>
-  readonly diff: (hash: string) => Effect.Effect<string>
-  readonly diffFull: (from: string, to: string) => Effect.Effect<FileDiff[]>
+  readonly diff: (hash: string, options?: { onTruncated?: () => void }) => Effect.Effect<string>
+  readonly diffFull: (
+    from: string,
+    to: string,
+    options?: { onSummary?: (summary: PreviewSummary) => void },
+  ) => Effect.Effect<FileDiff[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Snapshot") {}
@@ -95,7 +91,7 @@ export const layer: Layer.Layer<
         const git = Effect.fnUntraced(
           function* (
             cmd: string[],
-            opts?: { cwd?: string; env?: Record<string, string>; stdin?: ChildProcess.CommandInput },
+            opts?: { cwd?: string; env?: Record<string, string>; stdin?: ChildProcess.CommandInput; maxBytes?: number },
           ) {
             const proc = ChildProcess.make("git", cmd, {
               cwd: opts?.cwd,
@@ -104,12 +100,22 @@ export const layer: Layer.Layer<
               stdin: opts?.stdin,
             })
             const handle = yield* spawner.spawn(proc)
-            const [text, stderr] = yield* Effect.all(
-              [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr))],
+            const [output, stderr] = yield* Effect.all(
+              [
+                opts?.maxBytes === undefined
+                  ? Stream.mkString(Stream.decodeText(handle.stdout))
+                  : readLimited(handle.stdout, opts.maxBytes),
+                readLimited(handle.stderr, 64 * 1024).pipe(Effect.map((bytes) => bytes.toString("utf8"))),
+              ],
               { concurrency: 2 },
             )
             const code = yield* handle.exitCode
-            return { code, text, stderr } satisfies GitResult
+            return {
+              code,
+              text: typeof output === "string" ? output : output.toString("utf8"),
+              stderr,
+              bytes: typeof output === "string" ? undefined : output,
+            } satisfies GitResult
           },
           Effect.scoped,
           Effect.catch((err) =>
@@ -117,6 +123,7 @@ export const layer: Layer.Layer<
               code: ChildProcessSpawner.ExitCode(1),
               text: "",
               stderr: err instanceof Error ? err.message : String(err),
+              bytes: undefined,
             }),
           ),
         )
@@ -489,238 +496,220 @@ export const layer: Layer.Layer<
           )
         })
 
-        const diff = Effect.fnUntraced(function* (hash: string) {
-          return yield* locked(
-            Effect.gen(function* () {
-              yield* add()
-              const result = yield* git([...quote, ...args(["diff", "--cached", "--no-ext-diff", hash, "--", "."])], {
-                cwd: state.worktree,
-              })
-              if (result.code !== 0) {
-                log.warn("failed to get diff", {
-                  hash,
-                  exitCode: result.code,
-                  stderr: result.stderr,
-                })
-                return ""
-              }
-              return result.text.trim()
-            }),
-          )
+        const diff = Effect.fnUntraced(function* (hash: string, options?: { onTruncated?: () => void }) {
+          const to = yield* track()
+          if (!to) return ""
+          const diffs = yield* diffFull(hash, to, {
+            onSummary: (summary) => {
+              if (summary.omittedFiles || summary.omittedPatches) options?.onTruncated?.()
+            },
+          })
+          return diffs
+            .map((item) => item.patch)
+            .filter(Boolean)
+            .join("\n")
         })
 
-        const diffFull = Effect.fnUntraced(function* (from: string, to: string) {
+        const diffFull = Effect.fnUntraced(function* (
+          from: string,
+          to: string,
+          options?: { onSummary?: (summary: PreviewSummary) => void },
+        ) {
           return yield* locked(
             Effect.gen(function* () {
-              type Row = {
-                file: string
-                status: "added" | "deleted" | "modified"
-                binary: boolean
-                additions: number
-                deletions: number
-              }
-
-              type Ref = {
-                file: string
-                side: "before" | "after"
-                ref: string
-              }
-
-              const show = Effect.fnUntraced(function* (row: Row) {
-                if (row.binary) return ["", ""]
-                if (row.status === "added") {
-                  return [
-                    "",
-                    yield* git([...cfg, ...args(["show", `${to}:${row.file}`])]).pipe(Effect.map((item) => item.text)),
-                  ]
-                }
-                if (row.status === "deleted") {
-                  return [
-                    yield* git([...cfg, ...args(["show", `${from}:${row.file}`])]).pipe(
-                      Effect.map((item) => item.text),
-                    ),
-                    "",
-                  ]
-                }
-                return yield* Effect.all(
-                  [
-                    git([...cfg, ...args(["show", `${from}:${row.file}`])]).pipe(Effect.map((item) => item.text)),
-                    git([...cfg, ...args(["show", `${to}:${row.file}`])]).pipe(Effect.map((item) => item.text)),
-                  ],
-                  { concurrency: 2 },
-                )
-              })
-
-              const load = Effect.fnUntraced(
-                function* (rows: Row[]) {
-                  const refs = rows.flatMap((row) => {
-                    if (row.binary) return []
-                    if (row.status === "added")
-                      return [{ file: row.file, side: "after", ref: `${to}:${row.file}` } satisfies Ref]
-                    if (row.status === "deleted") {
-                      return [{ file: row.file, side: "before", ref: `${from}:${row.file}` } satisfies Ref]
-                    }
-                    return [
-                      { file: row.file, side: "before", ref: `${from}:${row.file}` } satisfies Ref,
-                      { file: row.file, side: "after", ref: `${to}:${row.file}` } satisfies Ref,
-                    ]
-                  })
-                  if (!refs.length) return new Map<string, { before: string; after: string }>()
-
-                  const proc = ChildProcess.make("git", [...cfg, ...args(["cat-file", "--batch"])], {
-                    cwd: state.directory,
-                    extendEnv: true,
-                    stdin: Stream.make(new TextEncoder().encode(refs.map((item) => item.ref).join("\n") + "\n")),
-                  })
-                  const handle = yield* spawner.spawn(proc)
-                  const [out, err] = yield* Effect.all(
-                    [Stream.mkUint8Array(handle.stdout), Stream.mkString(Stream.decodeText(handle.stderr))],
-                    { concurrency: 2 },
-                  )
-                  const code = yield* handle.exitCode
-                  if (code !== 0) {
-                    log.info("git cat-file --batch failed during snapshot diff, falling back to per-file git show", {
-                      stderr: err,
-                      refs: refs.length,
-                    })
-                    return
-                  }
-
-                  const fail = (msg: string, extra?: Record<string, string>) => {
-                    log.info(msg, { ...extra, refs: refs.length })
-                    return undefined
-                  }
-
-                  const map = new Map<string, { before: string; after: string }>()
-                  const dec = new TextDecoder()
-                  let i = 0
-                  for (const ref of refs) {
-                    let end = i
-                    while (end < out.length && out[end] !== 10) end += 1
-                    if (end >= out.length) {
-                      return fail(
-                        "git cat-file --batch returned a truncated header during snapshot diff, falling back to per-file git show",
-                      )
-                    }
-
-                    const head = dec.decode(out.slice(i, end))
-                    i = end + 1
-                    const hit = map.get(ref.file) ?? { before: "", after: "" }
-                    if (head.endsWith(" missing")) {
-                      map.set(ref.file, hit)
-                      continue
-                    }
-
-                    const match = head.match(/^[0-9a-f]+ blob (\d+)$/)
-                    if (!match) {
-                      return fail(
-                        "git cat-file --batch returned an unexpected header during snapshot diff, falling back to per-file git show",
-                        { head },
-                      )
-                    }
-
-                    const size = Number(match[1])
-                    if (!Number.isInteger(size) || size < 0 || i + size >= out.length || out[i + size] !== 10) {
-                      return fail(
-                        "git cat-file --batch returned truncated content during snapshot diff, falling back to per-file git show",
-                        { head },
-                      )
-                    }
-
-                    const text = dec.decode(out.slice(i, i + size))
-                    if (ref.side === "before") hit.before = text
-                    if (ref.side === "after") hit.after = text
-                    map.set(ref.file, hit)
-                    i += size + 1
-                  }
-
-                  if (i !== out.length) {
-                    return fail(
-                      "git cat-file --batch returned trailing data during snapshot diff, falling back to per-file git show",
-                    )
-                  }
-
-                  return map
-                },
-                Effect.scoped,
-                Effect.catch(() =>
-                  Effect.succeed<Map<string, { before: string; after: string }> | undefined>(undefined),
-                ),
-              )
-
-              const result: FileDiff[] = []
-              const status = new Map<string, "added" | "deleted" | "modified">()
-
-              const statuses = yield* git(
-                [...quote, ...args(["diff", "--no-ext-diff", "--name-status", "--no-renames", from, to, "--", "."])],
-                { cwd: state.directory },
-              )
-
-              for (const line of statuses.text.trim().split("\n")) {
-                if (!line) continue
-                const [code, file] = line.split("\t")
-                if (!code || !file) continue
-                status.set(file, code.startsWith("A") ? "added" : code.startsWith("D") ? "deleted" : "modified")
-              }
-
-              const numstat = yield* git(
-                [...quote, ...args(["diff", "--no-ext-diff", "--no-renames", "--numstat", from, to, "--", "."])],
-                {
-                  cwd: state.directory,
-                },
-              )
-
-              const rows = numstat.text
-                .trim()
-                .split("\n")
-                .filter(Boolean)
-                .flatMap((line) => {
-                  const [adds, dels, file] = line.split("\t")
-                  if (!file) return []
-                  const binary = adds === "-" && dels === "-"
-                  const additions = binary ? 0 : parseInt(adds)
-                  const deletions = binary ? 0 : parseInt(dels)
-                  return [
-                    {
-                      file,
-                      status: status.get(file) ?? "modified",
-                      binary,
-                      additions: Number.isFinite(additions) ? additions : 0,
-                      deletions: Number.isFinite(deletions) ? deletions : 0,
-                    } satisfies Row,
-                  ]
-                })
-
-              // Hide ignored-file removals from the user-facing diff output.
-              const ignored = yield* ignore(rows.map((r) => r.file))
-              if (ignored.size > 0) {
-                const filtered = rows.filter((r) => !ignored.has(r.file))
-                rows.length = 0
-                rows.push(...filtered)
-              }
-
-              const step = 100
-              const patch = (file: string, before: string, after: string) =>
-                formatPatch(structuredPatch(file, file, before, after, "", "", { context: Number.MAX_SAFE_INTEGER }))
-
-              for (let i = 0; i < rows.length; i += step) {
-                const run = rows.slice(i, i + step)
-                const text = yield* load(run)
-
-                for (const row of run) {
-                  const hit = text?.get(row.file) ?? { before: "", after: "" }
-                  const [before, after] = row.binary ? ["", ""] : text ? [hit.before, hit.after] : yield* show(row)
-                  result.push({
+              type Row = { file: string; additions: number; deletions: number; binary: boolean }
+              const builder = new PreviewBuilder()
+              const rows: Row[] = []
+              const binary = new Set<string>()
+              const consume = Effect.fnUntraced(function* () {
+                const ignored = yield* ignore(rows.map((row) => row.file))
+                for (const row of rows) {
+                  if (ignored.has(row.file)) continue
+                  const item = builder.add({
                     file: row.file,
-                    patch: row.binary ? "" : patch(row.file, before, after),
                     additions: row.additions,
                     deletions: row.deletions,
-                    status: row.status,
+                    patch: "",
                   })
+                  if (item && row.binary) binary.add(row.file)
+                }
+                rows.length = 0
+              })
+              // Git metadata is streamed; only the next ignore-check batch and
+              // the selected preview rows stay resident, even for huge trees.
+              const records = (cmd: string[], consume: (record: string) => Effect.Effect<void>) =>
+                Effect.scoped(
+                  Effect.gen(function* () {
+                    const proc = yield* spawner.spawn(
+                      ChildProcess.make("git", [...quote, ...args(cmd)], { cwd: state.directory, extendEnv: true }),
+                    )
+                    let pending = ""
+                    yield* Effect.all(
+                      [
+                        Stream.runForEach(Stream.decodeText(proc.stdout), (chunk) =>
+                          Effect.gen(function* () {
+                            pending += chunk
+                            let end: number
+                            while ((end = pending.indexOf("\0")) >= 0) {
+                              const record = pending.slice(0, end)
+                              pending = pending.slice(end + 1)
+                              yield* consume(record)
+                            }
+                            if (Buffer.byteLength(pending) > PreviewLimits.source)
+                              yield* Effect.die(new Error("Oversized git metadata record"))
+                          }),
+                        ),
+                        readLimited(proc.stderr, 64 * 1024),
+                      ],
+                      { concurrency: 2 },
+                    )
+                    const code = yield* proc.exitCode
+                    if (code !== 0 || pending) yield* Effect.die(new Error("Incomplete snapshot diff metadata"))
+                  }),
+                ).pipe(Effect.orDie)
+              yield* records(
+                ["diff", "--no-ext-diff", "--no-renames", "--numstat", "-z", from, to, "--", "."],
+                (record) =>
+                  Effect.gen(function* () {
+                    const first = record.indexOf("\t")
+                    const second = record.indexOf("\t", first + 1)
+                    if (first < 0 || second < 0) return
+                    const adds = record.slice(0, first)
+                    const dels = record.slice(first + 1, second)
+                    rows.push({
+                      file: record.slice(second + 1),
+                      binary: adds === "-" && dels === "-",
+                      additions: Number.parseInt(adds) || 0,
+                      deletions: Number.parseInt(dels) || 0,
+                    })
+                    if (rows.length >= 512) yield* consume()
+                  }),
+              )
+              yield* consume()
+              const selected = new Map(builder.value.diffs.map((item) => [item.file, item]))
+              const refs = new Map<string, { before?: string; after?: string }>()
+              let head = ""
+              yield* records(
+                ["diff", "--no-ext-diff", "--no-renames", "--raw", "--no-abbrev", "-z", from, to, "--", "."],
+                (record) =>
+                  Effect.sync(() => {
+                    if (!head) {
+                      head = record
+                      return
+                    }
+                    const fields = head.split(" ")
+                    head = ""
+                    const item = selected.get(record)
+                    if (!item) return
+                    const code = fields[4]
+                    item.status = code === "A" ? "added" : code === "D" ? "deleted" : "modified"
+                    refs.set(record, {
+                      before: /^0+$/.test(fields[2]) ? undefined : fields[2],
+                      after: /^0+$/.test(fields[3]) ? undefined : fields[3],
+                    })
+                  }),
+              )
+              const hashes = [
+                ...new Set(
+                  [...refs.values()].flatMap((ref) =>
+                    [ref.before, ref.after].filter((value): value is string => !!value),
+                  ),
+                ),
+              ]
+              const sizes = new Map<string, number>()
+              if (hashes.length) {
+                const check = yield* git([...cfg, ...args(["cat-file", "--batch-check", "-z"])], {
+                  cwd: state.directory,
+                  stdin: feed(hashes),
+                  maxBytes: PreviewLimits.batch,
+                })
+                if (check.code === 0)
+                  for (const line of check.text.split("\n")) {
+                    const match = line.match(/^([0-9a-f]+) blob (\d+)$/)
+                    if (match) sizes.set(match[1], Number(match[2]))
+                  }
+              }
+              const size = (hash?: string) => (hash ? (sizes.get(hash) ?? Infinity) : 0)
+              const items = builder.value.diffs
+              for (let i = 0; i < items.length; ) {
+                const batch: typeof items = []
+                let bytes = 0
+                while (i < items.length && batch.length < 100) {
+                  const item = items[i]
+                  const ref = refs.get(item.file)
+                  if (binary.has(item.file)) {
+                    i++
+                    continue
+                  }
+                  if (!ref || size(ref.before) > PreviewLimits.source || size(ref.after) > PreviewLimits.source) {
+                    builder.patch(item)
+                    i++
+                    continue
+                  }
+                  const next = size(ref.before) + size(ref.after)
+                  if (batch.length && bytes + next > PreviewLimits.batch) break
+                  batch.push(item)
+                  bytes += next
+                  i++
+                }
+                if (!batch.length) continue
+                const requested = batch.flatMap((item) => {
+                  const ref = refs.get(item.file)!
+                  return [ref.before, ref.after].filter((value): value is string => !!value)
+                })
+                const loaded = new Map<string, string>()
+                let valid = true
+                if (requested.length) {
+                  const result = yield* git([...cfg, ...args(["cat-file", "--batch", "-z"])], {
+                    cwd: state.directory,
+                    stdin: feed(requested),
+                    maxBytes: PreviewLimits.batch + 32 * 1024,
+                  })
+                  const out = Buffer.from(result.bytes ?? Buffer.from(result.text))
+                  let offset = 0
+                  if (result.code !== 0) valid = false
+                  for (const hash of requested) {
+                    const end = out.indexOf(10, offset)
+                    const match =
+                      end < 0
+                        ? undefined
+                        : out
+                            .subarray(offset, end)
+                            .toString()
+                            .match(/^[0-9a-f]+ blob (\d+)$/)
+                    if (!match) {
+                      valid = false
+                      break
+                    }
+                    const length = Number(match[1])
+                    offset = end + 1
+                    if (length > PreviewLimits.source || offset + length >= out.length || out[offset + length] !== 10) {
+                      valid = false
+                      break
+                    }
+                    loaded.set(hash, out.subarray(offset, offset + length).toString("utf8"))
+                    offset += length + 1
+                  }
+                }
+                for (const item of batch) {
+                  const ref = refs.get(item.file)!
+                  const read = (hash?: string) =>
+                    !hash
+                      ? Effect.succeed("")
+                      : valid
+                        ? Effect.succeed(loaded.get(hash))
+                        : git([...cfg, ...args(["show", hash])], {
+                            cwd: state.directory,
+                            maxBytes: PreviewLimits.source,
+                          }).pipe(Effect.map((result) => (result.code === 0 ? result.text : undefined)))
+                  const before = yield* read(ref.before)
+                  const after = yield* read(ref.after)
+                  builder.patch(item, before, after)
                 }
               }
-
-              return result
+              const preview = boundPreview(builder.value.diffs, builder.value.summary)
+              options?.onSummary?.(preview.summary)
+              return preview.diffs
             }),
           )
         })
@@ -758,11 +747,15 @@ export const layer: Layer.Layer<
       revert: Effect.fn("Snapshot.revert")(function* (patches: Patch[]) {
         return yield* InstanceState.useEffect(state, (s) => s.revert(patches))
       }),
-      diff: Effect.fn("Snapshot.diff")(function* (hash: string) {
-        return yield* InstanceState.useEffect(state, (s) => s.diff(hash))
+      diff: Effect.fn("Snapshot.diff")(function* (hash: string, options?: { onTruncated?: () => void }) {
+        return yield* InstanceState.useEffect(state, (s) => s.diff(hash, options))
       }),
-      diffFull: Effect.fn("Snapshot.diffFull")(function* (from: string, to: string) {
-        return yield* InstanceState.useEffect(state, (s) => s.diffFull(from, to))
+      diffFull: Effect.fn("Snapshot.diffFull")(function* (
+        from: string,
+        to: string,
+        options?: { onSummary?: (summary: PreviewSummary) => void },
+      ) {
+        return yield* InstanceState.useEffect(state, (s) => s.diffFull(from, to, options))
       }),
     })
   }),

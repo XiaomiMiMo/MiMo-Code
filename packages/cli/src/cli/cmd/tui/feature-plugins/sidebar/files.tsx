@@ -1,12 +1,19 @@
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@mimo-ai/plugin/tui"
+import type { TuiPlugin, TuiPluginModule, TuiThemeCurrent, TuiSidebarFileItem } from "@mimo-ai/plugin/tui"
 import { createMemo, For, Show, createSignal } from "solid-js"
+import { sidebarPreview } from "../../util/sidebar-diff"
 
 const id = "internal:sidebar-files"
 
-function View(props: { api: TuiPluginApi; session_id: string }) {
+export function FilesView(props: {
+  files: ReadonlyArray<TuiSidebarFileItem>
+  total?: number
+  theme: Pick<TuiThemeCurrent, "text" | "textMuted" | "diffAdded" | "diffRemoved">
+}) {
   const [open, setOpen] = createSignal(true)
-  const theme = () => props.api.theme.current
-  const list = createMemo(() => props.api.state.session.diff(props.session_id))
+  const theme = () => props.theme
+  const list = () => props.files
+
+  const preview = createMemo(() => sidebarPreview(list(), props.total))
 
   return (
     <Show when={list().length > 0}>
@@ -20,7 +27,12 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
           </text>
         </box>
         <Show when={list().length <= 2 || open()}>
-          <For each={list()}>
+          <Show when={preview().omitted > 0}>
+            <text fg={theme().textMuted}>
+              Showing {preview().files.length} of {preview().total} files
+            </text>
+          </Show>
+          <For each={preview().files}>
             {(item) => (
               <box flexDirection="row" gap={1} justifyContent="space-between">
                 <text fg={theme().textMuted} wrapMode="none">
@@ -48,7 +60,13 @@ const tui: TuiPlugin = async (api) => {
     order: 500,
     slots: {
       sidebar_content(_ctx, props) {
-        return <View api={api} session_id={props.session_id} />
+        return (
+          <FilesView
+            files={api.state.session.diff(props.session_id)}
+            total={api.state.session.diffTotal?.(props.session_id)}
+            theme={api.theme.current}
+          />
+        )
       },
     },
   })

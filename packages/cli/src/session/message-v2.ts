@@ -24,6 +24,8 @@ import type { Provider } from "@/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Effect } from "effect"
 import { EffectLogger } from "@/effect"
+import { getTableColumns } from "drizzle-orm"
+import { PreviewLimits } from "@/snapshot/preview"
 import {
   inlineToolAttachment,
   routeToolAttachment,
@@ -558,6 +560,8 @@ export const User = Base.extend({
       title: z.string().optional(),
       body: z.string().optional(),
       diffs: Snapshot.FileDiff.array(),
+      preview: Snapshot.PreviewStats.optional(),
+      diffTruncated: z.boolean().optional(),
     })
     .optional(),
   agent: z.string(),
@@ -838,6 +842,15 @@ export function promoteComposeProtocolFirst(parts: Part[]): Part[] {
 
 const older = (row: Cursor) =>
   or(lt(MessageTable.time_created, row.time), and(eq(MessageTable.time_created, row.time), lt(MessageTable.id, row.id)))
+
+// Strip only the oversized derived field inside SQLite, before Drizzle parses
+// the message JSON into JavaScript. Message text and parts remain unchanged.
+const messageColumns = {
+  ...getTableColumns(MessageTable),
+  data: sql`case when length(cast(json_extract(${MessageTable.data}, '$.summary.diffs') as blob)) > ${PreviewLimits.payload}
+    then json_set(${MessageTable.data}, '$.summary.diffs', json('[]'), '$.summary.diffTruncated', json('true'))
+    else ${MessageTable.data} end`.mapWith(MessageTable.data),
+}
 
 function hydrate(rows: (typeof MessageTable.$inferSelect)[]) {
   const ids = rows.map((row) => row.id)
@@ -1377,7 +1390,7 @@ export function page(input: { sessionID: SessionID; limit: number; before?: stri
   )
   const rows = Database.use((db) =>
     db
-      .select()
+      .select(messageColumns)
       .from(MessageTable)
       .where(where)
       .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
@@ -1469,7 +1482,7 @@ export function parts(message_id: MessageID) {
 export function get(input: { sessionID: SessionID; messageID: MessageID }): WithParts {
   const row = Database.use((db) =>
     db
-      .select()
+      .select(messageColumns)
       .from(MessageTable)
       .where(and(eq(MessageTable.id, input.messageID), eq(MessageTable.session_id, input.sessionID)))
       .get(),

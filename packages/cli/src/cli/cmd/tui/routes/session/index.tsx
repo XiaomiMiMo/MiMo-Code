@@ -1428,6 +1428,9 @@ export function Session() {
                                 <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
                                 restore
                               </text>
+                              <Show when={revertInfo()?.diffTruncated}>
+                                <text fg={theme.textMuted}>Diff preview limited</text>
+                              </Show>
                               <Show when={revert()!.diffFiles?.length}>
                                 <box marginTop={1}>
                                   <For each={revert()!.diffFiles}>

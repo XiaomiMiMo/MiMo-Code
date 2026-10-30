@@ -504,6 +504,7 @@ export type SnapshotFileDiff = {
   additions: number
   deletions: number
   status?: "added" | "deleted" | "modified"
+  patchOmitted?: boolean
 }
 
 export type EventSessionDiff = {
@@ -1162,6 +1163,14 @@ export type UserMessage = {
     title?: string
     body?: string
     diffs: Array<SnapshotFileDiff>
+    preview?: {
+      files: number
+      additions: number
+      deletions: number
+      omittedFiles: number
+      omittedPatches: number
+    }
+    diffTruncated?: boolean
   }
   agent: string
   model: {
@@ -1620,6 +1629,7 @@ export type Session = {
     partID?: string
     snapshot?: string
     diff?: string
+    diffTruncated?: boolean
   }
 }
 
@@ -1839,6 +1849,7 @@ export type SyncEventSessionUpdated = {
         partID?: string
         snapshot?: string
         diff?: string
+        diffTruncated?: boolean
       } | null
     }
   }
@@ -3322,6 +3333,7 @@ export type GlobalSession = {
     partID?: string
     snapshot?: string
     diff?: string
+    diffTruncated?: boolean
   }
   project: ProjectSummary | null
 }

@@ -10,6 +10,8 @@ import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
 import { SessionRunState } from "./run-state"
 import { SessionSummary } from "./summary"
+import { boundPreview, type PreviewSummary } from "@/snapshot/preview"
+import { writeDiffCache } from "./diff-cache"
 
 const log = Log.create({ service: "session.revert" })
 
@@ -73,18 +75,30 @@ export const layer = Layer.effect(
       rev.snapshot = session.revert?.snapshot ?? (yield* snap.track())
       if (session.revert?.snapshot) yield* snap.restore(session.revert.snapshot)
       yield* snap.revert(patches)
-      if (rev.snapshot) rev.diff = yield* snap.diff(rev.snapshot as string)
+      if (rev.snapshot)
+        rev.diff = yield* snap.diff(rev.snapshot as string, {
+          onTruncated: () => {
+            rev.diffTruncated = true
+          },
+        })
       const range = all.filter((msg) => msg.info.id >= rev!.messageID)
-      const diffs = yield* summary.computeDiff({ messages: range })
-      yield* storage.write(["session_diff", input.sessionID], diffs).pipe(Effect.ignore)
-      yield* bus.publish(Session.Event.Diff, { sessionID: input.sessionID, diff: diffs })
+      let total: PreviewSummary | undefined
+      const diffs = yield* summary.computeDiff({
+        messages: range,
+        onSummary: (summary) => {
+          total = summary
+        },
+      })
+      const preview = boundPreview(diffs, total)
+      yield* writeDiffCache(storage, input.sessionID, preview)
+      yield* bus.publish(Session.Event.Diff, { sessionID: input.sessionID, diff: preview.diffs })
       yield* sessions.setRevert({
         sessionID: input.sessionID,
         revert: rev,
         summary: {
-          additions: diffs.reduce((sum, x) => sum + x.additions, 0),
-          deletions: diffs.reduce((sum, x) => sum + x.deletions, 0),
-          files: diffs.length,
+          additions: preview.summary.additions,
+          deletions: preview.summary.deletions,
+          files: preview.summary.files,
         },
       })
       return yield* sessions.get(input.sessionID)

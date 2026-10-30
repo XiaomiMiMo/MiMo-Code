@@ -26,6 +26,7 @@ import { SessionRunState } from "./run-state"
 import { Instance } from "../project/instance"
 import { InstanceState } from "@/effect"
 import { Snapshot } from "@/snapshot"
+import { readDiffCache } from "./diff-cache"
 import { ProjectID } from "../project/schema"
 import { WorkspaceID } from "../control-plane/schema"
 import { SessionID, MessageID, PartID } from "./schema"
@@ -186,6 +187,7 @@ export const Info = z
         partID: PartID.zod.optional(),
         snapshot: z.string().optional(),
         diff: z.string().optional(),
+        diffTruncated: z.boolean().optional(),
       })
       .optional(),
   })
@@ -986,9 +988,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
     })
 
     const diff = Effect.fn("Session.diff")(function* (sessionID: SessionID) {
-      return yield* storage
-        .read<Snapshot.FileDiff[]>(["session_diff", sessionID])
-        .pipe(Effect.orElseSucceed((): Snapshot.FileDiff[] => []))
+      const preview = yield* readDiffCache(storage, sessionID)
+      return preview?.diffs ?? []
     })
 
     const messages = Effect.fn("Session.messages")(function* (input: {
