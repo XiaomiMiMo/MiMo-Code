@@ -701,6 +701,9 @@ export const RunCommand = cmd({
         }
         tracker.markStarted()
       } catch (error) {
+        // A prompt that never reached the server publishes no idle status, so
+        // stop the tracker instead of leaving its poll running indefinitely.
+        tracker.stop()
         await restoreDangerousDeleteApproval()
         throw error
       }
