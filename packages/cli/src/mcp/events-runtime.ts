@@ -60,6 +60,8 @@ export async function startLocalEvents(input: {
   })
   const streams: EventsSubscription[] = []
   let closed = false
+  let windowStart = Date.now()
+  let windowEvents = 0
   try {
     const descriptors = await client.listEvents()
     for (const subscription of grants) {
@@ -69,6 +71,8 @@ export async function startLocalEvents(input: {
       const stream = client.openStream({ name: subscription.name, arguments: subscription.arguments }, {
         onEvent: async (event) => {
           if (closed) return
+          if (Date.now() - windowStart >= 60_000) { windowStart = Date.now(); windowEvents = 0 }
+          if (++windowEvents > 60) throw new Error("MCP event rate limit exceeded; subscription stopped")
           await acceptEvent(input.bridge, grant, event, () => closed)
         },
         onError: (error) => input.onError(error),

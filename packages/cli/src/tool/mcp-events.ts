@@ -49,6 +49,8 @@ export const McpEventsTool = Tool.define(
           return { title: "MCP event unsubscribed", output: close ? "Subscription stopped." : "No active subscription.", metadata: {} }
         }
         if (ctx.abort.aborted) throw new Error("MCP event subscription cancelled")
+        if (Buffer.byteLength(JSON.stringify(input.arguments ?? {}), "utf8") > 16 * 1024)
+          throw new Error("MCP event subscription arguments exceed size limit")
         const cfg = yield* config.get()
         const server = HostMcp.get()[input.server] ?? cfg.mcp?.[input.server]
         if (!server || !("type" in server) || server.type !== "local" || server.enabled === false)
@@ -60,6 +62,7 @@ export const McpEventsTool = Tool.define(
         const currentServer = HostMcp.get()[input.server] ?? latest.mcp?.[input.server]
         if (JSON.stringify(currentServer) !== JSON.stringify(server)) throw new Error("MCP server configuration changed during approval; subscribe again")
         if (active.has(key)) return { title: "MCP event subscribed", output: "Subscription already active.", metadata: {} }
+        if (active.size >= 16) throw new Error("Too many active MCP event subscriptions in this workspace")
         const bridge = yield* EffectBridge.make()
         const cwd = yield* InstanceState.directory
         const pending = () => Promise.resolve()
