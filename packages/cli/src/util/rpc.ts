@@ -10,6 +10,11 @@ export function listen(rpc: Definition) {
       postMessage(JSON.stringify({ type: "rpc.result", result, id: parsed.id }))
     }
   }
+  // Tell the client the handler is installed. A request posted before this point can be
+  // dropped by the runtime (observed on Bun 1.4.x: the worker boots ~300ms after
+  // `new Worker`, and an early "server" request never arrived), so the client holds
+  // requests until it sees this.
+  postMessage(JSON.stringify({ type: "rpc.ready" }))
 }
 
 export function emit(event: string, data: unknown) {
@@ -23,8 +28,11 @@ export function client<T extends Definition>(target: {
   const pending = new Map<number, (result: any) => void>()
   const listeners = new Map<string, Set<(data: any) => void>>()
   let id = 0
+  let markReady!: () => void
+  const ready = new Promise<void>((resolve) => (markReady = resolve))
   target.onmessage = async (evt) => {
     const parsed = JSON.parse(evt.data)
+    if (parsed.type === "rpc.ready") markReady()
     if (parsed.type === "rpc.result") {
       const resolve = pending.get(parsed.id)
       if (resolve) {
@@ -46,7 +54,7 @@ export function client<T extends Definition>(target: {
       const requestId = id++
       return new Promise((resolve) => {
         pending.set(requestId, resolve)
-        target.postMessage(JSON.stringify({ type: "rpc.request", method, input, id: requestId }))
+        void ready.then(() => target.postMessage(JSON.stringify({ type: "rpc.request", method, input, id: requestId })))
       })
     },
     on<Data>(event: string, handler: (data: Data) => void) {
