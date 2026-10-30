@@ -23,6 +23,8 @@ const FIELD_RANGES: [number, number][] = [
 function expandField(token: string, [lo, hi]: [number, number]): number[] | null {
   const out = new Set<number>()
   for (const part of token.split(",")) {
+    // Validate the whole item before parseInt and split can discard malformed suffixes.
+    if (!/^(?:\*|\d+(?:-\d+)?)(?:\/\d+)?$/.test(part)) return null
     const [range, stepStr] = part.split("/")
     const step = stepStr ? parseInt(stepStr, 10) : 1
     if (!Number.isFinite(step) || step < 1) return null
