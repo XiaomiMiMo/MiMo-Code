@@ -79,6 +79,10 @@ export interface AgentInput {
   content: string
   type?: string
   legacyInboxID?: string
+  /** Stable event identity, scoped to the receiving session by the controller. */
+  idempotencyKey?: string
+  /** Marks a message as external input instead of an ordinary user instruction. */
+  externalOrigin?: { server: string; event: string; eventId: string }
 }
 
 export interface Interface {
@@ -125,10 +129,11 @@ export const layer = Layer.effect(
           role: "user",
           time: { created: now },
           agent: seed?.agent ?? "system",
-          ...(input.senderSessionID || input.senderActorID ? { provenance: {
-            source: "agent" as const,
-            senderSessionID: input.senderSessionID, senderActorID: input.senderActorID,
-          } } : {}),
+          ...(input.externalOrigin ? { provenance: { machine: `mcp-events:${input.externalOrigin.server}` } }
+            : input.senderSessionID || input.senderActorID ? { provenance: {
+              source: "agent" as const,
+              senderSessionID: input.senderSessionID, senderActorID: input.senderActorID,
+            } } : {}),
           model: seed?.model ?? { providerID: "system" as ProviderID, modelID: "system" as ModelID },
         },
         parts: [{
@@ -138,8 +143,10 @@ export const layer = Layer.effect(
           type: "text",
           synthetic: true,
           text,
+          ...(input.externalOrigin ? { metadata: { origin: { kind: "mcp-event", ...input.externalOrigin } } } : {}),
         }],
         type,
+        idempotencyKey: input.idempotencyKey,
         legacyInboxID: input.legacyInboxID,
         senderSessionID: input.senderSessionID,
         senderActorID: input.senderActorID,

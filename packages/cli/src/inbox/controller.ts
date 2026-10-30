@@ -52,6 +52,7 @@ export interface Interface {
     lane: Lane,
     runId: number,
     expectedEpoch?: number,
+    excludeEvents?: boolean,
   ) => Effect.Effect<{ receipts: Receipt[]; claimFrontier: MessageID | undefined } | undefined>
   readonly ack: (
     lane: Lane,
@@ -348,7 +349,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       return rows.map(toReceipt).sort((a, b) => a.id.localeCompare(b.id))
     })
 
-    const claim = (lane: Lane, runId: number, expectedEpoch: number | undefined, requireOwner: boolean, limit = MAX_CLAIM_PER_STEP) =>
+    const claim = (lane: Lane, runId: number, expectedEpoch: number | undefined, requireOwner: boolean, limit = MAX_CLAIM_PER_STEP, excludeEvents = false) =>
       Effect.gen(function* () {
         if (limit === 0) return undefined
         const identity = yield* ExecutionOwnership.captureIdentity
@@ -376,6 +377,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             eq(InboxTable.receiver_actor_id, lane.agentID),
             eq(InboxTable.state, "accepted"),
             promptOnly,
+            // External events must never join a turn that was already running.
+            ...(requireOwner || excludeEvents ? [ne(InboxTable.type, "mcp_event")] : []),
             eq(InboxTable.epoch, epoch),
           )).orderBy(InboxTable.id).limit(limit).all().map(toReceipt)
           if (eligible.length === 0) return undefined
@@ -409,8 +412,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         return batch
       })
 
-    const claimNext = Effect.fn("Inbox.claimNext")(function* (lane: Lane, runId: number, expectedEpoch?: number) {
-      return yield* claim(lane, runId, expectedEpoch, false)
+    const claimNext = Effect.fn("Inbox.claimNext")(function* (lane: Lane, runId: number, expectedEpoch?: number, excludeEvents = false) {
+      return yield* claim(lane, runId, expectedEpoch, false, MAX_CLAIM_PER_STEP, excludeEvents)
     })
 
     const ack = Effect.fn("Inbox.ack")(function* (
