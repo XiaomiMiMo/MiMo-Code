@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { StringDecoder } from "node:string_decoder"
+import { childProcessEnv } from "@/util/child-process-env"
 
 /** SEP-3415 proposal revision b08e4f9; stdio only. No legacy initialize or top-level events capability. */
 export const EVENTS_EXTENSION = "io.modelcontextprotocol/events"
@@ -116,7 +117,7 @@ export class EventsStdioClient {
     }
     this.child = spawn(options.command, options.args ?? [], {
       cwd: options.cwd,
-      env: options.env ?? {},
+      env: childProcessEnv(options.env),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: process.platform === "win32",
