@@ -722,4 +722,66 @@ describe("acp.agent event subscription", () => {
       },
     })
   })
+
+  // Regression for #2709: the prompt response must not overtake the text chunks
+  // of the same turn. The prompt request resolves as soon as the engine turn
+  // ends, while text is forwarded from the event stream, so a queued delta can
+  // land after the response and leave the client with a truncated answer.
+  test("forwards the full assistant text before returning the prompt response", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { agent, controller, chunks, sdk, stop } = createFakeAgent()
+        const cwd = "/tmp/opencode-acp-test"
+        const sessionId = await agent.newSession({ cwd, mcpServers: [] } as any).then((x) => x.sessionId)
+        const messageID = "msg_final"
+        const partID = `${messageID}_part`
+        const finalText = "MIMO_WIRE_OK"
+
+        // Hold the prompt response so a delta is forwarded while the turn is
+        // still running, then release it with the remaining text still queued.
+        let releasePrompt = () => {}
+        sdk.session.prompt = async () => {
+          await new Promise<void>((resolve) => {
+            releasePrompt = resolve
+          })
+          return {
+            data: {
+              info: { id: messageID, role: "assistant", sessionID: sessionId },
+              parts: [{ id: partID, sessionID: sessionId, messageID, type: "text", text: finalText }],
+            },
+          }
+        }
+
+        const pushDelta = (delta: string) =>
+          controller.push({
+            directory: cwd,
+            payload: {
+              type: "message.part.delta",
+              properties: { sessionID: sessionId, messageID, partID, field: "text", delta },
+            },
+          } as any)
+
+        const pending = agent.prompt({ sessionId, prompt: [{ type: "text", text: "reply" }] } as any)
+
+        pushDelta("MIMO")
+        await new Promise((r) => setTimeout(r, 20))
+        expect(chunks.get(sessionId)).toBe("MIMO")
+
+        releasePrompt()
+        await pending
+        expect(chunks.get(sessionId)).toBe(finalText)
+
+        // Late deltas for the finalized message must not duplicate the suffix.
+        pushDelta("_W")
+        pushDelta("IRE")
+        pushDelta("_OK")
+        await new Promise((r) => setTimeout(r, 20))
+        expect(chunks.get(sessionId)).toBe(finalText)
+
+        stop()
+      },
+    })
+  })
 })
