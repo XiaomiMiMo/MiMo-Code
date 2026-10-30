@@ -22,7 +22,7 @@ import { SessionStatus } from "./status"
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
 import { Log, Token } from "../util"
-import { Effect, Layer, Deferred, Context, Scope } from "effect"
+import { Effect, Layer, Deferred, Context, Scope, Semaphore } from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import type { ActorPromptOps } from "@/tool/actor"
 import type { ProviderID, ModelID } from "../provider/schema"
@@ -703,6 +703,7 @@ export const layer: Layer.Layer<
 
     // Plain Map in the layer closure — same approach as compaction.ts
     const writers = new Map<SessionID, WriterState>()
+    const writerStarts = new Map<SessionID, { lock: Semaphore.Semaphore; users: number }>()
 
     const tryStartCheckpointWriter: (
       input: TryStartCheckpointWriterInput,
@@ -1181,6 +1182,23 @@ export const layer: Layer.Layer<
       )
 
       return "started" as const
+    }, (effect, input) => {
+      // Keep admission serialized until the spawned actor is registered.
+      return Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const state = writerStarts.get(input.sessionID) ?? { lock: Semaphore.makeUnsafe(1), users: 0 }
+          state.users += 1
+          writerStarts.set(input.sessionID, state)
+          return state
+        }),
+        (state) => state.lock.withPermits(1)(effect),
+        (state) =>
+          Effect.sync(() => {
+            // Include waiters so cancellation cannot remove a lock still in use.
+            state.users -= 1
+            if (state.users === 0) writerStarts.delete(input.sessionID)
+          }),
+      )
     })
 
     const waitForWriterSettlement = Effect.fn("SessionCheckpoint.waitForWriterSettlement")(function* (
