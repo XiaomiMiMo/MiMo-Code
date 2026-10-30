@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { $ } from "bun"
+import path from "path"
 import { Effect, Layer } from "effect"
 import { Hono } from "hono"
 import { ErrorMiddleware } from "../../src/server/middleware"
@@ -8,6 +10,8 @@ import { Session } from "../../src/session"
 import { inboxServiceRef } from "../../src/inbox/inbox-ref"
 import * as Inbox from "../../src/inbox/inbox"
 import { Actor } from "../../src/actor/spawn"
+import { ActorRegistry } from "../../src/actor/registry"
+import { SessionRunState } from "../../src/session/run-state"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { schedulerRef } from "../../src/inbox/scheduler"
 import { MessageID, type SessionID } from "../../src/session/schema"
@@ -158,9 +162,15 @@ function answered(messages: MessageV2.WithParts[], text: string) {
   )
 }
 
-async function controlled(http: Http, llm: TestLLMServer["Service"], sessionID: SessionID, signal?: AbortSignal) {
+async function controlled(
+  http: Http,
+  llm: TestLLMServer["Service"],
+  sessionID: SessionID,
+  signal?: AbortSignal,
+  answer = "controlled first answer",
+) {
   const gate = Promise.withResolvers<void>()
-  await Effect.runPromise(llm.hold("controlled first answer", gate.promise))
+  await Effect.runPromise(llm.hold(answer, gate.promise))
   const messageID = MessageID.ascending()
   const text = `controlled first ${messageID}`
   const response = await http.post(
@@ -178,6 +188,44 @@ async function controlled(http: Http, llm: TestLLMServer["Service"], sessionID: 
   expect(persisted).toHaveLength(1)
   expect(persisted[0].state).toBe("claimed")
   return { response, release: () => gate.resolve(), receiptId: persisted[0].id, messageID }
+}
+
+async function child(http: Http, sessionID: SessionID) {
+  const finish = Promise.withResolvers<void>()
+  const message = (await http.messages(sessionID))[0]
+  const snapshot = await Instance.provide({
+    directory: http.directory,
+    fn: () =>
+      AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const registry = yield* ActorRegistry.Service
+          const state = yield* SessionRunState.Service
+          yield* registry.register({
+            sessionID,
+            actorID: "isolation-child",
+            mode: "subagent",
+            agent: "explore",
+            description: "isolation child",
+            contextMode: "none",
+            background: true,
+            lifecycle: "ephemeral",
+            tools: [],
+          })
+          yield* registry.updateStatus(sessionID, "isolation-child", { status: "running" })
+          yield* state.start(
+            sessionID,
+            "isolation-child",
+            Effect.never,
+            Effect.promise(() => finish.promise).pipe(
+              Effect.as(message),
+              Effect.ensuring(registry.updateStatus(sessionID, "isolation-child", { status: "idle" })),
+            ),
+          )
+          return yield* state.executionSnapshot(sessionID, "isolation-child")
+        }),
+      ),
+  })
+  return { ...snapshot, release: () => finish.resolve() }
 }
 
 describe("ErrorMiddleware → BusyError mapping", () => {
@@ -526,6 +574,110 @@ describe("HTTP abort and transport ownership", () => {
             expect(rows(session.id).filter((row) => row.input_message_id === messageID)).toHaveLength(1)
           } finally {
             first.release()
+          }
+        }),
+      30_000,
+    )
+  }
+
+  for (const mode of ["same directory", "linked worktrees", "pending refresh"] as const) {
+    const linked = mode === "linked worktrees"
+    test(
+      `aborting an active session preserves another active session and its queued input (${mode})`,
+      () =>
+        fixture(async (http, llm) => {
+          await using worktree = await tmpdir({
+            init: async (directory) => {
+              if (!linked) return
+              await $`git worktree add --detach ${directory} HEAD`.cwd(http.directory).quiet()
+              await Bun.write(
+                path.join(directory, "mimocode.json"),
+                await Bun.file(path.join(http.directory, "mimocode.json")).text(),
+              )
+            },
+          })
+          const otherHttp = linked ? client(worktree.path) : http
+          const a = await http.session()
+          const b = await otherHttp.session()
+          const first = await controlled(http, llm, a.id, undefined, "cancelled answer")
+          const second = await controlled(otherHttp, llm, b.id, undefined, "uninterrupted answer")
+          const childA = await child(http, a.id)
+          const childB = await child(otherHttp, b.id)
+          try {
+            const beforeA = epoch(a.id)
+            const beforeB = epoch(b.id)
+            const queuedID = MessageID.ascending()
+            await Effect.runPromise(llm.text("queued answer"))
+            const queued = await accepted(
+              otherHttp,
+              b.id,
+              await otherHttp.post(`/session/${b.id}/prompt_async`, {
+                messageID: queuedID,
+                model,
+                parts: [{ type: "text", text: `queued input ${queuedID}` }],
+              }),
+              queuedID,
+            )
+            const original = await otherHttp.receipt(b.id, second.receiptId)
+            expect(original.state).toBe("claimed")
+
+            for (const increment of [1, 2]) {
+              const response = await http.post(`/session/${a.id}/abort`)
+              expect(response.status).toBe(200)
+              expect(await response.json()).toMatchObject({ epoch: beforeA + increment })
+              expect(epoch(b.id)).toBe(beforeB)
+              expect(await otherHttp.receipt(b.id, second.receiptId)).toEqual(original)
+              expect((await otherHttp.receipt(b.id, queued.id)).state).toBe("accepted")
+            }
+            expect(childA.isCurrent()).toBe(false)
+            expect(childB.isCurrent()).toBe(true)
+            expect(childB.fiber?.pollUnsafe()).toBeUndefined()
+            if (mode === "pending refresh") {
+              await Instance.disposeAll()
+              expect(Instance.refreshStatus(otherHttp.directory).state).toBe("pending")
+              expect(childB.fiber?.pollUnsafe()).toBeUndefined()
+            }
+            expect((await http.receipt(a.id, first.receiptId)).state).toBe("cancelled")
+            first.release()
+            await first.response.text()
+            childB.release()
+            second.release()
+            await second.response.text()
+            await settled(otherHttp, b.id, second.receiptId)
+            await settled(otherHttp, b.id, queued.id)
+            expect(answered(await otherHttp.messages(b.id), "uninterrupted answer")).toBeDefined()
+            expect(answered(await otherHttp.messages(b.id), "queued answer")).toBeDefined()
+            await otherHttp.post(`/session/${b.id}/abort`)
+            if (mode === "pending refresh") {
+              await until(
+                async () => Instance.refreshStatus(http.directory).state,
+                (state) => state === "applied",
+              )
+            }
+
+            await Effect.runPromise(llm.text("replacement answer"))
+            const nextID = MessageID.ascending()
+            const next = await accepted(
+              http,
+              a.id,
+              await http.post(`/session/${a.id}/prompt_async`, {
+                messageID: nextID,
+                model,
+                parts: [{ type: "text", text: `replacement ${nextID}` }],
+              }),
+              nextID,
+            )
+            await settled(http, a.id, next.id)
+            expect(epoch(a.id)).toBe(beforeA + 2)
+            expect(epoch(b.id)).toBe(beforeB + 1)
+          } finally {
+            first.release()
+            second.release()
+            childA.release()
+            childB.release()
+            await http.post(`/session/${a.id}/abort`)
+            await otherHttp.post(`/session/${b.id}/abort`)
+            await Instance.disposeAll()
           }
         }),
       30_000,

@@ -22,6 +22,7 @@ interface MockClientState {
   toolCallSignals: Array<AbortSignal | undefined>
   toolCallHangs: boolean
   toolCallAbortCount: number
+  toolCallResolvers: Array<() => void>
   notifications: Array<Record<string, unknown>>
   notificationCalls: number
   notificationInFlight: number
@@ -63,6 +64,7 @@ function getOrCreateClientState(name?: string): MockClientState {
       toolCallSignals: [],
       toolCallHangs: false,
       toolCallAbortCount: 0,
+      toolCallResolvers: [],
       notifications: [],
       notificationCalls: 0,
       notificationInFlight: 0,
@@ -184,7 +186,7 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
       this._state?.toolCalls.push(params)
       this._state?.toolCallSignals.push(options?.signal)
       if (this._state?.toolCallHangs) {
-        await new Promise<void>((_resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const signal = options?.signal
           const onAbort = () => {
             signal?.removeEventListener("abort", onAbort)
@@ -192,9 +194,11 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
             reject(signal?.reason instanceof Error ? signal.reason : new Error("tool call aborted"))
           }
           signal?.addEventListener("abort", onAbort, { once: true })
+          this._state?.toolCallResolvers.push(() => {
+            signal?.removeEventListener("abort", onAbort)
+            resolve()
+          })
           if (signal?.aborted) onAbort()
-          // Deliberately no resolver: this request must settle only through
-          // the propagated cancellation signal.
         })
       }
       return { content: [{ type: "text", text: "ok" }] }
@@ -470,6 +474,45 @@ test(
           params: { ...context, status: "cancelled" },
         },
       ])
+    }),
+  ),
+)
+
+test(
+  "cancelling one session's MCP call preserves another call on the same client",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      lastCreatedClientName = "shared-server"
+      const state = getOrCreateClientState("shared-server")
+      state.toolCallHangs = true
+      yield* mcp.add("shared-server", { type: "local", command: ["echo", "test"] })
+      const a = new AbortController()
+      const b = new AbortController()
+      const first = (yield* mcp.tools({ sessionId: "ses_a", turnId: "turn_a", actorId: "main" }))[
+        "shared-server_test_tool"
+      ]
+      const second = (yield* mcp.tools({ sessionId: "ses_b", turnId: "turn_b", actorId: "main" }))[
+        "shared-server_test_tool"
+      ]
+      const resultA = Promise.resolve(
+        first.execute!({}, { toolCallId: "call_a", messages: [], abortSignal: a.signal }),
+      ).then(
+        () => {
+          throw new Error("cancelled call unexpectedly resolved")
+        },
+        (error: unknown) => error,
+      )
+      const resultB = Promise.resolve(
+        second.execute!({}, { toolCallId: "call_b", messages: [], abortSignal: b.signal }),
+      )
+      expect(state.toolCallSignals).toEqual([a.signal, b.signal])
+      a.abort(new Error("cancel session A"))
+      expect(yield* Effect.promise(() => resultA)).toEqual(new Error("cancel session A"))
+      expect(b.signal.aborted).toBe(false)
+      expect(state.closed).toBe(false)
+      state.toolCallResolvers[1]()
+      expect(yield* Effect.promise(() => resultB)).toMatchObject({ content: [{ type: "text", text: "ok" }] })
+      expect(state.toolCallAbortCount).toBe(1)
     }),
   ),
 )
