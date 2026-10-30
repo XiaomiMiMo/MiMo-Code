@@ -1878,6 +1878,91 @@ test("xiaomi models stay on Chat Completions regardless of version", async () =>
   })
 })
 
+test("configured api key does not inherit the stored credential endpoint", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          enabled_providers: ["xiaomi"],
+          provider: {
+            xiaomi: {
+              api: "https://api.example.test/v1",
+              options: { apiKey: "sk-config" },
+            },
+          },
+        }),
+      )
+    },
+  })
+  Auth.inject(
+    JSON.stringify({
+      xiaomi: {
+        type: "api",
+        key: "tp-stored",
+        metadata: { base_url: "https://token-plan.example.test/v1" },
+      },
+    }),
+  )
+  const originalFetch = globalThis.fetch
+  let request: Request | undefined
+  globalThis.fetch = (async (input, init) => {
+    request = new Request(input, init)
+    return new Response(
+      'data: {"id":"test","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      {
+        headers: { "content-type": "text/event-stream" },
+      },
+    )
+  }) as typeof fetch
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const provider = (await list())[ProviderID.make("xiaomi")]
+        expect(provider.options.apiKey).toBe("sk-config")
+        expect(provider.options.baseURL).toBeUndefined()
+        expect(Object.values(provider.models)[0]?.api.url).toBe("https://api.example.test/v1")
+
+        const model = Object.values(provider.models)[0]!
+        const language = await getLanguage(model)
+        const result = await language.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }] })
+        await result.stream.pipeTo(new WritableStream())
+        expect(request?.url).toBe(`https://api.example.test/v1/chat/completions`)
+        expect(request?.headers.get("authorization")).toBe("Bearer sk-config")
+      },
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+    Auth.inject(undefined)
+  }
+})
+
+test("stored credential endpoint is retained when config does not supply an api key", async () => {
+  await using tmp = await tmpdir()
+  Auth.inject(
+    JSON.stringify({
+      xiaomi: {
+        type: "api",
+        key: "tp-stored",
+        metadata: { base_url: "https://token-plan.example.test/v1" },
+      },
+    }),
+  )
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const provider = (await list())[ProviderID.make("xiaomi")]
+        expect(provider.key).toBe("tp-stored")
+        expect(provider.options.baseURL).toBe("https://token-plan.example.test/v1")
+      },
+    })
+  } finally {
+    Auth.inject(undefined)
+  }
+})
+
 test("xiaomi chat streams reasoning_content as reasoning parts", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

@@ -1314,6 +1314,10 @@ const layer: Layer.Layer<
             models: existing?.models ?? {},
           }
 
+          if (provider.api) {
+            for (const model of Object.values(parsed.models)) model.api.url = provider.api
+          }
+
           for (const [modelID, model] of Object.entries(provider.models ?? {})) {
             const existingModel = parsed.models[model.id ?? modelID]
             const apiID = model.id ?? existingModel?.api.id ?? modelID
@@ -1457,6 +1461,12 @@ const layer: Layer.Layer<
           const stored = yield* auth.get(providerID).pipe(Effect.orDie)
           if (!stored) continue
           if (!plugin.auth.loader) continue
+
+          // Auth loaders derive options (for example baseURL) from the stored credential.
+          // When config supplies its own key, applying those options would combine two
+          // independent credential sources. Keep the configured key paired with config/model
+          // endpoint options instead.
+          if (cfg.provider?.[providerID]?.options?.apiKey !== undefined) continue
 
           const catalog = database[plugin.auth.provider]
           if (!catalog) {
