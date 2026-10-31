@@ -13,7 +13,8 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 
 const it = testEffect(Layer.mergeAll(Config.defaultLayer, Agent.defaultLayer, Truncate.defaultLayer, Bus.layer, CrossSpawnSpawner.defaultLayer))
 const fixture = fileURLToPath(new URL("./fixtures/events-stdio-server.mjs", import.meta.url))
-const config = { mcp: { fixture: { type: "local" as const, command: [process.execPath, fixture, "silent"] } } }
+const mcp = { fixture: { type: "local" as const, command: [process.execPath, fixture, "silent"] } }
+const config = { mcp, experimental: { mcp_events: { enabled: true } } }
 
 describe("MCP event subscription tool", () => {
   it.live("requires a session-bound approval and allows revocation", provideTmpdirInstance(() => Effect.gen(function* () {
@@ -42,4 +43,16 @@ describe("MCP event subscription tool", () => {
     const result = yield* tool.execute({ operation: "subscribe", server: "fixture", event: "mail.created" }, ctx).pipe(Effect.exit)
     expect(result._tag).toBe("Failure")
   }), { git: true, config }), 15_000)
+  it.live("refuses to subscribe unless experimental.mcp_events.enabled is set", provideTmpdirInstance(() => Effect.gen(function* () {
+    const tool = yield* (yield* McpEventsTool).init()
+    const asked: string[] = []
+    const ctx = {
+      sessionID: SessionID.make("ses_test"), messageID: MessageID.make("msg_test"), agent: "build",
+      abort: new AbortController().signal, messages: [], metadata: () => Effect.void,
+      ask: (request: { permission: string }) => Effect.sync(() => { asked.push(request.permission) }),
+    }
+    const result = yield* tool.execute({ operation: "subscribe", server: "fixture", event: "mail.created" }, ctx).pipe(Effect.exit)
+    expect(result._tag).toBe("Failure")
+    expect(asked).toEqual([])
+  }), { git: true, config: { mcp } }), 15_000)
 })

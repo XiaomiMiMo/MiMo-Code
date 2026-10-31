@@ -222,7 +222,8 @@ export const layer = Layer.effect(
           }
         }
 
-        yield* config.get()
+        const cfg = yield* config.get()
+        const mcpEventsEnabled = cfg.experimental?.mcp_events?.enabled === true
         const questionEnabled =
           ["app", "cli", "desktop"].includes(Flag.MIMOCODE_CLIENT) || Flag.MIMOCODE_ENABLE_QUESTION_TOOL
 
@@ -274,7 +275,7 @@ export const layer = Layer.effect(
             tool.search,
             tool.code,
             tool.mcptoolsearch,
-            ...(process.env.MIMOCODE_EXPERIMENTAL_MCP_EVENTS === "1" ? [tool.mcpevents] : []),
+            ...(mcpEventsEnabled ? [tool.mcpevents] : []),
             tool.skillsearch,
             tool.skill,
             tool.patch,

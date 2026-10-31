@@ -442,6 +442,17 @@ const InfoSchema = Schema.Struct({
           }),
         }),
       ).annotate({ description: "Turn-end uncommitted-changes soft hint (experimental)." }),
+      mcp_events: Schema.optional(
+        Schema.Struct({
+          enabled: Schema.optional(Schema.Boolean).annotate({
+            description:
+              "Expose the mcp_events tool so a session can subscribe to SEP-3415 push events from an MCP server. Each subscription still requires explicit user approval. Default off.",
+          }),
+          allow_insecure_loopback: Schema.optional(Schema.Boolean).annotate({
+            description: "Allow plain-HTTP remote MCP Events servers on loopback addresses only (for local testing). Default off.",
+          }),
+        }),
+      ).annotate({ description: "Experimental MCP Events subscriptions that can wake an idle session." }),
       mcp_timeout: Schema.optional(PositiveInt).annotate({
         description: "Timeout in milliseconds for model context protocol (MCP) requests",
       }),

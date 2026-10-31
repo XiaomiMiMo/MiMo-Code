@@ -6,8 +6,10 @@ import { EffectBridge, InstanceState } from "@/effect"
 import { Log } from "@/util"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
-import { startLocalEvents } from "@/mcp/events-runtime"
+import { startEvents } from "@/mcp/events-runtime"
 import { HostMcp } from "@/mcp/host"
+import { McpAuth } from "@/mcp/auth"
+import type { AuthProvider } from "@modelcontextprotocol/client"
 
 const parameters = z.object({
   operation: z.enum(["subscribe", "unsubscribe"]),
@@ -23,6 +25,7 @@ export const McpEventsTool = Tool.define(
   "mcp_events",
   Effect.gen(function* () {
     const config = yield* Config.Service
+    const auth = yield* McpAuth.Service.use((service) => Effect.succeed(service)).pipe(Effect.provide(McpAuth.defaultLayer))
     const bus = yield* Bus.Service
     const connections = yield* InstanceState.make(
       Effect.fn("McpEventsTool.connections")(function* () {
@@ -36,7 +39,7 @@ export const McpEventsTool = Tool.define(
       }),
     )
     return {
-      description: "Subscribe the current session to a local MCP server's experimental SEP-3415 push event, or unsubscribe. Requires the user's explicit confirmation. External events may wake this session.",
+      description: "Subscribe the current session to an MCP server's experimental SEP-3415 push event, or unsubscribe. Remote OAuth must be connected first. Requires the user's explicit confirmation. External events may wake this session.",
       parameters,
       execute: (input: z.infer<typeof parameters>, ctx: Tool.Context) => Effect.gen(function* () {
         if (ctx.actorID && ctx.actorID !== "main") throw new Error("Only the main session can manage MCP event subscriptions")
@@ -52,9 +55,11 @@ export const McpEventsTool = Tool.define(
         if (Buffer.byteLength(JSON.stringify(input.arguments ?? {}), "utf8") > 16 * 1024)
           throw new Error("MCP event subscription arguments exceed size limit")
         const cfg = yield* config.get()
+        if (cfg.experimental?.mcp_events?.enabled !== true)
+          throw new Error("MCP Events are disabled; set experimental.mcp_events.enabled in config")
         const server = HostMcp.get()[input.server] ?? cfg.mcp?.[input.server]
-        if (!server || !("type" in server) || server.type !== "local" || server.enabled === false)
-          throw new Error("An enabled local MCP server is required; remote MCP Events are not supported yet")
+        if (!server || !("type" in server) || server.enabled === false)
+          throw new Error("An enabled MCP server is required")
         // Do not silently grant event-triggered model/tool execution based on an MCP config.
         yield* ctx.ask({ permission: "mcp_events", patterns: [`${input.server}:${input.event}:${ctx.sessionID}`], always: [], metadata: { server: input.server, event: input.event, sessionID: ctx.sessionID, arguments: input.arguments ?? {} } })
         if (ctx.abort.aborted) throw new Error("MCP event subscription cancelled")
@@ -65,13 +70,33 @@ export const McpEventsTool = Tool.define(
         if (active.size >= 16) throw new Error("Too many active MCP event subscriptions in this workspace")
         const bridge = yield* EffectBridge.make()
         const cwd = yield* InstanceState.directory
+        let authProvider: AuthProvider | undefined
+        if (server.type === "remote" && server.oauth !== false) {
+          const stored = yield* auth.getForUrl(input.server, server.url)
+          const hasHeader = Object.keys(server.headers ?? {}).some((name) => name.toLowerCase() === "authorization")
+          if (!stored?.tokens && !hasHeader) throw new Error("Connect and authorize the MCP server before subscribing to events")
+          if (stored?.tokens) {
+            // Reuse only URL-bound access tokens. The legacy store does not retain
+            // the OAuth issuer required by SDK v2 for a safe refresh. Re-auth via
+            // the existing MCP flow rather than forwarding a refresh token to an
+            // unverified authorization server selected by the resource server.
+            const remoteUrl = server.url
+            authProvider = { token: async () => {
+              const entry = await Effect.runPromise(auth.getForUrl(input.server, remoteUrl))
+              if (!entry?.tokens || (entry.tokens.expiresAt != null && entry.tokens.expiresAt <= Date.now() / 1000))
+                throw new Error("MCP OAuth access token expired; reconnect the MCP server")
+              return entry.tokens.accessToken
+            } }
+          }
+        }
         const pending = () => Promise.resolve()
         active.set(key, pending)
         let ended = false
         let closeHandle: (() => Promise<void>) | undefined
         const close = yield* Effect.tryPromise({
-          try: () => startLocalEvents({
-            server: input.server, config: server, cwd,
+          try: () => startEvents({
+            server: input.server, config: server, cwd, authProvider,
+            allowInsecureLoopback: server.type === "remote" && latest.experimental?.mcp_events?.allow_insecure_loopback === true,
             subscriptions: [{ name: input.event, sessionID: ctx.sessionID, arguments: input.arguments }], bridge,
             onError: () => log.warn("MCP event subscription failed", { server: input.server }),
             onClose: () => {
