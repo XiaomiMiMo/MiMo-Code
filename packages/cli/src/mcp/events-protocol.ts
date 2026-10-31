@@ -1,8 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { StringDecoder } from "node:string_decoder"
 import { childProcessEnv } from "@/util/child-process-env"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
+import type { AuthProvider, JSONRPCMessage, FetchLike } from "@modelcontextprotocol/client"
 
-/** SEP-3415 proposal revision b08e4f9; stdio only. No legacy initialize or top-level events capability. */
+/** SEP-3415 proposal revision b08e4f9. No legacy initialize or top-level events capability. */
 export const EVENTS_EXTENSION = "io.modelcontextprotocol/events"
 export const EVENTS_PROTOCOL_VERSION = "2026-07-28"
 const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId"
@@ -41,11 +43,26 @@ export interface EventsSubscription {
   cancel(): Promise<void>
 }
 
-export interface EventsStdioOptions {
+interface EventsOptions {
+  requestTimeoutMs?: number
+  heartbeatTimeoutMs?: number
+  maxPendingNotifications?: number
+  onError?: (error: Error) => void
+}
+
+export interface EventsHttpOptions extends EventsOptions {
+  url: URL
+  headers?: Record<string, string>
+  authProvider?: AuthProvider
+  fetch?: FetchLike
+  allowInsecureLoopback?: boolean
+}
+
+export interface EventsStdioOptions extends EventsOptions {
   command: string
   args?: string[]
   cwd?: string
-  /** Caller must construct the child environment explicitly; no credentials are inferred. */
+  /** Explicit server environment; inherited credentials are filtered. */
   env?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
   /** No event or heartbeat for this long terminates the stream; caller may reconnect with its committed cursor. */
@@ -91,9 +108,45 @@ function cursor(value: unknown): value is string | null {
   return value === null || typeof value === "string"
 }
 
+/** Bound one SSE frame (or one JSON body), not the lifetime of a long-lived stream. */
+function limitHttpResponse(response: Response): Response {
+  if (!response.body) return response
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+  if (contentType !== "text/event-stream" && contentType !== "application/json") return response
+  const isSse = contentType === "text/event-stream"
+  let bytes = 0
+  let lineBytes = 0
+  let previousCR = false
+  const bounded = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      for (const byte of chunk) {
+        if (!isSse) {
+          if (++bytes > MAX_LINE_BYTES) throw new Error("MCP HTTP response exceeds size limit")
+          continue
+        }
+        if (byte === 13 || byte === 10) {
+          // CRLF is one newline; a second newline terminates the SSE frame.
+          if (byte === 10 && previousCR) { previousCR = false; continue }
+          if (lineBytes === 0) bytes = 0
+          else lineBytes = 0
+          previousCR = byte === 13
+        } else {
+          previousCR = false
+          lineBytes++
+        }
+        if (++bytes > MAX_LINE_BYTES) throw new Error("MCP HTTP event frame exceeds size limit")
+      }
+      controller.enqueue(chunk)
+    },
+  }))
+  return new Response(bounded, { status: response.status, statusText: response.statusText, headers: response.headers })
+}
+
 /** Independent transport: never reuses the existing MCP 1.x client or sends legacy initialize. */
-export class EventsStdioClient {
-  private readonly child: ChildProcessWithoutNullStreams
+export class EventsClient {
+  private child?: ChildProcessWithoutNullStreams
+  private http?: StreamableHTTPClientTransport
+  private readonly httpRequests = new Map<RpcId, AbortController>()
   private readonly pending = new Map<RpcId, PendingRequest>()
   private readonly streams = new Map<RpcId, StreamState>()
   private readonly decoder = new StringDecoder("utf8")
@@ -103,7 +156,7 @@ export class EventsStdioClient {
   private discovered = false
   private readonly timeout: number
 
-  private constructor(private readonly options: EventsStdioOptions) {
+  private constructor(private readonly options: EventsStdioOptions | EventsHttpOptions) {
     this.timeout = options.requestTimeoutMs ?? 10_000
     if (
       !Number.isFinite(this.timeout) ||
@@ -115,24 +168,55 @@ export class EventsStdioClient {
     ) {
       throw new Error("Invalid events client limits")
     }
-    this.child = spawn(options.command, options.args ?? [], {
-      cwd: options.cwd,
-      env: childProcessEnv(options.env),
-      shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: process.platform === "win32",
-    })
-    this.child.stderr.resume()
-    this.child.stdout.on("data", (chunk: Buffer) => this.read(chunk))
-    this.child.stdout.on("end", () => this.fail(new Error("MCP stdio closed")))
-    this.child.on("error", (error) => this.fail(error))
-    this.child.on("close", () => this.fail(new Error("MCP server process closed")))
-    this.child.stdin.on("error", (error) => this.fail(error))
+    if ("command" in options) {
+      this.child = spawn(options.command, options.args ?? [], {
+        cwd: options.cwd,
+        env: childProcessEnv(options.env),
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: process.platform === "win32",
+      })
+      this.child.stderr.resume()
+      this.child.stdout.on("data", (chunk: Buffer) => this.read(chunk))
+      this.child.stdout.on("end", () => this.fail(new Error("MCP stdio closed")))
+      this.child.on("error", (error) => this.fail(error))
+      this.child.on("close", () => this.fail(new Error("MCP server process closed")))
+      this.child.stdin.on("error", (error) => this.fail(error))
+    } else {
+      const loopback = ["127.0.0.1", "[::1]"].includes(options.url.hostname)
+      if (options.url.protocol !== "https:" && !(options.allowInsecureLoopback && options.url.protocol === "http:" && loopback))
+        throw new Error("Remote MCP Events requires HTTPS")
+      if (options.url.username || options.url.password) throw new Error("MCP Events URL cannot contain credentials")
+      const fetchImpl = options.fetch ?? fetch
+      const routedFetch: FetchLike = async (resource, init) => {
+        const headers = new Headers(init?.headers)
+        if (init?.method === "POST" && typeof init.body === "string") {
+          const message: unknown = JSON.parse(init.body)
+          if (object(message) && message.method === "events/stream" && object(message.params) && typeof message.params.name === "string") {
+            const name = message.params.name
+            const encoded = name.trim() !== name || name.startsWith("=?base64?") || /[^\x20-\x7e]/.test(name)
+              ? `=?base64?${Buffer.from(name, "utf8").toString("base64")}?=` : name
+            headers.set("Mcp-Name", encoded)
+          }
+        }
+        const response = await fetchImpl(resource, { ...init, headers })
+        return limitHttpResponse(response)
+      }
+      this.http = new StreamableHTTPClientTransport(options.url, {
+        authProvider: options.authProvider,
+        requestInit: { headers: options.headers, redirect: "error" },
+        fetch: routedFetch,
+      })
+      this.http.onmessage = (message) => { try { this.handle(message) } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))) } }
+      this.http.onerror = (error) => this.fail(error)
+      this.http.onclose = () => this.fail(new Error("MCP HTTP transport closed"))
+    }
   }
 
-  static async connect(options: EventsStdioOptions): Promise<EventsStdioClient> {
-    const client = new EventsStdioClient(options)
+  static async connect(options: EventsStdioOptions | EventsHttpOptions): Promise<EventsClient> {
+    const client = new EventsClient(options)
     try {
+      if (client.http) await client.http.start()
       const result = await client.request("server/discover", {})
       if (!object(result) || result.resultType !== "complete" || !Array.isArray(result.supportedVersions)) {
         throw new Error("Invalid server/discover result")
@@ -166,8 +250,32 @@ export class EventsStdioClient {
 
   private async send(message: JsonObject): Promise<void> {
     if (this.closed) throw new Error("MCP client is closed")
+    if (this.http) {
+      // A 2026 request is stateless; each SSE stream is independently cancellable.
+      const id = message.id
+      if (typeof id === "number" || typeof id === "string") {
+        if (!this.pending.has(id) && !this.streams.has(id)) throw new Error("MCP request has already ended")
+      }
+      const controller = typeof id === "number" || typeof id === "string" ? new AbortController() : undefined
+      if (controller && (typeof id === "number" || typeof id === "string")) this.httpRequests.set(id, controller)
+      await this.http.send(message as JSONRPCMessage, {
+        requestSignal: controller?.signal,
+        onRequestStreamEnd: () => {
+          if (typeof id === "number" || typeof id === "string") {
+            this.httpRequests.delete(id)
+            if (this.streams.has(id)) this.endStream(id, "error", new Error("MCP HTTP stream ended without a final response"))
+          }
+        },
+      }).catch((error) => {
+        if (typeof id === "number" || typeof id === "string") this.httpRequests.delete(id)
+        throw error
+      })
+      return
+    }
+    const child = this.child
+    if (!child) throw new Error("MCP transport is unavailable")
     const text = `${JSON.stringify(message)}\n`
-    await new Promise<void>((resolve, reject) => this.child.stdin.write(text, (err) => (err ? reject(err) : resolve())))
+    await new Promise<void>((resolve, reject) => child.stdin.write(text, (err) => (err ? reject(err) : resolve())))
   }
 
   private request(method: string, params: JsonObject): Promise<unknown> {
@@ -175,6 +283,8 @@ export class EventsStdioClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        this.httpRequests.get(id)?.abort()
+        this.httpRequests.delete(id)
         reject(new Error(`${method} timed out`))
       }, this.timeout)
       this.pending.set(id, { resolve, reject, timer })
@@ -279,6 +389,7 @@ export class EventsStdioClient {
       cancel: async () => {
         if (!this.streams.has(id)) return
         this.endStream(id, "cancelled", undefined, false)
+        if (this.http) return
         await this.send({
           jsonrpc: "2.0",
           method: "notifications/cancelled",
@@ -332,6 +443,7 @@ export class EventsStdioClient {
     const pending = this.pending.get(message.id)
     if (pending) {
       this.pending.delete(message.id)
+      this.httpRequests.delete(message.id)
       clearTimeout(pending.timer)
       if (message.error !== undefined) pending.reject(rpcError(message.error))
       else if (message.result !== undefined) pending.resolve(message.result)
@@ -379,11 +491,11 @@ export class EventsStdioClient {
   private notification(id: RpcId, state: StreamState, method: string, params: JsonObject): void {
     if (state.ending) return
     if (method === "notifications/events/active") {
-      if (!cursor(params.cursor) || typeof params.truncated !== "boolean") {
+      if ((params.cursor !== undefined && !cursor(params.cursor)) || (params.truncated !== undefined && typeof params.truncated !== "boolean")) {
         this.endStream(id, "error", new Error("Invalid events/active"), true)
         return
       }
-      const info = { cursor: params.cursor, truncated: params.truncated }
+      const info = { cursor: (params.cursor ?? null) as string | null, truncated: params.truncated === true }
       if (!state.active) {
         state.active = true
         clearTimeout(state.timer)
@@ -422,11 +534,11 @@ export class EventsStdioClient {
       return
     }
     if (method === "notifications/events/heartbeat") {
-      if (!cursor(params.cursor)) {
+      if (params.cursor !== undefined && !cursor(params.cursor)) {
         this.endStream(id, "error", new Error("Invalid events/heartbeat"), true)
         return
       }
-      const value = params.cursor
+      const value = (params.cursor ?? null) as string | null
       this.resetHeartbeat(id, state)
       this.enqueue(id, state, () => state.callbacks.onHeartbeat?.(value))
       return
@@ -452,16 +564,22 @@ export class EventsStdioClient {
     state.ending = true
     state.finishReason = reason
     this.streams.delete(id)
+    this.httpRequests.get(id)?.abort()
+    this.httpRequests.delete(id)
     clearTimeout(state.timer)
     if (state.heartbeatTimer) clearTimeout(state.heartbeatTimer)
     if (!state.active) state.readyReject(error ?? new Error(`Stream ${reason} before activation`))
-    if (cancel && !this.closed)
+    if (cancel && !this.closed && !this.http)
       void this.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason } }).catch(
         () => {},
       )
     void state.processing.then(() => {
-      if (error) state.callbacks.onError?.(error, true)
-      state.callbacks.onClose?.(reason)
+      try {
+        if (error) state.callbacks.onError?.(error, true)
+        state.callbacks.onClose?.(reason)
+      } catch (callbackError) {
+        this.options.onError?.(callbackError instanceof Error ? callbackError : new Error(String(callbackError)))
+      }
     })
   }
 
@@ -475,15 +593,18 @@ export class EventsStdioClient {
     }
     for (const id of this.streams.keys()) this.endStream(id, "error", error)
     this.options.onError?.(error)
-    this.child.stdin.destroy()
-    this.child.kill()
+    for (const controller of this.httpRequests.values()) controller.abort()
+    this.httpRequests.clear()
+    void this.http?.close()
+    this.child?.stdin.destroy()
+    this.child?.kill()
   }
 
   async close(): Promise<void> {
     if (this.closed) return
     for (const id of [...this.streams.keys()]) {
       this.endStream(id, "cancelled")
-      await this.send({
+      if (!this.http) await this.send({
         jsonrpc: "2.0",
         method: "notifications/cancelled",
         params: { requestId: id, reason: "client closed" },
@@ -496,7 +617,10 @@ export class EventsStdioClient {
       pending.reject(error)
       this.pending.delete(id)
     }
-    this.child.stdin.end()
-    if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill()
+    for (const controller of this.httpRequests.values()) controller.abort()
+    this.httpRequests.clear()
+    await this.http?.close()
+    this.child?.stdin.end()
+    if (this.child && this.child.exitCode === null && this.child.signalCode === null) this.child.kill()
   }
 }

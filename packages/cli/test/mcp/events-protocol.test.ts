@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { fileURLToPath } from "node:url"
-import { EventsStdioClient } from "../../src/mcp/events-protocol"
+import { EventsClient } from "../../src/mcp/events-protocol"
 
 const fixture = fileURLToPath(new URL("./fixtures/events-stdio-server.mjs", import.meta.url))
 const options = (mode: string) => ({ command: Bun.which("node")!, args: [fixture, mode], requestTimeoutMs: 10_000 })
@@ -8,7 +8,7 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 describe("SEP-3415 stdio protocol", () => {
   test("discovers extension, lists events, correlates concurrent streams and cancels", async () => {
-    const client = await EventsStdioClient.connect(options("normal"))
+    const client = await EventsClient.connect(options("normal"))
     try {
       const descriptors = await client.listEvents()
       expect(descriptors.map((item) => item.name)).toEqual(["mail.created"])
@@ -50,11 +50,11 @@ describe("SEP-3415 stdio protocol", () => {
   })
 
   test.each(["legacy", "old"])("refuses unsupported negotiation: %s", async (mode) => {
-    await expect(EventsStdioClient.connect(options(mode))).rejects.toThrow()
+    await expect(EventsClient.connect(options(mode))).rejects.toThrow()
   })
 
   test("rejects repeated pagination cursors", async () => {
-    const client = await EventsStdioClient.connect(options("repeated-cursor"))
+    const client = await EventsClient.connect(options("repeated-cursor"))
     try {
       await expect(client.listEvents()).rejects.toThrow("Repeated")
     } finally {
@@ -63,7 +63,7 @@ describe("SEP-3415 stdio protocol", () => {
   })
 
   test("exposes immediate JSON-RPC subscription errors", async () => {
-    const client = await EventsStdioClient.connect(options("normal"))
+    const client = await EventsClient.connect(options("normal"))
     try {
       const stream = client.openStream({ name: "denied" }, { onEvent: () => {} })
       await expect(stream.ready).rejects.toThrow("Forbidden")
@@ -73,7 +73,7 @@ describe("SEP-3415 stdio protocol", () => {
   })
 
   test("refuses event before active confirmation", async () => {
-    const client = await EventsStdioClient.connect(options("pre-active"))
+    const client = await EventsClient.connect(options("pre-active"))
     try {
       const stream = client.openStream(
         { name: "mail.created" },
@@ -90,7 +90,7 @@ describe("SEP-3415 stdio protocol", () => {
   })
 
   test("times out only waiting for stream activation", async () => {
-    const client = await EventsStdioClient.connect({ ...options("never-active"), requestTimeoutMs: 600 })
+    const client = await EventsClient.connect({ ...options("never-active"), requestTimeoutMs: 600 })
     try {
       const stream = client.openStream({ name: "mail.created" }, { onEvent: () => {} })
       await expect(stream.ready).rejects.toThrow("activation timed out")
@@ -100,7 +100,7 @@ describe("SEP-3415 stdio protocol", () => {
   })
 
   test("ends silent streams on heartbeat timeout", async () => {
-    const client = await EventsStdioClient.connect({ ...options("silent"), heartbeatTimeoutMs: 80 })
+    const client = await EventsClient.connect({ ...options("silent"), heartbeatTimeoutMs: 80 })
     const errors: string[] = []
     try {
       const stream = client.openStream(
@@ -121,7 +121,7 @@ describe("SEP-3415 stdio protocol", () => {
   })
 
   test("cancels streams if the consumer cannot keep up", async () => {
-    const client = await EventsStdioClient.connect({ ...options("flood"), maxPendingNotifications: 2 })
+    const client = await EventsClient.connect({ ...options("flood"), maxPendingNotifications: 2 })
     const errors: string[] = []
     try {
       const stream = client.openStream(
@@ -144,7 +144,7 @@ describe("SEP-3415 stdio protocol", () => {
   })
 
   test("delivers occurrence before normal stream close", async () => {
-    const client = await EventsStdioClient.connect(options("finish"))
+    const client = await EventsClient.connect(options("finish"))
     const calls: string[] = []
     try {
       const stream = client.openStream(

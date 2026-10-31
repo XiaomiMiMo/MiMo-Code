@@ -117,6 +117,7 @@
     "@lydell/node-pty": "catalog:",
     "@mimo-ai/plugin": "workspace:*",
     "@mimo-ai/sdk": "workspace:*",
+    "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/sdk": "1.27.1",
     "@npmcli/arborist": "9.4.0",
     "@npmcli/config": "10.8.1",

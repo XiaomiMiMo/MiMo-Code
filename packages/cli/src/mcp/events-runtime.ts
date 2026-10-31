@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
 import { Effect } from "effect"
-import type { EventSubscription, Local } from "@/config/mcp"
+import type { EventSubscription, Info } from "@/config/mcp"
+import type { AuthProvider } from "@modelcontextprotocol/client"
 import { childProcessEnv } from "@/util/child-process-env"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
 import { SessionID } from "@/session/schema"
-import { EventsStdioClient, type EventsSubscription, type EventOccurrence } from "./events-protocol"
+import { EventsClient, type EventsSubscription, type EventOccurrence } from "./events-protocol"
 
 /** One explicitly configured grant binds exactly one server event to one session. */
 export type EventGrant = { server: string; subscription: EventSubscription }
@@ -40,9 +41,11 @@ export async function acceptEvent(bridge: EventBridge, grant: EventGrant, event:
   }, { isCancelled }))
 }
 
-export async function startLocalEvents(input: {
+export async function startEvents(input: {
   server: string
-  config: Local
+  config: Info
+  authProvider?: AuthProvider
+  allowInsecureLoopback?: boolean
   cwd: string
   subscriptions: readonly EventSubscription[]
   bridge: EventBridge
@@ -51,13 +54,15 @@ export async function startLocalEvents(input: {
 }): Promise<() => Promise<void>> {
   const grants = input.subscriptions
   if (!grants.length) return async () => {}
-  const [command, ...args] = input.config.command
-  if (!command) throw new Error("MCP events command is required")
-  const client = await EventsStdioClient.connect({
-    command, args, cwd: input.cwd,
-    env: childProcessEnv(input.config.environment),
-    onError: input.onError,
-  })
+  const opts = input.config.type === "local" ? (() => {
+    const [command, ...args] = input.config.command
+    if (!command) throw new Error("MCP events command is required")
+    return { command, args, cwd: input.cwd, env: childProcessEnv(input.config.environment), onError: input.onError }
+  })() : {
+    url: new URL(input.config.url), headers: input.config.headers, authProvider: input.authProvider,
+    allowInsecureLoopback: input.allowInsecureLoopback, onError: input.onError,
+  }
+  const client = await EventsClient.connect(opts)
   const streams: EventsSubscription[] = []
   let closed = false
   let windowStart = Date.now()
@@ -75,11 +80,12 @@ export async function startLocalEvents(input: {
           if (++windowEvents > 60) throw new Error("MCP event rate limit exceeded; subscription stopped")
           await acceptEvent(input.bridge, grant, event, () => closed)
         },
+        onActive: (status) => { if (status.truncated) input.onError(new Error("MCP event history has a gap; events may have been missed")) },
         onError: (error) => input.onError(error),
         onClose: () => {
           if (closed) return
           closed = true
-          void client.close().finally(() => input.onClose?.())
+          void client.close().catch((error) => input.onError(error instanceof Error ? error : new Error(String(error)))).finally(() => input.onClose?.())
         },
       })
       streams.push(stream)
