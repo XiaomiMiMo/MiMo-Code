@@ -73,7 +73,7 @@ jobs:
             exit 0
           fi
           mkdir -p .artifacts/unit
-          bun test --isolate $files --timeout 120000 --reporter=junit --reporter-outfile=.artifacts/unit/junit.xml
+          bun test $files --timeout 120000 --reporter=junit --reporter-outfile=.artifacts/unit/junit.xml
 
       - name: Upload JUnit
         if: always()
