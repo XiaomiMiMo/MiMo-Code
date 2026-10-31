@@ -11,7 +11,7 @@
   "scripts": {
     "prepare": "effect-language-service patch || true",
     "typecheck": "tsgo --noEmit",
-    "test": "bun test --timeout 30000",
+    "test": "bun test --isolate --timeout 30000",
     "test:ci": "mkdir -p .artifacts/unit && bun test --timeout 120000 --reporter=junit --reporter-outfile=.artifacts/unit/junit.xml",
     "build": "bun run script/build.ts",
     "build:local": "MIMOCODE_CHANNEL=local MIMOCODE_VERSION=local bun run script/build.ts --single",
@@ -117,6 +117,7 @@
     "@lydell/node-pty": "catalog:",
     "@mimo-ai/plugin": "workspace:*",
     "@mimo-ai/sdk": "workspace:*",
+    "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/sdk": "1.27.1",
     "@npmcli/arborist": "9.4.0",
     "@npmcli/config": "10.8.1",

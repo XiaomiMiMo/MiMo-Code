@@ -8,6 +8,14 @@ export const Sampling = Schema.Literals(["deny", "ask", "allow"])
   .pipe(withStatics((s) => ({ zod: zod(s) })))
 export type Sampling = Schema.Schema.Type<typeof Sampling>
 
+export class EventSubscription extends Schema.Class<EventSubscription>("McpEventSubscription")({
+  name: Schema.String.annotate({ description: "Explicitly authorized event type." }),
+  sessionID: Schema.String.annotate({ description: "Session allowed to receive this event." }),
+  arguments: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+}) {
+  static readonly zod = zod(this)
+}
+
 const samplingField = Schema.optional(Sampling).annotate({
   description:
     "Policy for MCP client-side sampling (`sampling/createMessage`) from this server: deny, ask (default), or allow.",

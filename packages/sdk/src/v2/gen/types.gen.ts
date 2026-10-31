@@ -3062,6 +3062,19 @@ export type Config = {
       enabled?: boolean
     }
     /**
+     * Experimental MCP Events subscriptions that can wake an idle session.
+     */
+    mcp_events?: {
+      /**
+       * Expose the mcp_events tool so a session can subscribe to SEP-3415 push events from an MCP server. Each subscription still requires explicit user approval. Default off.
+       */
+      enabled?: boolean
+      /**
+       * Allow plain-HTTP remote MCP Events servers on loopback addresses only (for local testing). Default off.
+       */
+      allow_insecure_loopback?: boolean
+    }
+    /**
      * Timeout in milliseconds for model context protocol (MCP) requests
      */
     mcp_timeout?: number

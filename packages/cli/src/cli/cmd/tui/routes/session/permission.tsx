@@ -502,6 +502,26 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
               }
             }
 
+            if (permission === "mcp_events") {
+              const meta = props.request.metadata ?? {}
+              const server = typeof meta.server === "string" ? meta.server : "unknown"
+              const event = typeof meta.event === "string" ? meta.event : "unknown"
+              const target = typeof meta.sessionID === "string" ? meta.sessionID : "unknown"
+              return {
+                icon: "↳",
+                title: "Allow MCP events to wake this session?",
+                body: (
+                  <box paddingLeft={1} flexDirection="column">
+                    <text fg={theme.textMuted}>{`Server: ${server}`}</text>
+                    <text fg={theme.textMuted}>{`Event: ${event}`}</text>
+                    <text fg={theme.textMuted}>{`Session: ${target}`}</text>
+                    <text fg={theme.textMuted}>{`Filters: ${JSON.stringify(meta.arguments ?? {})}`}</text>
+                    <text fg={theme.textMuted}>External events may start model runs and incur usage.</text>
+                  </box>
+                ),
+              }
+            }
+
             if (permission === "doom_loop") {
               return {
                 icon: "⟳",
@@ -531,7 +551,7 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
           // click looks like durable trust but the next invocation still
           // prompts. Offer only "once" and "reject" for those.
           const options: Record<string, string> =
-            props.request.permission === "bash_delete" || props.request.permission === "computer"
+            props.request.permission === "bash_delete" || props.request.permission === "computer" || props.request.permission === "mcp_events"
               ? { once: "Allow once", reject: "Reject" }
               : { once: "Allow once", always: "Allow always", reject: "Reject" }
 
