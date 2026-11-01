@@ -150,9 +150,10 @@ describe("host executable configuration policy", () => {
               const svc = yield* Config.Service
               const effective = yield* svc.get()
               expect(effective.model).toBe("test/original")
-              expect(effective.mcp?.example).toEqual(restricted ? undefined : executable.mcp?.example)
-              expect(effective.lsp).toEqual(restricted ? undefined : executable.lsp)
-              expect(effective.formatter).toEqual(restricted ? undefined : executable.formatter)
+              // The user's global config directory is trusted with or without host restrictions.
+              expect(effective.mcp?.example).toEqual(executable.mcp?.example)
+              expect(effective.lsp).toEqual(executable.lsp)
+              expect(effective.formatter).toEqual(executable.formatter)
 
               for (const model of ["test/updated", "test/updated-again"]) {
                 yield* svc.update({ model })
@@ -224,7 +225,7 @@ describe("host executable configuration policy", () => {
     })
   }
 
-  test("preserves host executable configuration and excludes global and Claude MCP sources", async () => {
+  test("merges host and global executable configuration and excludes project and Claude MCP sources", async () => {
     await using tmp = await tmpdir({ git: true })
     await using host = await tmpdir({ init: (dir) => writeConfig(dir, executable) })
     await using global = await tmpdir({
@@ -252,12 +253,44 @@ describe("host executable configuration policy", () => {
           directory: tmp.path,
           fn: async () => {
             const config = await load()
-            expect(config.mcp).toEqual(executable.mcp)
+            expect(config.mcp?.example).toEqual(executable.mcp?.example)
+            expect(config.mcp?.global).toMatchObject({ type: "local", command: ["example-global"] })
+            expect(Object.keys(config.mcp ?? {}).sort()).toEqual(["example", "global"])
             expect(config.lsp).toEqual(executable.lsp)
             expect(config.formatter).toEqual(executable.formatter)
             expect(config.mcp_origins).toEqual({
+              global: { type: "opencode", source: global.path },
               example: { type: "opencode", source: path.join(host.path, "mimocode.json") },
             })
+          },
+        }),
+      )
+    } finally {
+      Global.Path.config = previous
+    }
+  })
+
+  test("rejects a global config file that resolves outside the global directory", async () => {
+    if (process.platform === "win32") return
+    await using tmp = await tmpdir({ git: true })
+    await using outside = await tmpdir({
+      init: (dir) => writeConfig(dir, { ...executable, model: "test/linked" }, "linked.json"),
+    })
+    await using global = await tmpdir({
+      init: (dir) => fs.symlink(path.join(outside.path, "linked.json"), path.join(dir, "mimocode.json")),
+    })
+    const previous = Global.Path.config
+    Global.Path.config = global.path
+    try {
+      await withHost(undefined, () =>
+        Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const config = await load()
+            expect(config.model).toBe("test/linked")
+            expect(config.mcp?.example).toBeUndefined()
+            expect(config.lsp).toBeUndefined()
+            expect(config.formatter).toBeUndefined()
           },
         }),
       )
@@ -421,7 +454,8 @@ extensions = [".example"]
             })
             await clear(true)
           }
-          const migrated = !scenario.restricted || scenario.inHost
+          // Both the host and the user's global directory are trusted destinations.
+          const migrated = true
           expect(await Bun.file(path.join(directory, "config")).exists()).toBe(!migrated)
           expect(await Bun.file(path.join(directory, "config.json")).exists()).toBe(migrated)
           expect(await Bun.file(path.join(host.path, "allowed.toml")).exists()).toBe(true)
