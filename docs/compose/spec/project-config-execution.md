@@ -26,7 +26,7 @@ Opening a project in MiMo Desktop initializes the Node engine and connects MCP s
 
 ### [S2.1] Host execution policy
 
-Reuse the existing plugin and hook policy: Node, including a partial Bun shim, always restricts executable configuration; Bun restricts it when `MIMOCODE_ONLY_CONFIG_DIR_PLUGINS` is enabled. Accept MCP, LSP and formatter configuration only from files whose resolved paths are inside `MIMOCODE_CONFIG_DIR`, or from host-owned `MIMOCODE_CONFIG_CONTENT` and `MIMOCODE_CONFIG_DEFAULTS`. Preserve ordinary Bun CLI configuration behavior.
+Reuse the existing plugin and hook policy: Node, including a partial Bun shim, always restricts executable configuration; Bun restricts it when `MIMOCODE_ONLY_CONFIG_DIR_PLUGINS` is enabled. Accept MCP, LSP and formatter configuration only from files whose resolved paths are inside `MIMOCODE_CONFIG_DIR` or the user's global config directory, or from host-owned `MIMOCODE_CONFIG_CONTENT` and `MIMOCODE_CONFIG_DEFAULTS`. The restriction targets project-supplied configuration: the global directory is written by the user (Desktop's MCP settings persist there), so it is trusted like the host directory. A global file that resolves outside the global directory keeps the decision of its resolved location. Preserve ordinary Bun CLI configuration behavior.
 
 ### [S2.2] Filter before merging
 
