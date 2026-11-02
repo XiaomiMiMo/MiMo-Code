@@ -1261,8 +1261,8 @@ function anthropicAdaptiveEfforts(apiId: string): string[] | null {
 export function variants(model: Provider.Model): Record<string, Record<string, any>> {
   if (!model.capabilities.reasoning) return {}
   const declared = model.capabilities.efforts
-  // Budget-only declarations carry no levels; keep the built-in fixed-budget levels for them.
-  // Toggle-only (no effort, no budget) means no levels at all.
+  // Declared without effort levels: always-on and toggle-only mean no caller-selectable levels;
+  // a budget control keeps the built-in fixed-budget levels.
   if (declared && (declared.length || !model.capabilities.reasoningBudget)) return declaredVariants(model, declared)
 
   const id = model.id.toLowerCase()

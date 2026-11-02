@@ -3554,9 +3554,16 @@ test("models.dev reasoning_options become declared efforts", () => {
       budget: model("budget", [{ type: "budget_tokens", min: 1024, values: [1024, 4096] }]),
       graded: model("graded", [{ type: "toggle" }, { type: "effort", values: ["low", "high", "max"] }, { type: "effort", values: ["high"] }]),
       plain: model("plain"),
+      alwaysOn: model("alwaysOn", []),
+      providerDefault: model("providerDefault", [{ type: "effort", values: ["none", "default", "low", null, "high"] }]),
     },
   } as unknown as ModelsDev.Provider
   const models = Provider.fromModelsDevProvider(provider).models
+  expect(models["alwaysOn"].capabilities.efforts).toEqual([])
+  expect(models["alwaysOn"].variants).toEqual({})
+  // "default" means the provider's own default (= send no variant); it is not a level.
+  expect(models["providerDefault"].capabilities.efforts).toEqual(["none", "low", "high"])
+  expect(Object.keys(models["providerDefault"].variants ?? {})).toEqual(["none", "low", "high"])
   expect(models["toggle"].capabilities.efforts).toEqual([])
   expect(models["toggle"].variants).toEqual({})
   expect(models["budget"].capabilities.efforts).toEqual([])

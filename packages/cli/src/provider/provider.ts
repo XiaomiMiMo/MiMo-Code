@@ -994,8 +994,10 @@ const ProviderCapabilities = Schema.Struct({
   output: ProviderModalities,
   interleaved: ProviderInterleaved,
   /**
-   * Effort levels declared by models.dev `reasoning_options`: undefined = no declaration,
-   * [] = declared without levels (toggle/budget only). Drives `ProviderTransform.variants`.
+   * Effort levels declared by models.dev `reasoning_options` (an array of toggle / effort /
+   * budget_tokens controls). undefined = no models.dev declaration (config-only models; every
+   * reasoning model in models.dev has one). [] = declared without effort levels: always-on (empty
+   * array, no caller control), toggle-only, budget-only, or toggle + budget. Drives `ProviderTransform.variants`.
    */
   efforts: Schema.optional(Schema.Array(Schema.String)),
   /** models.dev also declares a `budget_tokens` control (thinking is budget-driven, not adaptive). */
@@ -1156,11 +1158,15 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
+// "default" (and null) in models.dev effort values means "the provider's own default", i.e. send no
+// variant, so it is not a selectable level (and would collide with clients' "default" = unset).
 function declaredEfforts(options: NonNullable<ModelsDev.Model["reasoning_options"]>): string[] {
   return [
     ...new Set(
       options.flatMap((option) =>
-        option.type === "effort" ? (option.values ?? []).filter((v): v is string => typeof v === "string") : [],
+        option.type === "effort"
+          ? (option.values ?? []).filter((v): v is string => typeof v === "string" && v !== "default")
+          : [],
       ),
     ),
   ]
