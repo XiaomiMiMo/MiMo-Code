@@ -2,7 +2,7 @@
 feature: reasoning-variants
 status: delivered
 updated: 2026-11-02
-source: feat/reasoning-variants
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2768
 ---
 
 # Reasoning Variants
