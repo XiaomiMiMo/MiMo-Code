@@ -1,6 +1,6 @@
 ---
 feature: reasoning-variants
-status: in-progress
+status: delivered
 updated: 2026-11-02
 source: feat/reasoning-variants
 ---
@@ -8,6 +8,10 @@ source: feat/reasoning-variants
 # Reasoning Variants
 
 ## Report
+
+**What was built** — models.dev `reasoning_options` are parsed into `capabilities.efforts` / `capabilities.reasoningBudget`. Declared effort levels drive `ProviderTransform.variants()`: toggle-only models get no levels, declared levels are offered exactly (adapter table when it covers all of them, otherwise the adapter-standard shape; budget-controlled Anthropic models pair `effort` with budgeted thinking), budget-only models keep the built-in fixed-budget levels, and undeclared models are unchanged. Config `variants` still merge last. The `actor` tool passes the parent turn's variant to the child (same model, or a different model offering that level), unless the child agent runs its own configured variant on its configured model; `Actor.spawn` forwards it to the child prompt.
+
+**Verification** — `packages/cli bun run typecheck` PASS; `packages/sdk bun run typecheck` PASS; `bun test test/provider` PASS 646/0; `bun test test/actor` PASS 274/0; `bun test test/tool/actor*.test.ts` PASS 69/0; `bun test test/session/prompt.test.ts test/session/boundary.test.ts test/session/prompt-effect.test.ts` PASS 214/0. New tests were confirmed red before each change. Full suite left to CI. Independent review: spec compliance met; Anthropic shape and strict-parse findings fixed; budget-only regression fixed.
 
 ## [S1] Problem
 
@@ -52,8 +56,11 @@ In the `actor` tool, after the child model is resolved:
 
 ## Tasks
 
-- [ ] T1: models.dev `reasoning_options` parsed into `capabilities.efforts` — acceptance: toggle-only model → `[]`, effort model → declared values, undeclared → undefined; config model extending a models.dev model keeps it (covers: S2.1)
-- [ ] T2: `variants()` honors declared efforts — acceptance: toggle-only openai-compatible model has no variants; declared `low…max` openai-compatible model gets all five with `reasoningEffort`; Anthropic declared levels keep built-in adaptive params; name-excluded family with declaration gets levels; undeclared models unchanged; config `variants`/`disabled` still apply (covers: S2.2; depends: T1)
-- [ ] T3: actor spawn passes inherited variant — acceptance: same-model child user message records parent variant; different model with/without the key; agent-configured variant still wins (covers: S2.3)
+- [x] T1: models.dev `reasoning_options` parsed into `capabilities.efforts` — acceptance: toggle-only model → `[]`, effort model → declared values, undeclared → undefined; config model extending a models.dev model keeps it (covers: S2.1)
+- [x] T2: `variants()` honors declared efforts — acceptance: toggle-only openai-compatible model has no variants; declared `low…max` openai-compatible model gets all five with `reasoningEffort`; Anthropic declared levels keep built-in adaptive params; name-excluded family with declaration gets levels; undeclared models unchanged; config `variants`/`disabled` still apply (covers: S2.2; depends: T1)
+- [x] T3: actor spawn passes inherited variant — acceptance: same-model child user message records parent variant; different model with/without the key; agent-configured variant still wins (covers: S2.3)
 
 ## Journey log
+
+- Gating Anthropic's fallback on the name-based adaptive list would have dropped levels for 5.x models; models.dev's own `budget_tokens` declaration is the reliable signal for budgeted vs adaptive thinking.
+- `efforts: []` initially collapsed toggle-only and budget-only declarations; budget-only must keep the built-in fixed-budget levels.
