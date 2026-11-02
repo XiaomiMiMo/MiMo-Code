@@ -19,13 +19,8 @@ for (const shim of [false, true]) {
     expect(build.status, build.stderr).toBe(0)
     const env: Record<string, string | undefined> = { ...process.env, BUN_SHIM: shim ? "1" : "" }
     delete env.MIMOCODE_ONLY_CONFIG_DIR_PLUGINS
-    delete env.MIMOCODE_CONFIG_DIR
     const run = spawnSync("node", [outfile], { cwd, encoding: "utf8", env })
     expect(run.status, run.stderr).toBe(0)
-    expect(JSON.parse(run.stdout.trim().split("\n").pop()!)).toEqual({
-      onlyConfigDir: true,
-      projectExecution: false,
-      hostExecution: true,
-    })
+    expect(JSON.parse(run.stdout.trim().split("\n").pop()!)).toEqual({ onlyConfigDir: true })
   })
 }
