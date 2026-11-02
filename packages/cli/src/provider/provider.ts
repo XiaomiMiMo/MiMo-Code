@@ -993,6 +993,11 @@ const ProviderCapabilities = Schema.Struct({
   input: ProviderModalities,
   output: ProviderModalities,
   interleaved: ProviderInterleaved,
+  /**
+   * Effort levels declared by models.dev `reasoning_options`: undefined = no declaration,
+   * [] = declared without levels (toggle/budget only). Drives `ProviderTransform.variants`.
+   */
+  efforts: Schema.optional(Schema.Array(Schema.String)),
 })
 
 const ProviderCacheCost = Schema.Struct({
@@ -1149,6 +1154,10 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
+function declaredEfforts(options: NonNullable<ModelsDev.Model["reasoning_options"]>): string[] {
+  return [...new Set(options.flatMap((option) => (option.type === "effort" ? (option.values ?? []) : [])))]
+}
+
 function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
   const base: Model = {
     id: ModelID.make(model.id),
@@ -1189,6 +1198,7 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
         pdf: model.modalities?.output?.includes("pdf") ?? false,
       },
       interleaved: model.interleaved ?? false,
+      ...(model.reasoning_options ? { efforts: declaredEfforts(model.reasoning_options) } : {}),
     },
     release_date: model.release_date ?? "",
     variants: {},
@@ -1366,6 +1376,7 @@ const layer: Layer.Layer<
                   (!existingModel && apiNpm === OPENAI_COMPATIBLE_NPM && apiID.includes("deepseek")
                     ? { field: "reasoning_content" }
                     : false),
+                ...(existingModel?.capabilities.efforts ? { efforts: existingModel.capabilities.efforts } : {}),
               },
               cost: {
                 input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,

@@ -1260,9 +1260,10 @@ function anthropicAdaptiveEfforts(apiId: string): string[] | null {
 
 export function variants(model: Provider.Model): Record<string, Record<string, any>> {
   if (!model.capabilities.reasoning) return {}
+  const declared = model.capabilities.efforts
+  if (declared) return declaredVariants(model, declared)
 
   const id = model.id.toLowerCase()
-  const adaptiveEfforts = anthropicAdaptiveEfforts(model.api.id)
   if (
     id.includes("minimax") ||
     id.includes("glm") ||
@@ -1297,6 +1298,14 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
   }
   if (id.includes("grok")) return {}
 
+  return adapterVariants(model)
+}
+
+// Per-adapter effort table (no model-family exclusions). Supplies parameter shapes for
+// both the legacy name-based path and declared efforts.
+function adapterVariants(model: Provider.Model): Record<string, Record<string, any>> {
+  const id = model.id.toLowerCase()
+  const adaptiveEfforts = anthropicAdaptiveEfforts(model.api.id)
   switch (model.api.npm) {
     case "@openrouter/ai-sdk-provider":
       if (!model.id.includes("gpt") && !model.id.includes("gemini-3") && !model.id.includes("claude")) return {}
@@ -1653,6 +1662,44 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
       return {}
   }
   return {}
+}
+
+// Adapter-standard parameters for one effort level, used when a declared level is absent
+// from the adapter table. undefined = this adapter has no standard effort field.
+function standardEffort(npm: string, effort: string): Record<string, any> | undefined {
+  switch (npm) {
+    case "@ai-sdk/openai-compatible":
+    case "@ai-sdk/gateway":
+    case "@ai-sdk/deepinfra":
+    case "venice-ai-sdk-provider":
+      return { reasoningEffort: effort }
+    case "@ai-sdk/openai":
+    case "@ai-sdk/azure":
+      return { reasoningEffort: effort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
+    case "@ai-sdk/anthropic":
+    case "@ai-sdk/google-vertex/anthropic":
+      return { thinking: { type: "adaptive" }, effort }
+    case "@openrouter/ai-sdk-provider":
+      return { reasoning: { effort } }
+  }
+  return undefined
+}
+
+// models.dev declared the levels: exactly those levels. The adapter table supplies the
+// parameters when it covers every declared level; otherwise the whole set uses the
+// adapter-standard shape so one model never mixes shapes (e.g. Anthropic budget `enabled`
+// for high/max but `adaptive` for the rest). Levels neither source can express are
+// dropped. [] (toggle/budget only) → none.
+function declaredVariants(model: Provider.Model, declared: readonly string[]): Record<string, Record<string, any>> {
+  if (!declared.length) return {}
+  const table = adapterVariants(model)
+  const useTable = declared.every((effort) => effort in table)
+  const out: Record<string, Record<string, any>> = {}
+  for (const effort of declared) {
+    const params = useTable ? table[effort] : (standardEffort(model.api.npm, effort) ?? table[effort])
+    if (params) out[effort] = params
+  }
+  return out
 }
 
 export function options(input: {

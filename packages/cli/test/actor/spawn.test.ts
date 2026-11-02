@@ -1847,3 +1847,36 @@ describe("AgentOutcome failure classification", () => {
     ),
   )
 })
+
+// docs/compose/spec/reasoning-variants.md S2.3 — the spawn variant reaches the child's user message.
+describe("Actor.spawn reasoning variant", () => {
+  it.live("records the given variant on the child user message", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "variant passthrough",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("done")
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "general",
+          task: "think hard",
+          context: "none",
+          tools: ["read"],
+          background: false,
+          model: ref,
+          variant: "high",
+        })
+        yield* Deferred.await(result.outcome)
+        const msgs = yield* session.messages({ sessionID: result.sessionID, agentID: "*" })
+        const childUser = msgs.find((m) => m.info.role === "user" && m.info.agentID === result.actorID)
+        expect(childUser?.info.role === "user" ? childUser.info.model.variant : "not-user").toBe("high")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+})

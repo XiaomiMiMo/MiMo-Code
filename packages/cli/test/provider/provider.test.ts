@@ -3530,3 +3530,71 @@ test("plugin config enabled and disabled providers are honored", async () => {
     },
   })
 })
+
+// docs/compose/spec/reasoning-variants.md S2.1 — models.dev reasoning_options → capabilities.efforts.
+test("models.dev reasoning_options become declared efforts", () => {
+  const model = (id: string, reasoning_options?: unknown) => ({
+    id,
+    name: id,
+    reasoning: true,
+    limit: { context: 8192, output: 2048 },
+    cost: { input: 0, output: 0 },
+    modalities: { input: ["text"], output: ["text"] },
+    ...(reasoning_options ? { reasoning_options } : {}),
+  })
+  const provider = {
+    id: "test-provider",
+    name: "Test Provider",
+    env: [],
+    npm: "@ai-sdk/openai-compatible",
+    api: "https://example.test/v1",
+    models: {
+      toggle: model("toggle", [{ type: "toggle" }]),
+      budget: model("budget", [{ type: "budget_tokens", min: 1024 }]),
+      graded: model("graded", [{ type: "toggle" }, { type: "effort", values: ["low", "high", "max"] }, { type: "effort", values: ["high"] }]),
+      plain: model("plain"),
+    },
+  } as unknown as ModelsDev.Provider
+  const models = Provider.fromModelsDevProvider(provider).models
+  expect(models["toggle"].capabilities.efforts).toEqual([])
+  expect(models["toggle"].variants).toEqual({})
+  expect(models["budget"].capabilities.efforts).toEqual([])
+  expect(models["graded"].capabilities.efforts).toEqual(["low", "high", "max"])
+  expect(Object.keys(models["graded"].variants ?? {})).toEqual(["low", "high", "max"])
+  expect(models["plain"].capabilities.efforts).toBeUndefined()
+  expect(Object.keys(models["plain"].variants ?? {})).toEqual(["low", "medium", "high"])
+})
+
+test("config model extending a models.dev model keeps its declared efforts; config variants still merge", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          enabled_providers: ["xiaomi"],
+          provider: {
+            xiaomi: {
+              options: { apiKey: "test-key" },
+              models: {
+                "mimo-v2-flash": { name: "Flash override" },
+                "mimo-v2-pro": { variants: { low: { disabled: true }, max: { reasoningEffort: "max" } } },
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const flash = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2-flash"))
+      expect(flash.capabilities.efforts).toEqual([])
+      expect(flash.variants).toEqual({})
+      const pro = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2-pro"))
+      expect(pro.capabilities.efforts).toBeUndefined()
+      expect(Object.keys(pro.variants ?? {})).toEqual(["medium", "high", "max"])
+    },
+  })
+})

@@ -930,3 +930,83 @@ describe("Actor tool task_id degradation", () => {
     ),
   )
 })
+
+// docs/compose/spec/reasoning-variants.md S2.3 — subagents inherit the parent turn's variant.
+describe("Actor tool reasoning variant inheritance", () => {
+  const xiaomi = {
+    enabled_providers: ["test", "xiaomi"],
+    provider: { xiaomi: { options: { apiKey: "test-key" } } },
+  }
+
+  const spawnWith = (operation: Record<string, unknown>, parentVariant?: string) =>
+    Effect.gen(function* () {
+      let captured: SpawnInput | undefined
+      yield* installMockSpawn((input) => {
+        captured = input
+      })
+      const { chat, assistant } = yield* seed()
+      if (parentVariant) yield* (yield* Session.Service).updateMessage({ ...assistant, variant: parentVariant })
+      const def = yield* (yield* ActorTool).init()
+      yield* def.execute(
+        { operation: { action: "run", description: "probe", prompt: "probe", subagent_type: "general", ...operation } },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: {},
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+      return captured
+    })
+
+  it.live("same model inherits the parent variant", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const input = yield* spawnWith({}, "high")
+        expect(input?.model).toEqual(ref)
+        expect(input?.variant).toBe("high")
+      }),
+    ),
+  )
+
+  it.live("no parent variant passes none", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        expect((yield* spawnWith({}))?.variant).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("a different model inherits only when it offers the same level", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          expect((yield* spawnWith({ model: "xiaomi/mimo-v2-pro" }, "high"))?.variant).toBe("high")
+          expect((yield* spawnWith({ model: "xiaomi/mimo-v2-pro" }, "max"))?.variant).toBeUndefined()
+          // toggle-only model: no levels at all
+          expect((yield* spawnWith({ model: "xiaomi/mimo-v2-flash" }, "high"))?.variant).toBeUndefined()
+        }),
+      { config: xiaomi },
+    ),
+  )
+
+  it.live("an agent's own variant on its configured model is not overridden", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const input = yield* spawnWith({ subagent_type: "tuned" }, "high")
+          expect(input?.variant).toBeUndefined()
+        }),
+      {
+        config: {
+          ...xiaomi,
+          agent: { tuned: { description: "Tuned", mode: "subagent", model: "xiaomi/mimo-v2-pro", variant: "low" } },
+        },
+      },
+    ),
+  )
+})

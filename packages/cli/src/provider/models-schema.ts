@@ -34,6 +34,13 @@ export const Model = z.object({
    */
   voice_design: z.boolean().optional().default(false),
   voice_clone: z.boolean().optional().default(false),
+  /**
+   * How reasoning can be controlled. `effort` lists selectable levels; `toggle` and
+   * `budget_tokens` carry no levels. Unknown option types are tolerated.
+   */
+  reasoning_options: z
+    .array(z.object({ type: z.string(), values: z.array(z.string()).optional() }).passthrough())
+    .optional(),
   interleaved: z
     .union([
       z.literal(true),

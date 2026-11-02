@@ -5377,3 +5377,84 @@ describe("prompt image count across user and native tool results", () => {
     },
   )
 })
+
+// docs/compose/spec/reasoning-variants.md S2.2 — models.dev `reasoning_options` drive the levels.
+describe("ProviderTransform.variants with declared efforts", () => {
+  const model = (npm: string, apiID: string, efforts: string[] | undefined, providerID = "test"): any => ({
+    id: apiID,
+    providerID,
+    api: { id: apiID, url: "https://api.test.com", npm },
+    name: apiID,
+    capabilities: {
+      temperature: true,
+      reasoning: true,
+      attachment: false,
+      toolcall: true,
+      input: { text: true, audio: false, image: false, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+      ...(efforts ? { efforts } : {}),
+    },
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: 200_000, output: 64_000 },
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "2026-01-01",
+  })
+
+  test("toggle-only declaration yields no levels even where the adapter table has some", () => {
+    expect(ProviderTransform.variants(model("@ai-sdk/openai-compatible", "test/toggle-model", []))).toEqual({})
+  })
+
+  test("declared levels beyond the adapter table get the adapter-standard shape", () => {
+    expect(ProviderTransform.variants(model("@ai-sdk/openai-compatible", "test/graded", ["low", "medium", "high", "xhigh", "max"]))).toEqual({
+      low: { reasoningEffort: "low" },
+      medium: { reasoningEffort: "medium" },
+      high: { reasoningEffort: "high" },
+      xhigh: { reasoningEffort: "xhigh" },
+      max: { reasoningEffort: "max" },
+    })
+  })
+
+  test("only the declared subset is offered", () => {
+    expect(Object.keys(ProviderTransform.variants(model("@ai-sdk/openai-compatible", "test/graded", ["high", "max"])))).toEqual(["high", "max"])
+  })
+
+  test("model families excluded by name still get their declared levels", () => {
+    expect(ProviderTransform.variants(model("@ai-sdk/openai-compatible", "test/kimi-k3", ["low", "high"]))).toEqual({
+      low: { reasoningEffort: "low" },
+      high: { reasoningEffort: "high" },
+    })
+  })
+
+  test("adapter table supplies parameters when it covers every declared level", () => {
+    const result = ProviderTransform.variants(model("@ai-sdk/anthropic", "test/claude-opus-4-7", ["low", "high"]))
+    expect(result.low).toEqual({ thinking: { type: "adaptive", display: "summarized" }, effort: "low" })
+    expect(Object.keys(result)).toEqual(["low", "high"])
+  })
+
+  test("a partially covered set uses one shape for all levels instead of mixing", () => {
+    const result = ProviderTransform.variants(model("@ai-sdk/anthropic", "test/claude-opus-5-5", ["low", "high", "max"]))
+    expect(result).toEqual({
+      low: { thinking: { type: "adaptive" }, effort: "low" },
+      high: { thinking: { type: "adaptive" }, effort: "high" },
+      max: { thinking: { type: "adaptive" }, effort: "max" },
+    })
+  })
+
+  test("levels with no adapter-standard field and no table entry are dropped", () => {
+    expect(ProviderTransform.variants(model("@ai-sdk/mistral", "test/magistral", ["high"]))).toEqual({})
+  })
+
+  test("undeclared models keep the name-based behaviour", () => {
+    expect(ProviderTransform.variants(model("@ai-sdk/openai-compatible", "test/kimi-k3", undefined))).toEqual({})
+    expect(Object.keys(ProviderTransform.variants(model("@ai-sdk/openai-compatible", "test/graded", undefined)))).toEqual(["low", "medium", "high"])
+  })
+
+  test("reasoning:false still wins over a declaration", () => {
+    const m = model("@ai-sdk/openai-compatible", "test/graded", ["high"])
+    m.capabilities.reasoning = false
+    expect(ProviderTransform.variants(m)).toEqual({})
+  })
+})
