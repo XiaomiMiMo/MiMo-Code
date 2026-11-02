@@ -1,10 +1,11 @@
 import { Log } from "../util"
 import path from "path"
+import { pathToFileURL } from "url"
 import os from "os"
 import z from "zod"
 import { clone, mergeDeep, pipe } from "remeda"
 import { Global } from "../global"
-import { NodePath } from "@effect/platform-node"
+import fsNode from "fs/promises"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { Flag } from "../flag/flag"
 import { Auth } from "../auth"
@@ -19,15 +20,13 @@ import { isRecord } from "@/util/record"
 import type { ConsoleState } from "./console-state"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { InstanceState } from "@/effect"
-import { Context, Duration, Effect, FileSystem, Layer, Option, Schema } from "effect"
-import * as Primitive from "effect/unstable/cli/Primitive"
+import { Context, Duration, Effect, Layer, Option, Schema } from "effect"
 import { EffectFlock } from "@mimo-ai/shared/util/effect-flock"
 import { InstanceRef } from "@/effect/instance-ref"
 import { zod, ZodOverride } from "@/util/effect-zod"
 import { ConfigAgent } from "./agent"
 import { ConfigCommand } from "./command"
 import { ConfigFormatter } from "./formatter"
-import { ConfigHost } from "./host"
 import { MIMOCODE_GITIGNORE_ENTRIES } from "./gitignore"
 import { ConfigLayout } from "./layout"
 import { ConfigLSP } from "./lsp"
@@ -46,17 +45,6 @@ import { ConfigSkills } from "./skills"
 import { ConfigVariable } from "./variable"
 
 const log = Log.create({ service: "config" })
-
-function filterExecutableConfig(config: Info, source: string): Info {
-  if (ConfigHost.allowsExecution(source)) return config
-  // Drop whole sections before merging: partial entries can enable a disabled
-  // server or inject environment/initialization into a trusted command.
-  const { mcp, lsp, formatter, ...safe } = config
-  if (mcp || lsp != null || formatter != null) {
-    log.warn("ignoring executable configuration outside host config sources", { source })
-  }
-  return safe
-}
 
 // Custom merge function that concatenates array fields instead of replacing them
 function mergeConfigConcatArrays(target: Info, source: Info): Info {
@@ -610,7 +598,7 @@ export const layer = Layer.effect(
       )
       const parsed = ConfigParse.jsonc(expanded, source)
       const data = ConfigParse.schema(Info, normalizeLoadedConfig(parsed, source), source)
-      if (!("path" in options) || options.modelsOnly) return filterExecutableConfig(data, source)
+      if (!("path" in options) || options.modelsOnly) return data
 
       yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))
       if (!data.$schema || data.$schema === "https://opencode.ai/config.json") {
@@ -624,7 +612,7 @@ export const layer = Layer.effect(
           yield* fs.writeFileString(options.path, updated).pipe(Effect.catch(() => Effect.void))
         }
       }
-      return filterExecutableConfig(data, source)
+      return data
     })
 
     const loadFile = Effect.fnUntraced(function* (filepath: string, modelsOnly = false) {
@@ -642,37 +630,22 @@ export const layer = Layer.effect(
         mergeDeep(yield* loadFile(path.join(Global.Path.config, "mimocode.jsonc"), modelsOnly)),
       )
 
+      if (modelsOnly) return result
       const legacy = path.join(Global.Path.config, "config")
       if (existsSync(legacy)) {
-        yield* Effect.gen(function* () {
-          // Imports cache TOML modules; retained legacy files must be read again
-          // so model refreshes see edits to the original source.
-          const parsed = yield* Primitive.fileParse({ format: "toml" }).parse(legacy).pipe(
-            Effect.provideService(FileSystem.FileSystem, fs),
-            Effect.provide(NodePath.layer),
-          )
-          if (!isRecord(parsed)) return
-          const { provider, model, ...rest } = parsed
-          const normalized = {
-            ...rest,
-            ...(typeof provider === "string" && typeof model === "string" ? { model: `${provider}/${model}` } : {}),
-          }
-          const next = yield* Effect.try({
-            try: () => ConfigParse.schema(Info, normalizeLoadedConfig(normalized, legacy), legacy),
-            catch: (error) => error,
-          })
-          result = mergeDeep(result, filterExecutableConfig(next, legacy))
-          result.$schema = "https://mimo.xiaomi.com/mimocode/config.json"
-          const destination = path.join(Global.Path.config, "config.json")
-          // Keep the original source when migration would cross the host
-          // boundary and make allowed configuration disappear on reload.
-          if (modelsOnly || !ConfigHost.allowsExecution(destination)) return
-          yield* fs.writeFileString(destination, JSON.stringify(result, null, 2))
-          yield* fs.remove(legacy)
-        }).pipe(Effect.catch(() => Effect.void))
+        yield* Effect.promise(() =>
+          import(pathToFileURL(legacy).href, { with: { type: "toml" } })
+            .then(async (mod) => {
+              const { provider, model, ...rest } = mod.default
+              if (provider && model) result.model = `${provider}/${model}`
+              result["$schema"] = "https://mimo.xiaomi.com/mimocode/config.json"
+              result = mergeDeep(result, rest)
+              await fsNode.writeFile(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
+              await fsNode.unlink(legacy)
+            })
+            .catch(() => {}),
+        )
       }
-
-      if (modelsOnly) return result
 
       // Seed a starter config when no global config file exists yet
       const globalConfigFile = path.join(Global.Path.config, "mimocode.jsonc")
@@ -784,7 +757,6 @@ export const layer = Layer.effect(
         })
 
         const mergeClaudeMcp = Effect.fnUntraced(function* (source: string) {
-          if (!ConfigHost.allowsExecution(source)) return
           const data = yield* readClaudeConfig(source)
           if (!isRecord(data)) return
           if (!isRecord(data.mcpServers)) return
@@ -1067,12 +1039,7 @@ export const layer = Layer.effect(
     const update = Effect.fn("Config.update")(function* (config: Info) {
       const dir = yield* InstanceState.directory
       const file = path.join(dir, "config.json")
-      // Persist the stored configuration, preserving filtered sections and literal references.
-      const before = (yield* readConfigFile(file)) || "{}"
-      const existing = yield* Effect.try({
-        try: () => ConfigParse.schema(Info, normalizeLoadedConfig(ConfigParse.jsonc(before, file), file), file),
-        catch: (error) => error,
-      }).pipe(Effect.orDie)
+      const existing = yield* loadFile(file)
       yield* fs
         .writeFileString(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
         .pipe(Effect.orDie)

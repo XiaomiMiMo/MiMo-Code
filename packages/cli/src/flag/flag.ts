@@ -463,9 +463,9 @@ export const Flag = {
   get MIMOCODE_PURE() {
     return truthy("MIMOCODE_PURE")
   },
-  // Restricts external plugins, file hooks, TUI plugins and executable MCP/LSP/
-  // formatter configuration to host sources. Always on for the Node build,
-  // which cannot serve the plugin SDK to user code.
+  // Loads only external plugins, file hooks and TUI plugins provided by
+  // MIMOCODE_CONFIG_DIR. Always on for the Node build, which cannot serve the
+  // plugin SDK to user code.
   get MIMOCODE_ONLY_CONFIG_DIR_PLUGINS() {
     return truthy("MIMOCODE_ONLY_CONFIG_DIR_PLUGINS")
   },
