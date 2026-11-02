@@ -21,10 +21,13 @@
 // how rare the matched tokens are; the caller applies a score floor to drop
 // common-word-only noise (see service.ts searchScoreFloor).
 //
-// \\p{L} includes CJK letters (added in openclaw PR #20767 for CJK recall).
+// Han characters are isolated with the same transform as body_idx. Keep each
+// contiguous input run in ONE phrase so scattered characters do not match it.
 //
 // Returns null when no usable tokens are extracted. Callers should treat
 // that as "empty query, no results" without sending the query to SQL.
+import { buildSearchIndexText } from "./search-text"
+
 export function buildFtsQuery(raw: string): string | null {
   const tokens =
     raw
@@ -33,6 +36,6 @@ export function buildFtsQuery(raw: string): string | null {
       .filter(Boolean) ?? []
   if (tokens.length === 0) return null
   // FTS5 phrase: inner `"` must be doubled, not stripped (MATCH syntax injection).
-  const quoted = tokens.map((t) => `"${t.replaceAll('"', '""')}"`)
+  const quoted = tokens.map((t) => `"${buildSearchIndexText(t).replaceAll('"', '""')}"`)
   return quoted.join(" OR ")
 }

@@ -4,6 +4,7 @@ import { Database, eq } from "../storage"
 import { Log } from "../util"
 import { MemoryFtsTable } from "./fts.sql"
 import { parsePath, parseCcPath, parseCcFrontmatterType, type MemoryLocator } from "./paths"
+import { buildSearchIndexText } from "./search-text"
 
 const log = Log.create({ service: "memory.reconcile" })
 
@@ -58,6 +59,7 @@ export async function indexFromDisk(
   if (oldFingerprint === fingerprint) return "hit"
 
   const body = await Bun.file(absPath).text()
+  const body_idx = buildSearchIndexText(body)
 
   // For CC files, derive type from frontmatter; mimo files keep loc.type from path.
   const finalType =
@@ -72,6 +74,7 @@ export async function indexFromDisk(
         scope_id: loc.scope_id,
         type: finalType,
         body,
+        body_idx,
         fingerprint,
         last_indexed_at: Date.now(),
       })
@@ -82,6 +85,7 @@ export async function indexFromDisk(
           scope_id: loc.scope_id,
           type: finalType,
           body,
+          body_idx,
           fingerprint,
           last_indexed_at: Date.now(),
         },

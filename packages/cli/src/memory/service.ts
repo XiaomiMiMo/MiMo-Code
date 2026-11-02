@@ -6,6 +6,7 @@ import { Database } from "../storage"
 import { Config } from "../config"
 import { reconcileMemory } from "./reconcile"
 import { buildFtsQuery } from "./fts-query"
+import { restoreSearchSnippet, SNIPPET_START, SNIPPET_END, SNIPPET_ELLIPSIS } from "./search-text"
 
 type SearchRow = {
   path: string
@@ -13,6 +14,7 @@ type SearchRow = {
   scope_id: string
   type: string
   snippet: string
+  body: string
   score: number
 }
 
@@ -100,8 +102,8 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
       const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : ""
 
       const sql = `
-        SELECT memory_fts.path, memory_fts.scope, memory_fts.scope_id, memory_fts.type,
-               snippet(memory_fts_idx, 0, '<<', '>>', '...', 32) AS snippet,
+        SELECT memory_fts.path, memory_fts.scope, memory_fts.scope_id, memory_fts.type, memory_fts.body,
+               snippet(memory_fts_idx, 0, ?, ?, ?, 32) AS snippet,
                bm25(memory_fts_idx) AS score
         FROM memory_fts_idx
         JOIN memory_fts ON memory_fts.id = memory_fts_idx.rowid
@@ -118,12 +120,13 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
       // same `.all(...positionalParams)` shape, so this path works under either driver
       // (`#db` resolves to node:sqlite outside Bun). `query`'s statement cache is Bun-only,
       // and caching buys little here — the SQL varies with the filter clause.
-      const rows = Database.Client().$client.prepare(sql).all(ftsQuery, ...params, fetchLimit) as SearchRow[]
+      const rows = Database.Client().$client.prepare(sql)
+        .all(SNIPPET_START, SNIPPET_END, SNIPPET_ELLIPSIS, ftsQuery, ...params, fetchLimit) as SearchRow[]
 
       // FTS5 bm25() returns lower = better; convert to higher = better for caller
       const mapped = rows.map((r) => ({
         path: r.path,
-        snippet: r.snippet,
+        snippet: restoreSearchSnippet(r.body, r.snippet),
         score: -r.score,
         scope: r.scope,
         scope_id: r.scope_id,

@@ -9,6 +9,7 @@ export const MemoryFtsTable = sqliteTable(
     scope_id: text().notNull().default(""),
     type: text().notNull(),
     body: text().notNull(),
+    body_idx: text().notNull(),
     fingerprint: text().notNull(),
     last_indexed_at: integer().notNull(),
   },
@@ -17,3 +18,7 @@ export const MemoryFtsTable = sqliteTable(
     index("memory_fts_type_idx").on(table.type),
   ],
 )
+
+export const MemoryIndexMigrationTable = sqliteTable("memory_index_migration", {
+  version: integer().primaryKey(),
+})
