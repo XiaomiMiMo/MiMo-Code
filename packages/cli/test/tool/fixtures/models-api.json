@@ -36040,7 +36040,7 @@
         "cost": { "input": 0.4, "output": 2, "cache_read": 0.08 },
         "limit": { "context": 256000, "output": 128000 }
       },
-      "mimo-v2-flash": {
+      "mimo-v2-flash": {"reasoning_options":[{"type":"toggle"}],
         "id": "mimo-v2-flash",
         "name": "MiMo-V2-Flash",
         "family": "mimo",

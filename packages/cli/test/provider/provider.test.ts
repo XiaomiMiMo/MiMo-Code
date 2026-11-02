@@ -6,6 +6,7 @@ import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "../../src/provider"
+import { validateCatalog } from "../../src/provider/models-schema"
 import { Provider } from "../../src/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Auth } from "../../src/auth"
@@ -3527,6 +3528,183 @@ test("plugin config enabled and disabled providers are honored", async () => {
       const providers = await list()
       expect(providers[ProviderID.anthropic]).toBeDefined()
       expect(providers[ProviderID.openai]).toBeUndefined()
+    },
+  })
+})
+
+// docs/compose/spec/reasoning-variants.md S2.1 — models.dev reasoning_options → capabilities.efforts.
+test("models.dev reasoning_options become declared efforts", () => {
+  const model = (id: string, reasoning_options?: unknown) => ({
+    id,
+    name: id,
+    reasoning: true,
+    limit: { context: 8192, output: 2048 },
+    cost: { input: 0, output: 0 },
+    modalities: { input: ["text"], output: ["text"] },
+    ...(reasoning_options ? { reasoning_options } : {}),
+  })
+  const provider = {
+    id: "test-provider",
+    name: "Test Provider",
+    env: [],
+    npm: "@ai-sdk/openai-compatible",
+    api: "https://example.test/v1",
+    models: {
+      toggle: model("toggle", [{ type: "toggle" }]),
+      budget: model("budget", [{ type: "budget_tokens", min: 1024, values: [1024, 4096] }]),
+      graded: model("graded", [{ type: "toggle" }, { type: "effort", values: ["low", "high", "max"] }, { type: "effort", values: ["high"] }]),
+      plain: model("plain"),
+      alwaysOn: model("alwaysOn", []),
+      providerDefault: model("providerDefault", [{ type: "effort", values: ["none", "default", "low", null, "high"] }]),
+    },
+  } as unknown as ModelsDev.Provider
+  const models = Provider.fromModelsDevProvider(provider).models
+  expect(models["alwaysOn"].capabilities.efforts).toEqual([])
+  expect(models["alwaysOn"].variants).toEqual({})
+  // "default" means the provider's own default (= send no variant); it is not a level.
+  expect(models["providerDefault"].capabilities.efforts).toEqual(["none", "low", "high"])
+  expect(Object.keys(models["providerDefault"].variants ?? {})).toEqual(["none", "low", "high"])
+  expect(models["toggle"].capabilities.efforts).toEqual([])
+  expect(models["toggle"].variants).toEqual({})
+  expect(models["budget"].capabilities.efforts).toEqual([])
+  expect(models["budget"].capabilities.reasoningBudget).toBe(true)
+  expect(Object.keys(models["budget"].variants ?? {})).toEqual(["low", "medium", "high"]) // built-in table kept
+  expect(models["toggle"].capabilities.reasoningBudget).toBe(false)
+  expect(models["graded"].capabilities.efforts).toEqual(["low", "high", "max"])
+  expect(Object.keys(models["graded"].variants ?? {})).toEqual(["low", "high", "max"])
+  expect(models["plain"].capabilities.efforts).toBeUndefined()
+  expect(Object.keys(models["plain"].variants ?? {})).toEqual(["low", "medium", "high"])
+})
+
+test("config model extending a models.dev model keeps its declared efforts; config variants still merge", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          enabled_providers: ["xiaomi"],
+          provider: {
+            xiaomi: {
+              options: { apiKey: "test-key" },
+              models: {
+                "mimo-v2-flash": { name: "Flash override" },
+                "mimo-v2-pro": { variants: { low: { disabled: true }, max: { reasoningEffort: "max" } } },
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const flash = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2-flash"))
+      expect(flash.capabilities.efforts).toEqual([])
+      expect(flash.variants).toEqual({})
+      const pro = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2-pro"))
+      expect(pro.capabilities.efforts).toBeUndefined()
+      expect(Object.keys(pro.variants ?? {})).toEqual(["medium", "high", "max"])
+    },
+  })
+})
+
+test("non-string option values never reject the models.dev catalog", () => {
+  const catalog = {
+    test: {
+      id: "test",
+      name: "Test",
+      env: [],
+      models: {
+        m: {
+          id: "m",
+          name: "m",
+          release_date: "2026-01-01",
+          attachment: false,
+          reasoning: true,
+          temperature: false,
+          tool_call: true,
+          limit: { context: 8192, output: 2048 },
+          reasoning_options: [{ type: "budget_tokens", values: [1024, 8192] }, { type: "effort", values: ["low", 3, "high"] }],
+        },
+      },
+    },
+  }
+  const parsed = validateCatalog(catalog)
+  const models = Provider.fromModelsDevProvider(parsed["test"]).models
+  expect(models["m"].capabilities.efforts).toEqual(["low", "high"])
+})
+
+// docs/compose/spec/reasoning-variants.md S2.4 — config names a level; the engine supplies its parameters.
+test("config variants that only name a level get the adapter-standard parameters or are dropped", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          enabled_providers: ["byok-chat", "byok-messages", "byok-responses", "xiaomi"],
+          provider: {
+            "byok-chat": {
+              name: "BYOK Chat",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              options: { apiKey: "k", baseURL: "https://example.test/v1" },
+              models: {
+                m: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { low: {}, high: {}, max: { disabled: true }, fast: {} } },
+                custom: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { high: { reasoningEffort: "high", extra: 1 } } },
+              },
+            },
+            "byok-messages": {
+              name: "BYOK Messages",
+              npm: "@ai-sdk/anthropic",
+              env: [],
+              options: { apiKey: "k", baseURL: "https://example.test/v1" },
+              models: {
+                "claude-opus-5-5": { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { high: {}, none: {} } },
+                "claude-opus-4-5": { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { low: {}, high: {} } },
+              },
+            },
+            "byok-responses": {
+              name: "BYOK Responses",
+              npm: "@ai-sdk/openai",
+              env: [],
+              options: { apiKey: "k", baseURL: "https://example.test/v1" },
+              models: { g: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { xhigh: {} } } },
+            },
+            xiaomi: {
+              options: { apiKey: "test-key" },
+              models: { "mimo-v2-pro": { variants: { high: {} } } },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      // An empty custom name is not an effort level: dropped rather than sent as reasoningEffort:"fast".
+      expect(providers[ProviderID.make("byok-chat")].models["m"].variants).toEqual({
+        low: { reasoningEffort: "low" },
+        high: { reasoningEffort: "high" },
+      })
+      expect(providers[ProviderID.make("byok-chat")].models["custom"].variants).toEqual({
+        high: { reasoningEffort: "high", extra: 1 },
+      })
+      expect(providers[ProviderID.make("byok-messages")].models["claude-opus-5-5"].variants).toEqual({
+        high: { thinking: { type: "adaptive" }, effort: "high" },
+      })
+      // Legacy Claude: naming a level never produces adaptive thinking; nothing it accepts → no level.
+      expect(providers[ProviderID.make("byok-messages")].models["claude-opus-4-5"].variants).toEqual({})
+      expect(providers[ProviderID.make("byok-responses")].models["g"].variants).toEqual({
+        xhigh: { reasoningEffort: "xhigh", reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
+      })
+      // A level the engine already defines keeps the engine's parameters.
+      const pro = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2-pro"))
+      expect(Object.keys(pro.variants?.high ?? {}).length).toBeGreaterThan(0)
     },
   })
 })

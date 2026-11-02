@@ -3,7 +3,7 @@ import z from "zod"
 import os from "os"
 import fuzzysort from "fuzzysort"
 import { Config } from "../config"
-import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
+import { mapValues, mergeDeep, sortBy } from "remeda"
 import { NoSuchModelError, type Provider as SDK } from "ai"
 import { Log } from "../util"
 import { Npm } from "../npm"
@@ -993,6 +993,15 @@ const ProviderCapabilities = Schema.Struct({
   input: ProviderModalities,
   output: ProviderModalities,
   interleaved: ProviderInterleaved,
+  /**
+   * Effort levels declared by models.dev `reasoning_options` (an array of toggle / effort /
+   * budget_tokens controls). undefined = no models.dev declaration (config-only models; every
+   * reasoning model in models.dev has one). [] = declared without effort levels: always-on (empty
+   * array, no caller control), toggle-only, budget-only, or toggle + budget. Drives `ProviderTransform.variants`.
+   */
+  efforts: Schema.optional(Schema.Array(Schema.String)),
+  /** models.dev also declares a `budget_tokens` control (thinking is budget-driven, not adaptive). */
+  reasoningBudget: Schema.optional(Schema.Boolean),
 })
 
 const ProviderCacheCost = Schema.Struct({
@@ -1149,6 +1158,20 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
+// "default" (and null) in models.dev effort values means "the provider's own default", i.e. send no
+// variant, so it is not a selectable level (and would collide with clients' "default" = unset).
+function declaredEfforts(options: NonNullable<ModelsDev.Model["reasoning_options"]>): string[] {
+  return [
+    ...new Set(
+      options.flatMap((option) =>
+        option.type === "effort"
+          ? (option.values ?? []).filter((v): v is string => typeof v === "string" && v !== "default")
+          : [],
+      ),
+    ),
+  ]
+}
+
 function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
   const base: Model = {
     id: ModelID.make(model.id),
@@ -1189,6 +1212,12 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
         pdf: model.modalities?.output?.includes("pdf") ?? false,
       },
       interleaved: model.interleaved ?? false,
+      ...(model.reasoning_options
+        ? {
+            efforts: declaredEfforts(model.reasoning_options),
+            reasoningBudget: model.reasoning_options.some((option) => option.type === "budget_tokens"),
+          }
+        : {}),
     },
     release_date: model.release_date ?? "",
     variants: {},
@@ -1366,6 +1395,9 @@ const layer: Layer.Layer<
                   (!existingModel && apiNpm === OPENAI_COMPATIBLE_NPM && apiID.includes("deepseek")
                     ? { field: "reasoning_content" }
                     : false),
+                ...(existingModel?.capabilities.efforts
+                  ? { efforts: existingModel.capabilities.efforts, reasoningBudget: existingModel.capabilities.reasoningBudget }
+                  : {}),
               },
               cost: {
                 input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,
@@ -1410,11 +1442,7 @@ const layer: Layer.Layer<
               cachePromptTTL: model.cachePromptTTL ?? existingModel?.cachePromptTTL,
               variants: {},
             }
-            const merged = mergeDeep(ProviderTransform.variants(parsedModel), model.variants ?? {})
-            parsedModel.variants = mapValues(
-              pickBy(merged, (v) => !v.disabled),
-              (v) => omit(v, ["disabled"]),
-            )
+            parsedModel.variants = ProviderTransform.configuredVariants(parsedModel, model.variants)
             parsed.models[modelID] = parsedModel
           }
           database[providerID] = parsed
@@ -1579,16 +1607,7 @@ const layer: Layer.Layer<
             )
               delete provider.models[modelID]
 
-            model.variants = mapValues(ProviderTransform.variants(model), (v) => v)
-
-            const configVariants = configProvider?.models?.[modelID]?.variants
-            if (configVariants && model.variants) {
-              const merged = mergeDeep(model.variants, configVariants)
-              model.variants = mapValues(
-                pickBy(merged, (v) => !v.disabled),
-                (v) => omit(v, ["disabled"]),
-              )
-            }
+            model.variants = ProviderTransform.configuredVariants(model, configProvider?.models?.[modelID]?.variants)
           }
 
           if (Object.keys(provider.models).length === 0) {
