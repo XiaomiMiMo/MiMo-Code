@@ -3652,7 +3652,7 @@ test("config variants that only name a level get the adapter-standard parameters
               env: [],
               options: { apiKey: "k", baseURL: "https://example.test/v1" },
               models: {
-                m: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { low: {}, high: {}, max: { disabled: true } } },
+                m: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { low: {}, high: {}, max: { disabled: true }, fast: {} } },
                 custom: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { high: { reasoningEffort: "high", extra: 1 } } },
               },
             },
@@ -3686,6 +3686,7 @@ test("config variants that only name a level get the adapter-standard parameters
     directory: tmp.path,
     fn: async () => {
       const providers = await list()
+      // An empty custom name is not an effort level: dropped rather than sent as reasoningEffort:"fast".
       expect(providers[ProviderID.make("byok-chat")].models["m"].variants).toEqual({
         low: { reasoningEffort: "low" },
         high: { reasoningEffort: "high" },

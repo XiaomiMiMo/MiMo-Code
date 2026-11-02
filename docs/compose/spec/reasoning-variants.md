@@ -47,7 +47,7 @@ When `capabilities.reasoning` is true and `capabilities.efforts` is defined:
 `ProviderTransform.configuredVariants(model, config)` produces `model.variants` for both models.dev-backed and config-only models:
 
 - Config `variants` deep-merge over `variants(model)`; `disabled` levels are removed.
-- A level left with no parameters (config only names it, e.g. `{ high: {} }`) gets the adapter-standard shape from S2.2. If there is none (unknown adapter, Anthropic `none`, legacy Claude), the level is dropped, so every listed level changes the request.
+- An effort level left with no parameters (config only names it, e.g. `{ high: {} }`) gets the adapter-standard shape from S2.2. If there is none (unknown adapter, Anthropic `none`, legacy Claude), the level is dropped; an empty name outside the effort vocabulary (e.g. `fast: {}`) is dropped too, never sent as an effort value. Every listed level changes the request.
 - Hand-written parameters are kept as written; a level the engine already defines keeps the engine's parameters unless config overrides them.
 - Clients that manage levels for the user (the desktop app) therefore write only level names and `disabled`, never protocol parameters.
 

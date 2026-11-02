@@ -1670,7 +1670,7 @@ function adapterVariants(model: Provider.Model): Record<string, Record<string, a
 // built-in fixed-budget levels, so a declared effort list never turns into adaptive requests
 // they reject. Newer names (4.6+, 5.x, other families) never match.
 function legacyClaude(apiId: string): boolean {
-  const m = apiId.toLowerCase().match(/claude-(?:(?:opus|sonnet|haiku)-)?(\d+)(?:[-.](\d{1,2})(?!\d))?/)
+  const m = apiId.toLowerCase().match(/claude-(?:(?:opus|sonnet|haiku)-?)?(\d+)(?:[-.](\d{1,2})(?!\d))?/)
   if (!m) return false
   const major = Number(m[1])
   const minor = m[2] ? Number(m[2]) : 0
@@ -1723,10 +1723,12 @@ function declaredVariants(model: Provider.Model, declared: readonly string[]): R
 
 /**
  * The model's levels after user config: config `variants` deep-merge over `variants(model)`,
- * `disabled` levels are removed, and a level left with no parameters (config only names it,
- * e.g. `{ high: {} }`) gets the adapter-standard shape. A level nothing can express is dropped,
- * so every listed level actually changes the request.
+ * `disabled` levels are removed, and an effort level left with no parameters (config only names
+ * it, e.g. `{ high: {} }`) gets the adapter-standard shape. A level nothing can express — including
+ * an empty custom name that is not an effort level — is dropped, so every listed level actually
+ * changes the request.
  */
+const EFFORT_LEVELS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
 export function configuredVariants(
   model: Provider.Model,
   config: Record<string, Record<string, any>> | undefined,
@@ -1736,7 +1738,7 @@ export function configuredVariants(
   for (const [key, value] of Object.entries(merged)) {
     if (value.disabled) continue
     const { disabled: _, ...params } = value
-    const filled = Object.keys(params).length ? params : standardEffort(model, key)
+    const filled = Object.keys(params).length ? params : EFFORT_LEVELS.has(key) ? standardEffort(model, key) : undefined
     if (filled) out[key] = filled
   }
   return out

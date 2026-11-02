@@ -5453,7 +5453,7 @@ describe("ProviderTransform.variants with declared efforts", () => {
   })
 
   test("legacy Claude (≤4.5) declaring effort never gets adaptive; only built-in budget levels remain", () => {
-    for (const id of ["anthropic/claude-opus-4.1", "anthropic/claude-sonnet-4.5", "claude-opus-4-5", "claude-opus-4-20250514", "claude-3-7-sonnet-latest"]) {
+    for (const id of ["anthropic/claude-opus-4.1", "anthropic/claude-sonnet-4.5", "claude-opus-4-5", "claude-opus4-5", "claude-opus-4-20250514", "claude-3-7-sonnet-latest", "anthropic.claude-opus-4-1-20250805-v1:0"]) {
       for (const budget of [false, true]) {
         expect(ProviderTransform.variants(model("@ai-sdk/anthropic", id, ["low", "medium", "high"], "test", budget))).toEqual({
           high: { thinking: { type: "enabled", budgetTokens: 16_000 } },
