@@ -3635,3 +3635,75 @@ test("non-string option values never reject the models.dev catalog", () => {
   const models = Provider.fromModelsDevProvider(parsed["test"]).models
   expect(models["m"].capabilities.efforts).toEqual(["low", "high"])
 })
+
+// docs/compose/spec/reasoning-variants.md S2.4 — config names a level; the engine supplies its parameters.
+test("config variants that only name a level get the adapter-standard parameters or are dropped", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          enabled_providers: ["byok-chat", "byok-messages", "byok-responses", "xiaomi"],
+          provider: {
+            "byok-chat": {
+              name: "BYOK Chat",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              options: { apiKey: "k", baseURL: "https://example.test/v1" },
+              models: {
+                m: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { low: {}, high: {}, max: { disabled: true } } },
+                custom: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { high: { reasoningEffort: "high", extra: 1 } } },
+              },
+            },
+            "byok-messages": {
+              name: "BYOK Messages",
+              npm: "@ai-sdk/anthropic",
+              env: [],
+              options: { apiKey: "k", baseURL: "https://example.test/v1" },
+              models: {
+                "claude-opus-5-5": { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { high: {}, none: {} } },
+                "claude-opus-4-5": { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { low: {}, high: {} } },
+              },
+            },
+            "byok-responses": {
+              name: "BYOK Responses",
+              npm: "@ai-sdk/openai",
+              env: [],
+              options: { apiKey: "k", baseURL: "https://example.test/v1" },
+              models: { g: { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { xhigh: {} } } },
+            },
+            xiaomi: {
+              options: { apiKey: "test-key" },
+              models: { "mimo-v2-pro": { variants: { high: {} } } },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      expect(providers[ProviderID.make("byok-chat")].models["m"].variants).toEqual({
+        low: { reasoningEffort: "low" },
+        high: { reasoningEffort: "high" },
+      })
+      expect(providers[ProviderID.make("byok-chat")].models["custom"].variants).toEqual({
+        high: { reasoningEffort: "high", extra: 1 },
+      })
+      expect(providers[ProviderID.make("byok-messages")].models["claude-opus-5-5"].variants).toEqual({
+        high: { thinking: { type: "adaptive" }, effort: "high" },
+      })
+      // Legacy Claude: naming a level never produces adaptive thinking; nothing it accepts → no level.
+      expect(providers[ProviderID.make("byok-messages")].models["claude-opus-4-5"].variants).toEqual({})
+      expect(providers[ProviderID.make("byok-responses")].models["g"].variants).toEqual({
+        xhigh: { reasoningEffort: "xhigh", reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
+      })
+      // A level the engine already defines keeps the engine's parameters.
+      const pro = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2-pro"))
+      expect(Object.keys(pro.variants?.high ?? {}).length).toBeGreaterThan(0)
+    },
+  })
+})

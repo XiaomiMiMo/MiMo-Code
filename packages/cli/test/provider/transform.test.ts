@@ -5443,13 +5443,27 @@ describe("ProviderTransform.variants with declared efforts", () => {
     })
   })
 
-  test("budget-controlled Anthropic models (e.g. Opus 4.5) pair effort with budgeted thinking, not adaptive", () => {
-    const result = ProviderTransform.variants(model("@ai-sdk/anthropic", "test/claude-opus-4-5", ["low", "medium", "high"], "test", true))
+  test("budget-controlled Anthropic models pair effort with budgeted thinking, not adaptive", () => {
+    const result = ProviderTransform.variants(model("@ai-sdk/anthropic", "test/claude-fable-5", ["low", "medium", "high"], "test", true))
     expect(result).toEqual({
       low: { thinking: { type: "enabled", budgetTokens: 16_000 }, effort: "low" },
       medium: { thinking: { type: "enabled", budgetTokens: 16_000 }, effort: "medium" },
       high: { thinking: { type: "enabled", budgetTokens: 16_000 }, effort: "high" },
     })
+  })
+
+  test("legacy Claude (≤4.5) declaring effort never gets adaptive; only built-in budget levels remain", () => {
+    for (const id of ["anthropic/claude-opus-4.1", "anthropic/claude-sonnet-4.5", "claude-opus-4-5", "claude-opus-4-20250514", "claude-3-7-sonnet-latest"]) {
+      for (const budget of [false, true]) {
+        expect(ProviderTransform.variants(model("@ai-sdk/anthropic", id, ["low", "medium", "high"], "test", budget))).toEqual({
+          high: { thinking: { type: "enabled", budgetTokens: 16_000 } },
+        })
+      }
+    }
+  })
+
+  test("Anthropic effort has no none/minimal level", () => {
+    expect(Object.keys(ProviderTransform.variants(model("@ai-sdk/anthropic", "test/claude-opus-5-5", ["none", "minimal", "low", "high"])))).toEqual(["low", "high"])
   })
 
   test("budget-only declarations keep the built-in fixed-budget levels", () => {

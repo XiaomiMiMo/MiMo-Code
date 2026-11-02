@@ -1666,8 +1666,19 @@ function adapterVariants(model: Provider.Model): Record<string, Record<string, a
   return {}
 }
 
+// Claude 3.x and 4.0–4.5: a closed set that predates adaptive thinking. They only get the
+// built-in fixed-budget levels, so a declared effort list never turns into adaptive requests
+// they reject. Newer names (4.6+, 5.x, other families) never match.
+function legacyClaude(apiId: string): boolean {
+  const m = apiId.toLowerCase().match(/claude-(?:(?:opus|sonnet|haiku)-)?(\d+)(?:[-.](\d{1,2})(?!\d))?/)
+  if (!m) return false
+  const major = Number(m[1])
+  const minor = m[2] ? Number(m[2]) : 0
+  return major < 4 || (major === 4 && minor <= 5)
+}
+
 // Adapter-standard parameters for one effort level, used when a declared level is absent
-// from the adapter table. undefined = this adapter has no standard effort field.
+// from the adapter table. undefined = this adapter has no standard field for that level.
 function standardEffort(model: Provider.Model, effort: string): Record<string, any> | undefined {
   switch (model.api.npm) {
     case "@ai-sdk/openai-compatible":
@@ -1680,7 +1691,9 @@ function standardEffort(model: Provider.Model, effort: string): Record<string, a
       return { reasoningEffort: effort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
     case "@ai-sdk/anthropic":
     case "@ai-sdk/google-vertex/anthropic":
-      // Budget-controlled models (e.g. Opus 4.5) take effort only alongside budgeted thinking;
+      // Anthropic effort has no off/minimal level; legacy Claude stays on the built-in table.
+      if (effort === "none" || effort === "minimal" || legacyClaude(model.api.id)) return undefined
+      // Budget-controlled models take effort only alongside budgeted thinking;
       // adaptive thinking is for models that declare effort without a budget control.
       return model.capabilities.reasoningBudget
         ? { thinking: { type: "enabled", budgetTokens: Math.min(16_000, Math.floor(model.limit.output / 2 - 1)) }, effort }
@@ -1704,6 +1717,27 @@ function declaredVariants(model: Provider.Model, declared: readonly string[]): R
   for (const effort of declared) {
     const params = useTable ? table[effort] : (standardEffort(model, effort) ?? table[effort])
     if (params) out[effort] = params
+  }
+  return out
+}
+
+/**
+ * The model's levels after user config: config `variants` deep-merge over `variants(model)`,
+ * `disabled` levels are removed, and a level left with no parameters (config only names it,
+ * e.g. `{ high: {} }`) gets the adapter-standard shape. A level nothing can express is dropped,
+ * so every listed level actually changes the request.
+ */
+export function configuredVariants(
+  model: Provider.Model,
+  config: Record<string, Record<string, any>> | undefined,
+): Record<string, Record<string, any>> {
+  const merged: Record<string, Record<string, any>> = mergeDeep(variants(model), config ?? {})
+  const out: Record<string, Record<string, any>> = {}
+  for (const [key, value] of Object.entries(merged)) {
+    if (value.disabled) continue
+    const { disabled: _, ...params } = value
+    const filled = Object.keys(params).length ? params : standardEffort(model, key)
+    if (filled) out[key] = filled
   }
   return out
 }
