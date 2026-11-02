@@ -412,7 +412,7 @@ export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?:
 
 function defs(key: string, client: MCPClient, timeout?: number) {
   return Effect.tryPromise({
-    try: () => withTimeout(client.listTools(), timeout ?? DEFAULT_TIMEOUT),
+    try: () => withTimeout(client.listTools(undefined, { timeout: timeout ?? DEFAULT_TIMEOUT }), timeout ?? DEFAULT_TIMEOUT),
     catch: (err) => (err instanceof Error ? err : new Error(String(err))),
   }).pipe(
     Effect.map((result) => result.tools),
@@ -540,7 +540,7 @@ export const layer = Layer.effect(
           Effect.tryPromise({
             try: () => {
               const client = createClient()
-              return withTimeout(client.connect(t), timeout).then(() => client)
+              return withTimeout(client.connect(t, { timeout }), timeout).then(() => client)
             },
             catch: (e) => (e instanceof Error ? e : new Error(String(e))),
           }),
@@ -1416,7 +1416,7 @@ export const layer = Layer.effect(
       return yield* Effect.tryPromise({
         try: () => {
           const client = createClient()
-          return client.connect(transport).then(
+          return client.connect(transport, { timeout: mcpConfig.timeout ?? DEFAULT_TIMEOUT }).then(
             () =>
               ({
                 kind: "connected",

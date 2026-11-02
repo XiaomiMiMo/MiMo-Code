@@ -39,6 +39,8 @@ let connectError = "Mock transport cannot connect"
 // Tracks how many Client instances were created (detects leaks)
 let clientCreateCount = 0
 const clientOptions: unknown[] = []
+const connectTimeouts: Array<number | undefined> = []
+const listToolsTimeouts: Array<number | undefined> = []
 // Tracks how many times transport.close() is called across all mock transports
 let transportCloseCount = 0
 
@@ -154,7 +156,8 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
       clientOptions.push(options)
     }
 
-    async connect(transport: { start: () => Promise<void> }) {
+    async connect(transport: { start: () => Promise<void> }, options?: { timeout?: number }) {
+      connectTimeouts.push(options?.timeout)
       this.transport = transport
       await transport.start()
       // After successful connect, bind to the last-created client name
@@ -219,7 +222,8 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
       }
     }
 
-    async listTools() {
+    async listTools(_params?: unknown, options?: { timeout?: number }) {
+      listToolsTimeouts.push(options?.timeout)
       if (this._state) this._state.listToolsCalls++
       if (this._state?.listToolsShouldFail) {
         throw new Error(this._state.listToolsError)
@@ -255,6 +259,8 @@ beforeEach(() => {
   connectError = "Mock transport cannot connect"
   clientCreateCount = 0
   clientOptions.length = 0
+  connectTimeouts.length = 0
+  listToolsTimeouts.length = 0
   transportCloseCount = 0
 })
 
@@ -296,6 +302,26 @@ function withInstance(
 // ========================================================================
 // Test: tools() are cached after connect
 // ========================================================================
+
+// Desktop mcp-config TP-R23-06: the SDK must receive the configured budget, not just an outer timer.
+for (const type of ["local", "remote"] as const) {
+  test(
+    `[TP-R23-06] ${type} initialization and tool discovery pass explicit timeouts to the SDK`,
+    withInstance({}, (mcp) =>
+      Effect.gen(function* () {
+        for (const timeout of [500, 120_000]) {
+          const config = type === "local"
+            ? { type, command: ["echo", "example"], timeout }
+            : { type, url: "http://example.invalid/mcp", oauth: false as const, timeout }
+          const result = yield* mcp.add("example", config)
+          expect(result).toMatchObject({ status: { example: { status: "connected" } } })
+          expect(connectTimeouts.at(-1)).toBe(timeout)
+          expect(listToolsTimeouts.at(-1)).toBe(timeout)
+        }
+      }),
+    ),
+  )
+}
 
 test(
   "tools() reuses cached tool definitions after connect",
