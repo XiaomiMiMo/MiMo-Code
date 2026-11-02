@@ -18,11 +18,12 @@ source: feat/reasoning-variants
 
 ### S2.1 Carry declared effort levels from models.dev
 
-- `ModelsDev.Model` accepts optional `reasoning_options: Array<{ type: string; values?: string[] }>`; unknown option types are tolerated.
+- `ModelsDev.Model` accepts optional `reasoning_options: Array<{ type: string; values?: unknown[] }>`; unknown option types and non-string values are tolerated (a strict shape would reject the whole catalog), and only string `effort` values are used.
 - `Provider.Model.capabilities` gains optional `efforts?: string[]`:
   - `undefined` — models.dev made no declaration (no `reasoning_options`); legacy behavior.
   - `[]` — declared, but no `effort` option (toggle-only / budget-only).
   - non-empty — the union of `values` across `effort` options, in declaration order, de-duplicated.
+- `capabilities.reasoningBudget?: boolean` records whether a `budget_tokens` option is also declared (set alongside `efforts`).
 - `fromModelsDevModel` fills it; config-declared models that extend a models.dev model inherit it from the existing model. Config-only models have no declaration.
 
 ### S2.2 Declared levels drive `variants()`
@@ -30,7 +31,7 @@ source: feat/reasoning-variants
 When `capabilities.reasoning` is true and `capabilities.efforts` is defined:
 
 - The result has exactly the declared levels.
-- Parameters come from the adapter's built-in table (computed without model-family exclusions, so kimi/qwen/glm/deepseek-on-other-providers… are not dropped) when that table covers every declared level; otherwise the whole set uses the adapter-standard shape, so one model never mixes shapes (e.g. Anthropic budget `enabled` for high/max but `adaptive` for the rest). Adapter-standard shapes: openai-compatible / gateway / deepinfra / venice → `{ reasoningEffort }`; `@ai-sdk/openai` / `@ai-sdk/azure` → `{ reasoningEffort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }`; `@ai-sdk/anthropic` / `@ai-sdk/google-vertex/anthropic` → `{ thinking: { type: "adaptive" }, effort }`; `@openrouter/ai-sdk-provider` → `{ reasoning: { effort } }`. Adapters with no standard shape keep only levels the built-in table provides; levels neither source can express are dropped.
+- Parameters come from the adapter's built-in table (computed without model-family exclusions, so kimi/qwen/glm/deepseek-on-other-providers… are not dropped) when that table covers every declared level; otherwise the whole set uses the adapter-standard shape, so one model never mixes shapes (e.g. Anthropic budget `enabled` for high/max but `adaptive` for the rest). Adapter-standard shapes: openai-compatible / gateway / deepinfra / venice → `{ reasoningEffort }`; `@ai-sdk/openai` / `@ai-sdk/azure` → `{ reasoningEffort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }`; `@ai-sdk/anthropic` / `@ai-sdk/google-vertex/anthropic` → `{ thinking: { type: "adaptive" }, effort }`, or `{ thinking: { type: "enabled", budgetTokens }, effort }` when `reasoningBudget` is true (budget-controlled models such as Opus 4.5 accept `effort` but not adaptive thinking); `@openrouter/ai-sdk-provider` → `{ reasoning: { effort } }`. Adapters with no standard shape keep only levels the built-in table provides; levels neither source can express are dropped.
 - `efforts: []` yields `{}`.
 - When `efforts` is undefined, behavior is unchanged.
 - Config `variants` are still merged on top afterwards (and `disabled` honored), so user configuration keeps final say.
@@ -39,7 +40,7 @@ When `capabilities.reasoning` is true and `capabilities.efforts` is defined:
 
 In the `actor` tool, after the child model is resolved:
 
-- If the child agent has its own configured `variant` and runs on its configured model (no explicit `--model` overriding it), do not pass anything — the agent's variant applies as today.
+- If the child agent has its own configured `variant` and runs on its configured model (no explicit `--model`), do not pass anything — the agent's variant applies as today. An explicit `--model` always counts as an override, even when it names the agent's own model.
 - Otherwise, take the parent assistant message's `variant`. Pass it when the child model is the parent model; when the child model differs, pass it only if the child model's `variants` contains that key.
 - The value flows `actor.spawn` → child prompt `variant`, so the child's user message records it and `llm.ts` merges the matching variant.
 

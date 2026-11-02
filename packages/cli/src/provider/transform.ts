@@ -1666,8 +1666,8 @@ function adapterVariants(model: Provider.Model): Record<string, Record<string, a
 
 // Adapter-standard parameters for one effort level, used when a declared level is absent
 // from the adapter table. undefined = this adapter has no standard effort field.
-function standardEffort(npm: string, effort: string): Record<string, any> | undefined {
-  switch (npm) {
+function standardEffort(model: Provider.Model, effort: string): Record<string, any> | undefined {
+  switch (model.api.npm) {
     case "@ai-sdk/openai-compatible":
     case "@ai-sdk/gateway":
     case "@ai-sdk/deepinfra":
@@ -1678,7 +1678,11 @@ function standardEffort(npm: string, effort: string): Record<string, any> | unde
       return { reasoningEffort: effort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
     case "@ai-sdk/anthropic":
     case "@ai-sdk/google-vertex/anthropic":
-      return { thinking: { type: "adaptive" }, effort }
+      // Budget-controlled models (e.g. Opus 4.5) take effort only alongside budgeted thinking;
+      // adaptive thinking is for models that declare effort without a budget control.
+      return model.capabilities.reasoningBudget
+        ? { thinking: { type: "enabled", budgetTokens: Math.min(16_000, Math.floor(model.limit.output / 2 - 1)) }, effort }
+        : { thinking: { type: "adaptive" }, effort }
     case "@openrouter/ai-sdk-provider":
       return { reasoning: { effort } }
   }
@@ -1696,7 +1700,7 @@ function declaredVariants(model: Provider.Model, declared: readonly string[]): R
   const useTable = declared.every((effort) => effort in table)
   const out: Record<string, Record<string, any>> = {}
   for (const effort of declared) {
-    const params = useTable ? table[effort] : (standardEffort(model.api.npm, effort) ?? table[effort])
+    const params = useTable ? table[effort] : (standardEffort(model, effort) ?? table[effort])
     if (params) out[effort] = params
   }
   return out

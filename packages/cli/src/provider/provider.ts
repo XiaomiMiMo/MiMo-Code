@@ -998,6 +998,8 @@ const ProviderCapabilities = Schema.Struct({
    * [] = declared without levels (toggle/budget only). Drives `ProviderTransform.variants`.
    */
   efforts: Schema.optional(Schema.Array(Schema.String)),
+  /** models.dev also declares a `budget_tokens` control (thinking is budget-driven, not adaptive). */
+  reasoningBudget: Schema.optional(Schema.Boolean),
 })
 
 const ProviderCacheCost = Schema.Struct({
@@ -1155,7 +1157,13 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible"
 
 function declaredEfforts(options: NonNullable<ModelsDev.Model["reasoning_options"]>): string[] {
-  return [...new Set(options.flatMap((option) => (option.type === "effort" ? (option.values ?? []) : [])))]
+  return [
+    ...new Set(
+      options.flatMap((option) =>
+        option.type === "effort" ? (option.values ?? []).filter((v): v is string => typeof v === "string") : [],
+      ),
+    ),
+  ]
 }
 
 function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
@@ -1198,7 +1206,12 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
         pdf: model.modalities?.output?.includes("pdf") ?? false,
       },
       interleaved: model.interleaved ?? false,
-      ...(model.reasoning_options ? { efforts: declaredEfforts(model.reasoning_options) } : {}),
+      ...(model.reasoning_options
+        ? {
+            efforts: declaredEfforts(model.reasoning_options),
+            reasoningBudget: model.reasoning_options.some((option) => option.type === "budget_tokens"),
+          }
+        : {}),
     },
     release_date: model.release_date ?? "",
     variants: {},
@@ -1376,7 +1389,9 @@ const layer: Layer.Layer<
                   (!existingModel && apiNpm === OPENAI_COMPATIBLE_NPM && apiID.includes("deepseek")
                     ? { field: "reasoning_content" }
                     : false),
-                ...(existingModel?.capabilities.efforts ? { efforts: existingModel.capabilities.efforts } : {}),
+                ...(existingModel?.capabilities.efforts
+                  ? { efforts: existingModel.capabilities.efforts, reasoningBudget: existingModel.capabilities.reasoningBudget }
+                  : {}),
               },
               cost: {
                 input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,

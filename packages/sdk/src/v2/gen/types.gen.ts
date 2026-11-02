@@ -3187,6 +3187,7 @@ export type Model = {
           field: "reasoning" | "reasoning_content" | "reasoning_details"
         }
     efforts?: Array<string>
+    reasoningBudget?: boolean
   }
   cost: {
     input: number

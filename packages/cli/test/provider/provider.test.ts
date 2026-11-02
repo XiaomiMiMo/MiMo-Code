@@ -6,6 +6,7 @@ import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "../../src/provider"
+import { validateCatalog } from "../../src/provider/models-schema"
 import { Provider } from "../../src/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Auth } from "../../src/auth"
@@ -3550,7 +3551,7 @@ test("models.dev reasoning_options become declared efforts", () => {
     api: "https://example.test/v1",
     models: {
       toggle: model("toggle", [{ type: "toggle" }]),
-      budget: model("budget", [{ type: "budget_tokens", min: 1024 }]),
+      budget: model("budget", [{ type: "budget_tokens", min: 1024, values: [1024, 4096] }]),
       graded: model("graded", [{ type: "toggle" }, { type: "effort", values: ["low", "high", "max"] }, { type: "effort", values: ["high"] }]),
       plain: model("plain"),
     },
@@ -3559,6 +3560,8 @@ test("models.dev reasoning_options become declared efforts", () => {
   expect(models["toggle"].capabilities.efforts).toEqual([])
   expect(models["toggle"].variants).toEqual({})
   expect(models["budget"].capabilities.efforts).toEqual([])
+  expect(models["budget"].capabilities.reasoningBudget).toBe(true)
+  expect(models["toggle"].capabilities.reasoningBudget).toBe(false)
   expect(models["graded"].capabilities.efforts).toEqual(["low", "high", "max"])
   expect(Object.keys(models["graded"].variants ?? {})).toEqual(["low", "high", "max"])
   expect(models["plain"].capabilities.efforts).toBeUndefined()
@@ -3597,4 +3600,30 @@ test("config model extending a models.dev model keeps its declared efforts; conf
       expect(Object.keys(pro.variants ?? {})).toEqual(["medium", "high", "max"])
     },
   })
+})
+
+test("non-string option values never reject the models.dev catalog", () => {
+  const catalog = {
+    test: {
+      id: "test",
+      name: "Test",
+      env: [],
+      models: {
+        m: {
+          id: "m",
+          name: "m",
+          release_date: "2026-01-01",
+          attachment: false,
+          reasoning: true,
+          temperature: false,
+          tool_call: true,
+          limit: { context: 8192, output: 2048 },
+          reasoning_options: [{ type: "budget_tokens", values: [1024, 8192] }, { type: "effort", values: ["low", 3, "high"] }],
+        },
+      },
+    },
+  }
+  const parsed = validateCatalog(catalog)
+  const models = Provider.fromModelsDevProvider(parsed["test"]).models
+  expect(models["m"].capabilities.efforts).toEqual(["low", "high"])
 })

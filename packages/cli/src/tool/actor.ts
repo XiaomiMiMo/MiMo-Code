@@ -485,18 +485,20 @@ export const ActorTool = Tool.define(
         // own variant on its own configured model keeps it (SessionPrompt applies it when no
         // variant is passed). Otherwise inherit the parent turn's variant — as-is on the same
         // model, and on a different model only when that model offers the same level.
+        // An explicit --model always counts as an override, even when it names the agent's own model.
         const agentOwnsVariant = !!next.variant && !op.model && !!(next.model || next.modelRef)
         const parentVariant = agentOwnsVariant ? undefined : msg.info.variant
-        const sameModel = model.providerID === msg.info.providerID && model.modelID === msg.info.modelID
-        const variant = !parentVariant
-          ? undefined
-          : sameModel
-            ? parentVariant
-            : (yield* provider
-                  .getModel(model.providerID, model.modelID)
-                  .pipe(Effect.catchDefect(() => Effect.succeed(undefined))))?.variants?.[parentVariant]
-              ? parentVariant
-              : undefined
+        let variant: string | undefined
+        if (parentVariant) {
+          const sameModel = model.providerID === msg.info.providerID && model.modelID === msg.info.modelID
+          if (sameModel) variant = parentVariant
+          else {
+            const target = yield* provider
+              .getModel(model.providerID, model.modelID)
+              .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
+            if (target?.variants?.[parentVariant]) variant = parentVariant
+          }
+        }
 
         // Validate task_id by reference at execute time (NOT in the schema, so a
         // bad value degrades instead of hard-failing the call). A malformed shape

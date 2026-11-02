@@ -39,7 +39,7 @@ export const Model = z.object({
    * `budget_tokens` carry no levels. Unknown option types are tolerated.
    */
   reasoning_options: z
-    .array(z.object({ type: z.string(), values: z.array(z.string()).optional() }).passthrough())
+    .array(z.object({ type: z.string(), values: z.array(z.unknown()).optional() }).passthrough())
     .optional(),
   interleaved: z
     .union([

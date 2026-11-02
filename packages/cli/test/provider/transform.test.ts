@@ -5380,7 +5380,7 @@ describe("prompt image count across user and native tool results", () => {
 
 // docs/compose/spec/reasoning-variants.md S2.2 — models.dev `reasoning_options` drive the levels.
 describe("ProviderTransform.variants with declared efforts", () => {
-  const model = (npm: string, apiID: string, efforts: string[] | undefined, providerID = "test"): any => ({
+  const model = (npm: string, apiID: string, efforts: string[] | undefined, providerID = "test", reasoningBudget = false): any => ({
     id: apiID,
     providerID,
     api: { id: apiID, url: "https://api.test.com", npm },
@@ -5393,7 +5393,7 @@ describe("ProviderTransform.variants with declared efforts", () => {
       input: { text: true, audio: false, image: false, video: false, pdf: false },
       output: { text: true, audio: false, image: false, video: false, pdf: false },
       interleaved: false,
-      ...(efforts ? { efforts } : {}),
+      ...(efforts ? { efforts, reasoningBudget } : {}),
     },
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
     limit: { context: 200_000, output: 64_000 },
@@ -5440,6 +5440,15 @@ describe("ProviderTransform.variants with declared efforts", () => {
       low: { thinking: { type: "adaptive" }, effort: "low" },
       high: { thinking: { type: "adaptive" }, effort: "high" },
       max: { thinking: { type: "adaptive" }, effort: "max" },
+    })
+  })
+
+  test("budget-controlled Anthropic models (e.g. Opus 4.5) pair effort with budgeted thinking, not adaptive", () => {
+    const result = ProviderTransform.variants(model("@ai-sdk/anthropic", "test/claude-opus-4-5", ["low", "medium", "high"], "test", true))
+    expect(result).toEqual({
+      low: { thinking: { type: "enabled", budgetTokens: 16_000 }, effort: "low" },
+      medium: { thinking: { type: "enabled", budgetTokens: 16_000 }, effort: "medium" },
+      high: { thinking: { type: "enabled", budgetTokens: 16_000 }, effort: "high" },
     })
   })
 
