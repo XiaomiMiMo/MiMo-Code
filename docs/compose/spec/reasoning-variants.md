@@ -32,7 +32,7 @@ When `capabilities.reasoning` is true and `capabilities.efforts` is defined:
 
 - The result has exactly the declared levels.
 - Parameters come from the adapter's built-in table (computed without model-family exclusions, so kimi/qwen/glm/deepseek-on-other-providers… are not dropped) when that table covers every declared level; otherwise the whole set uses the adapter-standard shape, so one model never mixes shapes (e.g. Anthropic budget `enabled` for high/max but `adaptive` for the rest). Adapter-standard shapes: openai-compatible / gateway / deepinfra / venice → `{ reasoningEffort }`; `@ai-sdk/openai` / `@ai-sdk/azure` → `{ reasoningEffort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }`; `@ai-sdk/anthropic` / `@ai-sdk/google-vertex/anthropic` → `{ thinking: { type: "adaptive" }, effort }`, or `{ thinking: { type: "enabled", budgetTokens }, effort }` when `reasoningBudget` is true (budget-controlled models such as Opus 4.5 accept `effort` but not adaptive thinking); `@openrouter/ai-sdk-provider` → `{ reasoning: { effort } }`. Adapters with no standard shape keep only levels the built-in table provides; levels neither source can express are dropped.
-- `efforts: []` yields `{}`.
+- `efforts: []` with no budget control (toggle-only) yields `{}`. `efforts: []` with `reasoningBudget` (budget-only) keeps the built-in table, so fixed-budget levels such as Anthropic `high`/`max` stay available.
 - When `efforts` is undefined, behavior is unchanged.
 - Config `variants` are still merged on top afterwards (and `disabled` honored), so user configuration keeps final say.
 

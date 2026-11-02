@@ -5452,6 +5452,12 @@ describe("ProviderTransform.variants with declared efforts", () => {
     })
   })
 
+  test("budget-only declarations keep the built-in fixed-budget levels", () => {
+    const result = ProviderTransform.variants(model("@ai-sdk/anthropic", "test/claude-sonnet-4-5", [], "test", true))
+    expect(Object.keys(result)).toEqual(["high", "max"])
+    expect(result.high).toEqual({ thinking: { type: "enabled", budgetTokens: 16_000 } })
+  })
+
   test("levels with no adapter-standard field and no table entry are dropped", () => {
     expect(ProviderTransform.variants(model("@ai-sdk/mistral", "test/magistral", ["high"]))).toEqual({})
   })

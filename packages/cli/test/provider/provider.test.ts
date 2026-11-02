@@ -3561,6 +3561,7 @@ test("models.dev reasoning_options become declared efforts", () => {
   expect(models["toggle"].variants).toEqual({})
   expect(models["budget"].capabilities.efforts).toEqual([])
   expect(models["budget"].capabilities.reasoningBudget).toBe(true)
+  expect(Object.keys(models["budget"].variants ?? {})).toEqual(["low", "medium", "high"]) // built-in table kept
   expect(models["toggle"].capabilities.reasoningBudget).toBe(false)
   expect(models["graded"].capabilities.efforts).toEqual(["low", "high", "max"])
   expect(Object.keys(models["graded"].variants ?? {})).toEqual(["low", "high", "max"])
