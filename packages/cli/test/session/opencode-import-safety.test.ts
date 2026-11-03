@@ -195,6 +195,8 @@ test("OpenCode native session metadata is lossless except project remapping and 
   await using dir = await tmpdir()
   const file = path.join(dir.path, "metadata.db")
   const src = source(file)
+  // OpenCode databases still carry the removed share link column.
+  src.exec("ALTER TABLE session ADD COLUMN share_url text")
   try {
     session(src, "ses_import_a", {
       workspace_id: "wrk_source", parent_id: "ses_parent", context_from: "ses_context", context_watermark: "msg_context",
@@ -208,7 +210,8 @@ test("OpenCode native session metadata is lossless except project remapping and 
     message(src, "ses_import_a")
     expect((await OpencodeImport.run({ dbPath: file })).errors).toEqual([])
     const sourceRow = src.query<Record<string, unknown>, []>("SELECT * FROM session").get()!
-    const expected: Record<string, unknown> = { ...sourceRow, project_id: "global", auto_worktree_hint_sent: true }
+    const { share_url: _, ...kept } = sourceRow
+    const expected: Record<string, unknown> = { ...kept, project_id: "global", auto_worktree_hint_sent: true }
     for (const field of ["summary_diffs", "revert", "permission", "prompt"]) expected[field] = JSON.parse(expected[field] as string)
     const local = () => Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, SessionID.make("ses_import_a"))).get())
     expect(local() as unknown).toEqual(expected)

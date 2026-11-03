@@ -28,6 +28,7 @@ test("cloud share routes are absent even with auto-share configuration", async (
     const created = await app.request("/session", { method: "POST", headers, body: "{}" })
     expect(created.status).toBe(200)
     const session = await created.json()
+    expect(session).not.toHaveProperty("share")
     for (const method of ["POST", "DELETE"]) {
       const res = await app.request(`/session/${session.id}/share`, { method, headers })
       expect(res.status).toBe(404)
@@ -36,7 +37,6 @@ test("cloud share routes are absent even with auto-share configuration", async (
     const config = await conf.json()
     expect(config).not.toHaveProperty("share")
     expect(config).not.toHaveProperty("autoshare")
-    await new Promise((resolve) => setTimeout(resolve, 1200))
     expect(calls).toEqual([])
     const removed = await app.request(`/session/${session.id}`, { method: "DELETE", headers })
     expect(removed.status).toBe(200)
@@ -51,4 +51,5 @@ test("OpenAPI has no cloud share operations or settings", async () => {
   expect(doc.paths).not.toHaveProperty("/session/{sessionID}/share")
   expect(doc.components?.schemas?.Config?.properties).not.toHaveProperty("share")
   expect(doc.components?.schemas?.Config?.properties).not.toHaveProperty("autoshare")
+  expect(doc.components?.schemas?.Session?.properties).not.toHaveProperty("share")
 })

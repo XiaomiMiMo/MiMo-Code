@@ -539,9 +539,6 @@ export type Session = {
     files: number
     diffs?: Array<FileDiff>
   }
-  share?: {
-    url: string
-  }
   title: string
   version: string
   time: {

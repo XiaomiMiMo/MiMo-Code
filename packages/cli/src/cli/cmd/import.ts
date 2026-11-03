@@ -4,6 +4,7 @@ import type { Session as SDKSession, Message, Part } from "@mimo-ai/sdk/v2"
 import { Session } from "../../session"
 import { MessageV2 } from "../../session/message-v2"
 import { cmd } from "./cmd"
+import { UI } from "../ui"
 import { bootstrap } from "../bootstrap"
 import { Database, eq } from "../../storage"
 import { isDeepStrictEqual } from "node:util"
@@ -99,29 +100,23 @@ export const ImportCommand = cmd({
   },
   handler: async (args) => {
     if (/^https?:\/\//i.test(args.file)) {
-      throw new Error("Import accepts local JSON files only")
+      UI.error("Import accepts local JSON files only")
+      process.exitCode = 1
+      return
     }
     await bootstrap(process.cwd(), async () => {
-      let exportData:
-        | {
-            info: SDKSession
-            messages: Array<{
-              info: Message
-              parts: Part[]
-            }>
-            queue?: unknown
-          }
-        | undefined
-
-      exportData = await Filesystem.readJson<NonNullable<typeof exportData>>(args.file).catch(() => undefined)
-      if (!exportData) {
-        process.stdout.write(`File not found: ${args.file}`)
-        process.stdout.write(EOL)
-        return
+      type ExportData = {
+        info: SDKSession
+        messages: Array<{
+          info: Message
+          parts: Part[]
+        }>
+        queue?: unknown
       }
 
+      const exportData = await Filesystem.readJson<ExportData>(args.file).catch(() => undefined)
       if (!exportData) {
-        process.stdout.write(`Failed to read session data`)
+        process.stdout.write(`File not found: ${args.file}`)
         process.stdout.write(EOL)
         return
       }

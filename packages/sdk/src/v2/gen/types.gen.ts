@@ -1595,9 +1595,6 @@ export type Session = {
     files: number
     diffs?: Array<SnapshotFileDiff>
   }
-  share?: {
-    url: string
-  }
   title: string
   titleSource: "fallback" | "generated" | "user"
   titleRevision: number
@@ -1814,9 +1811,6 @@ export type SyncEventSessionUpdated = {
         files: number
         diffs?: Array<SnapshotFileDiff>
       } | null
-      share?: {
-        url?: string | null
-      }
       title?: string | null
       titleSource?: "fallback" | "generated" | "user" | null
       titleRevision?: number | null
@@ -3290,9 +3284,6 @@ export type GlobalSession = {
     deletions: number
     files: number
     diffs?: Array<SnapshotFileDiff>
-  }
-  share?: {
-    url: string
   }
   title: string
   titleSource: "fallback" | "generated" | "user"

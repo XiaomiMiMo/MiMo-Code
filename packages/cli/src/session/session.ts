@@ -69,7 +69,6 @@ export function fromRow(row: SessionRow): Info {
           diffs: row.summary_diffs ?? undefined,
         }
       : undefined
-  const share = row.share_url ? { url: row.share_url } : undefined
   const revert = row.revert ?? undefined
   return {
     id: row.id,
@@ -85,7 +84,6 @@ export function fromRow(row: SessionRow): Info {
     titleRevision: row.title_revision,
     version: row.version,
     summary,
-    share,
     revert,
     permission: row.permission ?? undefined,
     prompt: row.prompt ? PromptConfig.parse(row.prompt) : undefined,
@@ -113,7 +111,6 @@ export function toRow(info: Info) {
     title_source: info.titleSource ?? (info.title ? "user" : "fallback"),
     title_revision: info.titleRevision ?? 0,
     version: info.version,
-    share_url: info.share?.url,
     summary_additions: info.summary?.additions,
     summary_deletions: info.summary?.deletions,
     summary_files: info.summary?.files,
@@ -161,11 +158,6 @@ export const Info = z
         deletions: z.number(),
         files: z.number(),
         diffs: Snapshot.FileDiff.array().optional(),
-      })
-      .optional(),
-    share: z
-      .object({
-        url: z.string(),
       })
       .optional(),
     title: z.string(),
@@ -299,7 +291,7 @@ export const MessagesInput = z.object({ sessionID: SessionID.zod, limit: z.numbe
 // conservatively protected. New commands may only emit the revisioned v2 event.
 export const LegacyUpdated = SyncEvent.define({
   type: "session.updated", version: 1, aggregate: "sessionID",
-  schema: z.object({ sessionID: SessionID.zod, info: updateSchema(Info.omit({ titleSource: true, titleRevision: true })).extend({ share: updateSchema(Info.shape.share.unwrap()).optional(), time: updateSchema(Info.shape.time).optional() }) }),
+  schema: z.object({ sessionID: SessionID.zod, info: updateSchema(Info.omit({ titleSource: true, titleRevision: true })).extend({ time: updateSchema(Info.shape.time).optional() }) }),
 })
 
 export const Event = {
@@ -320,7 +312,6 @@ export const Event = {
       sessionID: SessionID.zod,
       previousRevision: Info.shape.titleRevision.optional(),
       info: updateSchema(Info).extend({
-        share: updateSchema(Info.shape.share.unwrap()).optional(),
         time: updateSchema(Info.shape.time).optional(),
       }),
     }),
@@ -506,7 +497,7 @@ export interface Interface {
      * `undefined` (default) returns the main-agent slice only.
      * `"main"` is equivalent to `undefined`.
      * `"*"` returns every message in the session, regardless of slice
-     * (export / stats / share / cross-slice diagnostic paths only —
+     * (export / stats / cross-slice diagnostic paths only —
      * almost no production caller wants this).
      * Any other string returns the slice owned by that subagent actor
      * (`agent_id = <id>`).

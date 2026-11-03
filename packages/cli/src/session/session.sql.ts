@@ -30,7 +30,6 @@ export const SessionTable = sqliteTable(
     title_source: text().$type<"fallback" | "generated" | "user">().notNull().default("user"),
     title_revision: integer().notNull().default(0),
     version: text().notNull(),
-    share_url: text(),
     summary_additions: integer(),
     summary_deletions: integer(),
     summary_files: integer(),
