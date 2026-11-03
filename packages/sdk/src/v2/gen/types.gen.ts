@@ -2822,12 +2822,6 @@ export type Config = {
   tools?: {
     [key: string]: boolean
   }
-  enterprise?: {
-    /**
-     * Enterprise URL
-     */
-    url?: string
-  }
   compaction?: {
     /**
      * Enable automatic compaction when context is full (default: true)

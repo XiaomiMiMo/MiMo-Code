@@ -531,7 +531,6 @@ export const SessionRoutes = lazy(() =>
         return c.json({ ok: true, epoch })
       },
     )
-
     .get(
       "/:sessionID/diff",
       describeRoute({
@@ -572,7 +571,6 @@ export const SessionRoutes = lazy(() =>
           })
         }),
     )
-
     .post(
       "/:sessionID/summarize",
       describeRoute({

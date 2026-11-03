@@ -65,6 +65,8 @@ function normalizeLoadedConfig(data: unknown, source: string) {
   // Cloud sharing settings from existing files cannot enable a transport.
   delete copy.share
   delete copy.autoshare
+  // Only the removed share transport read the enterprise endpoint.
+  delete copy.enterprise
   if (isRecord(copy.compaction) && "prune" in copy.compaction) {
     const { prune: _, ...compaction } = copy.compaction
     copy.compaction = compaction
@@ -225,11 +227,6 @@ const InfoSchema = Schema.Struct({
   layout: Schema.optional(ConfigLayout.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
   permission: Schema.optional(PermissionRef),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
-  enterprise: Schema.optional(
-    Schema.Struct({
-      url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }),
-    }),
-  ),
   compaction: Schema.optional(
     Schema.Struct({
       auto: Schema.optional(Schema.Boolean).annotate({

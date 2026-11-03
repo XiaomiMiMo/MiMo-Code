@@ -88,13 +88,11 @@ These commands are available while viewing a session. Some appear only when thei
 
 | Command | Aliases | Purpose / availability |
 |---------|---------|------------------------|
-| `/share` | — | Share the session; unavailable when sharing is disabled |
 | `/rename` | — | Rename the session |
 | `/timeline` | — | Open the message timeline |
 | `/fork` | — | Fork the session from an earlier message |
 | `/compact` | `/summarize` | Summarize a long session to free context |
 | `/btw <question>` | — | Ask a side question without adding it to the main conversation context |
-| `/unshare` | — | Stop sharing; shown only for a shared session |
 | `/undo` | — | Undo the latest message and its file changes |
 | `/redo` | — | Restore an undone message and its file changes |
 | `/timestamps` | `/toggle-timestamps` | Toggle message timestamps |

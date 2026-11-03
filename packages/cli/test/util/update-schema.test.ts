@@ -36,17 +36,18 @@ describe("updateSchema", () => {
   })
 
   for (const [name, event] of [["revisioned", Session.Event.Updated], ["legacy", Session.LegacyUpdated]] as const) {
-    test(`${name} session updates accept real workspace, time, share and clearing patches`, () => {
+    test(`${name} session updates accept real workspace, time and clearing patches`, () => {
       const sessionID = SessionID.descending()
       for (const info of [
         { workspaceID: WorkspaceID.ascending() },
         { workspaceID: null },
         { time: { updated: 42 } },
         { time: { archived: null } },
-        { share: { url: "https://example.test/share" } },
-        { share: { url: null } },
         { permission: null },
       ]) expect(event.schema.parse({ sessionID, info })).toEqual({ sessionID, info })
+      // Events logged before cloud sharing was removed still parse; the link is dropped.
+      for (const share of [{ url: "https://example.test/share" }, { url: null }])
+        expect(event.schema.parse({ sessionID, info: { share } })).toEqual({ sessionID, info: {} })
       expect(event.schema.safeParse({ sessionID, info: { time: { updated: "bad" } } }).success).toBe(false)
       expect(event.schema.safeParse({ sessionID, info: { workspaceID: 1 } }).success).toBe(false)
     })

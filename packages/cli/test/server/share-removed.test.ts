@@ -3,6 +3,8 @@ import path from "node:path"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { tmpdir } from "../fixture/fixture"
+import { Session } from "../../src/session"
+import { Config } from "../../src/config"
 
 afterEach(() => Instance.disposeAll())
 
@@ -37,6 +39,7 @@ test("cloud share routes are absent even with auto-share configuration", async (
     const config = await conf.json()
     expect(config).not.toHaveProperty("share")
     expect(config).not.toHaveProperty("autoshare")
+    expect(config).not.toHaveProperty("enterprise")
     expect(calls).toEqual([])
     const removed = await app.request(`/session/${session.id}`, { method: "DELETE", headers })
     expect(removed.status).toBe(200)
@@ -45,11 +48,12 @@ test("cloud share routes are absent even with auto-share configuration", async (
   }
 })
 
-// engine-runtime [TP-R14-02]: SDK discovery must not advertise removed operations.
-test("OpenAPI has no cloud share operations or settings", async () => {
-  const doc = await Server.openapi()
-  expect(doc.paths).not.toHaveProperty("/session/{sessionID}/share")
-  expect(doc.components?.schemas?.Config?.properties).not.toHaveProperty("share")
-  expect(doc.components?.schemas?.Config?.properties).not.toHaveProperty("autoshare")
-  expect(doc.components?.schemas?.Session?.properties).not.toHaveProperty("share")
+// engine-runtime [TP-R14-02]: the schemas OpenAPI and the SDK are generated from carry no share surface.
+// Checked on the schemas directly: Server.openapi() is not safe to call twice in one process.
+test("session and config schemas have no cloud share fields", () => {
+  expect(Session.Info.shape).not.toHaveProperty("share")
+  // The schema is strict, so removed keys are rejected; loading strips them first (see config.test.ts).
+  for (const removed of [{ share: "auto" }, { autoshare: true }, { enterprise: { url: "https://example.com" } }])
+    expect(Config.Info.safeParse(removed).success).toBe(false)
+  expect(Config.Info.safeParse({}).success).toBe(true)
 })

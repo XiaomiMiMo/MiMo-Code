@@ -786,6 +786,7 @@ test("ignores legacy cloud sharing settings", async () => {
           $schema: "https://opencode.ai/config.json",
           autoshare: true,
           share: "auto",
+          enterprise: { url: "https://example.com" },
         }),
       )
     },
@@ -796,6 +797,7 @@ test("ignores legacy cloud sharing settings", async () => {
       const config = await load()
       expect(config).not.toHaveProperty("share")
       expect(config).not.toHaveProperty("autoshare")
+      expect(config).not.toHaveProperty("enterprise")
     },
   })
 })

@@ -1319,12 +1319,6 @@ export type Config = {
   tools?: {
     [key: string]: boolean
   }
-  enterprise?: {
-    /**
-     * Enterprise URL
-     */
-    url?: string
-  }
   experimental?: {
     hook?: {
       file_edited?: {

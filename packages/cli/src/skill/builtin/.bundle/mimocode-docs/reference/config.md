@@ -154,11 +154,9 @@ The trigger is the model's prompt capacity (`limit.input` when the provider publ
 | Key | Purpose |
 |-----|---------|
 | `autoupdate` | `true` / `false` / `"notify"` |
-| `share` | `"manual"` / `"auto"` / `"disabled"` |
 | `snapshot` | Filesystem snapshot tracking for undo/redo (default true) |
 | `logLevel` | Log verbosity |
 | `server` | Config for `mimo serve` |
-| `enterprise.url` | Enterprise endpoint |
 
 ## Example: common tweaks
 

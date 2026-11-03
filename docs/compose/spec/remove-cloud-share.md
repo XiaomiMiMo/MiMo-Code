@@ -10,11 +10,11 @@
 
 Session creation calls `Session.Service.create` directly. App and bootstrap runtimes have no sharing services or event subscriptions. The share transport is removed, including enterprise/account transport. CLI run and GitHub output contain no cloud links or social cards. TUI commands, shortcut declarations, tips and translations contain no sharing affordances. Import accepts local JSON files only and rejects URLs before bootstrap or network access. The v2 SDK is regenerated from actual OpenAPI; the v1 SDK loses share/unshare methods, operation types and the session `share` field as well.
 
-`Session.Info` has no `share` field, so session reads, `session.updated` events and the OpenAPI `Session` schema carry no share link. Replaying older `session.updated` events that still contain `share` is safe: the session projection writes only known columns and ignores it. The `sidebar_title` plugin slot no longer receives `share_url`.
+`Session.Info` has no `share` field, so session reads, `session.updated` events and the OpenAPI `Session` schema carry no share link. Replaying older `session.updated` events that still contain `share` is safe: the session projection writes only known columns and ignores it. The `sidebar_title` plugin slot no longer receives `share_url`. The bundled `mimocode-docs` reference lists no sharing commands or settings.
 
 Migration `20261103000000_remove_session_share` drops the `session_share` table and the `session.share_url` column. Published migrations are unchanged. JSON storage migration ignores legacy `session_share/*.json` files and session `share` links; OpenCode database import ignores the source `share_url` column.
 
-Configuration normalization discards `share` and `autoshare` before validation; TUI config normalization discards sharing shortcuts. Removing local capabilities and data does not revoke already published third-party links.
+Configuration normalization discards `share`, `autoshare` and `enterprise` (whose `url` only the removed transport read) before validation, and the config schema no longer declares them; TUI config normalization discards sharing shortcuts. Removing local capabilities and data does not revoke already published third-party links.
 
 ## Test points
 
