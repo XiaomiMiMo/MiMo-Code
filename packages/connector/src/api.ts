@@ -148,7 +148,10 @@ export class ConnectApi {
   }
 
   async decide(requestId: string, decision: "approve" | "reject" | "cancel", connectionEpoch: number) {
-    const result = parse(Decision, await this.post1(`${ROOT}/pairing/requests/${requestId}/${decision}`, { connectionEpoch }))
+    const result = parse(
+      Decision,
+      await this.post1(`${ROOT}/pairing/requests/${requestId}/${decision}`, { connectionEpoch }),
+    )
     if (result.requestId !== requestId) throw new ConnectError("protocol")
     return result
   }

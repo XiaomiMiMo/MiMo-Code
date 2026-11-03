@@ -24,11 +24,11 @@ export function base64url(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64url")
 }
 
-export function fromBase64url(text: string): Uint8Array {
+export function fromBase64url(text: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array(Buffer.from(text, "base64url"))
 }
 
-export async function sha256(bytes: Uint8Array | string): Promise<Uint8Array> {
+export async function sha256(bytes: Uint8Array<ArrayBuffer> | string): Promise<Uint8Array<ArrayBuffer>> {
   const input = typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes
   return new Uint8Array(await crypto.subtle.digest("SHA-256", input))
 }

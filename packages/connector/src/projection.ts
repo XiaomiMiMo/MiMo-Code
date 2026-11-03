@@ -52,7 +52,7 @@ export class SessionProjection {
 
   /** Frames to publish for `snapshot`, text before state; empty when nothing changed. */
   next(snapshot: BackendSnapshot): ProjectionFrames | ProjectionFailure {
-    if (snapshot.turns.length > MAX_TURNS) return "projection_too_large"
+    if (snapshot.complete === false || snapshot.turns.length > MAX_TURNS) return "projection_too_large"
     const parts = snapshot.parts.filter((part) => part.messageId !== RESERVED_MESSAGE)
     if (parts.length > MAX_PARTS) return "projection_too_large"
 
@@ -99,7 +99,11 @@ export class SessionProjection {
       const partBody = JSON.stringify(part)
       const seen = this.parts.get(key)
       if (!seen) newIdentities += 1
-      const revision = !seen ? 1 : seen.body === partBody && this.visibleParts.has(key) ? seen.revision : seen.revision + 1
+      const revision = !seen
+        ? 1
+        : seen.body === partBody && this.visibleParts.has(key)
+          ? seen.revision
+          : seen.revision + 1
       wire.push({ ...part, revision })
     }
     if (this.parts.size + newIdentities > MAX_PART_IDENTITIES) return "resync_required"

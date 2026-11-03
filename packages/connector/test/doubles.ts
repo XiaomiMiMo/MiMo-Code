@@ -1,4 +1,11 @@
-import type { AgentBackend, BackendSession, BackendSnapshot, LookupOutcome, SecretStore, SubmitOutcome } from "../src/ports"
+import type {
+  AgentBackend,
+  BackendSession,
+  BackendSnapshot,
+  LookupOutcome,
+  SecretStore,
+  SubmitOutcome,
+} from "../src/ports"
 
 export class MemorySecrets implements SecretStore {
   readonly values = new Map<string, string>()

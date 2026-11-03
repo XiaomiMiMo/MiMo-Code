@@ -62,7 +62,14 @@ export class Catalog {
 
   private async seal(revision: string, offset: number): Promise<string> {
     const issuedAt = this.clock()
-    const body: CursorBody = { v: 1, keyId: this.keyId, revision, offset, issuedAt, expiresAt: issuedAt + CURSOR_LIFETIME_MS }
+    const body: CursorBody = {
+      v: 1,
+      keyId: this.keyId,
+      revision,
+      offset,
+      issuedAt,
+      expiresAt: issuedAt + CURSOR_LIFETIME_MS,
+    }
     const encoded = base64url(new TextEncoder().encode(JSON.stringify(body)))
     return `${encoded}.${base64url(await this.mac(encoded))}`
   }

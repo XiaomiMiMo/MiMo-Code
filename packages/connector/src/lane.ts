@@ -134,9 +134,10 @@ export class ContentLane {
     if (!fence || !this.matches(frame)) return this.fail("invalid_fence")
     const deadline = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), GATE_BUDGET_MS))
     // Never acknowledge a fence whose gate is not durable: a late or failed gate closes the lane.
-    const outcome = await Promise.race([this.events.onFence(this.lane, fence).then(() => "ok" as const), deadline]).catch(
-      () => "failed" as const,
-    )
+    const outcome = await Promise.race([
+      this.events.onFence(this.lane, fence).then(() => "ok" as const),
+      deadline,
+    ]).catch(() => "failed" as const)
     if (outcome !== "ok") return this.fail(`gate_${outcome}`)
     if (this.closed) return
     this.socket?.send({

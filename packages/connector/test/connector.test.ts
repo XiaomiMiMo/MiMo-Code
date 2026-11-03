@@ -105,7 +105,9 @@ describe("connector", () => {
     await s.connector.start()
     await s.until(() => online(s.connector.status))
     const outcome = s.connector.pair()
-    await s.until(() => s.connector.status.state === "online" && "pairing" in s.connector.status && !!s.connector.status.pairing)
+    await s.until(
+      () => s.connector.status.state === "online" && "pairing" in s.connector.status && !!s.connector.status.pairing,
+    )
     const shown = (s.connector.status as { pairing: { code: string } }).pairing.code
     expect(shown).toMatch(/^\d{4}$/)
     const requestId = s.claim("Pixel 9")
@@ -122,7 +124,10 @@ describe("connector", () => {
       { bindingId, phoneName: "Pixel 9", canSend: true, connected: true },
     ])
     const state = await s.state()
-    expect(state.consents[bindingId]).toMatchObject({ subject: "subject-1", scopes: ["sessions:list", "sessions:read", "sessions:send"] })
+    expect(state.consents[bindingId]).toMatchObject({
+      subject: "subject-1",
+      scopes: ["sessions:list", "sessions:read", "sessions:send"],
+    })
     expect(state.pending).toEqual({})
     expect(Object.keys(state.gates).sort()).toEqual([`${bindingId}:command`, `${bindingId}:state`, `${bindingId}:text`])
 

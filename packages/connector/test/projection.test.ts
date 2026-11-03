@@ -2,16 +2,33 @@ import { describe, expect, test } from "bun:test"
 import type { BackendPart, BackendSnapshot, BackendTurn } from "../src/ports"
 import { SessionProjection } from "../src/projection"
 
-type Text = { sequence: number; snapshot: boolean; contentRevision: number; parts: (BackendPart & { revision: number; messageOrder: number; partOrder: number })[] }
+type Text = {
+  sequence: number
+  snapshot: boolean
+  contentRevision: number
+  parts: (BackendPart & { revision: number; messageOrder: number; partOrder: number })[]
+}
 type State = {
   sequence: number
   contentRevision: number
   sessionPhase: string
   sessionTitle: string
-  turns: { inputMessageId: string; assistantMessageId: string; phase: string; revision: number; finalContentRevision: number | null }[]
+  turns: {
+    inputMessageId: string
+    assistantMessageId: string
+    phase: string
+    revision: number
+    finalContentRevision: number | null
+  }[]
 }
 
-const user = (id: string, text: string): BackendPart => ({ messageId: id, partId: `${id}_p`, role: "user", turnId: id, text })
+const user = (id: string, text: string): BackendPart => ({
+  messageId: id,
+  partId: `${id}_p`,
+  role: "user",
+  turnId: id,
+  text,
+})
 const reply = (id: string, turnId: string, text: string, partId = `${id}_p`): BackendPart => ({
   messageId: id,
   partId,
@@ -24,7 +41,12 @@ const turn = (input: string, assistant: string, phase: BackendTurn["phase"]): Ba
   assistantMessageId: assistant,
   phase,
 })
-const snap = (parts: BackendPart[], turns: BackendTurn[], phase: BackendSnapshot["phase"] = "idle", title = "T"): BackendSnapshot => ({
+const snap = (
+  parts: BackendPart[],
+  turns: BackendTurn[],
+  phase: BackendSnapshot["phase"] = "idle",
+  title = "T",
+): BackendSnapshot => ({
   title,
   phase,
   parts,
@@ -60,7 +82,15 @@ describe("session projection", () => {
       turns: [],
       sessionTitle: "T",
     })
-    expect(Object.keys(first.text!)).toEqual(["type", "desktopSessionId", "projectionEpoch", "sequence", "snapshot", "contentRevision", "parts"])
+    expect(Object.keys(first.text!)).toEqual([
+      "type",
+      "desktopSessionId",
+      "projectionEpoch",
+      "sequence",
+      "snapshot",
+      "contentRevision",
+      "parts",
+    ])
   })
 
   test("an empty session still publishes both lanes", () => {
@@ -79,7 +109,10 @@ describe("session projection", () => {
   test("text changes raise the content revision and only the changed part's revision", () => {
     const projection = new SessionProjection("ses_1")
     frames(projection, snap([user("m1", "hi"), reply("a1", "m1", "He")], [turn("m1", "a1", "running")], "running"))
-    const { text, state } = frames(projection, snap([user("m1", "hi"), reply("a1", "m1", "Hello")], [turn("m1", "a1", "running")], "running"))
+    const { text, state } = frames(
+      projection,
+      snap([user("m1", "hi"), reply("a1", "m1", "Hello")], [turn("m1", "a1", "running")], "running"),
+    )
     expect(text).toMatchObject({ sequence: 1, snapshot: false, contentRevision: 2 })
     expect(text!.parts.map((p) => [p.messageId, p.revision, p.messageOrder, p.partOrder])).toEqual([
       ["m1", 1, 0, 0],
@@ -92,7 +125,10 @@ describe("session projection", () => {
   test("a finished turn points at the text revision that holds its whole reply", () => {
     const projection = new SessionProjection("ses_1")
     frames(projection, snap([user("m1", "hi"), reply("a1", "m1", "Hel")], [turn("m1", "a1", "running")], "running"))
-    const done = frames(projection, snap([user("m1", "hi"), reply("a1", "m1", "Hello")], [turn("m1", "a1", "completed")]))
+    const done = frames(
+      projection,
+      snap([user("m1", "hi"), reply("a1", "m1", "Hello")], [turn("m1", "a1", "completed")]),
+    )
     expect(done.text?.contentRevision).toBe(2)
     expect(done.state).toMatchObject({ sequence: 1, contentRevision: 2, sessionPhase: "idle" })
     expect(done.state!.turns).toEqual([
@@ -148,21 +184,37 @@ describe("session projection", () => {
   test("a phone-reserved control part is never produced", () => {
     const { text } = frames(
       new SessionProjection("ses_1"),
-      snap([{ messageId: "mimo-remote-interaction", partId: "permission-state", role: "assistant", turnId: null, text: "{}" }], []),
+      snap(
+        [
+          {
+            messageId: "mimo-remote-interaction",
+            partId: "permission-state",
+            role: "assistant",
+            turnId: null,
+            text: "{}",
+          },
+        ],
+        [],
+      ),
     )
     expect(text!.parts).toEqual([])
   })
 
   test("a session over the single-snapshot budget is reported as too large", () => {
+    expect(new SessionProjection("ses_1").next({ ...snap([], []), complete: false })).toBe("projection_too_large")
     const tooManyTurns = Array.from({ length: 33 }, (_, i) => turn(`m${i}`, `a${i}`, "unknown"))
     expect(new SessionProjection("ses_1").next(snap([], tooManyTurns))).toBe("projection_too_large")
     const tooManyParts = Array.from({ length: 257 }, (_, i) => user(`m${i}`, "x"))
     expect(new SessionProjection("ses_1").next(snap(tooManyParts, []))).toBe("projection_too_large")
-    expect(new SessionProjection("ses_1").next(snap([user("m1", "x".repeat(262_144))], []))).toBe("projection_too_large")
+    expect(new SessionProjection("ses_1").next(snap([user("m1", "x".repeat(262_144))], []))).toBe(
+      "projection_too_large",
+    )
     // A full-length title alone fits the 16 KiB state frame; with 32 turns it does not.
     const title = "界".repeat(4096)
     expect(typeof new SessionProjection("ses_1").next(snap([], [], "idle", title))).toBe("object")
-    const turns = Array.from({ length: 32 }, (_, i) => turn(`msg_${"x".repeat(40)}${i}`, `msg_${"y".repeat(40)}${i}`, "unknown"))
+    const turns = Array.from({ length: 32 }, (_, i) =>
+      turn(`msg_${"x".repeat(40)}${i}`, `msg_${"y".repeat(40)}${i}`, "unknown"),
+    )
     expect(new SessionProjection("ses_1").next(snap([], turns, "idle", title))).toBe("projection_too_large")
   })
 

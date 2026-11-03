@@ -31,7 +31,10 @@ export class FakeConnect {
   devices = new Map<string, { name: string; thumbprint: string }>()
   epoch = 0
   discovery: "cli" | "empty" | "missing" = "cli"
-  challenges = new Map<string, { code: string; status: string; request: null | { requestId: string; phoneName: string } }>()
+  challenges = new Map<
+    string,
+    { code: string; status: string; request: null | { requestId: string; phoneName: string } }
+  >()
   decisions = new Map<string, { status: string; bindingId: string | null }>()
   grants = new Map<string, Record<string, unknown>>()
   /** Last fence state sent per lane path: a revoked fence ends with fence-confirmed on ack. */
@@ -84,7 +87,10 @@ export class FakeConnect {
 
   // ---- HTTP -------------------------------------------------------------
 
-  private async handle(request: Request, server: Server<{ path: string; lane?: string }>): Promise<Response | undefined> {
+  private async handle(
+    request: Request,
+    server: Server<{ path: string; lane?: string }>,
+  ): Promise<Response | undefined> {
     const url = new URL(request.url)
     const path = url.pathname
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return this.upgrade(request, server, path)
@@ -115,7 +121,10 @@ export class FakeConnect {
     if (path === "/api/connect/connector-capabilities") {
       if (profile !== null) return this.error(id, 400, "invalid_request", version)
       if (this.discovery === "missing") return this.error(id, 404, "not_found", null)
-      return respond({ contract: "connector-discovery-v1", profiles: this.discovery === "cli" ? ["cli-connector-v1"] : [] })
+      return respond({
+        contract: "connector-discovery-v1",
+        profiles: this.discovery === "cli" ? ["cli-connector-v1"] : [],
+      })
     }
     if (path === "/api/connect/device-challenges") {
       const nonce = crypto.randomUUID()
@@ -173,7 +182,8 @@ export class FakeConnect {
       return { requestId: decision[1], status, bindingId }
     }
     const request = path.match(/^\/api\/connect\/pairing\/requests\/([^/]+)$/)
-    if (request) return { requestId: request[1], ...(this.decisions.get(request[1]) ?? { status: "claimed", bindingId: null }) }
+    if (request)
+      return { requestId: request[1], ...(this.decisions.get(request[1]) ?? { status: "claimed", bindingId: null }) }
     const list = path.match(/^\/api\/connect\/devices\/([^/]+)\/bindings$/)
     if (list) {
       const all = [...this.bindings.values()]
@@ -262,13 +272,20 @@ export class FakeConnect {
     }
   }
 
-  private async verifyProof(method: string, path: string, body: unknown, proof: string | null): Promise<string | undefined> {
+  private async verifyProof(
+    method: string,
+    path: string,
+    body: unknown,
+    proof: string | null,
+  ): Promise<string | undefined> {
     if (!proof) return undefined
     const [h, c, s] = proof.split(".")
     const header = JSON.parse(new TextDecoder().decode(fromBase64url(h)))
     const claims = JSON.parse(new TextDecoder().decode(fromBase64url(c)))
     if (header.alg !== "ES256" || header.typ !== "mimo-device-proof+jwt") return undefined
-    const key = await crypto.subtle.importKey("jwk", header.jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"])
+    const key = await crypto.subtle.importKey("jwk", header.jwk, { name: "ECDSA", namedCurve: "P-256" }, false, [
+      "verify",
+    ])
     const ok = await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       key,
@@ -301,7 +318,13 @@ export class FakeConnect {
     return thumbprint
   }
 
-  private envelope(id: string, version: string | null, data: unknown, status: number, profile: string | null): Response {
+  private envelope(
+    id: string,
+    version: string | null,
+    data: unknown,
+    status: number,
+    profile: string | null,
+  ): Response {
     const headers = new Headers({ "Content-Type": "application/json", "Mimo-Request-Id": id })
     if (version) headers.set("Mimo-Connect-Version", version)
     if (profile) headers.set("Mimo-Connect-Profile", profile)
@@ -312,7 +335,10 @@ export class FakeConnect {
     const headers = new Headers({ "Content-Type": "application/json", "Mimo-Request-Id": id })
     if (version) headers.set("Mimo-Connect-Version", version)
     if (retryAfter) headers.set("Retry-After", retryAfter)
-    return new Response(JSON.stringify({ contractVersion: version, requestId: id, error: { code } }), { status, headers })
+    return new Response(JSON.stringify({ contractVersion: version, requestId: id, error: { code } }), {
+      status,
+      headers,
+    })
   }
 
   // ---- WebSocket ----------------------------------------------------------
@@ -338,7 +364,13 @@ export class FakeConnect {
       this.control = ws
       this.epoch += 1
       ws.send(
-        JSON.stringify({ type: "ready", protocolVersion: 1, connectionEpoch: this.epoch, heartbeatMs: 25000, connectorLeaseMs: 75000 }),
+        JSON.stringify({
+          type: "ready",
+          protocolVersion: 1,
+          connectionEpoch: this.epoch,
+          heartbeatMs: 25000,
+          connectorLeaseMs: 75000,
+        }),
       )
     }
   }
@@ -347,7 +379,8 @@ export class FakeConnect {
     const frame = JSON.parse(message) as Record<string, unknown>
     this.frames.push({ path: ws.data.path, frame })
     if (ws.data.path === "/api/connect/control") {
-      if (frame.type === "heartbeat") ws.send(JSON.stringify({ protocolVersion: 1, type: "pong", connectionEpoch: this.epoch }))
+      if (frame.type === "heartbeat")
+        ws.send(JSON.stringify({ protocolVersion: 1, type: "pong", connectionEpoch: this.epoch }))
       return
     }
     if (frame.type === "attach") {

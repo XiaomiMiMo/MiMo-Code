@@ -29,6 +29,8 @@ export type BackendSnapshot = {
   /** Text parts in conversation order. */
   parts: BackendPart[]
   turns: BackendTurn[]
+  /** False when the agent could not read the whole conversation; it is then never shown as complete. */
+  complete?: boolean
 }
 
 export type SubmitOutcome =

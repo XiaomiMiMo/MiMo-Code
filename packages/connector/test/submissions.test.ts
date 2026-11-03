@@ -97,7 +97,9 @@ describe("phone submissions", () => {
 
   test("status without a record is unknown; read-only grants and missing sessions are rejected", async () => {
     await using s = await setup()
-    expect(await s.submissions.status({ bindingId: "b1", sessionId: "ses_1", requestId: "nope" })).toEqual({ status: "unknown" })
+    expect(await s.submissions.status({ bindingId: "b1", sessionId: "ses_1", requestId: "nope" })).toEqual({
+      status: "unknown",
+    })
     expect(await s.submissions.send({ ...send, canSend: false })).toEqual({ status: "rejected", reason: "read-only" })
     expect(await s.submissions.send({ ...send, requestId: "r2", sessionId: "ses_gone" })).toEqual({
       status: "rejected",

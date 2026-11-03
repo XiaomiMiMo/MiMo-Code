@@ -79,7 +79,10 @@ export class Dispatcher {
       case "sessions-list":
         return this.list(frame, target)
       case "sessions-watch":
-        return this.observe(target, new CatalogWatch(this.backend, this.catalog, target, this.reply, this.done, this.clock))
+        return this.observe(
+          target,
+          new CatalogWatch(this.backend, this.catalog, target, this.reply, this.done, this.clock),
+        )
       case "subscribe-session":
         if (typeof frame.sessionId !== "string" || !WIRE_ID.test(frame.sessionId)) {
           return void this.reply(target, "request-error", { code: "not_found" })
@@ -105,7 +108,8 @@ export class Dispatcher {
   }
 
   private async list(frame: Record<string, unknown>, target: Target): Promise<void> {
-    const limit = typeof frame.limit === "number" && Number.isInteger(frame.limit) ? Math.min(Math.max(frame.limit, 1), 50) : 50
+    const limit =
+      typeof frame.limit === "number" && Number.isInteger(frame.limit) ? Math.min(Math.max(frame.limit, 1), 50) : 50
     const cursor = typeof frame.cursor === "string" ? frame.cursor : null
     const sessions = await this.backend.listSessions().catch(() => undefined)
     if (!sessions) return void this.reply(target, "request-error", { code: "source_unavailable" })

@@ -33,11 +33,16 @@ async function setup(options: { canSend?: boolean } = {}) {
   const sent: Sent[] = []
   const open = { command: true, state: true, text: true }
   const submissions = new Submissions(backend, new StateFile(path.join(dir, "state"), new MemorySecrets()))
-  const dispatcher = new Dispatcher({ ...scope, canSend: options.canSend ?? true }, backend, submissions, (lane, frame) => {
-    if (!open[lane]) return false
-    sent.push({ lane, frame })
-    return true
-  })
+  const dispatcher = new Dispatcher(
+    { ...scope, canSend: options.canSend ?? true },
+    backend,
+    submissions,
+    (lane, frame) => {
+      if (!open[lane]) return false
+      sent.push({ lane, frame })
+      return true
+    },
+  )
   return {
     backend,
     sent,
@@ -72,7 +77,15 @@ async function setup(options: { canSend?: boolean } = {}) {
   }
 }
 
-const TARGET_KEYS = ["bindingId", "connectionEpoch", "deviceGroupId", "dispatchId", "grantVersion", "protocolVersion", "requestId"]
+const TARGET_KEYS = [
+  "bindingId",
+  "connectionEpoch",
+  "deviceGroupId",
+  "dispatchId",
+  "grantVersion",
+  "protocolVersion",
+  "requestId",
+]
 
 describe("dispatcher", () => {
   test("sessions-list answers a page that echoes the exact target", async () => {
@@ -84,7 +97,9 @@ describe("dispatcher", () => {
     expect(frame).toMatchObject({ ...wire, ...ids, protocolVersion: 4, type: "sessions-page", nextCursor: null })
     expect(frame.canSend).toBeUndefined()
     expect(Object.keys(frame).sort()).toEqual([...TARGET_KEYS, "entries", "nextCursor", "revision", "type"].sort())
-    expect(frame.entries).toEqual([{ sessionId: "ses_1", title: "First", updatedAt: new Date(1_700_000_000_000).toISOString() }])
+    expect(frame.entries).toEqual([
+      { sessionId: "ses_1", title: "First", updatedAt: new Date(1_700_000_000_000).toISOString() },
+    ])
   })
 
   test("frames for another group or grant are ignored", async () => {
@@ -135,7 +150,13 @@ describe("dispatcher", () => {
     await s.until(() => s.sent.length === 2)
     expect(s.sent.map((x) => x.lane)).toEqual(["text", "state"])
     for (const { frame } of s.sent) {
-      expect(frame).toMatchObject({ ...ids, sessionId: "ses_1", desktopSessionId: "ses_1", sequence: 0, snapshot: true })
+      expect(frame).toMatchObject({
+        ...ids,
+        sessionId: "ses_1",
+        desktopSessionId: "ses_1",
+        sequence: 0,
+        snapshot: true,
+      })
     }
     expect(s.sent[0].frame.parts[0]).toMatchObject({ messageId: "msg_u1", role: "user", revision: 1 })
   })
@@ -176,7 +197,13 @@ describe("dispatcher", () => {
     s.backend.snapshots.set("ses_1", {
       title: "",
       phase: "idle",
-      parts: Array.from({ length: 300 }, (_, i) => ({ messageId: `m${i}`, partId: "p", role: "user" as const, turnId: `m${i}`, text: "x" })),
+      parts: Array.from({ length: 300 }, (_, i) => ({
+        messageId: `m${i}`,
+        partId: "p",
+        role: "user" as const,
+        turnId: `m${i}`,
+        text: "x",
+      })),
       turns: [],
     })
     s.request("subscribe-session", { sessionId: "ses_1" })
@@ -226,7 +253,12 @@ describe("dispatcher", () => {
     await using s = await setup()
     const send = s.request("send", { sessionId: "ses_1", text: "do it" })
     await s.until(() => s.sent.length === 1)
-    expect(s.sent[0].frame).toMatchObject({ ...send, type: "submission-result", sessionId: "ses_1", status: "accepted" })
+    expect(s.sent[0].frame).toMatchObject({
+      ...send,
+      type: "submission-result",
+      sessionId: "ses_1",
+      status: "accepted",
+    })
     const messageId = s.sent[0].frame.messageId
     expect(s.backend.submits).toEqual([{ sessionId: "ses_1", messageId, text: "do it" }])
     s.dispatcher.handle({
@@ -240,7 +272,9 @@ describe("dispatcher", () => {
     })
     await s.until(() => s.sent.length === 2)
     expect(s.sent[1].frame).toMatchObject({ status: "accepted", messageId })
-    expect(Object.keys(s.sent[1].frame).sort()).toEqual([...TARGET_KEYS, "messageId", "sessionId", "status", "type"].sort())
+    expect(Object.keys(s.sent[1].frame).sort()).toEqual(
+      [...TARGET_KEYS, "messageId", "sessionId", "status", "type"].sort(),
+    )
     expect(s.backend.submits.length).toBe(1)
   })
 

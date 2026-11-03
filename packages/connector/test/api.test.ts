@@ -49,7 +49,12 @@ describe("Connect endpoints for the CLI role", () => {
     expect(grant.grantVersion).toBe(1)
     expect(h.service.requests.at(-1)!.body).toMatchObject({ expectedVersion: 0, grantVersion: 1, targetKind: "cli" })
     const deviceGroupId = crypto.randomUUID()
-    const token = await h.api.channelToken(bindingId, { deviceGroupId, lane: "state", grantVersion: 1, connectionEpoch: 2 })
+    const token = await h.api.channelToken(bindingId, {
+      deviceGroupId,
+      lane: "state",
+      grantVersion: 1,
+      connectionEpoch: 2,
+    })
     expect(token.lane).toBe("state")
     expect(token.deviceGroupId).toBe(deviceGroupId)
   })

@@ -37,7 +37,7 @@ export async function importDeviceKey(privateJwk: PrivateJwk): Promise<DeviceKey
     jwk,
     // WebCrypto ECDSA already returns IEEE P1363 (R||S), which is what Connect verifies.
     sign: async (data) =>
-      new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, data)),
+      new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, new Uint8Array(data))),
   }
 }
 

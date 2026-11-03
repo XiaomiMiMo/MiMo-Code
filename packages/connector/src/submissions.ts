@@ -60,7 +60,9 @@ export class Submissions {
     await this.state.update((state) => {
       state.submissions[key] = { messageId, textSha256, createdAt: this.clock() }
     })
-    const outcome = await this.backend.submit(request.sessionId, messageId, request.text).catch(() => ({ kind: "unknown" as const }))
+    const outcome = await this.backend
+      .submit(request.sessionId, messageId, request.text)
+      .catch(() => ({ kind: "unknown" as const }))
     if (outcome.kind === "accepted") return { status: "accepted", messageId }
     if (outcome.kind === "rejected") return { status: "rejected", reason: outcome.reason }
     return this.resolve(request.sessionId, messageId)

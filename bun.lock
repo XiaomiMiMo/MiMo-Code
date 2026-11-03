@@ -65,6 +65,7 @@
         "@hono/zod-validator": "catalog:",
         "@jitl/quickjs-singlefile-mjs-release-sync": "0.32.0",
         "@lydell/node-pty": "catalog:",
+        "@mimo-ai/connector": "workspace:*",
         "@mimo-ai/plugin": "workspace:*",
         "@mimo-ai/sdk": "workspace:*",
         "@modelcontextprotocol/sdk": "1.27.1",

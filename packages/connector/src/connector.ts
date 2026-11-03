@@ -182,7 +182,8 @@ export class Connector {
     if (!pairing) return
     pairing.cancelled = true
     const epoch = this.generation?.epoch
-    if (this.runtime && epoch) await this.runtime.api.cancelPairingCode(pairing.challengeId, epoch).catch(() => undefined)
+    if (this.runtime && epoch)
+      await this.runtime.api.cancelPairingCode(pairing.challengeId, epoch).catch(() => undefined)
   }
 
   /** Remove a phone: the binding is revoked on the service and the local consent dropped. */
@@ -328,7 +329,8 @@ export class Connector {
     for (const { binding } of bindings) {
       const consent = state.consents[binding.bindingId]
       if (binding.state === "active") {
-        if (consent && this.consentHolds(consent, runtime.account)) void this.expose(runtime, generation, binding, consent)
+        if (consent && this.consentHolds(consent, runtime.account))
+          void this.expose(runtime, generation, binding, consent)
         continue
       }
       const hasGate = Object.keys(state.gates).some((key) => key.startsWith(`${binding.bindingId}:`))
@@ -350,7 +352,12 @@ export class Connector {
   }
 
   /** Publish this generation's grant from the stored consent and open a device group for it. */
-  private async expose(runtime: Runtime, generation: Generation, binding: BindingView, consent: Consent): Promise<void> {
+  private async expose(
+    runtime: Runtime,
+    generation: Generation,
+    binding: BindingView,
+    consent: Consent,
+  ): Promise<void> {
     if (!this.live(generation) || this.groups.has(binding.bindingId) || this.exposing.has(binding.bindingId)) return
     this.exposing.add(binding.bindingId)
     let grant: GrantView
@@ -425,7 +432,12 @@ export class Connector {
       .catch(() => gate?.grantVersion)
     let confirmed = binding.relayFence === "complete"
     if (!confirmed && grantVersion) {
-      const recovery = { bindingId: binding.bindingId, grantVersion, connectionEpoch: generation.epoch, scopes: [] as Scopes }
+      const recovery = {
+        bindingId: binding.bindingId,
+        grantVersion,
+        connectionEpoch: generation.epoch,
+        scopes: [] as Scopes,
+      }
       confirmed = await new DeviceGroup(this.groupContext(runtime), recovery, () => {})
         .confirmRevocation()
         .catch(() => false)
@@ -538,7 +550,12 @@ export class Connector {
       if (request?.status === "approved" && !binding) continue
       await this.state.update((state) => {
         delete state.pending[requestId]
-        if (binding) state.consents[binding.bindingId] = { ...confirmation, bindingId: binding.bindingId, phoneId: binding.phoneId }
+        if (binding)
+          state.consents[binding.bindingId] = {
+            ...confirmation,
+            bindingId: binding.bindingId,
+            phoneId: binding.phoneId,
+          }
       })
     }
   }
