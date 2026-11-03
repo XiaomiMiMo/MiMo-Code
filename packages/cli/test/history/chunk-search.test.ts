@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn } from "bun:test"
+import type { SQLQueryBindings } from "bun:sqlite"
 import { Effect, Layer } from "effect"
 import { Database } from "../../src/storage"
 import { HistoryFtsTable } from "../../src/history/fts.sql"
@@ -29,7 +30,7 @@ afterEach(async () => {
 const it = testEffect(Layer.mergeAll(History.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
 describe("History.search chunked parts", () => {
-  it.live("multi-chunk part does not hide other distinct parts under LIMIT", () =>
+  it.live("legacy chunk residue never yields duplicate hits", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const now = Date.now()
@@ -51,29 +52,61 @@ describe("History.search chunked parts", () => {
               })
               .run()
           }
-          for (const id of ["prt_s1", "prt_s2", "prt_s3"]) {
+        })
+
+        const history = yield* History.Service
+        const hits = yield* history.search({ query: "sharedtoken", scope: "project", limit: 3 })
+        expect(hits.map((h) => h.part_id)).toEqual(["prt_big"])
+      }),
+    ),
+  )
+
+  it.live("reads at most limit index rows", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const now = Date.now()
+        const projectID = Instance.project.id
+        Database.use((db) => {
+          for (let i = 0; i < 60; i++) {
             db.insert(HistoryFtsTable)
               .values({
-                part_id: id,
+                part_id: `prt_${i}`,
                 session_id: "ses_a",
-                message_id: "msg_b",
+                message_id: "msg_a",
                 project_id: projectID,
-      kind: "assistant_text",
+                kind: "assistant_text",
                 tool_name: null,
-                body: `sharedtoken in ${id}`,
-                body_idx: `sharedtoken in ${id}`,
+                body: `sharedtoken ${i}`,
+                body_idx: `sharedtoken ${i}`,
                 time_created: now,
               })
               .run()
           }
         })
-
-        const history = yield* History.Service
-        const hits = yield* history.search({ query: "sharedtoken", scope: "project", limit: 3 })
-        const ids = hits.map((h) => h.part_id)
-        expect(ids.length).toBe(3)
-        expect(new Set(ids).size).toBe(3)
-        expect(ids).toContain("prt_big")
+        const client = Database.Client().$client
+        const prepare = client.prepare.bind(client)
+        const reads: number[] = []
+        const capture = spyOn(client, "prepare").mockImplementation(
+          <R, P extends SQLQueryBindings | SQLQueryBindings[]>(sql: string, params?: P) => {
+            const statement = prepare<R, P>(sql, params)
+            if (!sql.includes("history_fts_idx MATCH")) return statement
+            const all = statement.all.bind(statement)
+            statement.all = (...args) => {
+              const rows = all(...args)
+              reads.push(rows.length)
+              return rows
+            }
+            return statement
+          },
+        )
+        try {
+          const history = yield* History.Service
+          const hits = yield* history.search({ query: "sharedtoken", scope: "project", limit: 5 })
+          expect(hits.length).toBe(5)
+        } finally {
+          capture.mockRestore()
+        }
+        expect(reads).toEqual([5])
       }),
     ),
   )

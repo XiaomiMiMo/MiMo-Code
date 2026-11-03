@@ -116,11 +116,6 @@ export const layer = Layer.effect(
       }
 
       const whereClause = conditions.length ? `AND ${conditions.join(" AND ")}` : ""
-      // Debt history-search-overfetch-after-v6: legacy multi-row FTS bodies may remain
-      // until migration v6 finishes. Over-fetch so one part cannot fill LIMIT before
-      // dedupe. When v6 is done on a DB (or once fleet v6 coverage is complete), tighten
-      // fetchLimit back to `limit` — tracked in docs/compose/spec/history-chunk-large-bodies.md.
-      const fetchLimit = Math.min(limit * 24, HARD_CAP * 24)
       // CROSS JOIN fixes the loop order in SQLite: MATCH once, then rowid lookup.
       // Node SQLite may otherwise scan a project first and rerun MATCH per row.
       const sqlText = `
@@ -142,7 +137,7 @@ export const layer = Layer.effect(
       // resolves to node:sqlite outside Bun). See the same note in memory/service.ts.
       const rows = Database.Client()
         .$client.prepare(sqlText)
-        .all(ftsQuery, ...params, fetchLimit) as Row[]
+        .all(ftsQuery, ...params, limit) as Row[]
       const seen = new Set<string>()
       const hits = []
       for (const r of rows) {
