@@ -86,14 +86,13 @@ export const EditTool = Tool.define(
             Effect.gen(function* () {
               if (params.old_string === "") {
                 const existed = yield* afs.existsSafe(filePath)
-                if (existed) contentOld = yield* afs.readFileString(filePath)
+                if (existed) {
+                  const info = yield* afs.stat(filePath)
+                  if (info.type === "Directory") throw new Error(`Path is a directory, not a file: ${filePath}`)
+                  contentOld = yield* afs.readFileString(filePath)
+                }
                 contentNew = params.new_string
-                diff = createTwoFilesPatch(
-                  filePath,
-                  filePath,
-                  normalizeLineEndings(contentOld),
-                  normalizeLineEndings(contentNew),
-                )
+                diff = createTwoFilesPatch(filePath, filePath, contentOld, contentNew)
                 yield* askEditUnlessMemory(ctx, filePath, {
                   patterns: [path.relative(Instance.worktree, filePath)],
                   diff,
@@ -106,12 +105,7 @@ export const EditTool = Tool.define(
                   event: existed ? "change" : "add",
                 })
                 contentNew = yield* afs.readFileString(filePath)
-                diff = createTwoFilesPatch(
-                  filePath,
-                  filePath,
-                  normalizeLineEndings(contentOld),
-                  normalizeLineEndings(contentNew),
-                )
+                diff = createTwoFilesPatch(filePath, filePath, contentOld, contentNew)
                 return
               }
 

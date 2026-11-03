@@ -42,7 +42,7 @@ Renderers apply it where they show a diff to a person, keeping terminal output u
 
 ### S2.4 `edit` with an empty `old_string`
 
-When the target exists, `contentOld` is its current content (line endings normalized for the diff, as the replace branch does). After writing and formatting, the file is re-read and `metadata.diff` and `filediff` are computed from `contentOld` to the re-read content. When the target does not exist, `contentOld` stays `""` and the diff remains a new-file patch.
+When the target exists, `contentOld` is its current content; a directory is rejected with the same `Path is a directory` error as the replace branch. The branch writes `new_string` verbatim, so its diffs use the raw strings without line-ending normalization, keeping a CRLF→LF overwrite visible and applyable. After writing and formatting, the file is re-read and `metadata.diff` and `filediff` are computed from `contentOld` to the re-read content. When the target does not exist, `contentOld` stays `""` and the diff remains a new-file patch.
 
 ### S2.5 Testing boundary
 
@@ -51,6 +51,7 @@ Tool tests assert the contract through public tool execution: for each tool, an 
 ## [S3] Out of Scope
 
 - `apply_patch` also computes its diff before formatting. It is not changed here: its diff is built before the permission prompt and before any file is written, and fixing it means restructuring the multi-file commit path. Applyability against the pre-format result is still guaranteed.
+- `write` takes no per-file lock, unlike `edit`; a concurrent change landing between its format step and the re-read would appear in its diff. Pre-existing and unchanged here.
 - Mimo Desktop changes (dropping its indentation-restore heuristic, review falling back to Git when every step diff has no hunks, tolerating trimmed diffs in already-recorded sessions). Sessions recorded before this change keep their trimmed diffs.
 - Changing the metadata schema or adding a second patch field.
 
@@ -62,3 +63,6 @@ Tool tests assert the contract through public tool execution: for each tool, an 
 - [ ] T5: Verify — acceptance: repo typecheck and the tool, permission and CLI test suites pass, with each command's result recorded (depends: T3, T4)
 
 ## Journey log
+
+1. The defect surfaced in Mimo Desktop: its per-turn review rebuilds a file's turn diff by reverse-applying each step's `metadata.diff` against disk. A two-edit reproduction inside a function body showed the rebuild succeeding with untrimmed patches and failing with `trimDiff` output, after which review silently fell back to `git diff HEAD`. Desktop undo had already hit the same wall and grown an indentation-restoring heuristic, which pointed at the engine data contract rather than another consumer-side patch.
+2. Upstream opencode v1 carries the same `trimDiff` and the same class of breakage: #31625 asked for an applyable patch beside the display diff, #37266 traced lost ACP permission previews to `applyPatch` failing on trimmed hunks, and #37265 / #31783 proposed consumer-side workarounds. None merged; all were closed by the stale bot. Upstream v2 (`packages/core/src/tool/plugin/file-diff.ts`) drops trimming and computes the patch from the formatted file, which is the contract adopted here. Adding a second `patch` field (the #31625 shape) was rejected because it stores the same change twice and leaves consumers choosing between two sources.

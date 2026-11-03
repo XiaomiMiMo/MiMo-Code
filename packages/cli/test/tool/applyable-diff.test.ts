@@ -256,6 +256,58 @@ describe("file tools publish applyable diffs", () => {
     })
   })
 
+  test("edit with empty old_string keeps line-ending changes in the diff", async () => {
+    await using tmp = await tmpdir()
+    const file = path.join(tmp.path, "crlf.txt")
+    const before = "alpha\r\nbeta\r\n"
+    await fs.writeFile(file, before, "utf-8")
+    const { ctx } = makeCtx()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const result = await edit({ file_path: file, old_string: "", new_string: "alpha\nbeta\n" }, ctx)
+        const after = await fs.readFile(file, "utf-8")
+        expect(after).toBe("alpha\nbeta\n")
+        expectApplies(before, result.metadata.diff, after)
+        expectApplies(before, result.metadata.filediff.patch, after)
+      },
+    })
+  })
+
+  test("apply_patch add, update and delete", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const updated = path.join(tmp.path, "deep.ts")
+    const removed = path.join(tmp.path, "old.ts")
+    const before = indentedSource()
+    const removedBefore = indentedSource({ index: 1, value: "11" })
+    await fs.writeFile(updated, before, "utf-8")
+    await fs.writeFile(removed, removedBefore, "utf-8")
+    const { ctx } = makeCtx()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const patchText = [
+          "*** Begin Patch",
+          "*** Add File: added.ts",
+          "+    indented()",
+          "*** Delete File: old.ts",
+          "*** Update File: deep.ts",
+          "@@",
+          "-      const v10 = 10",
+          "+      const v10 = 100",
+          "*** End Patch",
+        ].join("\n")
+        const result = await applyPatchTool({ patch_text: patchText }, ctx)
+        const patches = new Map(result.metadata.files.map((file) => [file.relativePath, file.patch]))
+        expectApplies("", patches.get("added.ts"), await fs.readFile(path.join(tmp.path, "added.ts"), "utf-8"))
+        expectApplies(removedBefore, patches.get("old.ts"), "")
+        expectApplies(before, patches.get("deep.ts"), await fs.readFile(updated, "utf-8"))
+      },
+    })
+  })
+
   test("apply_patch update inside an indented block", async () => {
     await using tmp = await tmpdir({ git: true })
     const file = path.join(tmp.path, "deep.ts")
