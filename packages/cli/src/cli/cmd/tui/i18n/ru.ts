@@ -210,12 +210,6 @@ export const dict = {
     'Установите {highlight}"mcp_*": false{/highlight}, чтобы отключить все инструменты конкретного MCP-сервера',
   "tui.tips.tool_override":
     "Переопределяйте глобальные настройки инструментов в конфигурации каждого агента",
-  "tui.tips.share_auto":
-    'Установите {highlight}"share": "auto"{/highlight}, чтобы автоматически делиться всеми сессиями',
-  "tui.tips.share_disabled":
-    'Установите {highlight}"share": "disabled"{/highlight}, чтобы запретить любой шаринг сессий',
-  "tui.tips.unshare":
-    "Выполните {highlight}/unshare{/highlight}, чтобы убрать сессию из публичного доступа",
   "tui.tips.doom_loop":
     "Разрешение {highlight}doom_loop{/highlight} предотвращает бесконечные циклы вызова инструментов",
   "tui.tips.external_dir":
@@ -452,8 +446,6 @@ export const dict = {
   "tui.command.logout.toast": "Вы вышли из аккаунта",
 
   // Session-level commands
-  "tui.command.session.share.title": "Поделиться сессией",
-  "tui.command.session.share.copy_link": "Скопировать ссылку",
   "tui.command.session.rename.title": "Переименовать сессию",
   "tui.command.session.timeline.title": "Перейти к сообщению",
   "tui.command.session.fork.title": "Разветвить сессию",
@@ -462,7 +454,6 @@ export const dict = {
   "tui.command.session.ask.description": "Задайте вопрос текущей сессии, не прерывая её",
   "tui.command.session.ask.placeholder": "Задайте побочный вопрос…",
   "tui.command.session.ask.busy": "Думаю…",
-  "tui.command.session.unshare.title": "Отменить публикацию",
   "tui.command.session.undo.title": "Отменить предыдущее сообщение",
   "tui.command.session.redo.title": "Повторить",
   "tui.command.session.sidebar.show": "Показать боковую панель",

@@ -48,8 +48,6 @@ import { Vcs } from "@/project"
 import { Worktree } from "@/worktree"
 import { Pty } from "@/pty"
 import { Installation } from "@/installation"
-import { ShareNext } from "@/share"
-import { SessionShare } from "@/share"
 import { Npm } from "@/npm"
 import { ActorRegistry } from "@/actor/registry"
 import { InboxController } from "@/inbox"
@@ -110,8 +108,6 @@ export const AppLayer = Layer.suspend(() =>
     Worktree.defaultLayer,
     Pty.defaultLayer,
     Installation.defaultLayer,
-    ShareNext.defaultLayer,
-    SessionShare.defaultLayer,
     ActorRegistry.defaultLayer,
     ActorWaiter.defaultLayer,
     InboxController.defaultLayer,

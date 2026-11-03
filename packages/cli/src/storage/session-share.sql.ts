@@ -1,6 +1,7 @@
+// Schema retained for existing database and JSON migration compatibility.
 import { sqliteTable, text } from "drizzle-orm/sqlite-core"
 import { SessionTable } from "../session/session.sql"
-import { Timestamps } from "../storage/schema.sql"
+import { Timestamps } from "./schema.sql"
 
 export const SessionShareTable = sqliteTable("session_share", {
   session_id: text()

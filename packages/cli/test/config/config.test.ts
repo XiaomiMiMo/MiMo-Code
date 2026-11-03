@@ -776,7 +776,8 @@ test("handles command configuration", async () => {
   })
 })
 
-test("migrates autoshare to share field", async () => {
+// engine-runtime [TP-R14-02]
+test("ignores legacy cloud sharing settings", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -784,6 +785,7 @@ test("migrates autoshare to share field", async () => {
         JSON.stringify({
           $schema: "https://opencode.ai/config.json",
           autoshare: true,
+          share: "auto",
         }),
       )
     },
@@ -792,8 +794,8 @@ test("migrates autoshare to share field", async () => {
     directory: tmp.path,
     fn: async () => {
       const config = await load()
-      expect(config.share).toBe("auto")
-      expect(config.autoshare).toBe(true)
+      expect(config).not.toHaveProperty("share")
+      expect(config).not.toHaveProperty("autoshare")
     },
   })
 })
@@ -1584,7 +1586,7 @@ test("managed settings override user settings", async () => {
     fn: async () => {
       const config = await load()
       expect(config.model).toBe("managed/model")
-      expect(config.share).toBe("disabled")
+      expect(config).not.toHaveProperty("share")
       expect(config.username).toBe("testuser")
     },
   })
@@ -2525,7 +2527,6 @@ test("parseManagedPlist strips MDM metadata keys", async () => {
           PayloadUUID: "AAAA-BBBB-CCCC",
           PayloadVersion: 1,
           _manualProfile: true,
-          share: "disabled",
           model: "mdm/model",
         }),
       ),
@@ -2533,7 +2534,6 @@ test("parseManagedPlist strips MDM metadata keys", async () => {
     ),
     "test:mobileconfig",
   )
-  expect(config.share).toBe("disabled")
   expect(config.model).toBe("mdm/model")
   // MDM keys must not leak into the parsed config
   expect((config as any).PayloadUUID).toBeUndefined()

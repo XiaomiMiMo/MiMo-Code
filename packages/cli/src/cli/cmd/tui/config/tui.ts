@@ -46,18 +46,15 @@ function pluginScope(file: string, ctx: { directory: string }): ConfigPlugin.Sco
 
 function normalize(raw: Record<string, unknown>) {
   const data = { ...raw }
-  if (!("tui" in data)) return data
-  if (!isRecord(data.tui)) {
-    delete data.tui
-    return data
-  }
-
-  const tui = data.tui
+  if (isRecord(data.tui)) Object.assign(data, { ...data.tui, ...data })
   delete data.tui
-  return {
-    ...tui,
-    ...data,
+  if (isRecord(data.keybinds)) {
+    const keybinds = { ...data.keybinds }
+    delete keybinds.session_share
+    delete keybinds.session_unshare
+    data.keybinds = keybinds
   }
+  return data
 }
 
 async function resolvePlugins(config: Info, configFilepath: string) {

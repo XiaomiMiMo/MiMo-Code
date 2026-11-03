@@ -11,7 +11,7 @@ import { Global } from "../../src/global"
 import { ProjectTable } from "../../src/project/project.sql"
 import { ProjectID } from "../../src/project/schema"
 import { SessionTable, MessageTable, PartTable, TodoTable, PermissionTable } from "../../src/session/session.sql"
-import { SessionShareTable } from "../../src/share/share.sql"
+import { SessionShareTable } from "../../src/storage/session-share.sql"
 import { SessionID, MessageID, PartID } from "../../src/session/schema"
 
 // Test fixtures

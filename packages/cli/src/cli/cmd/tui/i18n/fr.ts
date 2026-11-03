@@ -198,12 +198,6 @@ export const dict = {
     'Définissez {highlight}"mcp_*": false{/highlight} pour désactiver tous les outils d\'un serveur MCP',
   "tui.tips.tool_override":
     "Remplacez les paramètres globaux des outils dans la configuration de chaque agent",
-  "tui.tips.share_auto":
-    'Définissez {highlight}"share": "auto"{/highlight} pour partager automatiquement toutes les sessions',
-  "tui.tips.share_disabled":
-    'Définissez {highlight}"share": "disabled"{/highlight} pour empêcher tout partage de session',
-  "tui.tips.unshare":
-    "Exécutez {highlight}/unshare{/highlight} pour retirer une session de l'accès public",
   "tui.tips.doom_loop":
     "La permission {highlight}doom_loop{/highlight} prévient les boucles infinies d'appels d'outils",
   "tui.tips.external_dir":
@@ -438,8 +432,6 @@ export const dict = {
   "tui.command.logout.toast": "Déconnecté",
 
   // Session-level commands
-  "tui.command.session.share.title": "Partager la session",
-  "tui.command.session.share.copy_link": "Copier le lien de partage",
   "tui.command.session.rename.title": "Renommer la session",
   "tui.command.session.timeline.title": "Aller à un message",
   "tui.command.session.fork.title": "Dupliquer la session",
@@ -448,7 +440,6 @@ export const dict = {
   "tui.command.session.ask.description": "Posez une question à la session actuelle sans la perturber",
   "tui.command.session.ask.placeholder": "Poser une question annexe…",
   "tui.command.session.ask.busy": "Réflexion…",
-  "tui.command.session.unshare.title": "Annuler le partage",
   "tui.command.session.undo.title": "Annuler le message précédent",
   "tui.command.session.redo.title": "Rétablir",
   "tui.command.session.sidebar.show": "Afficher la barre latérale",
