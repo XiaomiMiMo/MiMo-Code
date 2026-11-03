@@ -8,6 +8,8 @@ export type BackendPart = {
   messageId: string
   partId: string
   role: "user" | "assistant"
+  /** The user message this part belongs to: its own ID for user parts, the parent prompt for replies. */
+  turnId: string | null
   /** Plain text of the part; non-text parts are not exposed under the text-only profile. */
   text: string
 }
@@ -15,8 +17,9 @@ export type BackendPart = {
 export type BackendTurn = {
   /** The user message that started the turn. */
   inputMessageId: string
-  /** The assistant reply, once one exists. */
-  assistantMessageId?: string
+  /** The assistant reply that answers it (the last one when a prompt took several steps). */
+  assistantMessageId: string
+  /** Proven by the agent's own durable record; `unknown` when it cannot be proven. */
   phase: "running" | "completed" | "failed" | "cancelled" | "unknown"
 }
 
