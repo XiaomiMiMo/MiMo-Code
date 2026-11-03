@@ -70,7 +70,10 @@ describe("phone connection end to end", () => {
             }
             const service = new FakeConnect().start()
             const stateDir = await mkdtemp(path.join(osTmpdir(), "phone-e2e-"))
-            const backend = new MimoBackend(engineFrom(() => client), events)
+            const backend = new MimoBackend(
+              engineFrom(() => client),
+              events,
+            )
             const statuses: ConnectorStatus[] = []
             const connector = new Connector({
               backend,
@@ -87,7 +90,10 @@ describe("phone connection end to end", () => {
 
               // Pair: the code is claimed by a phone and confirmed locally.
               await connector.start()
-              await until(() => connector.status, (status) => status.state === "online")
+              await until(
+                () => connector.status,
+                (status) => status.state === "online",
+              )
               const outcome = connector.pair()
               const challenge = await until(
                 () => [...service.challenges.values()].find((c) => c.status === "open"),
@@ -101,7 +107,9 @@ describe("phone connection end to end", () => {
                 (status) => status.state === "online" && status.phones.some((phone) => phone.connected),
               )
 
-              const attach = service.frames.findLast((f) => f.path.endsWith("/command") && f.frame.type === "attach")!.frame
+              const attach = service.frames.findLast(
+                (f) => f.path.endsWith("/command") && f.frame.type === "attach",
+              )!.frame
               const target = {
                 protocolVersion: 4,
                 bindingId: attach.bindingId,
@@ -120,14 +128,16 @@ describe("phone connection end to end", () => {
                   (frame) => frame !== undefined,
                 )
               const frames = (lane: string, requestId: string) =>
-                service.frames.filter((f) => f.path.endsWith(`/${lane}`) && f.frame.requestId === requestId).map((f) => f.frame)
+                service.frames
+                  .filter((f) => f.path.endsWith(`/${lane}`) && f.frame.requestId === requestId)
+                  .map((f) => f.frame)
 
               // The catalog lists the project's session.
               const list = ask("sessions-list", { cursor: null, limit: 50 })
               const page = (await answer(list.requestId, "sessions-page"))!
-              expect((page.entries as { sessionId: string; title: string }[]).map((e) => [e.sessionId, e.title])).toEqual([
-                [session.id, "From the phone"],
-              ])
+              expect(
+                (page.entries as { sessionId: string; title: string }[]).map((e) => [e.sessionId, e.title]),
+              ).toEqual([[session.id, "From the phone"]])
 
               // Reading starts with a paired snapshot of the empty session.
               const reading = ask("subscribe-session", { sessionId: session.id })
@@ -147,7 +157,9 @@ describe("phone connection end to end", () => {
 
               const finished = await until(
                 () => frames("state", reading.requestId).at(-1),
-                (state) => (state?.turns as { phase: string }[] | undefined)?.[0]?.phase === "completed" && state?.sessionPhase === "idle",
+                (state) =>
+                  (state?.turns as { phase: string }[] | undefined)?.[0]?.phase === "completed" &&
+                  state?.sessionPhase === "idle",
               )
               const turn = (finished!.turns as Record<string, unknown>[])[0]
               expect(turn.inputMessageId).toBe(messageId)
@@ -172,7 +184,9 @@ describe("phone connection end to end", () => {
               expect(textRevisions).toEqual([...textRevisions].sort((a, b) => a - b))
               expect(new Set(textRevisions).size).toBe(textRevisions.length)
               const lanes = service.frames.filter(
-                (f) => f.frame.requestId === reading.requestId && (f.frame.type === "event-text" || f.frame.type === "event-state"),
+                (f) =>
+                  f.frame.requestId === reading.requestId &&
+                  (f.frame.type === "event-text" || f.frame.type === "event-state"),
               )
               let published = 0
               let stateRevision = 0
@@ -198,7 +212,10 @@ describe("phone connection end to end", () => {
                 sessionId: session.id,
               })
               await until(
-                () => service.frames.filter((f) => f.frame.requestId === send.requestId && f.frame.type === "submission-result"),
+                () =>
+                  service.frames.filter(
+                    (f) => f.frame.requestId === send.requestId && f.frame.type === "submission-result",
+                  ),
                 (answers) => answers.length === 2,
               )
               expect(await Effect.runPromise(llm.calls)).toBe(1)

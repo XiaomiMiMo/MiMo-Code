@@ -24,6 +24,7 @@ describe("phone connection", () => {
         "service_without_cli",
         "state_unreadable",
         "registration_conflict",
+        "in_use",
       ].map((reason) => `tui.phone.unavailable.${reason}`),
       ...["missing", "unreadable", "invalid", "expired"].map((problem) => `tui.phone.identity.${problem}`),
       ...["rejected", "expired", "cancelled", "failed"].map((outcome) => `tui.phone.outcome.${outcome}`),

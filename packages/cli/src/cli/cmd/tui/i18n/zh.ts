@@ -592,6 +592,7 @@ export const dict = {
   "tui.phone.unavailable.service_without_cli": "这个 Connect 服务还不支持 MiMo Code。",
   "tui.phone.unavailable.state_unreadable": "无法读取已保存的手机连接：它的密钥不在系统保护存储中。",
   "tui.phone.unavailable.registration_conflict": "这台电脑已在此账号下以另一个名称注册。",
+  "tui.phone.unavailable.in_use": "这台电脑上的另一个 MiMo Code 窗口已经连接了你的手机。",
   "tui.phone.identity.missing": "请将 MIMOCODE_PHONE_DEBUG_IDENTITY 设为 Connect 调试身份文件（cli.json）。",
   "tui.phone.identity.unreadable": "无法读取 MIMOCODE_PHONE_DEBUG_IDENTITY 指向的文件。",
   "tui.phone.identity.invalid": "MIMOCODE_PHONE_DEBUG_IDENTITY 指向的文件不是 CLI 调试身份。",

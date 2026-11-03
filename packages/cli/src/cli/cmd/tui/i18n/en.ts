@@ -588,6 +588,7 @@ export const dict: Record<string, string> = {
   "tui.phone.unavailable.service_without_cli": "This Connect service does not support MiMo Code yet.",
   "tui.phone.unavailable.state_unreadable": "The saved phone connection cannot be read: its key is missing from protected storage.",
   "tui.phone.unavailable.registration_conflict": "This computer is already registered under another name for this account.",
+  "tui.phone.unavailable.in_use": "Another MiMo Code window on this computer is already connected to your phones.",
   "tui.phone.identity.missing": "Set MIMOCODE_PHONE_DEBUG_IDENTITY to a Connect debug identity file (cli.json).",
   "tui.phone.identity.unreadable": "The file named by MIMOCODE_PHONE_DEBUG_IDENTITY cannot be read.",
   "tui.phone.identity.invalid": "The file named by MIMOCODE_PHONE_DEBUG_IDENTITY is not a CLI debug identity.",

@@ -36,6 +36,9 @@ class FakeEngine implements EngineApi {
   reads = 0
   onRead: (() => void) | undefined
   receiptFailure = false
+  receiptCalls = 0
+  onReceipt: (() => void) | undefined
+  statusDelay: Promise<void> | undefined
 
   async listSessions() {
     return this.sessions
@@ -47,11 +50,16 @@ class FakeEngine implements EngineApi {
     return { messages: snapshot, complete: snapshot.length < 1000 }
   }
   async status() {
-    return this.statuses
+    const statuses = structuredClone(this.statuses)
+    await this.statusDelay
+    return statuses
   }
   async receipt(_sessionId: string, messageId: string) {
+    this.receiptCalls += 1
     if (this.receiptFailure) throw new Error("down")
-    return this.receipts.get(messageId)
+    const receipt = this.receipts.get(messageId)
+    this.onReceipt?.()
+    return receipt
   }
   async promptAsync(input: Parameters<EngineApi["promptAsync"]>[0]) {
     this.prompts.push(input)
@@ -285,5 +293,75 @@ describe("phone backend", () => {
     events.emit({ type: "session.created", properties: { sessionID: "ses_2", info: engine.sessions[1] } })
     expect(seen).toEqual([undefined])
     expect((await backend.listSessions()).map((s) => s.id)).toEqual(["ses_2", "ses_1"])
+  })
+
+  test("a turn's reply is its last message with visible text", async () => {
+    const { engine, backend } = setup()
+    engine.conversation = [
+      user("msg_01", "run it"),
+      reply("msg_02", "msg_01", "Running the tool"),
+      reply("msg_03", "msg_01", ""),
+    ]
+    expect((await backend.snapshot("ses_1"))!.turns).toEqual([
+      { inputMessageId: "msg_01", assistantMessageId: "msg_02", phase: "unknown" },
+    ])
+  })
+
+  test("a turn is never reported finished with text older than its receipt", async () => {
+    const { engine, events, backend, advance } = setup()
+    engine.conversation = [user("msg_01", "hi"), reply("msg_02", "msg_01", "")]
+    engine.receipts.set("msg_01", { state: "claimed" })
+    expect((await backend.snapshot("ses_1"))!.turns[0].phase).toBe("running")
+    // While the receipt is being re-read, the reply finishes and the receipt settles.
+    advance(10_000)
+    engine.onReceipt = () => {
+      engine.onReceipt = undefined
+      events.emit({
+        type: "message.part.updated",
+        properties: {
+          sessionID: "ses_1",
+          part: { id: "prt_a", messageID: "msg_02", sessionID: "ses_1", type: "text", text: "final" },
+          time: 1,
+        },
+      })
+      events.emit({
+        type: "session.receipt.updated",
+        properties: {
+          sessionID: "ses_1",
+          agentID: "main",
+          receiptId: "r",
+          state: "settled",
+          outcome: "success",
+          inputMessageID: "msg_01",
+          epoch: 1,
+        },
+      })
+    }
+    const snapshot = (await backend.snapshot("ses_1"))!
+    expect(snapshot.turns[0].phase).toBe("completed")
+    expect(snapshot.parts.find((p) => p.messageId === "msg_02")?.text).toBe("final")
+  })
+
+  test("unfinished and missing receipts are not re-read on every frame", async () => {
+    const { engine, backend, advance } = setup()
+    engine.conversation = [user("msg_01", "old prompt"), reply("msg_02", "msg_01", "a")]
+    await backend.snapshot("ses_1")
+    await backend.snapshot("ses_1")
+    expect(engine.receiptCalls).toBe(1)
+    advance(30_000)
+    await backend.snapshot("ses_1")
+    expect(engine.receiptCalls).toBe(2)
+  })
+
+  test("a status change seen while the status map loads is not lost", async () => {
+    const { engine, events, backend } = setup()
+    engine.statuses = { ses_1: { type: "busy" } }
+    let release!: () => void
+    engine.statusDelay = new Promise((resolve) => (release = resolve))
+    const pending = backend.snapshot("ses_1")
+    await Bun.sleep(10)
+    events.emit({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } })
+    release()
+    expect((await pending)!.phase).toBe("idle")
   })
 })

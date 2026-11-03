@@ -43,6 +43,8 @@ export class ControlChannel {
       resolveReady = resolve
       rejectReady = reject
     })
+    // Observed even when open gives up before awaiting it (closed while dialing).
+    ready.catch(() => undefined)
     this.socket = await this.dial({
       url: wssUrl(this.origin(), CONTROL_PATH),
       headers,
@@ -67,9 +69,15 @@ export class ControlChannel {
         onClose: (code, reason) => this.end(`closed:${code}:${reason}`, rejectReady),
       },
     })
+    // Closed while dialing: an orphan socket would take a new epoch from the live generation.
+    if (this.closed) {
+      this.socket.close(1000, "closed_by_client")
+      throw new Error("closed_by_client")
+    }
     const timeout = setTimeout(() => this.fail("ready_timeout", rejectReady), READY_TIMEOUT_MS)
     try {
       const epoch = await ready
+      if (this.closed) throw new Error("closed_by_client")
       this.timer = setInterval(() => this.heartbeat(), HEARTBEAT_MS)
       return epoch
     } finally {
@@ -95,11 +103,12 @@ export class ControlChannel {
   }
 
   private end(reason: string, reject?: (error: Error) => void): void {
+    // A pending open always settles, also when the channel was already closed by the client.
+    reject?.(new Error(reason))
     if (this.closed) return
     this.closed = true
     clearInterval(this.timer)
     clearTimeout(this.awaitingPong)
-    reject?.(new Error(reason))
     this.events.onClosed(reason)
   }
 }

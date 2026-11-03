@@ -42,6 +42,8 @@ export class DeviceGroup {
   private readonly lanes = new Map<Lane, ContentLane>()
   private dispatcher: Dispatcher | undefined
   private ended = false
+  /** Recovery waits for every lane to finish its own revoked fence instead of ending at the first close. */
+  private recovering = false
   /** All three lanes are ready and the group serves the phone. */
   ready = false
 
@@ -84,9 +86,10 @@ export class DeviceGroup {
    * Resolves true once every lane confirmed the revocation.
    */
   async confirmRevocation(): Promise<boolean> {
+    this.recovering = true
     this.build(await this.credentials())
     await Promise.allSettled([...this.lanes.values()].map((lane) => lane.open()))
-    const confirmed = [...this.lanes.values()].every((lane) => lane.revoked)
+    const confirmed = [...this.lanes.values()].some((lane) => lane.revoked)
     this.close()
     return confirmed
   }
@@ -121,7 +124,7 @@ export class DeviceGroup {
             if (lane === "command") this.dispatcher?.handle(frame)
           },
           onClosed: (lane, reason) => {
-            if (this.ended) return
+            if (this.ended || this.recovering) return
             this.end({ reason, revoked: this.lanes.get(lane)?.revoked ?? false }, true)
           },
         }),

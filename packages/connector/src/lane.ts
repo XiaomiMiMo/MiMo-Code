@@ -65,6 +65,8 @@ export class ContentLane {
       resolveReady = resolve
       rejectReady = reject
     })
+    // Observed even when open gives up before awaiting it (closed while dialing).
+    ready.catch(() => undefined)
     let relayError: string | undefined
     this.socket = await this.dial({
       url: wssUrl(this.origin(), path),
@@ -97,11 +99,17 @@ export class ContentLane {
         },
         onClose: (code, reason) => {
           const why = relayError ?? (reason || `close_${code}`)
+          clearInterval(this.ping)
           rejectReady(new Error(why))
           this.end(why)
         },
       },
     })
+    // Closed while dialing: nothing may be attached for a group that already ended.
+    if (this.closed) {
+      this.socket.close(1000, "closed_by_client")
+      throw new Error("closed_by_client")
+    }
     this.socket.send({
       protocolVersion: 4,
       type: "attach",

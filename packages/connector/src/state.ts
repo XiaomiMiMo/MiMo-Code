@@ -60,6 +60,7 @@ export function emptyState(): ConnectorState {
 export class StateFile {
   private cache: ConnectorState | undefined
   private writing: Promise<void> = Promise.resolve()
+  private dataKey: CryptoKey | undefined
 
   constructor(
     private readonly file: string,
@@ -123,11 +124,20 @@ export class StateFile {
   }
 
   private async key(create: boolean): Promise<CryptoKey | undefined> {
+    // Read once: every gate and submission write goes through here, and a store read can be a subprocess.
+    if (this.dataKey) return this.dataKey
     const stored = await this.secrets.get(DATA_KEY)
-    if (stored) return crypto.subtle.importKey("raw", fromBase64url(stored), "AES-GCM", false, ["encrypt", "decrypt"])
+    if (stored) {
+      this.dataKey = await crypto.subtle.importKey("raw", fromBase64url(stored), "AES-GCM", false, [
+        "encrypt",
+        "decrypt",
+      ])
+      return this.dataKey
+    }
     if (!create) return undefined
     const raw = crypto.getRandomValues(new Uint8Array(32))
     await this.secrets.set(DATA_KEY, base64url(raw))
-    return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"])
+    this.dataKey = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"])
+    return this.dataKey
   }
 }

@@ -8,9 +8,12 @@
 // off only goes offline: bindings stay until the user unpairs.
 
 import { ConnectApi, type BindingView, type GrantView, type Scopes } from "./api"
+import { mkdir } from "node:fs/promises"
+import path from "node:path"
 import { ControlChannel } from "./control"
 import { DeviceGroup, type GroupContext } from "./group"
 import { ConnectError, ConnectHttp, type AccountSession, type ClientInfo } from "./http"
+import { InstanceLock } from "./lock"
 import { generateDeviceKey, importDeviceKey, type DeviceKey, type PrivateJwk } from "./proof"
 import type { AgentBackend, SecretStore } from "./ports"
 import { bunDial, type Dial } from "./socket"
@@ -39,6 +42,8 @@ export type UnavailableReason =
   | "service_without_cli"
   | "state_unreadable"
   | "registration_conflict"
+  /** Another MiMo Code process on this computer is already connected. */
+  | "in_use"
 
 export type PhoneStatus = { bindingId: string; phoneName: string; canSend: boolean; connected: boolean }
 export type PairingStatus = { code: string; expiresAt: string; phoneName?: string }
@@ -104,12 +109,19 @@ export class Connector {
   private reconnectAttempts = 0
   private pairing: { challengeId: string; status: PairingStatus; cancelled: boolean } | undefined
   private current: ConnectorStatus = { state: "off" }
+  /** Bumped by start and stop, so a boot that outlived a stop does nothing. */
+  private session = 0
+  private readonly lock: InstanceLock
+  /** Reconciles and pairing settlement run one at a time: each reads and rewrites the consents. */
+  private serial: Promise<unknown> = Promise.resolve()
+  private reconcileTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(private readonly options: ConnectorOptions) {
     this.state = new StateFile(options.stateFile, options.secrets, options.clock)
     this.submissions = new Submissions(options.backend, this.state, options.clock)
     this.dial = options.dial ?? bunDial
     this.clock = options.clock ?? Date.now
+    this.lock = new InstanceLock(`${options.stateFile}.lock`)
   }
 
   get status(): ConnectorStatus {
@@ -120,35 +132,50 @@ export class Connector {
   async start(): Promise<void> {
     if (this.enabled) return
     this.enabled = true
+    const session = ++this.session
     this.publish({ state: "starting" })
-    await this.boot()
+    await mkdir(path.dirname(this.options.stateFile), { recursive: true, mode: 0o700 })
+    if (!(await this.lock.acquire())) {
+      if (session !== this.session) return
+      this.enabled = false
+      return this.publish({ state: "unavailable", reason: "in_use" })
+    }
+    await this.boot(session)
   }
 
-  private async boot(): Promise<void> {
-    if (!this.enabled) return
+  /**
+   * Read the account and installation again and connect. Every reconnect boots,
+   * so an expired or replaced sign-in is noticed instead of retried forever.
+   */
+  private async boot(session: number): Promise<void> {
+    if (!this.enabled || session !== this.session) return
     let runtime: Runtime | UnavailableReason
     try {
       runtime = await this.prepare()
     } catch (error) {
-      // Service or network trouble before the first connection is retried like a lost connection.
-      return this.lost(error)
+      // Service or network trouble before connecting is retried like a lost connection.
+      if (session === this.session) this.lost(error)
+      return
     }
-    if (!this.enabled) return
+    if (!this.enabled || session !== this.session) return
     if (typeof runtime === "string") {
       this.enabled = false
+      await this.lock.release()
       return this.publish({ state: "unavailable", reason: runtime })
     }
     this.runtime = runtime
-    await this.connect()
+    await this.connect(session)
   }
 
   /** Go offline. Bindings and consents are kept; phones see this computer as offline. */
   async stop(): Promise<void> {
     this.enabled = false
+    this.session += 1
     clearTimeout(this.reconnectTimer)
     if (this.pairing) this.pairing.cancelled = true
     this.endGeneration()
     this.runtime = undefined
+    await this.lock.release()
     this.publish({ state: "off" })
   }
 
@@ -266,9 +293,9 @@ export class Connector {
 
   // ---- connection generations -------------------------------------------------
 
-  private async connect(): Promise<void> {
+  private async connect(session: number): Promise<void> {
     const runtime = this.runtime
-    if (!this.enabled || !runtime) return
+    if (!this.enabled || !runtime || session !== this.session) return
     const generation: Generation = { control: undefined!, epoch: 0, startedAt: this.clock(), ended: false }
     generation.control = new ControlChannel(runtime.http, () => runtime.account.origin, this.dial, {
       onClosed: () => {
@@ -283,7 +310,24 @@ export class Connector {
       return
     }
     this.refresh()
-    await this.reconcile(runtime, generation).catch(() => undefined)
+    await this.reconcileUntilDone(runtime, generation, 0)
+  }
+
+  /** Reconcile, retrying with backoff while the generation lives: nothing else would bring phones online. */
+  private async reconcileUntilDone(runtime: Runtime, generation: Generation, attempt: number): Promise<void> {
+    try {
+      await this.reconcile(runtime, generation)
+    } catch (error) {
+      if (!this.live(generation)) return
+      const cooldown = error instanceof ConnectError ? (error.retryAfterMs ?? 0) : 0
+      const wait = Math.max(
+        Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** attempt),
+        cooldown,
+        runtime.http.cooldownRemainingMs(),
+      )
+      clearTimeout(this.reconcileTimer)
+      this.reconcileTimer = setTimeout(() => void this.reconcileUntilDone(runtime, generation, attempt + 1), wait)
+    }
   }
 
   private lost(error?: unknown): void {
@@ -297,12 +341,16 @@ export class Connector {
     const wait = Math.max(backoff, cooldown, this.runtime?.http.cooldownRemainingMs() ?? 0)
     this.reconnectAttempts += 1
     this.publish({ state: "reconnecting", retryInMs: wait, phones: this.lastPhones })
-    this.reconnectTimer = setTimeout(() => void (this.runtime ? this.connect() : this.boot()), wait)
+    this.runtime = undefined
+    const session = this.session
+    clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = setTimeout(() => void this.boot(session), wait)
   }
 
   private endGeneration(): void {
     const generation = this.generation
     this.generation = undefined
+    clearTimeout(this.reconcileTimer)
     for (const retry of this.retries.values()) clearTimeout(retry.timer)
     this.retries.clear()
     for (const group of this.groups.values()) group.close()
@@ -319,8 +367,18 @@ export class Connector {
 
   // ---- bindings ---------------------------------------------------------------
 
+  private exclusive<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.serial.then(work, work)
+    this.serial = run.catch(() => undefined)
+    return run
+  }
+
   /** Bring the service's bindings and the local consents into agreement for this generation. */
-  private async reconcile(runtime: Runtime, generation: Generation): Promise<void> {
+  private reconcile(runtime: Runtime, generation: Generation): Promise<void> {
+    return this.exclusive(() => this.reconcileNow(runtime, generation))
+  }
+
+  private async reconcileNow(runtime: Runtime, generation: Generation): Promise<void> {
     await this.settlePending(runtime)
     const bindings = await runtime.api.bindings(runtime.deviceId)
     if (!this.live(generation)) return
@@ -438,8 +496,11 @@ export class Connector {
         connectionEpoch: generation.epoch,
         scopes: [] as Scopes,
       }
-      confirmed = await new DeviceGroup(this.groupContext(runtime), recovery, () => {})
-        .confirmRevocation()
+      await new DeviceGroup(this.groupContext(runtime), recovery, () => {}).confirmRevocation().catch(() => false)
+      // The service is the judge: the binding's fence completes once it recorded our confirmation.
+      confirmed = await runtime.api
+        .binding(binding.bindingId)
+        .then((view) => view.relayFence === "complete")
         .catch(() => false)
     }
     if (confirmed) await this.forget(binding.bindingId)
@@ -524,10 +585,16 @@ export class Connector {
       }
     })
     const decision = await runtime.api.decide(request.requestId, "approve", generation.epoch).catch(() => undefined)
-    await this.settlePending(runtime)
-    if (decision?.status !== "approved" || !decision.bindingId) return "failed"
+    // Settles the confirmation into a consent and exposes the binding, also when the approve answer was lost.
     await this.reconcile(runtime, generation).catch(() => undefined)
-    return "approved"
+    const bindingId =
+      decision?.bindingId ??
+      (await runtime.api
+        .pairingRequest(request.requestId)
+        .then((result) => (result.status === "approved" ? result.bindingId : null))
+        .catch(() => null))
+    if (!bindingId) return "failed"
+    return (await this.state.read()).consents[bindingId] ? "approved" : "failed"
   }
 
   /** Turn recorded confirmations into consents once their pairing request is decided. */

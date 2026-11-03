@@ -28,6 +28,12 @@ const MIRROR_IDLE_MS = 60_000
 const MAX_MIRRORS = 8
 /** The engine's prompt limit is shared with the person typing; the phone takes a small share. */
 const SUBMITS_PER_MINUTE = 6
+/** A turn beyond this many cannot be shown anyway (the phone takes at most 32 turns). */
+const RECEIPT_TURNS = 32
+const RECEIPT_CONCURRENCY = 4
+/** Unfinished receipts follow events; a read is only repeated after this long. */
+const RECEIPT_RECHECK_MS = 10_000
+const RECEIPT_ABSENT_RECHECK_MS = 30_000
 
 export type Receipt = {
   state: "accepted" | "claimed" | "settled" | "cancelled" | "rejected"
@@ -70,9 +76,14 @@ const CONVERSATION_EVENTS = [
 export class MimoBackend implements AgentBackend {
   private sessions: Promise<Session[]> | undefined
   private statuses: Record<string, SessionStatus> | undefined
+  private statusLoad: Promise<Record<string, SessionStatus>> | undefined
+  /** Status events seen before the status map was read; they are newer than or equal to what it returns. */
+  private readonly earlyStatuses = new Map<string, SessionStatus>()
   private readonly mirrors = new Map<string, { mirror: SessionMirror; usedAt: number }>()
   /** Receipts by user message ID; terminal ones never change again. */
   private readonly receipts = new Map<string, Receipt>()
+  /** When each prompt's receipt was last read, so unfinished or missing ones are not re-read on every frame. */
+  private readonly receiptReadAt = new Map<string, number>()
   private readonly listeners = new Set<(sessionId: string | undefined) => void>()
   private readonly submitted: number[] = []
   private readonly unsubscribe: (() => void)[] = []
@@ -101,8 +112,10 @@ export class MimoBackend implements AgentBackend {
     }
     this.unsubscribe.push(
       events.on("session.status", (event) => {
-        if (this.statuses) this.statuses[event.properties.sessionID] = event.properties.status
-        this.notify(event.properties.sessionID)
+        const { sessionID, status } = event.properties
+        if (this.statuses) this.statuses[sessionID] = status
+        else this.earlyStatuses.set(sessionID, status)
+        this.notify(sessionID)
       }),
       events.on("session.receipt.updated", (event) => {
         const { agentID, inputMessageID, state, outcome } = event.properties
@@ -131,14 +144,14 @@ export class MimoBackend implements AgentBackend {
 
   async snapshot(sessionId: string): Promise<BackendSnapshot | undefined> {
     if (!(await this.listSessions()).some((session) => session.id === sessionId)) return undefined
-    const statuses = (this.statuses ??= await this.api.status())
     const mirror = this.mirror(sessionId)
     await mirror.ready()
-    const conversation = mirror.conversation()
-    // Outcomes are read before the snapshot is cut: a finished receipt then
-    // always comes with the text it finished with.
-    await this.loadReceipts(sessionId, conversation)
+    await this.loadReceipts(sessionId, turnInputs(mirror.conversation()))
+    const statuses = await this.statusMap()
     const session = (await this.listed()).find((entry) => entry.id === sessionId)
+    // Cut the snapshot only now, with no await after it: events apply in order, so a
+    // finished receipt is never paired with text older than what it finished with.
+    const conversation = mirror.conversation()
     return {
       title: session?.title ?? "",
       phase: phaseOf(statuses[sessionId]),
@@ -224,24 +237,57 @@ export class MimoBackend implements AgentBackend {
     return mirror
   }
 
-  private async loadReceipts(sessionId: string, conversation: MessageWithParts[]): Promise<void> {
-    const pending = turnInputs(conversation).filter((id) => !isTerminal(this.receipts.get(id)))
-    await Promise.all(
-      pending.map(async (messageId) => {
-        const receipt = await this.api.receipt(sessionId, messageId).catch(() => undefined)
-        // A later receipt event may already be newer than this read.
-        if (receipt && !isTerminal(this.receipts.get(messageId))) this.receipts.set(messageId, receipt)
-      }),
+  private async statusMap(): Promise<Record<string, SessionStatus>> {
+    if (this.statuses) return this.statuses
+    this.statusLoad ??= this.api.status().then(
+      (fetched) => {
+        this.statuses = { ...fetched, ...Object.fromEntries(this.earlyStatuses) }
+        this.earlyStatuses.clear()
+        return this.statuses
+      },
+      (error: unknown) => {
+        this.statusLoad = undefined
+        throw error
+      },
     )
+    return this.statusLoad
+  }
+
+  private async loadReceipts(sessionId: string, inputs: string[]): Promise<void> {
+    const now = this.clock()
+    const due = inputs.slice(-RECEIPT_TURNS).filter((id) => {
+      const receipt = this.receipts.get(id)
+      if (isTerminal(receipt)) return false
+      const readAt = this.receiptReadAt.get(id)
+      if (readAt === undefined) return true
+      return now - readAt >= (receipt ? RECEIPT_RECHECK_MS : RECEIPT_ABSENT_RECHECK_MS)
+    })
+    for (let start = 0; start < due.length; start += RECEIPT_CONCURRENCY) {
+      await Promise.all(
+        due.slice(start, start + RECEIPT_CONCURRENCY).map(async (messageId) => {
+          const receipt = await this.api.receipt(sessionId, messageId).catch(() => null)
+          // A read that failed is retried next time; a missing receipt is remembered for a while.
+          if (receipt === null) return
+          this.receiptReadAt.set(messageId, now)
+          // A receipt event may already be newer than this read.
+          if (receipt && !isTerminal(this.receipts.get(messageId))) this.receipts.set(messageId, receipt)
+        }),
+      )
+    }
   }
 
   private turnsOf(conversation: MessageWithParts[]): BackendTurn[] {
-    const replies = new Map<string, string>()
-    for (const { info } of conversation) {
-      if (info.role === "assistant" && !info.summary) replies.set(info.parentID, info.id)
+    // A prompt's reply is its last assistant message with visible text (the phone
+    // matches outcomes to the last text it shows), or its last one when none has text.
+    const replies = new Map<string, { id: string; text: boolean }>()
+    for (const { info, parts } of conversation) {
+      if (info.role !== "assistant" || info.summary) continue
+      const text = parts.some((part) => part.type === "text" && !part.synthetic && !part.ignored)
+      const current = replies.get(info.parentID)
+      if (!current || text || !current.text) replies.set(info.parentID, { id: info.id, text })
     }
     return turnInputs(conversation).flatMap((inputMessageId) => {
-      const assistantMessageId = replies.get(inputMessageId)
+      const assistantMessageId = replies.get(inputMessageId)?.id
       if (!assistantMessageId) return []
       return [{ inputMessageId, assistantMessageId, phase: turnPhase(this.receipts.get(inputMessageId)) }]
     })

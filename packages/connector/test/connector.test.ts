@@ -8,6 +8,7 @@ import { FakeBackend, MemorySecrets } from "./doubles"
 import { FakeConnect } from "./fake-connect"
 
 async function setup(options: { answer?: { canSend: boolean } | undefined; secrets?: MemorySecrets } = {}) {
+  let signedIn = true
   const dir = await mkdtemp(path.join(tmpdir(), "connector-"))
   const service = new FakeConnect().start()
   const secrets = options.secrets ?? new MemorySecrets()
@@ -21,7 +22,7 @@ async function setup(options: { answer?: { canSend: boolean } | undefined; secre
       backend,
       secrets,
       stateFile,
-      account: async () => ({ ...service.account(), subject: "subject-1" }),
+      account: async () => (signedIn ? { ...service.account(), subject: "subject-1" } : undefined),
       client: { version: "1.0.0", platform: "linux" },
       name: "dev-box",
       host: {
@@ -44,6 +45,7 @@ async function setup(options: { answer?: { canSend: boolean } | undefined; secre
     connector,
     make,
     state: () => new StateFile(stateFile, secrets).read(),
+    signOut: () => (signedIn = false),
     async until(predicate: () => boolean, ms = 3000) {
       const end = Date.now() + ms
       while (!predicate()) {
@@ -241,5 +243,72 @@ describe("connector", () => {
     await s.until(() => online(again.status) && (again.status as { phones: unknown[] }).phones.length === 0)
     expect((await s.state()).consents).toEqual({})
     await again.stop()
+  })
+
+  test("a second connector on the same installation stays off while the first runs", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const second = s.make()
+    await second.start()
+    expect(second.status).toEqual({ state: "unavailable", reason: "in_use" })
+    await s.connector.stop()
+    await second.start()
+    await s.until(() => online(second.status))
+    await second.stop()
+  })
+
+  test("stopping while starting leaves nothing connected", async () => {
+    await using s = await setup()
+    const starting = s.connector.start()
+    await s.connector.stop()
+    await starting
+    await Bun.sleep(200)
+    expect(s.connector.status).toEqual({ state: "off" })
+    expect(s.service.control).toBeUndefined()
+  })
+
+  test("a failed binding read after connecting is retried until the phone is served", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const outcome = s.connector.pair()
+    await s.until(() => [...s.service.challenges.values()].some((c) => c.status === "open"))
+    s.claim()
+    await outcome
+    await s.until(() => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true)
+    const deviceId = [...s.service.devices.keys()][0]
+    // Like the real service, the rejection says when to come back.
+    s.service.failNext.set(`/api/connect/devices/${deviceId}/bindings`, [503, "dependency_unavailable", "1"])
+    const grants = s.service.requests.filter((r) => r.path.endsWith("/content-grant")).length
+    s.service.control!.close(1013, "lease_lost")
+    await s.until(() => s.service.requests.filter((r) => r.path.endsWith("/content-grant")).length > grants, 8000)
+    await s.until(
+      () => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true,
+      8000,
+    )
+  }, 20_000)
+
+  test("a lost approve answer still ends with the phone paired and served", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const outcome = s.connector.pair()
+    await s.until(() => [...s.service.challenges.values()].some((c) => c.status === "open"))
+    const requestId = s.claim()
+    // The service commits the approval, but its answer never arrives.
+    s.service.tamper.set(`/api/connect/pairing/requests/${requestId}/approve`, () => new Response("", { status: 502 }))
+    expect(await outcome).toBe("approved")
+    await s.until(() => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true)
+  })
+
+  test("an account that is gone on reconnect turns the connector unavailable instead of retrying", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    s.signOut()
+    s.service.control!.close(1013, "lease_lost")
+    await s.until(() => s.connector.status.state === "unavailable", 5000)
+    expect(s.connector.status).toEqual({ state: "unavailable", reason: "not_signed_in" })
   })
 })
