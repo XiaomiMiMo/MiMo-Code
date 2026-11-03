@@ -1,6 +1,6 @@
 ---
 feature: history-index-tool-output-budget
-status: in-progress
+status: delivered
 updated: 2026-11-03
 source: fix/history-search-fetch-limit
 ---
@@ -9,15 +9,15 @@ source: fix/history-search-fetch-limit
 
 ## Report
 
-**What was built** — History FTS is truncated **before write** on the **same path as tool call results**: pure `previewToolOutput` in `tool/truncate.ts` is shared by `Truncate.output` and history `extract` / writer / import. Tool parts prefer the stored tool-result string (including `Full output saved to: <path>` when tools truncated); other kinds compose then preview with the same 50KiB / 2000-line budget. Full text stays in `PartTable` / tool-output files for `history get`. Migration v6 removes legacy chunk rows and rebuilds one truncated index row per original part.
+**What was built** — History FTS is truncated **before write** on the **same path as tool call results**: pure `previewToolOutput` in `tool/truncate.ts` is shared by `Truncate.output` and history `extract` / writer / import. Tool parts prefer the stored tool-result string (including `Full output saved to: <path>` when tools truncated); other kinds compose then preview with the same 50KiB / 2000-line budget. Full text stays in `PartTable` / tool-output files for `history get`. Migration v6 removes legacy chunk rows and rebuilds one truncated index row per original part. Search fetches exactly `limit` index rows ([S2.1]), with base-id dedupe kept as a guard.
 
-**Verification** — `packages/cli`: `bun test test/history/` green after budget tests; `tsgo --noEmit` filtered to `src/history`/`test/history` clean.
+**Verification** — `packages/cli`: `bun test test/history/` green after budget tests; `tsgo --noEmit` filtered to `src/history`/`test/history` clean. S2.1: `bun test --timeout 30000 test/history` 100 pass / 5 skip / 0 fail; `bun test test/tool/history.test.ts` 5 pass; `bun run typecheck` clean; the new `reads at most limit index rows` test fails on the previous `service.ts` (60 rows read) and passes after. `node:sqlite` benchmark on a real 47k-row index copy: `limit=50` went from 69–114ms to 8–27ms, `limit=10` from 13–36ms to 6–24ms; top-N part ids were identical before and after for all 14 query/limit pairs.
 
 **Journey log**
 - Root cause is **missing pre-write truncation**, not chunking: tool results are capped; history indexed full part payloads (`patch` ~38MB, `reasoning` ~600KB).
 - User required the **tool-call-result path** — `previewToolOutput` extracted from `truncate.ts`; history writer/import call it before FTS insert.
 - Chunk deletion uses exact base id plus the binary prefix range `[id + '#', id + '$')`, preserving literal `_`/`%` while using the primary-key index.
-- Post-LIMIT dedupe under-filled search — over-fetch `limit*24` before dedupe.
+- Post-LIMIT dedupe under-filled search — over-fetch `limit*24` before dedupe. Superseded by [S2.1]: with one row per part, the over-fetch only cost main-thread time on Desktop.
 
 ## [S1] Problem
 
@@ -62,7 +62,7 @@ Desktop runs the engine on the Electron main thread, and search executes synchro
 - Why unconditional is compatible with old data:
   - `history_fts.part_id` is the primary key, and `upsertHistoryBody` (the only writer) deletes every row of a part before writing one row under the base id. Current code cannot produce several rows per part.
   - Only legacy `part#N` chunk rows from v5 break that invariant. Each migration's `clean` phase (v6/v7/v8) deletes them.
-  - v8 recreates `history_fts_idx` empty and refills it only in `finalize`, after `clean` has run. During migration the index is empty with or without over-fetch, so a gate would buy nothing.
+  - v8 recreates `history_fts_idx` empty. Its SQL also recreates the triggers, so writes made before the first batch drops them are indexed, but those are all single base-id rows. Afterwards the index is refilled only in `finalize`, after `clean` has run. A migration-state gate would therefore buy nothing.
 - Dedupe by `basePartId` stays as a guard. If residue survives (for example, an old v5 engine still writing to a shared DB), search may return fewer than `limit` hits but never duplicates.
 
 ## Follow-ups
@@ -84,5 +84,5 @@ Desktop runs the engine on the Electron main thread, and search executes synchro
 - [x] T4: Migration v6 + indexed trigger (covers: S2)
 - [x] T5: Tests: index-preview, extract budgets, chunk-write, backfill (covers: S2)
 - [x] T6: history unit suite + typecheck (covers: S2; depends: T1-T5)
-- [ ] T7: search `fetchLimit = limit`; drop the over-fetch comment — acceptance: a search with `limit: 5` over 60 matching parts reads at most 5 index rows; legacy chunk residue yields no duplicate hits (covers: S2.1)
-- [ ] T8: history suite + typecheck + Node-driver benchmark on a real-size index — acceptance: suite green; `limit=50` latency no longer pays for 1,200 rows (covers: S2.1; depends: T7)
+- [x] T7: search `fetchLimit = limit`; drop the over-fetch comment — acceptance: a search with `limit: 5` over 60 matching parts reads at most 5 index rows; legacy chunk residue yields no duplicate hits (covers: S2.1)
+- [x] T8: history suite + typecheck + Node-driver benchmark on a real-size index — acceptance: suite green; `limit=50` latency no longer pays for 1,200 rows (covers: S2.1; depends: T7)
