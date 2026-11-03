@@ -149,9 +149,6 @@ export const dict: Record<string, string> = {
   "tui.tips.disable_tool": 'Set {highlight}"tools": {"bash": false}{/highlight} to disable specific tools',
   "tui.tips.disable_mcp_tools": 'Set {highlight}"mcp_*": false{/highlight} to disable all tools from an MCP server',
   "tui.tips.tool_override": "Override global tool settings per agent configuration",
-  "tui.tips.share_auto": 'Set {highlight}"share": "auto"{/highlight} to automatically share all sessions',
-  "tui.tips.share_disabled": 'Set {highlight}"share": "disabled"{/highlight} to prevent any session sharing',
-  "tui.tips.unshare": "Run {highlight}/unshare{/highlight} to remove a session from public access",
   "tui.tips.doom_loop": "Permission {highlight}doom_loop{/highlight} prevents infinite tool call loops",
   "tui.tips.external_dir": "Permission {highlight}external_directory{/highlight} protects files outside project",
   "tui.tips.debug_config": "Run {highlight}mimo debug config{/highlight} to troubleshoot configuration",
@@ -404,8 +401,6 @@ export const dict: Record<string, string> = {
   "tui.command.logout.toast": "Logged out",
 
   // Session-level commands
-  "tui.command.session.share.title": "Share session",
-  "tui.command.session.share.copy_link": "Copy share link",
   "tui.command.session.rename.title": "Rename session",
   "tui.command.session.timeline.title": "Jump to message",
   "tui.command.session.fork.title": "Fork session",
@@ -414,7 +409,6 @@ export const dict: Record<string, string> = {
   "tui.command.session.ask.description": "Ask the current session a question without disrupting it",
   "tui.command.session.ask.placeholder": "Ask a side question…",
   "tui.command.session.ask.busy": "Thinking…",
-  "tui.command.session.unshare.title": "Unshare session",
   "tui.command.session.undo.title": "Undo previous message",
   "tui.command.session.redo.title": "Redo",
   "tui.command.session.sidebar.show": "Show sidebar",

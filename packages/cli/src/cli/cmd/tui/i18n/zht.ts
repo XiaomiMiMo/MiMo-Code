@@ -142,9 +142,6 @@ export const dict = {
   "tui.tips.disable_tool": '設定 {highlight}"tools": {"bash": false}{/highlight} 停用特定工具',
   "tui.tips.disable_mcp_tools": '設定 {highlight}"mcp_*": false{/highlight} 停用某個 MCP 伺服器的所有工具',
   "tui.tips.tool_override": "在每個智慧代理設定中覆寫全域工具設定",
-  "tui.tips.share_auto": '設定 {highlight}"share": "auto"{/highlight} 自動分享所有工作階段',
-  "tui.tips.share_disabled": '設定 {highlight}"share": "disabled"{/highlight} 禁止任何工作階段分享',
-  "tui.tips.unshare": "執行 {highlight}/unshare{/highlight} 把工作階段從公開存取中移除",
   "tui.tips.doom_loop": "權限 {highlight}doom_loop{/highlight} 防止工具呼叫陷入無窮迴圈",
   "tui.tips.external_dir": "權限 {highlight}external_directory{/highlight} 保護專案外部的檔案",
   "tui.tips.debug_config": "執行 {highlight}mimo debug config{/highlight} 排查設定問題",
@@ -408,8 +405,6 @@ export const dict = {
   "tui.command.logout.toast": "已登出",
 
   // Session-level commands
-  "tui.command.session.share.title": "分享工作階段",
-  "tui.command.session.share.copy_link": "複製分享連結",
   "tui.command.session.rename.title": "重新命名工作階段",
   "tui.command.session.timeline.title": "跳到訊息",
   "tui.command.session.fork.title": "分支工作階段",
@@ -418,7 +413,6 @@ export const dict = {
   "tui.command.session.ask.description": "向目前工作階段提問而不打斷它",
   "tui.command.session.ask.placeholder": "提一個旁問…",
   "tui.command.session.ask.busy": "思考中…",
-  "tui.command.session.unshare.title": "取消分享",
   "tui.command.session.undo.title": "復原上一條訊息",
   "tui.command.session.redo.title": "重做",
   "tui.command.session.sidebar.show": "顯示側邊欄",

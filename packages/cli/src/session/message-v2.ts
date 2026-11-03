@@ -1367,7 +1367,7 @@ export function toModelMessages(
 export function page(input: { sessionID: SessionID; limit: number; before?: string; agentID?: string }) {
   const before = input.before ? cursor.decode(input.before) : undefined
   // Slice contract: agentID `undefined` (default) ⇒ main slice only;
-  // `"*"` ⇒ every slice (full-stream opt-out for export/stats/share/etc.);
+  // `"*"` ⇒ every slice (full-stream opt-out for export/stats/etc.);
   // any other string ⇒ that subagent's actorID slice.
   const agentClause = input.agentID === "*" ? undefined : eq(MessageTable.agent_id, input.agentID ?? "main")
   const where = and(

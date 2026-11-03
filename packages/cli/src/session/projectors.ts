@@ -51,7 +51,6 @@ export function toPartialRow(info: DeepPartial<Session.Info>) {
     title_source: grab(info, "titleSource"),
     title_revision: grab(info, "titleRevision"),
     version: grab(info, "version"),
-    share_url: grab(info, "share", (v) => grab(v, "url")),
     summary_additions: grab(info, "summary", (v) => grab(v, "additions")),
     summary_deletions: grab(info, "summary", (v) => grab(v, "deletions")),
     summary_files: grab(info, "summary", (v) => grab(v, "files")),
@@ -95,10 +94,13 @@ export default [
     // legacy prefix must produce that same baseline before any v2 transition.
     // Once a revisioned title command exists, no v1 title can follow it.
     if (title !== undefined && current.title_revision !== 0) throw new Error("Legacy title event after revisioned title command")
-    db.update(SessionTable).set({
+    const values = {
       ...toPartialRow(rest),
       ...(title !== undefined ? { title: title || "Untitled", title_source: "user" as const, title_revision: 0 } : {}),
-    }).where(eq(SessionTable.id, data.sessionID)).run()
+    }
+    // Share-only events from removed cloud sharing have nothing left to write.
+    if (Object.keys(values).length === 0) return
+    db.update(SessionTable).set(values).where(eq(SessionTable.id, data.sessionID)).run()
   }),
 
   SyncEvent.project(Session.Event.Updated, (db, data) => {
@@ -113,12 +115,11 @@ export default [
       if (current.title_source === "user" && next.titleSource !== "user") throw new Error("Protected title cannot be unlocked")
       if (next.titleSource === "fallback" && current.title_source !== "fallback") throw new Error("Generated title cannot return to fallback")
     } else if (data.previousRevision !== undefined) throw new Error("Title event is missing its snapshot")
-    const row = db
-      .update(SessionTable)
-      .set(toPartialRow(info))
-      .where(eq(SessionTable.id, data.sessionID))
-      .returning()
-      .get()
+    const values = toPartialRow(info)
+    // Share-only events from removed cloud sharing have nothing left to write.
+    const row = Object.keys(values).length === 0
+      ? db.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, data.sessionID)).get()
+      : db.update(SessionTable).set(values).where(eq(SessionTable.id, data.sessionID)).returning().get()
     if (!row) throw new NotFoundError({ message: `Session not found: ${data.sessionID}` })
   }),
 

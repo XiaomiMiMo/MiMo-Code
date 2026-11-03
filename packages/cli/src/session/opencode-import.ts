@@ -43,7 +43,7 @@ function nativeSessionRow(session: OcSession, projectID: ProjectID): SessionRow 
     parent_id: session.parent_id ?? null, context_from: session.context_from ?? null, context_watermark: session.context_watermark ?? null,
     slug: session.slug, directory: session.directory, title: session.title,
     title_source: session.title_source ?? "user", title_revision: session.title_revision ?? 0, version: session.version,
-    share_url: session.share_url ?? null, summary_additions: session.summary_additions ?? null,
+    summary_additions: session.summary_additions ?? null,
     summary_deletions: session.summary_deletions ?? null, summary_files: session.summary_files ?? null,
     summary_diffs: json<SessionRow["summary_diffs"]>(session.summary_diffs), revert: json<SessionRow["revert"]>(session.revert),
     permission: json<SessionRow["permission"]>(session.permission), prompt: json<SessionRow["prompt"]>(session.prompt),

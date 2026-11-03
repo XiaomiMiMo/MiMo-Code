@@ -163,9 +163,6 @@ export const dict = {
   "tui.tips.disable_mcp_tools":
     '{highlight}"mcp_*": false{/highlight} で MCP サーバ由来のツールをすべて無効化できます',
   "tui.tips.tool_override": "エージェントごとの設定でグローバルなツール設定を上書きできます",
-  "tui.tips.share_auto": '{highlight}"share": "auto"{/highlight} で全セッションを自動共有します',
-  "tui.tips.share_disabled": '{highlight}"share": "disabled"{/highlight} でセッション共有を完全に禁止します',
-  "tui.tips.unshare": "{highlight}/unshare{/highlight} で公開アクセスからセッションを解除します",
   "tui.tips.doom_loop": "権限 {highlight}doom_loop{/highlight} がツール呼び出しの無限ループを防ぎます",
   "tui.tips.external_dir":
     "権限 {highlight}external_directory{/highlight} がプロジェクト外のファイルを保護します",
@@ -378,8 +375,6 @@ export const dict = {
   "tui.command.logout.toast": "ログアウトしました",
 
   // Session-level commands
-  "tui.command.session.share.title": "セッションを共有",
-  "tui.command.session.share.copy_link": "共有リンクをコピー",
   "tui.command.session.rename.title": "セッションをリネーム",
   "tui.command.session.timeline.title": "メッセージにジャンプ",
   "tui.command.session.fork.title": "セッションを分岐",
@@ -388,7 +383,6 @@ export const dict = {
   "tui.command.session.ask.description": "現在のセッションを中断せずに質問する",
   "tui.command.session.ask.placeholder": "サイド質問を入力…",
   "tui.command.session.ask.busy": "考え中…",
-  "tui.command.session.unshare.title": "共有を解除",
   "tui.command.session.undo.title": "直前のメッセージを取り消す",
   "tui.command.session.redo.title": "やり直し",
   "tui.command.session.sidebar.show": "サイドバーを表示",

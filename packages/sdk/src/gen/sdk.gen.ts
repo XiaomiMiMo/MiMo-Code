@@ -73,12 +73,6 @@ import type {
   SessionAbortData,
   SessionAbortResponses,
   SessionAbortErrors,
-  SessionUnshareData,
-  SessionUnshareResponses,
-  SessionUnshareErrors,
-  SessionShareData,
-  SessionShareResponses,
-  SessionShareErrors,
   SessionDiffData,
   SessionDiffResponses,
   SessionDiffErrors,
@@ -551,26 +545,6 @@ class Session extends _HeyApiClient {
   public abort<ThrowOnError extends boolean = false>(options: Options<SessionAbortData, ThrowOnError>) {
     return (options.client ?? this._client).post<SessionAbortResponses, SessionAbortErrors, ThrowOnError>({
       url: "/session/{id}/abort",
-      ...options,
-    })
-  }
-
-  /**
-   * Unshare the session
-   */
-  public unshare<ThrowOnError extends boolean = false>(options: Options<SessionUnshareData, ThrowOnError>) {
-    return (options.client ?? this._client).delete<SessionUnshareResponses, SessionUnshareErrors, ThrowOnError>({
-      url: "/session/{id}/share",
-      ...options,
-    })
-  }
-
-  /**
-   * Share a session
-   */
-  public share<ThrowOnError extends boolean = false>(options: Options<SessionShareData, ThrowOnError>) {
-    return (options.client ?? this._client).post<SessionShareResponses, SessionShareErrors, ThrowOnError>({
-      url: "/session/{id}/share",
       ...options,
     })
   }

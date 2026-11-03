@@ -37,6 +37,19 @@ afterEach(async () => {
   await clear(true)
 })
 
+// engine-runtime [TP-R14-02]
+test("ignores cloud sharing shortcuts in existing TUI config", async () => {
+  await using tmp = await tmpdir({ outsideGit: true, init: async (dir) => {
+    await Bun.write(path.join(dir, "tui.json"), JSON.stringify({
+      tui: { keybinds: { session_share: "ctrl+s", session_unshare: "ctrl+u", app_exit: "ctrl+q" } },
+    }))
+  } })
+  const config = await getTuiConfig(tmp.path)
+  expect(config.keybinds).not.toHaveProperty("session_share")
+  expect(config.keybinds).not.toHaveProperty("session_unshare")
+  expect(config.keybinds?.app_exit).toBe("ctrl+q")
+})
+
 test("keeps server and tui plugin merge semantics aligned", async () => {
   await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {

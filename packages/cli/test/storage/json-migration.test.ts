@@ -11,7 +11,6 @@ import { Global } from "../../src/global"
 import { ProjectTable } from "../../src/project/project.sql"
 import { ProjectID } from "../../src/project/schema"
 import { SessionTable, MessageTable, PartTable, TodoTable, PermissionTable } from "../../src/session/session.sql"
-import { SessionShareTable } from "../../src/share/share.sql"
 import { SessionID, MessageID, PartID } from "../../src/session/schema"
 
 // Test fixtures
@@ -226,7 +225,8 @@ describe("JSON to SQLite migration", () => {
     expect(sessions[0].title).toBe("Test Session Title")
     expect(sessions[0].summary_additions).toBe(10)
     expect(sessions[0].summary_deletions).toBe(5)
-    expect(sessions[0].share_url).toBe("https://example.com/share")
+    // The retained column is left empty: legacy share links are not imported.
+    expect(sqlite.prepare("SELECT share_url FROM session").get()).toEqual({ share_url: null })
   })
 
   // JSON imports remain searchable when the database migration is already complete.
@@ -573,7 +573,8 @@ describe("JSON to SQLite migration", () => {
     expect(permissions[0].data).toEqual(permissionData)
   })
 
-  test("migrates session shares", async () => {
+  // engine-runtime [TP-R14-03]
+  test("ignores legacy session share files", async () => {
     await writeProject(storageDir, {
       id: "proj_test123abc",
       worktree: "/",
@@ -594,14 +595,9 @@ describe("JSON to SQLite migration", () => {
 
     const stats = await JsonMigration.run(db)
 
-    expect(stats?.shares).toBe(1)
-
-    const shares = db.select().from(SessionShareTable).all()
-    expect(shares.length).toBe(1)
-    expect(shares[0].session_id).toBe("ses_test456def")
-    expect(shares[0].id).toBe("share_123")
-    expect(shares[0].secret).toBe("supersecretkey")
-    expect(shares[0].url).toBe("https://share.example.com/ses_test456def")
+    expect(stats.sessions).toBe(1)
+    expect(stats).not.toHaveProperty("shares")
+    expect(stats.errors).toEqual([])
   })
 
   test("returns empty stats when storage directory does not exist", async () => {
@@ -615,7 +611,6 @@ describe("JSON to SQLite migration", () => {
     expect(stats.parts).toBe(0)
     expect(stats.todos).toBe(0)
     expect(stats.permissions).toBe(0)
-    expect(stats.shares).toBe(0)
     expect(stats.errors).toEqual([])
   })
 
@@ -667,7 +662,7 @@ describe("JSON to SQLite migration", () => {
     expect(todos[1].position).toBe(2)
   })
 
-  test("skips orphaned todos, permissions, and shares", async () => {
+  test("skips orphaned todos and permissions", async () => {
     await writeProject(storageDir, {
       id: "proj_test123abc",
       worktree: "/",
@@ -694,24 +689,13 @@ describe("JSON to SQLite migration", () => {
       JSON.stringify([{ permission: "file.write" }]),
     )
 
-    await Bun.write(
-      path.join(storageDir, "session_share", "ses_test456def.json"),
-      JSON.stringify({ id: "share_ok", secret: "secret", url: "https://ok.example.com" }),
-    )
-    await Bun.write(
-      path.join(storageDir, "session_share", "ses_missing.json"),
-      JSON.stringify({ id: "share_missing", secret: "secret", url: "https://missing.example.com" }),
-    )
-
     const stats = await JsonMigration.run(db)
 
     expect(stats.todos).toBe(1)
     expect(stats.permissions).toBe(1)
-    expect(stats.shares).toBe(1)
 
     expect(db.select().from(TodoTable).all().length).toBe(1)
     expect(db.select().from(PermissionTable).all().length).toBe(1)
-    expect(db.select().from(SessionShareTable).all().length).toBe(1)
   })
 
   test("handles mixed corruption and partial validity in one migration run", async () => {
@@ -801,16 +785,6 @@ describe("JSON to SQLite migration", () => {
     )
     await Bun.write(path.join(storageDir, "permission", "proj_broken.json"), "{ nope")
 
-    await Bun.write(
-      path.join(storageDir, "session_share", "ses_test456def.json"),
-      JSON.stringify({ id: "share_ok", secret: "secret", url: "https://ok.example.com" }),
-    )
-    await Bun.write(
-      path.join(storageDir, "session_share", "ses_missing.json"),
-      JSON.stringify({ id: "share_orphan", secret: "secret", url: "https://missing.example.com" }),
-    )
-    await Bun.write(path.join(storageDir, "session_share", "ses_broken.json"), "{ nope")
-
     const stats = await JsonMigration.run(db)
 
     // Projects: proj_test123abc (valid), proj_missing_id (now derives id from filename)
@@ -822,7 +796,6 @@ describe("JSON to SQLite migration", () => {
     expect(stats.parts).toBe(1)
     expect(stats.todos).toBe(2)
     expect(stats.permissions).toBe(1)
-    expect(stats.shares).toBe(1)
     expect(stats.errors.length).toBeGreaterThanOrEqual(6)
 
     expect(db.select().from(ProjectTable).all().length).toBe(2)
@@ -831,6 +804,5 @@ describe("JSON to SQLite migration", () => {
     expect(db.select().from(PartTable).all().length).toBe(1)
     expect(db.select().from(TodoTable).all().length).toBe(2)
     expect(db.select().from(PermissionTable).all().length).toBe(1)
-    expect(db.select().from(SessionShareTable).all().length).toBe(1)
   })
 })

@@ -142,9 +142,6 @@ export const dict = {
   "tui.tips.disable_tool": '设置 {highlight}"tools": {"bash": false}{/highlight} 禁用具体工具',
   "tui.tips.disable_mcp_tools": '设置 {highlight}"mcp_*": false{/highlight} 禁用某个 MCP 服务器的所有工具',
   "tui.tips.tool_override": "在每个智能体配置中覆盖全局工具设置",
-  "tui.tips.share_auto": '设置 {highlight}"share": "auto"{/highlight} 自动分享所有会话',
-  "tui.tips.share_disabled": '设置 {highlight}"share": "disabled"{/highlight} 禁止任何会话分享',
-  "tui.tips.unshare": "运行 {highlight}/unshare{/highlight} 把会话从公开访问中移除",
   "tui.tips.doom_loop": "权限 {highlight}doom_loop{/highlight} 防止工具调用陷入死循环",
   "tui.tips.external_dir": "权限 {highlight}external_directory{/highlight} 保护项目外部的文件",
   "tui.tips.debug_config": "运行 {highlight}mimo debug config{/highlight} 排查配置问题",
@@ -408,8 +405,6 @@ export const dict = {
   "tui.command.logout.toast": "已登出",
 
   // Session-level commands
-  "tui.command.session.share.title": "分享会话",
-  "tui.command.session.share.copy_link": "复制分享链接",
   "tui.command.session.rename.title": "重命名会话",
   "tui.command.session.timeline.title": "跳转到消息",
   "tui.command.session.fork.title": "派生会话",
@@ -418,7 +413,6 @@ export const dict = {
   "tui.command.session.ask.description": "向当前会话提问而不打断它",
   "tui.command.session.ask.placeholder": "提一个旁问…",
   "tui.command.session.ask.busy": "思考中…",
-  "tui.command.session.unshare.title": "取消分享",
   "tui.command.session.undo.title": "撤销上一条消息",
   "tui.command.session.redo.title": "重做",
   "tui.command.session.sidebar.show": "显示侧栏",

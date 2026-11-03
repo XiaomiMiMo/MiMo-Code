@@ -13,6 +13,8 @@ const DEFAULT_CSP =
 
 export const UIRoutes = (): Hono =>
   new Hono().all("/*", async (c) => {
+    // The SPA fallback serves documents, never successful API mutations.
+    if (c.req.method !== "GET" && c.req.method !== "HEAD") return c.json({ error: "Not Found" }, 404)
     const embeddedWebUI = await embeddedUIPromise
     const path = c.req.path
 

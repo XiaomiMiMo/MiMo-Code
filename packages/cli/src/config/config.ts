@@ -62,6 +62,11 @@ function normalizeLoadedConfig(data: unknown, source: string) {
   delete copy.history
   // Ignore the removed worktree policy in existing files and host-injected config.
   delete copy.auto_worktree
+  // Cloud sharing settings from existing files cannot enable a transport.
+  delete copy.share
+  delete copy.autoshare
+  // Only the removed share transport read the enterprise endpoint.
+  delete copy.enterprise
   if (isRecord(copy.compaction) && "prune" in copy.compaction) {
     const { prune: _, ...compaction } = copy.compaction
     copy.compaction = compaction
@@ -129,13 +134,6 @@ const InfoSchema = Schema.Struct({
   }),
   // User-facing plugin config is stored as Specs; provenance gets attached later while configs are merged.
   plugin: Schema.optional(Schema.mutable(Schema.Array(ConfigPlugin.Spec))),
-  share: Schema.optional(Schema.Literals(["manual", "auto", "disabled"])).annotate({
-    description:
-      "Control sharing behavior:'manual' allows manual sharing via commands, 'auto' enables automatic sharing, 'disabled' disables all sharing",
-  }),
-  autoshare: Schema.optional(Schema.Boolean).annotate({
-    description: "@deprecated Use 'share' field instead. Share newly created sessions automatically",
-  }),
   autoupdate: Schema.optional(Schema.Union([Schema.Boolean, Schema.Literal("notify")])).annotate({
     description:
       "Automatically update to the latest version. Set to true to auto-update, false to disable, or 'notify' to show update notifications",
@@ -229,11 +227,6 @@ const InfoSchema = Schema.Struct({
   layout: Schema.optional(ConfigLayout.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
   permission: Schema.optional(PermissionRef),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
-  enterprise: Schema.optional(
-    Schema.Struct({
-      url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }),
-    }),
-  ),
   compaction: Schema.optional(
     Schema.Struct({
       auto: Schema.optional(Schema.Boolean).annotate({
@@ -970,10 +963,6 @@ export const layer = Layer.effect(
         }
 
         if (!result.username) result.username = os.userInfo().username
-
-        if (result.autoshare === true && !result.share) {
-          result.share = "auto"
-        }
 
         if (Flag.MIMOCODE_DISABLE_AUTOCOMPACT) {
           result.compaction = { ...result.compaction, auto: false }
