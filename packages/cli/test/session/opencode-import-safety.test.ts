@@ -195,8 +195,6 @@ test("OpenCode native session metadata is lossless except project remapping and 
   await using dir = await tmpdir()
   const file = path.join(dir.path, "metadata.db")
   const src = source(file)
-  // OpenCode databases still carry the removed share link column.
-  src.exec("ALTER TABLE session ADD COLUMN share_url text")
   try {
     session(src, "ses_import_a", {
       workspace_id: "wrk_source", parent_id: "ses_parent", context_from: "ses_context", context_watermark: "msg_context",

@@ -225,7 +225,8 @@ describe("JSON to SQLite migration", () => {
     expect(sessions[0].title).toBe("Test Session Title")
     expect(sessions[0].summary_additions).toBe(10)
     expect(sessions[0].summary_deletions).toBe(5)
-    expect(sessions[0]).not.toHaveProperty("share_url")
+    // The retained column is left empty: legacy share links are not imported.
+    expect(sqlite.prepare("SELECT share_url FROM session").get()).toEqual({ share_url: null })
   })
 
   // JSON imports remain searchable when the database migration is already complete.

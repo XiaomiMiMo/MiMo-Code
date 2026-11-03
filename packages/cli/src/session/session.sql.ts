@@ -30,6 +30,8 @@ export const SessionTable = sqliteTable(
     title_source: text().$type<"fallback" | "generated" | "user">().notNull().default("user"),
     title_revision: integer().notNull().default(0),
     version: text().notNull(),
+    // `share_url` stays in the database, cleared, for older clients sharing it. It is deliberately not
+    // declared: databases that ran an earlier draft of the clearing migration no longer have the column.
     summary_additions: integer(),
     summary_deletions: integer(),
     summary_files: integer(),
