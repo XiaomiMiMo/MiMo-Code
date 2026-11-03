@@ -175,6 +175,18 @@
         "zod-to-json-schema": "3.24.5",
       },
     },
+    "packages/connector": {
+      "name": "@mimo-ai/connector",
+      "version": "0.1.16",
+      "dependencies": {
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+      },
+    },
     "packages/plugin": {
       "name": "@mimo-ai/plugin",
       "version": "0.1.18",
@@ -713,6 +725,8 @@
     "@lydell/node-pty-win32-x64": ["@lydell/node-pty-win32-x64@1.2.0-beta.10", "", { "os": "win32", "cpu": "x64" }, "sha512-ExFgWrzyldNAMi45U9PLIOu+g/RatP+f0c/dZxaooifME6yLW32BoHveH26/TtoAjZyJrc2iL0u48pgnR1fzmg=="],
 
     "@mimo-ai/cli": ["@mimo-ai/cli@workspace:packages/cli"],
+
+    "@mimo-ai/connector": ["@mimo-ai/connector@workspace:packages/connector"],
 
     "@mimo-ai/plugin": ["@mimo-ai/plugin@workspace:packages/plugin"],
 
