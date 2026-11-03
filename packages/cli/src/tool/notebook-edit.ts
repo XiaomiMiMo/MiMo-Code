@@ -11,7 +11,6 @@ import { FileWatcher } from "../file/watcher"
 import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
-import { trimDiff } from "./edit"
 
 const Parameters = z.object({
   notebook_path: z.string().describe("Path to the .ipynb file"),
@@ -202,7 +201,7 @@ export const NotebookEditTool = Tool.define(
 
           const contentNew = JSON.stringify(notebook, null, 1) + (contentOld.endsWith("\n") ? "\n" : "")
 
-          const diff = trimDiff(createTwoFilesPatch(notebookPath, notebookPath, contentOld, contentNew))
+          const diff = createTwoFilesPatch(notebookPath, notebookPath, contentOld, contentNew)
           yield* askEditUnlessMemory(ctx, notebookPath, {
             patterns: [path.relative(Instance.worktree, notebookPath)],
             diff,

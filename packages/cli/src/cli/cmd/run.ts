@@ -26,6 +26,7 @@ import { ActorTool } from "../../tool/actor"
 import { SkillTool } from "../../tool/skill"
 import { BashTool } from "../../tool/bash"
 import { Locale } from "../../util"
+import { trimDiff } from "../../util/trim-diff"
 import { AppRuntime } from "@/effect/app-runtime"
 import { createCompletionTracker, type CompletionTracker } from "./run-completion"
 
@@ -153,7 +154,7 @@ function webfetch(info: ToolProps<typeof WebFetchTool>) {
 
 function edit(info: ToolProps<typeof EditTool>) {
   const title = normalizePath(info.input.file_path)
-  const diff = info.metadata.diff
+  const diff = info.metadata.diff && trimDiff(info.metadata.diff)
   block(
     {
       icon: "←",

@@ -86,8 +86,14 @@ export const EditTool = Tool.define(
             Effect.gen(function* () {
               if (params.old_string === "") {
                 const existed = yield* afs.existsSafe(filePath)
+                if (existed) contentOld = yield* afs.readFileString(filePath)
                 contentNew = params.new_string
-                diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
+                diff = createTwoFilesPatch(
+                  filePath,
+                  filePath,
+                  normalizeLineEndings(contentOld),
+                  normalizeLineEndings(contentNew),
+                )
                 yield* askEditUnlessMemory(ctx, filePath, {
                   patterns: [path.relative(Instance.worktree, filePath)],
                   diff,
@@ -99,6 +105,13 @@ export const EditTool = Tool.define(
                   file: filePath,
                   event: existed ? "change" : "add",
                 })
+                contentNew = yield* afs.readFileString(filePath)
+                diff = createTwoFilesPatch(
+                  filePath,
+                  filePath,
+                  normalizeLineEndings(contentOld),
+                  normalizeLineEndings(contentNew),
+                )
                 return
               }
 
@@ -113,13 +126,11 @@ export const EditTool = Tool.define(
 
               contentNew = replace(contentOld, old, next, params.replace_all)
 
-              diff = trimDiff(
-                createTwoFilesPatch(
-                  filePath,
-                  filePath,
-                  normalizeLineEndings(contentOld),
-                  normalizeLineEndings(contentNew),
-                ),
+              diff = createTwoFilesPatch(
+                filePath,
+                filePath,
+                normalizeLineEndings(contentOld),
+                normalizeLineEndings(contentNew),
               )
               yield* askEditUnlessMemory(ctx, filePath, {
                 patterns: [path.relative(Instance.worktree, filePath)],
@@ -134,13 +145,11 @@ export const EditTool = Tool.define(
                 event: "change",
               })
               contentNew = yield* afs.readFileString(filePath)
-              diff = trimDiff(
-                createTwoFilesPatch(
-                  filePath,
-                  filePath,
-                  normalizeLineEndings(contentOld),
-                  normalizeLineEndings(contentNew),
-                ),
+              diff = createTwoFilesPatch(
+                filePath,
+                filePath,
+                normalizeLineEndings(contentOld),
+                normalizeLineEndings(contentNew),
               )
             }).pipe(Effect.orDie),
           )
@@ -184,42 +193,6 @@ export const EditTool = Tool.define(
     }
   }),
 )
-
-export function trimDiff(diff: string): string {
-  const lines = diff.split("\n")
-  const contentLines = lines.filter(
-    (line) =>
-      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
-      !line.startsWith("---") &&
-      !line.startsWith("+++"),
-  )
-
-  if (contentLines.length === 0) return diff
-
-  let min = Infinity
-  for (const line of contentLines) {
-    const content = line.slice(1)
-    if (content.trim().length > 0) {
-      const match = content.match(/^(\s*)/)
-      if (match) min = Math.min(min, match[1].length)
-    }
-  }
-  if (min === Infinity || min === 0) return diff
-  const trimmedLines = lines.map((line) => {
-    if (
-      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
-      !line.startsWith("---") &&
-      !line.startsWith("+++")
-    ) {
-      const prefix = line[0]
-      const content = line.slice(1)
-      return prefix + content.slice(min)
-    }
-    return line
-  })
-
-  return trimmedLines.join("\n")
-}
 
 export type Replacer = (content: string, find: string) => Generator<string, void, unknown>
 

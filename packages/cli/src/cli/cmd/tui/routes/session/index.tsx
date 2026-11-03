@@ -94,6 +94,7 @@ import stripAnsi from "strip-ansi"
 import { usePromptRef } from "../../context/prompt"
 import { useExit } from "../../context/exit"
 import { Filesystem } from "@/util"
+import { trimDiff } from "@/util/trim-diff"
 import { Global } from "@/global"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
@@ -3624,7 +3625,7 @@ function Edit(props: ToolProps<typeof EditTool>) {
 
   const ft = createMemo(() => filetype(props.input.file_path))
 
-  const diffContent = createMemo(() => props.metadata.diff)
+  const diffContent = createMemo(() => props.metadata.diff && trimDiff(props.metadata.diff))
 
   return (
     <Switch>
@@ -3720,7 +3721,8 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
           {(file) => {
             const open = createMemo(() => expanded().includes(file.filePath))
             const count = createMemo(() => file.additions + file.deletions)
-            const collapsed = createMemo(() => count() > TOOL_COLLAPSE_MAX_LINES || hasLongDisplayLine(file.patch))
+            const patch = createMemo(() => trimDiff(file.patch))
+            const collapsed = createMemo(() => count() > TOOL_COLLAPSE_MAX_LINES || hasLongDisplayLine(patch()))
 
             return (
               <BlockTool
@@ -3744,7 +3746,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
                       </text>
                     }
                   >
-                    <Diff diff={file.patch} filePath={file.filePath} />
+                    <Diff diff={patch()} filePath={file.filePath} />
                     <Show when={collapsed()}>
                       <text fg={theme.textMuted}>Click to collapse</text>
                     </Show>
