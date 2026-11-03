@@ -31,9 +31,18 @@ export type GateEntry = {
 
 export type Submission = { messageId: string; textSha256: string; createdAt: number }
 
+/** The registration of this installation's key for one account. */
+export type Installation = { origin: string; environment: string; subject: string; deviceId: string }
+
+/** A local confirmation recorded before approving, so a crash after approve still finds it. */
+export type PendingConsent = Omit<Consent, "bindingId" | "phoneId">
+
 export type ConnectorState = {
   version: 1
+  installation?: Installation
   consents: Record<string, Consent>
+  /** pairing requestId -> the confirmation given for it, until the binding is known. */
+  pending: Record<string, PendingConsent>
   /** `${bindingId}:${lane}` -> last fence this installation made durable. */
   gates: Record<string, GateEntry>
   /** `${bindingId}:${sessionId}:${requestId}` -> the message ID a phone request was submitted as. */
@@ -45,7 +54,7 @@ const DATA_KEY = "state-key"
 const SUBMISSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 export function emptyState(): ConnectorState {
-  return { version: 1, consents: {}, gates: {}, submissions: {} }
+  return { version: 1, consents: {}, pending: {}, gates: {}, submissions: {} }
 }
 
 export class StateFile {

@@ -32,7 +32,10 @@ export class FakeConnect {
   epoch = 0
   discovery: "cli" | "empty" | "missing" = "cli"
   challenges = new Map<string, { code: string; status: string; request: null | { requestId: string; phoneName: string } }>()
+  decisions = new Map<string, { status: string; bindingId: string | null }>()
   grants = new Map<string, Record<string, unknown>>()
+  /** Last fence state sent per lane path: a revoked fence ends with fence-confirmed on ack. */
+  private fenceStates = new Map<string, "active" | "revoked">()
   bindings = new Map<string, Record<string, unknown>>()
   control: Socket | undefined
   lanes = new Map<string, Socket>()
@@ -159,10 +162,18 @@ export class FakeConnect {
     const decision = path.match(/^\/api\/connect\/pairing\/requests\/([^/]+)\/(approve|reject|cancel)$/)
     if (decision) {
       const status = { approve: "approved", reject: "rejected", cancel: "cancelled" }[decision[2]]!
+      const earlier = this.decisions.get(decision[1])
+      if (earlier) return { requestId: decision[1], ...earlier }
       const bindingId = status === "approved" ? crypto.randomUUID() : null
       if (bindingId) this.bindings.set(bindingId, this.bindingView(bindingId))
+      this.decisions.set(decision[1], { status, bindingId })
+      for (const challenge of this.challenges.values()) {
+        if (challenge.request?.requestId === decision[1]) challenge.status = status
+      }
       return { requestId: decision[1], status, bindingId }
     }
+    const request = path.match(/^\/api\/connect\/pairing\/requests\/([^/]+)$/)
+    if (request) return { requestId: request[1], ...(this.decisions.get(request[1]) ?? { status: "claimed", bindingId: null }) }
     const list = path.match(/^\/api\/connect\/devices\/([^/]+)\/bindings$/)
     if (list) {
       const all = [...this.bindings.values()]
@@ -188,6 +199,7 @@ export class FakeConnect {
       }
     }
     const grant = path.match(/^\/api\/connect\/bindings\/([^/]+)\/content-grant$/)
+    if (grant && method === "GET") return this.grants.get(grant[1])
     if (grant && method === "PUT") {
       const view = {
         protocolVersion: 4,
@@ -217,7 +229,7 @@ export class FakeConnect {
         grantVersion: body.grantVersion,
         connectionEpoch: body.connectionEpoch,
         revocationVersion: 0,
-        scopes: ["sessions:list", "sessions:read", "sessions:send"],
+        scopes: this.bindings.get(token[1])?.state === "revoked" ? [] : (this.grants.get(token[1])?.scopes ?? []),
         token: base64url(crypto.getRandomValues(new Uint8Array(32))).slice(0, 43),
         audience: `${this.origin}/api/connect/content-relay/${body.lane}`,
         expiresAt: Date.now() + 3_600_000,
@@ -228,7 +240,9 @@ export class FakeConnect {
       const view = this.bindings.get(binding[1])!
       if (binding[2]) {
         view.state = "revoked"
+        view.relayFence = "pending"
         view.revocationVersion = (view.revocationVersion as number) + 1
+        setTimeout(() => this.revokeLive(binding[1]), 10)
       }
       return view
     }
@@ -338,11 +352,32 @@ export class FakeConnect {
     }
     if (frame.type === "attach") {
       this.lanes.set(ws.data.lane!, ws)
-      this.fence(ws.data.lane!, frame)
+      const binding = this.bindings.get(frame.bindingId as string)
+      this.fence(ws.data.lane!, frame, binding?.state === "revoked" ? "revoked" : "active")
+      return
+    }
+    if (frame.type === "fence-ack" && this.fenceStates.get(ws.data.lane!) === "revoked") {
+      const attach = this.lastAttach(ws.data.path)
+      ws.send(
+        JSON.stringify({
+          protocolVersion: 4,
+          type: "fence-confirmed",
+          bindingId: attach.bindingId,
+          targetKind: "cli",
+          deviceGroupId: attach.deviceGroupId,
+          grantVersion: attach.grantVersion,
+          revocationVersion: 1,
+          connectionEpoch: attach.connectionEpoch,
+        }),
+      )
+      this.confirmedRevocations.add(attach.bindingId as string)
+      const view = this.bindings.get(attach.bindingId as string)
+      if (view) view.relayFence = "complete"
+      ws.close(1008, "binding_revoked")
       return
     }
     if (frame.type === "fence-ack" && this.sendTransportReady) {
-      const attach = this.frames.find((f) => f.path === ws.data.path && f.frame.type === "attach")!.frame
+      const attach = this.lastAttach(ws.data.path)
       ws.send(
         JSON.stringify({
           protocolVersion: 4,
@@ -361,9 +396,25 @@ export class FakeConnect {
     if (frame.type === "ping") ws.send(JSON.stringify({ protocolVersion: 4, type: "pong" }))
   }
 
+  private lastAttach(path: string): Record<string, unknown> {
+    return this.frames.findLast((f) => f.path === path && f.frame.type === "attach")!.frame
+  }
+
+  /** Bindings whose revocation a connector confirmed on a lane. */
+  readonly confirmedRevocations = new Set<string>()
+
+  /** Re-fence every live lane of a binding as revoked, like the service after a revoke. */
+  revokeLive(bindingId: string): void {
+    for (const [lane] of this.lanes) {
+      const attach = this.lastAttach(`/api/connect/content-relay/${lane}`)
+      if (attach.bindingId === bindingId) this.fence(lane, attach, "revoked")
+    }
+  }
+
   /** Send a fence on a lane (initial after attach, or a re-fence from a test). */
   fence(lane: string, attach: Record<string, unknown>, state: "active" | "revoked" = "active"): string {
     const fenceId = crypto.randomUUID()
+    this.fenceStates.set(lane, state)
     this.lanes.get(lane)!.send(
       JSON.stringify({
         protocolVersion: 4,
