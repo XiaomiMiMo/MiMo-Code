@@ -1,6 +1,6 @@
 ---
 feature: edit-diff-untrimmed
-status: in-progress
+status: delivered
 updated: 2026-11-03
 source: fix/edit-diff-untrimmed
 ---
@@ -8,6 +8,10 @@ source: fix/edit-diff-untrimmed
 # Edit Tool Diffs Are Applyable Patches
 
 ## Report
+
+**What was built** — `edit`, `write`, `apply_patch` and `notebook-edit` now publish untrimmed `createTwoFilesPatch` output in `metadata.diff`, `filediff.patch`, `files[].patch` and permission-request metadata, so every published diff applies to the file's previous content and yields the bytes on disk. `trimDiff` moved to `src/util/trim-diff.ts` as a display-only helper that trims each `Index:` section independently; the TUI edit block, apply_patch block and its collapse check, the edit permission prompt and the `run` edit block call it at render time, so terminal output is unchanged. `write` recomputes its diff from the file after formatting (the permission prompt still previews the requested content). `edit` with an empty `old_string` diffs against the existing file's content using raw line endings, recomputes after formatting, and rejects directories with the replace branch's error. Side effect: ACP's permission handling, which applies `metadata.diff` to the file, now succeeds on edits inside indented blocks.
+
+**Verification** — `bun run typecheck` (repo root) PASS, 0 errors. `cd packages/cli && bun test --timeout 30000 test/tool test/util test/permission test/cli test/acp test/patch` PASS: 1661 pass / 9 skip / 0 fail across 157 files. Regression proof is RED→GREEN: `test/tool/applyable-diff.test.ts` failed 8 of 9 cases on the original implementation (`applyPatch` returned `false` on trimmed hunks; write's diff missed the formatter's rewrite; empty-`old_string` overwrite published a `@@ -0,0` new-file patch), and the CRLF overwrite case added in review failed before its fix; all 11 cases pass now. `oxlint` on the new files: 0 warnings. Independent review: one IMPORTANT finding (CRLF overwrite) and minor items were fixed and re-reviewed with no remaining critical or important findings.
 
 ## [S1] Problem
 
@@ -56,13 +60,14 @@ Tool tests assert the contract through public tool execution: for each tool, an 
 - Changing the metadata schema or adding a second patch field.
 
 ## Tasks
-- [ ] T1: Regression tests for the data contract — acceptance: new tests for edit, write, apply_patch and notebook-edit editing inside an indented block assert `applyPatch(before, metadata diff) === final content`, plus write/edit with a rewriting formatter and edit with an empty `old_string` on an existing file; they fail on the current implementation for the intended reason (covers: S2.1, S2.3, S2.4, S2.5)
-- [ ] T2: Move `trimDiff` to a display helper with per-section trimming — acceptance: unit tests show single-file output identical to the old function and multi-file sections trimmed independently (covers: S2.2)
-- [ ] T3: Tools publish untrimmed diffs; write and empty-`old_string` edit compute from the formatted file — acceptance: T1 is green and existing tool tests stay green (covers: S2.1, S2.3, S2.4; depends: T1, T2)
-- [ ] T4: Renderers trim at display time — acceptance: TUI edit block, apply_patch block and collapse check, edit permission prompt, and `run` edit block pass their diff through `trimDiff`; typecheck passes (covers: S2.2; depends: T2)
-- [ ] T5: Verify — acceptance: repo typecheck and the tool, permission and CLI test suites pass, with each command's result recorded (depends: T3, T4)
+- [x] T1: Regression tests for the data contract — acceptance: new tests for edit, write, apply_patch and notebook-edit editing inside an indented block assert `applyPatch(before, metadata diff) === final content`, plus write/edit with a rewriting formatter and edit with an empty `old_string` on an existing file; they fail on the current implementation for the intended reason (covers: S2.1, S2.3, S2.4, S2.5)
+- [x] T2: Move `trimDiff` to a display helper with per-section trimming — acceptance: unit tests show single-file output identical to the old function and multi-file sections trimmed independently (covers: S2.2)
+- [x] T3: Tools publish untrimmed diffs; write and empty-`old_string` edit compute from the formatted file — acceptance: T1 is green and existing tool tests stay green (covers: S2.1, S2.3, S2.4; depends: T1, T2)
+- [x] T4: Renderers trim at display time — acceptance: TUI edit block, apply_patch block and collapse check, edit permission prompt, and `run` edit block pass their diff through `trimDiff`; typecheck passes (covers: S2.2; depends: T2)
+- [x] T5: Verify — acceptance: repo typecheck and the tool, permission and CLI test suites pass, with each command's result recorded (depends: T3, T4)
 
 ## Journey log
 
 1. The defect surfaced in Mimo Desktop: its per-turn review rebuilds a file's turn diff by reverse-applying each step's `metadata.diff` against disk. A two-edit reproduction inside a function body showed the rebuild succeeding with untrimmed patches and failing with `trimDiff` output, after which review silently fell back to `git diff HEAD`. Desktop undo had already hit the same wall and grown an indentation-restoring heuristic, which pointed at the engine data contract rather than another consumer-side patch.
 2. Upstream opencode v1 carries the same `trimDiff` and the same class of breakage: #31625 asked for an applyable patch beside the display diff, #37266 traced lost ACP permission previews to `applyPatch` failing on trimmed hunks, and #37265 / #31783 proposed consumer-side workarounds. None merged; all were closed by the stale bot. Upstream v2 (`packages/core/src/tool/plugin/file-diff.ts`) drops trimming and computes the patch from the formatted file, which is the contract adopted here. Adding a second `patch` field (the #31625 shape) was rejected because it stores the same change twice and leaves consumers choosing between two sources.
+3. Review caught a regression introduced by this change: the empty-`old_string` branch had been made to normalize line endings like the replace branch, but it writes `new_string` verbatim, so a CRLF→LF overwrite vanished from the diff. jsdiff `applyPatch` auto-converts line endings, so normalized diffs stay applyable only when the tool preserves the file's original endings; this branch now diffs raw strings.
