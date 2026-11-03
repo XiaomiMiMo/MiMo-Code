@@ -23,7 +23,7 @@ export type AccountSession = {
 }
 
 export type ClientInfo = {
-  /** Semver of the running CLI; sent as X-Client-Version. */
+  /** Version of the running CLI; sent as X-Client-Version only when it is a release semver. */
   version: string
   platform: "macos" | "windows" | "linux"
 }
@@ -78,6 +78,7 @@ export type HttpOptions = {
   clock?: () => number
 }
 
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Connect envelopes are bounded; a larger body is not a Connect response. */
 const MAX_RESPONSE_BYTES = 65536
@@ -135,9 +136,10 @@ export class ConnectHttp {
     const headers = new Headers({
       Authorization: `Bearer ${account.accessToken}`,
       "Mimo-Request-Id": crypto.randomUUID(),
-      "X-Client-Version": this.options.client.version,
       "X-Client-Platform": this.options.client.platform,
     })
+    // Optional and diagnostic; a development build without a release version leaves it out.
+    if (SEMVER.test(this.options.client.version)) headers.set("X-Client-Version", this.options.client.version)
     if (input.profile) headers.set(PROFILE_HEADER, PROFILE)
     if (!input.proof) return headers
     const nonce = await this.challenge(account, input.method, input.path)

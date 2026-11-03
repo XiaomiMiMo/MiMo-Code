@@ -1,7 +1,31 @@
 import { describe, expect, test } from "bun:test"
+import { ConnectApi } from "../src/api"
+import { ConnectHttp } from "../src/http"
+import { generateDeviceKey } from "../src/proof"
+import { FakeConnect } from "./fake-connect"
 import { harness } from "./helpers"
 
 describe("Connect HTTP rules", () => {
+  test("a development build without a release version sends no client version", async () => {
+    const service = new FakeConnect().start()
+    try {
+      const { key } = await generateDeviceKey()
+      const http = new ConnectHttp({
+        account: () => service.account(),
+        key,
+        deviceId: () => undefined,
+        client: { version: "local", platform: "macos" },
+      })
+      await new ConnectApi(http).register("dev-box")
+      for (const request of service.requests) {
+        expect(request.headers.get("X-Client-Version")).toBeNull()
+        expect(request.headers.get("X-Client-Platform")).toBe("macos")
+      }
+    } finally {
+      service.stop()
+    }
+  })
+
   test("discovery: declared profile, empty list and a legal not_found are told apart from failures", async () => {
     using h = await harness()
     expect(await h.api.offersCliProfile()).toBe(true)
