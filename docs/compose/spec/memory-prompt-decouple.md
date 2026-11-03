@@ -123,19 +123,25 @@ only spaces inserted by the transform, preserving original whitespace and FTS
 highlighting. History uses the same segmentation strategy; memory retains its
 independent OR query semantics.
 
-The new SQL migration rebuilds the FTS table over the new column and records a
-pending content migration. Before the database is returned to callers,
-`memory/migration.ts` fills every existing row and clears the pending record in
-one immediate transaction. SQL triggers use the external-content `'delete'`
-command for updates/deletes. A failed backfill rolls back and retries on the
-next boot, even when reconcile-on-search is disabled; original bodies, IDs,
-fingerprints and timestamps remain intact. Shipped SQL migrations are unchanged.
+The new SQL migration rebuilds the FTS table over the new column and, only when
+`memory_fts` already has rows, records a pending content migration with an id
+cursor. Desktop runs the engine on the Electron main thread, so `Database.Client()`
+only reads the pending marker (no writer lock) and `memory/migration.ts` backfills
+in the background: bounded batches (32 rows / 8 ms budget, <=5% duty cycle), each
+in its own immediate transaction that advances the cursor, cleared on completion.
+A failed batch rolls back, never fails startup, and retries after 30 s or on the
+next boot; `Database.close()` stops the job. Rows awaiting backfill are briefly
+unsearchable because `memory_fts` is a cache of disk files. SQL triggers use the
+external-content `'delete'` command for updates/deletes. The migration is
+replay-safe (`IF NOT EXISTS` / `OR IGNORE`); original bodies, IDs, fingerprints
+and timestamps remain intact. Shipped SQL migrations are unchanged.
 
 Regression coverage: Desktop engine-runtime `TP-R6-07`, engine
 `test/memory/service.test.ts`, `test/memory/cjk-migration.test.ts`,
 `test/memory/fts-query.test.ts`, and `test/tool/memory.test.ts`. These cover
-Chinese recall, mixed text, snippets, existing-row upgrade, restart retry,
-trigger integrity, English recall and the public tool result.
+Chinese recall, mixed text, snippets, existing-row upgrade, non-blocking startup,
+writer-lock contention, batch resume, restart retry, journal replay, trigger
+integrity, English recall and the public tool result.
 
 ## Tasks
 

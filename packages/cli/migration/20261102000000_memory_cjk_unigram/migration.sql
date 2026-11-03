@@ -19,5 +19,6 @@ CREATE TRIGGER memory_fts_au AFTER UPDATE ON memory_fts BEGIN
   INSERT INTO memory_fts_idx(memory_fts_idx, rowid, body_idx) VALUES('delete', OLD.id, OLD.body_idx);
   INSERT INTO memory_fts_idx(rowid, body_idx) VALUES(NEW.id, NEW.body_idx);
 END;--> statement-breakpoint
-CREATE TABLE memory_index_migration(version integer PRIMARY KEY NOT NULL);--> statement-breakpoint
-INSERT INTO memory_index_migration(version) VALUES(1);
+CREATE TABLE IF NOT EXISTS memory_index_migration(version integer PRIMARY KEY NOT NULL, cursor integer NOT NULL DEFAULT 0);--> statement-breakpoint
+-- Fresh installs have nothing to backfill and must not start a background job.
+INSERT OR IGNORE INTO memory_index_migration(version) SELECT 1 WHERE EXISTS (SELECT 1 FROM memory_fts);

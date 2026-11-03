@@ -16,7 +16,7 @@ import { iife } from "@/util/iife"
 import { init } from "#db"
 import { startIndexMigration, stopIndexMigration } from "../history/migration"
 import { migrateReplaySafe } from "./migrate-replay-safe"
-import { migrateMemoryIndex } from "../memory/migration"
+import { startMemoryIndexMigration, stopMemoryIndexMigration } from "../memory/migration"
 
 declare const MIMOCODE_MIGRATIONS: { sql: string; timestamp: number; name: string }[] | undefined
 
@@ -116,13 +116,14 @@ export const Client = lazy(() => {
     migrateReplaySafe(db, entries)
   }
   if (!Flag.MIMOCODE_SKIP_MIGRATIONS) {
-    migrateMemoryIndex(db)
+    startMemoryIndexMigration(db)
     startIndexMigration(db)
   }
   return db
 })
 
 export function close() {
+  stopMemoryIndexMigration(Client())
   stopIndexMigration(Client())
   Client().$client.close()
   Client.reset()

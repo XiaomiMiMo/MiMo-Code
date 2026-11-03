@@ -21,4 +21,5 @@ export const MemoryFtsTable = sqliteTable(
 
 export const MemoryIndexMigrationTable = sqliteTable("memory_index_migration", {
   version: integer().primaryKey(),
+  cursor: integer().notNull().default(0),
 })
