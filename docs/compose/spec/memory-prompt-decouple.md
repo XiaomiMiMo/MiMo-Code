@@ -106,6 +106,43 @@ Desktop regression coverage is tracked by engine-runtime `TP-R6-06`: path parsin
 native `buildPath` round-trips, filesystem reconciliation/search, fingerprint hits,
 updates/deletes, and the embedded Node memory tool.
 
+## Chinese memory recall
+
+Memory search supports contiguous Chinese substrings, one- and two-character
+queries, whitespace-separated terms, and Han/Latin/digit mixtures in both CLI
+and Desktop. Contiguous query runs stay adjacent phrases; separate runs retain
+OR semantics and the relative BM25 score floor. Scattered individual characters
+must not satisfy a multi-character phrase. Scope, type and limit filters remain
+part of the search contract.
+
+`memory_fts.body` stores the original file. `body_idx` inserts a space at each
+Han/letter-or-digit boundary, using the same transform for indexing and queries.
+Only `body_idx` is indexed by the external-content FTS5 table. The disk
+reconciler supplies both columns on insert/update. Snippet presentation removes
+only spaces inserted by the transform, preserving original whitespace and FTS
+highlighting. History uses the same segmentation strategy; memory retains its
+independent OR query semantics.
+
+The new SQL migration rebuilds the FTS table over the new column and, only when
+`memory_fts` already has rows, records a pending content migration with an id
+cursor. Desktop runs the engine on the Electron main thread, so `Database.Client()`
+only reads the pending marker (no writer lock) and `memory/migration.ts` backfills
+in the background: bounded batches (32 rows / 8 ms budget, <=5% duty cycle), each
+in its own immediate transaction that advances the cursor, cleared on completion.
+A failed batch rolls back, never fails startup, and retries after 30 s or on the
+next boot; `Database.close()` stops the job. Rows awaiting backfill are briefly
+unsearchable because `memory_fts` is a cache of disk files. SQL triggers use the
+external-content `'delete'` command for updates/deletes. The migration is
+replay-safe (`IF NOT EXISTS` / `OR IGNORE`); original bodies, IDs, fingerprints
+and timestamps remain intact. Shipped SQL migrations are unchanged.
+
+Regression coverage: Desktop engine-runtime `TP-R6-07`, engine
+`test/memory/service.test.ts`, `test/memory/cjk-migration.test.ts`,
+`test/memory/fts-query.test.ts`, and `test/tool/memory.test.ts`. These cover
+Chinese recall, mixed text, snippets, existing-row upgrade, non-blocking startup,
+writer-lock contention, batch resume, restart retry, journal replay, trigger
+integrity, English recall and the public tool result.
+
 ## Tasks
 
 - [x] T1: `llm.ts` always inject `# Memory system` when `servesCheckpoint`; flag only filters ckpt extras — acceptance: with `MIMOCODE_DISABLE_CHECKPOINT=true`, main-agent system contains `# Memory system` + project MEMORY.md + notes.md and omits checkpoint-writer ownership / Active recall (covers: S2)

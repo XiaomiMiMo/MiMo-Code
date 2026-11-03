@@ -10,12 +10,15 @@ describe("buildFtsQuery", () => {
     expect(buildFtsQuery("FOO_bar baz-1")).toBe('"FOO_bar" OR "baz" OR "1"')
   })
 
-  test("keeps CJK ideographs as a single token", () => {
-    expect(buildFtsQuery("金银价格")).toBe('"金银价格"')
+  // [TP-R6-07] Contiguous Chinese stays one adjacent phrase, with OR between runs.
+  test("segments Han within each phrase", () => {
+    expect(buildFtsQuery("金银价格")).toBe('"金 银 价 格"')
+    expect(buildFtsQuery("项目 知识")).toBe('"项 目" OR "知 识"')
+    expect(buildFtsQuery("npm打包脚本2")).toBe('"npm 打 包 脚 本 2"')
   })
 
   test("splits Japanese on whitespace boundaries", () => {
-    expect(buildFtsQuery("価格 2026年")).toBe('"価格" OR "2026年"')
+    expect(buildFtsQuery("価格 2026年")).toBe('"価 格" OR "2026 年"')
   })
 
   test("returns null for empty / whitespace-only query", () => {

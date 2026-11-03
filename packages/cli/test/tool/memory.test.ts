@@ -42,13 +42,20 @@ describe("memory tool", () => {
         const root = yield* memory.root()
         yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
-        yield* Effect.promise(() => fs.writeFile(path.join(root, "global", "auth.md"), "JWT signing notes"))
+        yield* Effect.promise(() => fs.writeFile(path.join(root, "global", "auth.md"), "JWT signing notes。把所有项目知识总结进一个文档。"))
 
         const info = yield* MemoryTool
         const tool = yield* info.init()
         const result = yield* tool.execute({ operation: "search", query: "JWT" }, ctx)
 
         expect(result.output).toContain("auth.md")
+        // [TP-R6-07] The public tool searches Chinese and presents original text.
+        for (const query of ["项目知识", "项目 知识", "文档"]) {
+          const result = yield* tool.execute({ operation: "search", query }, ctx)
+          expect(result.output).toContain("auth.md")
+          expect(result.output).not.toContain("No matches")
+          expect(result.output).not.toContain("项 目")
+        }
       }),
     ),
   )

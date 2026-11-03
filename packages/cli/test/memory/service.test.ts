@@ -19,6 +19,52 @@ afterEach(async () => {
 const it = testEffect(Layer.mergeAll(Memory.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
 describe("Memory.search", () => {
+  // [TP-R6-07] @ desktop engine-runtime: Chinese substring recall and original snippets.
+  it.live("finds Chinese substrings and short phrases without matching scattered characters", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const memory = yield* Memory.Service
+        const root = yield* memory.root()
+        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
+        yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
+        const file = path.join(root, "global", "knowledge.md")
+        const body = "把所有项目知识总结进一个文档。这是本周的目标。npm打包脚本2支持JWT认证。"
+        yield* Effect.promise(() => fs.writeFile(file, body))
+        yield* Effect.promise(() => fs.writeFile(path.join(root, "global", "noise.md"), "项链和目光，知晓与识别"))
+        for (const query of ["项目知识", "项目 知识", "项目", "知识", "文档", "目标", "项目 目标", "npm打包脚本2", "JWT认证"]) {
+          const results = yield* memory.search({ query })
+          expect(results.map((row) => row.path), query).toEqual([file])
+          expect(results[0].score).toBeGreaterThan(0)
+          expect(results[0].snippet.replaceAll("<<", "").replaceAll(">>", "").replaceAll("...", ""), query)
+            .toSatisfy((text: string) => body.includes(text))
+          expect(results[0].snippet).toContain("<<")
+        }
+        expect((yield* memory.search({ query: "项" })).some((row) => row.path === file)).toBe(true)
+        expect(yield* memory.search({ query: "不存在的词" })).toEqual([])
+      }),
+    ),
+  )
+
+  // [TP-R6-07] Real FTS snippet selection preserves source whitespace at truncation.
+  it.live("keeps original spacing and supplementary Han in a truncated snippet", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const memory = yield* Memory.Service
+        const root = yield* memory.root()
+        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
+        yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
+        const body = `${"prefix ".repeat(80)}项目  知识\n𠮷野家 npm打包脚本2 ${"suffix ".repeat(80)}`
+        yield* Effect.promise(() => fs.writeFile(path.join(root, "global", "spaces.md"), body))
+        const rows = yield* memory.search({ query: "𠮷野家" })
+        expect(rows).toHaveLength(1)
+        expect(rows[0].snippet).toContain("<<𠮷野家>>")
+        expect(rows[0].snippet).toContain("项目  知识\n")
+        expect(rows[0].snippet).toContain("...")
+        expect(body).toContain(rows[0].snippet.replaceAll("<<", "").replaceAll(">>", "").replace(/^\.\.\./, "").replace(/\.\.\.$/, ""))
+      }),
+    ),
+  )
+
   it.live("returns BM25-ranked matches across all scopes when no scope filter", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
