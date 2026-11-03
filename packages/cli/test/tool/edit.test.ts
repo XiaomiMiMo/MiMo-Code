@@ -569,6 +569,22 @@ describe("tool.edit", () => {
       })
     })
 
+    test("throws error when overwriting a directory with empty oldString", async () => {
+      await using tmp = await tmpdir()
+      const dirpath = path.join(tmp.path, "adir")
+      await fs.mkdir(dirpath)
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const edit = await resolve()
+          await expect(
+            Effect.runPromise(edit.execute({ file_path: dirpath, old_string: "", new_string: "new" }, ctx)),
+          ).rejects.toThrow("Path is a directory")
+        },
+      })
+    })
+
     test("tracks file diff statistics", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")

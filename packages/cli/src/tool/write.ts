@@ -12,7 +12,6 @@ import { Format } from "../format"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
-import { trimDiff } from "./edit"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
 
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
@@ -41,10 +40,10 @@ export const WriteTool = Tool.define(
           const exists = yield* fs.existsSafe(filepath)
           const contentOld = exists ? yield* fs.readFileString(filepath) : ""
 
-          const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
+          const preview = createTwoFilesPatch(filepath, filepath, contentOld, params.content)
           yield* askEditUnlessMemory(ctx, filepath, {
             patterns: [path.relative(Instance.worktree, filepath)],
-            diff,
+            diff: preview,
           })
 
           yield* fs.writeWithDirs(filepath, params.content)
@@ -54,6 +53,7 @@ export const WriteTool = Tool.define(
             file: filepath,
             event: exists ? "change" : "add",
           })
+          const diff = createTwoFilesPatch(filepath, filepath, contentOld, yield* fs.readFileString(filepath))
 
           let output = "Wrote file successfully."
           yield* lsp.touchFile(filepath, true)
