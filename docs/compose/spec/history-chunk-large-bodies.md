@@ -2,7 +2,7 @@
 feature: history-index-tool-output-budget
 status: delivered
 updated: 2026-11-03
-source: fix/history-search-fetch-limit
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2772
 ---
 
 # History FTS Index Budget (tool-output policy)
