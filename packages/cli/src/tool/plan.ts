@@ -7,8 +7,14 @@ import { Session } from "../session"
 import { MessageV2 } from "../session/message-v2"
 import { Provider } from "../provider"
 import { Instance } from "../project/instance"
+import { Config } from "../config"
 import { type SessionID, MessageID, PartID } from "../session/schema"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
+
+/** True when plan_exit should open the Yes/No approval dialog (default). */
+export function planExitPromptEnabled(cfg: Config.Info): boolean {
+  return cfg.plan?.exit_prompt !== false
+}
 
 function getLastModel(sessionID: SessionID) {
   for (const item of MessageV2.stream(sessionID, { agentID: "*" })) {
@@ -23,6 +29,7 @@ export const PlanExitTool = Tool.define(
     const session = yield* Session.Service
     const question = yield* Question.Service
     const provider = yield* Provider.Service
+    const config = yield* Config.Service
 
     return {
       description: EXIT_DESCRIPTION,
@@ -39,6 +46,18 @@ export const PlanExitTool = Tool.define(
 
           const info = yield* session.get(ctx.sessionID)
           const plan = path.relative(Instance.worktree, Session.plan(info))
+
+          if (!planExitPromptEnabled(yield* config.get())) {
+            return {
+              title: "Plan ready",
+              output:
+                `Plan at ${plan} is ready. plan.exit_prompt is disabled, so no approval dialog was shown.\n\n` +
+                "Do NOT switch agents yourself and do NOT ask the user whether to switch to build or refine the plan. " +
+                "Stop with a short summary of the plan path. The user will read the plan and switch to build with Tab when ready.",
+              metadata: { switched: false, feedback: "" },
+            }
+          }
+
           const answers = yield* question.ask({
             sessionID: ctx.sessionID,
             abortSignal: ctx.abort,

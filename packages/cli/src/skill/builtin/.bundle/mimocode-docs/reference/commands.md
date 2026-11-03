@@ -131,7 +131,7 @@ The slash menu also includes commands discovered at runtime:
 ## Keybindings
 
 - `Tab` — cycle primary agents (build → plan). Build and Plan can switch at any time; other custom or special modes lock once the first message is sent. (Many models ignore tools injected mid-conversation; a fixed skill/tool set from session start improves tool-call reliability.)
-- Entering plan mode is a user gesture: `Tab` (or the agent dialog) — there is no `plan_enter` tool, so the agent cannot put you in plan mode and will not offer to unless you raise it. Leaving works either way: `Tab` back, or the agent calls `plan_exit` to ask you to approve the finished plan and return to build.
+- Entering plan mode is a user gesture: `Tab` (or the agent dialog) — there is no `plan_enter` tool, so the agent cannot put you in plan mode and will not offer to unless you raise it. Leaving works either way: `Tab` back, or the agent calls `plan_exit` to ask you to approve the finished plan and return to build. With `plan.exit_prompt: false`, `plan_exit` does not open that dialog — the agent stops with a plan summary and you switch with `Tab` when ready.
 - Other keybinds are configurable; the keybinds config module governs them.
 
 ## Notes

@@ -12,3 +12,5 @@ Do NOT call this tool:
 - Before you have created or finalized the plan
 - If you still have unanswered questions about the implementation
 - If the user has indicated they want to continue planning
+
+When plan.exit_prompt is disabled, this tool only records that the plan is ready (no Yes/No dialog). Prefer stopping with a short plan summary instead; the user switches to build with Tab when ready.
