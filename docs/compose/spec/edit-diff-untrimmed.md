@@ -2,7 +2,7 @@
 feature: edit-diff-untrimmed
 status: delivered
 updated: 2026-11-03
-source: fix/edit-diff-untrimmed
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2771
 ---
 
 # Edit Tool Diffs Are Applyable Patches
