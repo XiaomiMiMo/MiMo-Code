@@ -47,6 +47,12 @@ export interface Interface {
     guard?: AdmissionGuard,
   ) => Effect.Effect<Receipt>
   readonly getReceipt: (receiptId: string) => Effect.Effect<Receipt, ReceiptNotFound>
+  /**
+   * Read-only lookup of the prompt receipt a caller created with its own message ID
+   * (prompt_async stores it as the idempotency key). Lets a caller that lost the 202
+   * learn the outcome without submitting again.
+   */
+  readonly findPromptReceipt: (sessionID: SessionID, messageID: MessageID) => Effect.Effect<Receipt | undefined>
   readonly listAccepted: (lane: Lane) => Effect.Effect<Receipt[]>
   readonly claimNext: (
     lane: Lane,
@@ -268,6 +274,19 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       const row = yield* loadReceipt(receiptId)
       if (!row) return yield* Effect.fail(new ReceiptNotFound(receiptId))
       return toReceipt(row)
+    })
+
+    const findPromptReceipt = Effect.fn("Inbox.findPromptReceipt")(function* (sessionID: SessionID, messageID: MessageID) {
+      const row = yield* Effect.sync(() =>
+        Database.use((db) =>
+          db.select().from(InboxTable).where(and(
+            eq(InboxTable.receiver_session_id, sessionID),
+            eq(InboxTable.idempotency_key, messageID),
+            promptOnly,
+          )).get(),
+        ),
+      )
+      return row ? toReceipt(row) : undefined
     })
 
     /** Fire-and-forget schedule: Controller owns receipts; kick only starts a lease when idle. */
@@ -646,6 +665,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     const impl: Interface = {
       accept,
       getReceipt,
+      findPromptReceipt,
       listAccepted,
       claimNext,
       ack,

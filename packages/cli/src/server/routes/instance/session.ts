@@ -1328,6 +1328,49 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .get(
+      "/:sessionID/receipt",
+      describeRoute({
+        summary: "Find turn receipt by message",
+        description:
+          "Read-only lookup of the receipt for a prompt submitted with this messageID. " +
+          "Lets a caller that lost the prompt_async response learn the outcome without submitting again; " +
+          "404 means no prompt with this messageID was admitted to the session.",
+        operationId: "session.receiptByMessage",
+        responses: {
+          200: {
+            description: "Receipt",
+            content: {
+              "application/json": {
+                schema: resolver(PublicReceipt),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "query",
+        z.object({
+          messageID: MessageID.zod,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const messageID = c.req.valid("query").messageID
+        const tq = inboxControllerRef.current
+        if (!tq) return c.json({ error: "turn queue unavailable" }, 404)
+        const receipt = await AppRuntime.runPromise(tq.findPromptReceipt(sessionID, messageID))
+        if (!receipt) return c.json({ error: "not found" }, 404)
+        return c.json(toPublicReceipt(receipt))
+      },
+    )
+    .get(
       "/:sessionID/receipt/:receiptId",
       describeRoute({
         summary: "Get turn receipt",
