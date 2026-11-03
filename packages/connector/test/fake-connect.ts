@@ -48,7 +48,7 @@ export class FakeConnect {
   sendTransportReady = true
 
   constructor(options: FakeOptions = {}) {
-    this.environment = options.environment ?? "china-test"
+    this.environment = options.environment ?? "debug-test"
     this.accountSessionId = options.accountSessionId ?? crypto.randomUUID()
     this.accessToken = options.accessToken ?? "A".repeat(43)
   }

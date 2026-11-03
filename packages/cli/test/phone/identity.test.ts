@@ -9,7 +9,7 @@ const valid = {
   version: 1,
   mode: "isolated-debug",
   origin: "https://connect.example.test",
-  environment: "china-test",
+  environment: "debug-test",
   subject: "debug:7f6c2f9e-0000-4000-8000-000000000001",
   issuedAt: NOW - 1000,
   expiresAt: NOW + 60_000,
@@ -34,7 +34,7 @@ describe("debug identity", () => {
     await withFile(valid, async (file) => {
       expect(await loadDebugIdentity(file, () => NOW)).toEqual({
         origin: "https://connect.example.test",
-        environment: "china-test",
+        environment: "debug-test",
         subject: valid.subject,
         accountSessionId: valid.accountSessionId,
         accessToken: "token-value",
