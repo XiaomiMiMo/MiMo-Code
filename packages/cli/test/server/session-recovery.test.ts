@@ -5,7 +5,8 @@ import { AppRuntime } from "../../src/effect/app-runtime"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
-import { SessionPrompt, SESSION_MEMORY_DIR_MARKER } from "../../src/session/prompt"
+import { SessionPrompt } from "../../src/session/prompt"
+import { isWindowReminder } from "../lib/reminder"
 import { MessageV2 } from "../../src/session/message-v2"
 import { HostModelTransport } from "../../src/provider/host-transport"
 import { SessionStatus } from "../../src/session/status"
@@ -26,7 +27,7 @@ void Log.init({ print: false })
 // A resumed user message has not been sent yet, so the runLoop may persist the
 // memory paths reminder on it; every other part must stay untouched.
 function withoutDirReminder(parts: MessageV2.Part[] | undefined) {
-  return parts?.filter((part) => !(part.type === "text" && part.text.includes(SESSION_MEMORY_DIR_MARKER)))
+  return parts?.filter((part) => !isWindowReminder(part))
 }
 
 afterEach(async () => {

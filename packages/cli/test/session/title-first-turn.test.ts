@@ -8,7 +8,8 @@ import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionStatus } from "../../src/session/status"
 import { Command } from "../../src/command"
-import { injectScheduledPrompt, SessionPrompt, SESSION_MEMORY_DIR_MARKER } from "../../src/session/prompt"
+import { injectScheduledPrompt, SessionPrompt } from "../../src/session/prompt"
+import { isWindowReminder } from "../lib/reminder"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { tmpdir } from "../fixture/fixture"
@@ -484,7 +485,7 @@ test("completed user turns do not automatically reconsider the title",  async ()
       expect(await run(Session.Service.use(svc => svc.get(scheduled.id)))).toMatchObject({ title: "Untitled", titleRevision: 0 })
       const scheduledMessages = await run(Session.Service.use(svc => svc.messages({ sessionID: scheduled.id })))
       const scheduledParts = scheduledMessages.find(message => message.info.role === "user")?.parts ?? []
-      expect(scheduledParts.filter(part => !(part.type === "text" && part.text.includes(SESSION_MEMORY_DIR_MARKER)))).toMatchObject([{ type: "text", synthetic: true }])
+      expect(scheduledParts.filter(part => !isWindowReminder(part))).toMatchObject([{ type: "text", synthetic: true }])
       expect(reviews).toBe(0)
       const s = await run(Session.Service.use(svc => svc.create()))
       await run(Session.Service.use(svc => svc.setGeneratedTitle({ sessionID: s.id, title: "Original task", expectedRevision: 0 })))

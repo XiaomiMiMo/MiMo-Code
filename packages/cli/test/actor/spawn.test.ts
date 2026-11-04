@@ -50,6 +50,7 @@ import { Database } from "../../src/storage"
 import { MessageTable, PartTable } from "../../src/session/session.sql"
 import { InboxTable } from "../../src/inbox/inbox.sql"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionReminder } from "../../src/session/reminder"
 import { MessageID, PartID } from "../../src/session/schema"
 import { Instance } from "../../src/project/instance"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -1690,6 +1691,73 @@ describe("Actor.spawn return-format injection (F21)", () => {
         const subAgentUser = msgs.find((m) => m.info.role === "user" && m.info.agentID === result.actorID)
         const text = subAgentUser?.parts.find((p) => p.type === "text")?.text ?? ""
         expect(text).not.toContain("Return format (required)")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  it.live("a subagent's own window carries the workspace reminder but not memory paths", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "workspace reminder subagent",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("done")
+
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "explore",
+          task: "search for foo",
+          context: "none",
+          tools: ["read", "grep", "glob"],
+          background: false,
+          model: ref,
+        })
+        yield* Deferred.await(result.outcome)
+
+        const msgs = yield* session.messages({ sessionID: result.sessionID, agentID: "*" })
+        const subAgentUser = msgs.find((m) => m.info.role === "user" && m.info.agentID === result.actorID)
+        const tags = (subAgentUser?.parts ?? []).flatMap((part) => SessionReminder.tag(part) ?? [])
+        expect(tags).toContainEqual({ key: "workspace", rev: Instance.directory })
+        expect(tags.some((tag) => tag.key === "memory-paths")).toBe(false)
+        expect(JSON.stringify(yield* llm.inputs)).toContain(`- Working directory: ${Instance.directory}`)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  it.live("a bounded-computation agent gets no workspace reminder", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "workspace reminder writer",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("done")
+
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "checkpoint-writer",
+          task: "write the next checkpoint for this session",
+          context: "full",
+          tools: ["read", "write", "edit", "glob", "grep"],
+          background: false,
+          model: ref,
+        })
+        yield* Deferred.await(result.outcome)
+
+        const msgs = yield* session.messages({ sessionID: result.sessionID, agentID: "*" })
+        const writerUsers = msgs.filter((m) => m.info.role === "user" && m.info.agentID === result.actorID)
+        expect(writerUsers.length).toBeGreaterThan(0)
+        for (const user of writerUsers)
+          expect(user.parts.some((part) => SessionReminder.tag(part)?.key === "workspace")).toBe(false)
       }),
       { git: true, config: providerCfg },
     ),

@@ -32,7 +32,9 @@ import { SessionSummary } from "../../src/session/summary"
 import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionCompaction } from "../../src/session/compaction"
-import { SessionPrompt, SESSION_MEMORY_DIR_MARKER } from "../../src/session/prompt"
+import { SessionPrompt } from "../../src/session/prompt"
+import { isWindowReminder } from "../lib/reminder"
+import { SessionReminder } from "../../src/session/reminder"
 import { defaultLayer as CronBridgeDefaultLayer } from "../../src/session/cron-bridge"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
@@ -64,14 +66,12 @@ import { provideTmpdirInstance, provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { reply, TestLLMServer } from "../lib/llm-server"
 
-// The runLoop may persist the memory paths reminder on a user
-// message; tests pinning user parts compare everything else.
-function usersWithoutDirReminder(messages: MessageV2.WithParts[]) {
+function usersWithoutWindowReminders(messages: MessageV2.WithParts[]) {
   return messages
     .filter((m) => m.info.role === "user")
     .map((m) => ({
       ...m,
-      parts: m.parts.filter((p) => !(p.type === "text" && p.text.includes(SESSION_MEMORY_DIR_MARKER))),
+      parts: m.parts.filter((p) => !isWindowReminder(p)),
     }))
 }
 import { Inbox } from "../../src/inbox"
@@ -2630,11 +2630,10 @@ it.live(
           yield* prompt.loop({ sessionID: chat.id })
 
           const inputs = yield* llm.inputs
-          const serialized = JSON.stringify(inputs)
           const system = ((inputs[0].messages ?? []) as { role: string; content: unknown }[])
             .flatMap((message) => message.role === "system" && typeof message.content === "string" ? [message.content] : [])
             .join("\n")
-          expect(serialized).not.toContain("Working directory:")
+          expect(system).not.toContain("Working directory:")
           expect(system).toContain("Skills available in this session:")
           expect(system.indexOf("Skills available in this session:")).toBeLessThan(system.indexOf(marker))
           expect(system.trim().endsWith(marker)).toBe(true)
@@ -2741,6 +2740,79 @@ it.live("loop injects the dynamic environment block only when the flag is set", 
       }),
       { git: true, config: providerCfg },
     ),
+  ),
+)
+
+it.live("the workspace reminder rides once on the window's first user message, outside the system prompt", () =>
+  withoutDynamicSystemPrompt(() =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          title: "Workspace reminder",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const ask = (text: string) =>
+          prompt.prompt({ sessionID: chat.id, agent: "build", model: ref, parts: [{ type: "text", text }] })
+
+        yield* llm.text("first")
+        yield* ask("first query")
+        yield* llm.text("second")
+        yield* ask("second query")
+
+        const workspace = { key: "workspace", rev: Instance.directory }
+        const users = (yield* sessions.messages({ sessionID: chat.id })).filter((m) => m.info.role === "user")
+        expect(users.map((m) => SessionReminder.has(m.parts, workspace))).toEqual([true, false])
+
+        const inputs = yield* llm.inputs
+        expect(inputs).toHaveLength(2)
+        for (const input of inputs) {
+          const messages = (input.messages ?? []) as { role: string; content: unknown }[]
+          const system = JSON.stringify(messages.filter((m) => m.role === "system"))
+          const rest = JSON.stringify(messages.filter((m) => m.role !== "system"))
+          expect(system).not.toContain("Working directory:")
+          expect(rest.split(`- Working directory: ${Instance.directory}`)).toHaveLength(2)
+        }
+      }),
+      { git: true, config: providerCfg },
+    ),
+  ),
+)
+
+it.live("a client-supplied part with the same reminder tag suppresses the engine's copy", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "Client reminder",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      const workspace = { key: "workspace", rev: Instance.directory }
+      yield* llm.text("ok")
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        parts: [
+          {
+            type: "text",
+            text: "<system-reminder>\nclient workspace\n</system-reminder>",
+            synthetic: true,
+            metadata: { [SessionReminder.METADATA_KEY]: workspace },
+          },
+          { type: "text", text: "hello" },
+        ],
+      })
+
+      const user = (yield* sessions.messages({ sessionID: chat.id })).find((m) => m.info.role === "user")!
+      expect(user.parts.filter((part) => SessionReminder.tag(part)?.key === "workspace")).toHaveLength(1)
+      const serialized = JSON.stringify(yield* llm.inputs)
+      expect(serialized).toContain("client workspace")
+      expect(serialized).not.toContain("Workspace for this conversation:")
+    }),
+    { git: true, config: providerCfg },
   ),
 )
 
@@ -4077,7 +4149,7 @@ reminderMcpIt.live(
       expect(tools[1]).toContain('"name":"example_lookup"')
       expect(tools[1]).not.toContain('"name":"mcp_tool_search"')
         const messages = yield* MessageV2.filterCompactedEffect(session.id)
-        expect(usersWithoutDirReminder(messages)[0]?.parts).toEqual([
+        expect(usersWithoutWindowReminders(messages)[0]?.parts).toEqual([
           expect.objectContaining({ type: "text", text: "turn 0" }),
         ])
       }),
@@ -5900,7 +5972,7 @@ describe("trailing-user resume integration", () => {
           expect(JSON.stringify(messages.at(-1)?.content)).toContain(opts.text)
           const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
           expect(after.filter((m) => m.info.role === "user").map((m) => m.info.id)).toEqual([user1.id, user2.id])
-          expect(usersWithoutDirReminder(after)).toEqual(usersWithoutDirReminder(before))
+          expect(usersWithoutWindowReminders(after)).toEqual(usersWithoutWindowReminders(before))
           expect(after.flatMap((m) => m.parts).filter((p) => p.type === "tool")).toEqual(
             before.flatMap((m) => m.parts).filter((p) => p.type === "tool"),
           )
@@ -6815,7 +6887,7 @@ describe("trailing-user resume integration", () => {
         const resumed = after.filter((m) => m.info.role === "assistant" && m.info.parentID === user2.id)
         expect(resumed).toHaveLength(1)
         expect(resumed[0]!.parts.some((p) => p.type === "text" && p.text === "RESUMED_ONCE")).toBe(true)
-        expect(usersWithoutDirReminder(after)).toEqual(usersWithoutDirReminder(before))
+        expect(usersWithoutWindowReminders(after)).toEqual(usersWithoutWindowReminders(before))
         expect(after.flatMap((m) => m.parts).filter((p) => p.type === "tool")).toEqual(
           before.flatMap((m) => m.parts).filter((p) => p.type === "tool"),
         )
