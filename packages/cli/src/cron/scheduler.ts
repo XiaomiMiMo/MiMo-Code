@@ -95,7 +95,7 @@ export type ArmLoopResult = {
 export interface Interface {
   readonly start: (opts: StartOpts) => Effect.Effect<void>
   readonly stop: () => Effect.Effect<void>
-  readonly add: (task: NewCronTask) => Effect.Effect<CronTask>
+  readonly add: (task: NewCronTask) => Effect.Effect<CronTask, Error>
   readonly remove: (id: string, opts?: { session_id?: string }) => Effect.Effect<boolean>
   readonly rename: (id: string, prompt: string, opts?: { session_id?: string }) => Effect.Effect<boolean>
   readonly list: (filter: ListFilter) => Effect.Effect<CronTask[]>
@@ -304,9 +304,7 @@ const makeImpl = (): Interface => {
       if (input.durable) {
         const dir = rt?.opts.dir
         const existing = yield* readCronTasks(dir)
-        yield* writeCronTasks([...existing, created], dir).pipe(
-          Effect.orElseSucceed(() => undefined),
-        )
+        yield* writeCronTasks([...existing, created], dir)
         return created
       }
 
