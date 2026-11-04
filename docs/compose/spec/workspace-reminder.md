@@ -2,7 +2,7 @@
 feature: workspace-reminder
 status: delivered
 updated: 2026-10-01
-source: feat/workspace-reminder
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2776
 ---
 
 # Keyed synthetic reminders and the workspace reminder
