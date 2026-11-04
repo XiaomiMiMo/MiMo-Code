@@ -311,7 +311,8 @@ export class FakeConnect {
       claims.aud !== this.origin ||
       claims.accountSessionId !== this.accountSessionId ||
       claims.environment !== this.environment ||
-      !(claims.exp > claims.iat && claims.exp - claims.iat <= 60 && Math.abs(now - claims.iat) <= 60)
+      // Same window as the service: at most 1 s ahead of its clock, at most 60 s old.
+      !(claims.exp > claims.iat && claims.exp - claims.iat <= 60 && claims.iat - now <= 1 && now - claims.iat <= 60)
     ) {
       return undefined
     }

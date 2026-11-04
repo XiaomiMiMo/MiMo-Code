@@ -6,6 +6,26 @@ import { FakeConnect } from "./fake-connect"
 import { harness } from "./helpers"
 
 describe("Connect HTTP rules", () => {
+  test("a local clock running ahead still produces proofs the service accepts", async () => {
+    const service = new FakeConnect().start()
+    try {
+      const { key } = await generateDeviceKey()
+      const http = new ConnectHttp({
+        account: () => service.account(),
+        key,
+        deviceId: () => undefined,
+        client: { version: "1.0.0", platform: "linux" },
+        clock: () => Date.now() + 5_000,
+      })
+      const api = new ConnectApi(http)
+      // The first answer teaches the client the service clock.
+      expect(await api.offersCliProfile()).toBe(true)
+      expect((await api.register("dev-box")).deviceId).toMatch(/^[0-9a-f-]{36}$/)
+    } finally {
+      service.stop()
+    }
+  })
+
   test("a development build without a release version sends no client version", async () => {
     const service = new FakeConnect().start()
     try {

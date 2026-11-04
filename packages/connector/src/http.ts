@@ -85,13 +85,19 @@ const MAX_RESPONSE_BYTES = 65536
 
 export class ConnectHttp {
   private cooldownUntil = 0
+  /**
+   * Service clock minus local clock, from the last response's Date header.
+   * Connect accepts a proof issued at most 1 s ahead of its own clock, so a
+   * local clock running fast would otherwise get every proof rejected.
+   */
+  private serverOffsetMs = 0
   private readonly fetch: typeof fetch
   private readonly now: () => number
   private readonly clock: () => number
 
   constructor(private readonly options: HttpOptions) {
     this.fetch = options.fetch ?? fetch
-    this.now = options.now ?? (() => Math.floor(Date.now() / 1000))
+    this.now = options.now ?? (() => Math.floor((this.clock() + this.serverOffsetMs) / 1000))
     this.clock = options.clock ?? Date.now
   }
 
@@ -183,11 +189,16 @@ export class ConnectHttp {
   }
 
   private async send(url: string, init: RequestInit): Promise<Response> {
+    let response: Response
     try {
-      return await this.fetch(url, init)
+      response = await this.fetch(url, init)
     } catch {
       throw new ConnectError("network")
     }
+    // Date has whole seconds and is truncated, so the estimate never runs ahead of the service.
+    const date = Date.parse(response.headers.get("Date") ?? "")
+    if (Number.isFinite(date)) this.serverOffsetMs = date - this.clock()
+    return response
   }
 
   private async unwrap(response: Response, input: HttpRequest, sentId: string): Promise<Record<string, unknown>> {
