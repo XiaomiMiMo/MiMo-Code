@@ -16,6 +16,15 @@ export type FakeOptions = {
   accessToken?: string
 }
 
+class FakeError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+  ) {
+    super(code)
+  }
+}
+
 export class FakeConnect {
   readonly environment: string
   readonly accountSessionId: string
@@ -148,7 +157,12 @@ export class FakeConnect {
     }
     const deviceId = request.headers.get("X-Device-Id")
     if (!deviceId || this.devices.get(deviceId)?.thumbprint !== proof) return this.error(id, 403, "forbidden", version)
-    return respond(this.business(request.method, path, body, url), this.businessStatus)
+    try {
+      return respond(this.business(request.method, path, body, url), this.businessStatus)
+    } catch (error) {
+      if (error instanceof FakeError) return this.error(id, error.status, error.code, version)
+      throw error
+    }
   }
 
   /** Status for the last business answer (201 for creates). */
@@ -198,6 +212,7 @@ export class FakeConnect {
       }
     }
     const meta = path.match(/^\/api\/connect\/bindings\/([^/]+)\/content-upgrade-metadata$/)
+    if (meta && this.bindings.get(meta[1])?.state === "revoked") throw new FakeError(403, "binding_revoked")
     if (meta) {
       const grant = this.grants.get(meta[1])
       return {
@@ -436,6 +451,18 @@ export class FakeConnect {
 
   /** Bindings whose revocation a connector confirmed on a lane. */
   readonly confirmedRevocations = new Set<string>()
+
+  /** The phone unbinds: the binding is revoked and the live lanes close without a revoked fence. */
+  phoneRevokes(bindingId: string): void {
+    const view = this.bindings.get(bindingId)!
+    view.state = "revoked"
+    view.relayFence = "pending"
+    view.revocationVersion = (view.revocationVersion as number) + 1
+    for (const [lane, ws] of this.lanes) {
+      if (this.lastAttach(`/api/connect/content-relay/${lane}`).bindingId === bindingId)
+        ws.close(1008, "grant_unavailable")
+    }
+  }
 
   /** Re-fence every live lane of a binding as revoked, like the service after a revoke. */
   revokeLive(bindingId: string): void {

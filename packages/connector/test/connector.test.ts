@@ -311,4 +311,27 @@ describe("connector", () => {
     await s.until(() => s.connector.status.state === "unavailable", 5000)
     expect(s.connector.status).toEqual({ state: "unavailable", reason: "not_signed_in" })
   })
+
+  test("a revocation the lanes did not confirm is confirmed with recovery before local records go", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const outcome = s.connector.pair()
+    await s.until(() => [...s.service.challenges.values()].some((c) => c.status === "open"))
+    s.claim()
+    await outcome
+    await s.until(() => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true)
+    const bindingId = [...s.service.bindings.keys()][0]
+    s.service.phoneRevokes(bindingId)
+    await s.until(() => s.service.confirmedRevocations.has(bindingId), 8000)
+    expect(s.service.bindings.get(bindingId)!.relayFence).toBe("complete")
+    let state = await s.state()
+    const end = Date.now() + 3000
+    while (Object.keys(state.gates).length > 0 && Date.now() < end) {
+      await Bun.sleep(20)
+      state = await s.state()
+    }
+    expect(state.consents).toEqual({})
+    expect(state.gates).toEqual({})
+  }, 20_000)
 })

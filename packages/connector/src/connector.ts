@@ -430,8 +430,11 @@ export class Connector {
           void this.expose(runtime, generation, binding, consent)
         continue
       }
+      // A revoked binding is confirmed while the service still waits for this connector,
+      // also when local records were lost; otherwise only leftover local records are cleared.
       const hasGate = Object.keys(state.gates).some((key) => key.startsWith(`${binding.bindingId}:`))
-      if (consent || hasGate) await this.confirmRevoked(runtime, generation, binding)
+      if (binding.relayFence === "pending" || consent || hasGate)
+        await this.confirmRevoked(runtime, generation, binding)
     }
     // Consents for bindings the service no longer lists cannot be exposed again.
     await this.state.update((next) => {
@@ -461,7 +464,8 @@ export class Connector {
     try {
       grant = await this.publishGrant(runtime, generation, binding.bindingId, consent.scopes)
     } catch (error) {
-      if (error instanceof ConnectError && error.code === "binding_revoked") return void this.forget(binding.bindingId)
+      if (error instanceof ConnectError && error.code === "binding_revoked")
+        return void this.retire(runtime, generation, binding.bindingId)
       return this.retry(runtime, generation, binding, consent)
     } finally {
       this.exposing.delete(binding.bindingId)
@@ -471,7 +475,7 @@ export class Connector {
       if (this.groups.get(binding.bindingId) !== group) return
       this.groups.delete(binding.bindingId)
       this.refresh()
-      if (end.revoked) return void this.forget(binding.bindingId)
+      if (end.revoked) return void this.retire(runtime, generation, binding.bindingId)
       // Grant changes and lane failures rebuild with a fresh grant and group.
       this.retry(runtime, generation, binding, consent)
     })
@@ -548,6 +552,20 @@ export class Connector {
         delete next.consents[binding.bindingId]
       })
     }
+  }
+
+  /**
+   * A binding was revoked while this connector served it: stop exposing it at
+   * once, but keep its gates until the service confirms the revocation.
+   */
+  private async retire(runtime: Runtime, generation: Generation, bindingId: string): Promise<void> {
+    this.groups.get(bindingId)?.close()
+    this.groups.delete(bindingId)
+    await this.state.update((state) => {
+      delete state.consents[bindingId]
+    })
+    this.refresh()
+    await this.reconcileUntilDone(runtime, generation, 0)
   }
 
   private async forget(bindingId: string): Promise<void> {
