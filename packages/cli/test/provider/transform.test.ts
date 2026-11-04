@@ -5434,6 +5434,25 @@ describe("ProviderTransform.variants with declared efforts", () => {
     expect(Object.keys(result)).toEqual(["low", "high"])
   })
 
+  test("Vertex Anthropic Haiku 5.5 uses adaptive thinking instead of a fixed budget", () => {
+    const result = ProviderTransform.variants(
+      model(
+        "@ai-sdk/google-vertex/anthropic",
+        "claude-haiku-5-5@default",
+        ["low", "medium", "high", "xhigh", "max"],
+        "google-vertex-anthropic",
+        true,
+      ),
+    )
+    expect(result).toEqual({
+      low: { thinking: { type: "adaptive" }, effort: "low" },
+      medium: { thinking: { type: "adaptive" }, effort: "medium" },
+      high: { thinking: { type: "adaptive" }, effort: "high" },
+      xhigh: { thinking: { type: "adaptive" }, effort: "xhigh" },
+      max: { thinking: { type: "adaptive" }, effort: "max" },
+    })
+  })
+
   test("a partially covered set uses one shape for all levels instead of mixing", () => {
     const result = ProviderTransform.variants(model("@ai-sdk/anthropic", "test/claude-opus-5-5", ["low", "high", "max"]))
     expect(result).toEqual({

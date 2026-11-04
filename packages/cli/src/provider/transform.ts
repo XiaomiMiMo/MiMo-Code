@@ -1249,6 +1249,9 @@ const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
 function anthropicAdaptiveEfforts(apiId: string): string[] | null {
+  if (apiId.includes("haiku-5-5")) {
+    return ["low", "medium", "high", "xhigh", "max"]
+  }
   if (["opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"].some((v) => apiId.includes(v))) {
     return ["low", "medium", "high", "xhigh", "max"]
   }
