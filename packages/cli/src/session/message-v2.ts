@@ -1364,6 +1364,136 @@ export function toModelMessages(
   return Effect.runPromise(toModelMessagesEffect(input, model, options).pipe(Effect.provide(EffectLogger.layer)))
 }
 
+export type RecoveryPart =
+  | Pick<TextPart, "type" | "text" | "synthetic" | "ignored">
+  | Pick<ReasoningPart, "type" | "text">
+  | { type: Exclude<Part["type"], "text" | "reasoning"> }
+
+export type RecoveryState = {
+  finish?: string
+  completed: boolean
+  error: boolean
+  summary: boolean
+  structured: boolean
+}
+
+export type RecoveryTail =
+  | { role: "user"; id: MessageID; created: number }
+  | (RecoveryState & {
+      role: "assistant"
+      id: MessageID
+      parentID: MessageID
+      created: number
+      parentExists: boolean
+      parts: RecoveryPart[]
+    })
+
+/** Read recovery facts without hydrating historical messages or attachment payloads. */
+export function readRecoveryTail(input: { sessionID: SessionID; agentID?: string }): RecoveryTail | undefined {
+  return Database.transaction(
+    (db) => {
+      const scope = and(
+        eq(MessageTable.session_id, input.sessionID),
+        input.agentID === "*" ? undefined : eq(MessageTable.agent_id, input.agentID ?? "main"),
+      )
+      const role = sql<Info["role"]>`json_extract(${MessageTable.data}, '$.role')`
+      const created = sql<number>`json_extract(${MessageTable.data}, '$.time.created')`
+      // Objects and arrays are truthy without returning their potentially large contents.
+      const truthy = (path: string) =>
+        sql<boolean>`CASE
+      WHEN json_type(${MessageTable.data}, ${path}) IN ('object', 'array') THEN 1
+      ELSE coalesce(json_extract(${MessageTable.data}, ${path}), 0) END`.mapWith(Boolean)
+      const head = db
+        .select({
+          id: MessageTable.id,
+          role,
+          created,
+          parentID: sql<MessageID | null>`json_extract(${MessageTable.data}, '$.parentID')`,
+          finish: sql<string | null>`json_extract(${MessageTable.data}, '$.finish')`,
+          completed: sql<boolean>`json_type(${MessageTable.data}, '$.time.completed') IS NOT NULL`.mapWith(Boolean),
+          structured: sql<boolean>`json_type(${MessageTable.data}, '$.structured') IS NOT NULL`.mapWith(Boolean),
+          error: truthy("$.error"),
+          summary: truthy("$.summary"),
+        })
+        .from(MessageTable)
+        .where(scope)
+        .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
+        .limit(1)
+        .get()
+
+      if (!head) {
+        if (!db.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get())
+          throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        return undefined
+      }
+
+      if (head.role === "user") {
+        const checkpoint = sql`EXISTS (
+        SELECT 1 FROM ${PartTable}
+        WHERE ${PartTable.message_id} = ${MessageTable.id}
+          AND json_extract(${PartTable.data}, '$.type') = 'checkpoint'
+      )`
+        // Skip only rebuild users. An assistant behind them must not become a candidate.
+        const last = db
+          .select({ id: MessageTable.id, role, created })
+          .from(MessageTable)
+          .where(and(scope, sql`NOT (${role} = 'user' AND ${checkpoint})`))
+          .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
+          .limit(1)
+          .get()
+        return last?.role === "user" ? { role: "user", id: last.id, created: last.created } : undefined
+      }
+
+      if (!head.parentID) return undefined
+      const parentExists = !!db
+        .select({ id: MessageTable.id })
+        .from(MessageTable)
+        .where(and(scope, eq(MessageTable.id, head.parentID), sql`${role} = 'user'`))
+        .get()
+      const parts: RecoveryPart[] = []
+      // Only empty-stop classification needs content. Other finish states use metadata alone.
+      if (parentExists && head.finish === "stop" && !head.structured && !head.summary) {
+        const rows = db
+          .select({
+            type: sql<"text" | "reasoning" | "tool">`json_extract(${PartTable.data}, '$.type')`,
+            text: sql<string>`CASE WHEN json_extract(${PartTable.data}, '$.type') IN ('text', 'reasoning')
+          THEN json_extract(${PartTable.data}, '$.text') END`,
+            synthetic: sql<boolean>`coalesce(json_extract(${PartTable.data}, '$.synthetic'), 0)`.mapWith(Boolean),
+            ignored: sql<boolean>`coalesce(json_extract(${PartTable.data}, '$.ignored'), 0)`.mapWith(Boolean),
+          })
+          .from(PartTable)
+          .where(
+            and(
+              eq(PartTable.message_id, head.id),
+              sql`json_extract(${PartTable.data}, '$.type') IN ('text', 'reasoning', 'tool')`,
+            ),
+          )
+          .orderBy(PartTable.id)
+          .all()
+        for (const row of rows) {
+          if (row.type === "tool") parts.push({ type: "tool" })
+          else if (row.type === "reasoning") parts.push({ type: "reasoning", text: row.text })
+          else parts.push({ type: "text", text: row.text, synthetic: row.synthetic, ignored: row.ignored })
+        }
+      }
+      return {
+        role: "assistant",
+        id: head.id,
+        parentID: head.parentID,
+        created: head.created,
+        finish: head.finish ?? undefined,
+        completed: head.completed,
+        structured: head.structured,
+        error: head.error,
+        summary: head.summary,
+        parentExists,
+        parts,
+      }
+    },
+    { behavior: "deferred" },
+  )
+}
+
 export function page(input: { sessionID: SessionID; limit: number; before?: string; agentID?: string }) {
   const before = input.before ? cursor.decode(input.before) : undefined
   // Slice contract: agentID `undefined` (default) ⇒ main slice only;

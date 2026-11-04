@@ -3835,7 +3835,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     /** empty residue = no usable model site: not an assistant prefill target and not a continue target. */
-    const hasUsefulAssistantParts = (parts: readonly MessageV2.Part[]) =>
+    const hasUsefulAssistantParts = (parts: readonly MessageV2.RecoveryPart[]) =>
       parts.some((part) => {
         if (part.type === "text") return !part.synthetic && !part.ignored && part.text.trim().length > 0
         if (part.type === "tool") return true
@@ -3843,8 +3843,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return false
       })
 
-    const isEmptyAssistantResidue = (assistant: MessageV2.Assistant, parts: readonly MessageV2.Part[]) =>
-      assistant.structured === undefined && !assistant.summary && !hasUsefulAssistantParts(parts)
+    const recoveryState = (assistant: MessageV2.Assistant): MessageV2.RecoveryState => ({
+      finish: assistant.finish,
+      completed: "completed" in assistant.time,
+      error: !!assistant.error,
+      summary: !!assistant.summary,
+      structured: assistant.structured !== undefined,
+    })
+
+    const isEmptyAssistantResidue = (assistant: MessageV2.RecoveryState, parts: readonly MessageV2.RecoveryPart[]) =>
+      !assistant.structured && !assistant.summary && !hasUsefulAssistantParts(parts)
 
     /**
      * Delete empty-residue assistants under one parent user.
@@ -3868,7 +3876,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         if (msg.info.role !== "assistant") continue
         if (msg.info.parentID !== input.parentMessageID) continue
         if (input.exceptMessageID && msg.info.id === input.exceptMessageID) continue
-        if (!isEmptyAssistantResidue(msg.info, msg.parts)) continue
+        if (!isEmptyAssistantResidue(recoveryState(msg.info), msg.parts)) continue
         if (preserveError && msg.info.error) continue
         const liveOwned = !input.force && busy && !msg.info.error && !("completed" in msg.info.time)
         if (liveOwned) continue
@@ -3882,58 +3890,48 @@ NOTE: At any point in time through this workflow you should feel free to ask the
      * Provider stop alone is not a valid delivery: empty stops can resume from
      * their parent even after completion was persisted, before classification.
      */
-    const isRecoveryWorthyAssistant = (info: MessageV2.Assistant, parts: readonly MessageV2.Part[]) => {
+    const isRecoveryWorthyAssistant = (info: MessageV2.RecoveryState, parts: readonly MessageV2.RecoveryPart[]) => {
       if (info.finish === "stop" && isEmptyAssistantResidue(info, parts)) return true
-      if (
-        "completed" in info.time &&
-        !info.error &&
-        info.finish &&
-        info.finish !== "tool-calls" &&
-        info.finish !== "length"
-      )
+      if (info.completed && !info.error && info.finish && info.finish !== "tool-calls" && info.finish !== "length")
         return false
       if (info.finish === "stop" && !info.error) return false
       return true
     }
 
-    const recovery = Effect.fn("SessionPrompt.recovery")(function* (input: { sessionID: SessionID; agentID?: string; allowBusy?: boolean }) {
+    const recovery = Effect.fn("SessionPrompt.recovery")(function* (input: {
+      sessionID: SessionID
+      agentID?: string
+      allowBusy?: boolean
+    }) {
       if (!input.allowBusy) {
         if ((yield* status.get(input.sessionID)).type !== "idle") return []
         // Runner acquisition precedes the runLoop's busy publication.
         if (Exit.isFailure(yield* state.assertNotBusy(input.sessionID, input.agentID).pipe(Effect.exit))) return []
       }
-      const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
-      const candidates: RecoveryCandidate[] = []
-      for (const [index, msg] of msgs.entries()) {
-        if (msg.info.role !== "assistant") continue
-        // Only incomplete assistants are recovery candidates (shared with resume planning via
-        // isRecoveryWorthyAssistant). error => not finished => recoverable; abandoned
-        // completed+AbortedError remains retryable. One followed by a rebuild boundary sits in
-        // that boundary's tail, outside the window, and is not offered.
-        if (!isRecoveryWorthyAssistant(msg.info, msg.parts)) continue
-        const assistant = msg.info
-        if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
-        if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue
-        candidates.push({
-          kind: "assistant",
-          assistantMessageID: assistant.id,
-          parentMessageID: assistant.parentID,
-          created: assistant.time.created,
-        })
+      const tail = MessageV2.readRecoveryTail({ sessionID: input.sessionID, agentID: input.agentID })
+      if (!tail) return []
+      if (tail.role === "assistant") {
+        if (!tail.parentExists || !isRecoveryWorthyAssistant(tail, tail.parts)) return []
+        return [
+          {
+            kind: "assistant",
+            assistantMessageID: tail.id,
+            parentMessageID: tail.parentID,
+            created: tail.created,
+          },
+        ] satisfies RecoveryCandidate[]
       }
       // [SR-R21 D16f] Trailing user with no following assistant: explicit Resume starts the next
       // turn from that user. Source (manual/notification/synthetic/noReply) is irrelevant — Resume
       // is the user's intent to run now. A rebuild boundary is not that user; the unanswered user
       // it carries is.
-      const last = msgs.findLast((m) => !isRebuildBoundary(m))
-      if (last?.info.role === "user") {
-        candidates.push({
+      return [
+        {
           kind: "parent-user",
-          userMessageID: last.info.id,
-          created: last.info.time.created,
-        })
-      }
-      return candidates
+          userMessageID: tail.id,
+          created: tail.created,
+        },
+      ] satisfies RecoveryCandidate[]
     })
 
     type ClaimOwner = { runId: number; receipts: (Receipt & { preparedAssistantID?: MessageID })[]; frontier?: MessageID }
@@ -6927,7 +6925,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
 
       const parentMessageID = target.info.parentID
-      if (!isEmptyAssistantResidue(target.info, target.parts)) {
+      if (!isEmptyAssistantResidue(recoveryState(target.info), target.parts)) {
         const tool: ResumePlan = {
           action: "tool-resume",
           assistantMessageID: target.info.id,
@@ -7004,8 +7002,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   tail?.info.role !== "assistant" ||
                   tail.info.id !== plan.assistantMessageID ||
                   tail.info.parentID !== plan.parentMessageID ||
-                  !isRecoveryWorthyAssistant(tail.info, tail.parts) ||
-                  isEmptyAssistantResidue(tail.info, tail.parts) !== (plan.action === "user-resume")
+                  !isRecoveryWorthyAssistant(recoveryState(tail.info), tail.parts) ||
+                  isEmptyAssistantResidue(recoveryState(tail.info), tail.parts) !== (plan.action === "user-resume")
                 )
                 ? "assistant changed at runner admission"
                 : undefined
