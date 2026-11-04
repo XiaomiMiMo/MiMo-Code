@@ -1,7 +1,7 @@
 ---
 feature: workspace-reminder
 status: delivered
-updated: 2026-10-01
+updated: 2026-11-04
 source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2776
 ---
 
@@ -9,7 +9,7 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2776
 
 ## Report
 
-**What was built** — Synthetic user reminders are identified by `metadata.reminder = { key, rev }` through `SessionReminder.tag` / `has` / `windowTarget` (`packages/cli/src/session/reminder.ts`) instead of substring-matching their text. `ensurePersistedUserSynthetic` dedupes by tag; memory paths (`memory-paths`, rev = session memory dir), loop streak (`loop-streak`) and MCP (`mcp`, rev = existing MCP marker) are tagged, and `hasSyntheticReminder`, `memoryPathsReminderTarget` and `syntheticMarker` are gone. The run loop now injects a session environment reminder (session directory, git repository root when inside git, platform) once per context window, tagged `session-env` with rev = `Instance.directory`, before memory paths; every loop except bounded-computation agents gets it, including subagents. The system prompt and the dynamic system prompt flag are unchanged. A client part carrying the same tag (e.g. from MiMo Desktop through `TextPartInput.metadata`) suppresses the engine copy. Related fix: the flag-gated Claude environment block names the shell the bash tool actually runs (`Shell.acceptable()`) instead of `Shell.preferred()`. Follow-up in the Desktop repository: drop the `Working directory:` line from `runtimeContextNote`, keeping UI language.
+**What was built** — Synthetic user reminders are identified by `metadata.reminder = { key, rev }` through `SessionReminder.tag` / `has` / `windowTarget` (`packages/cli/src/session/reminder.ts`) instead of substring-matching their text. `ensurePersistedUserSynthetic` dedupes by tag; memory paths (`memory-paths`, rev = session memory dir), loop streak (`loop-streak`) and MCP (`mcp`, rev = existing MCP marker) are tagged, and `hasSyntheticReminder`, `memoryPathsReminderTarget` and `syntheticMarker` are gone. The run loop now injects a session environment reminder (session directory, git repository root when inside git, platform) once per context window, tagged `session-env` with rev = `Instance.directory`, before memory paths; every loop except bounded-computation agents gets it, including subagents. The system prompt and the dynamic system prompt flag are unchanged. Clients can tag their own synthetic parts through `TextPartInput.metadata`; a part with an identical tag is not duplicated by the engine. Related fix: the flag-gated Claude environment block names the shell the bash tool actually runs (`Shell.acceptable()`) instead of `Shell.preferred()`. Follow-up in the Desktop repository: on the MiMoCode engine path only, stop sending the `Working directory:` line of `runtimeContextNote` (keeping UI language); the evolve path does not run this engine and keeps it.
 
 **Verification**
 
@@ -85,13 +85,17 @@ Wording rules:
 
 Tag `{ key: "session-env", rev: Instance.directory }` (session cwd is immutable; `SessionCwd.get` returns `Instance.directory`). Placed with `windowTarget` at the same point in the run loop as memory paths, before it.
 
-Gate: every run loop except bounded-computation agents (`native && hidden`, e.g. title, checkpoint writer, compaction), including subagents that do not serve checkpoints. Subagents spawned into their own directory see their own `Instance.directory`. A `context: "full"` subagent also sees the parent's copy through its inherited messages, which its own window does not include, so its request carries the reminder twice with identical content; accepted.
+Gate: every run loop except bounded-computation agents (`native && hidden`, e.g. title, summary, compaction, checkpoint-writer), including subagents that do not serve checkpoints. Subagents spawned into their own directory see their own `Instance.directory`. A `context: "full"` subagent also sees the parent's copy through its inherited messages, which its own window does not include, so its request carries the reminder twice with identical content; accepted.
 
 The dynamic system prompt flag and `SystemPrompt.environment()` are unchanged; with the flag on the cwd simply appears twice.
 
 ### S2.5 Reuse by MiMo Desktop
 
-Desktop already sends synthetic text parts with `metadata` through `TextPartInput`, which the engine stores verbatim. A Desktop part tagged with the same `key`/`rev` is recognized by `has`/`windowTarget`, so Desktop can mark its own reminders with namespaced keys and can supersede an engine reminder by sending the identical tag. The follow-up Desktop change removes the `Working directory:` line from `runtimeContextNote` (keeping UI language) because the engine now owns cwd.
+Desktop already sends synthetic text parts with `metadata` through `TextPartInput`, which the engine stores verbatim, so Desktop can give its own reminders a stable identity with namespaced keys (`desktop.*`). A part with an identical `key`/`rev` is recognized by `has`/`windowTarget`, but clients should not try to supersede `session-env`: its `rev` is the server-side realpath-normalized directory, which a client-sent path may not match byte for byte (symlinks, `/tmp` vs `/private/tmp`, Windows casing), and a mismatch yields two copies.
+
+The follow-up Desktop change stops sending the `Working directory:` line of `runtimeContextNote` on the MiMoCode engine path (`SessionCommands`), keeping UI language; the evolve path runs a different engine and keeps it.
+
+Client-owned reminders are still placed only on the message the client sends, so they are not re-added after compaction or a checkpoint rebuild. Desktop's remaining first-message facts (UI language, MCP config path) are not blocking when lost; an engine-side re-injection of client-declared window reminders is left for later (see S3).
 
 ### S2.6 Related fix: shell named in the Claude environment block
 
@@ -103,12 +107,13 @@ Desktop already sends synthetic text parts with `metadata` through `TextPartInpu
 - Restructuring MCP's announcement diff.
 - `<vision-capability>` still sits behind the dynamic system prompt flag; moving it is a separate change.
 - The Desktop-side deletion (S2.5) ships as a follow-up PR in the Desktop repository.
+- Re-injecting client-owned reminders per context window (e.g. a client-declared `scope: "window"` replayed from the latest tagged part); not needed while the remaining Desktop first-message facts are non-blocking.
 
 ## Tasks
 
 - [x] T1: `session/reminder.ts` with `tag`, `has`, `windowTarget` and unit tests — acceptance: tests cover tag validation, rev matching, ignored/non-synthetic exclusion, and every `windowTarget` branch (covers: S2.1, S2.2)
 - [x] T2: migrate `ensurePersistedUserSynthetic`, memory paths, loop streak, MCP to tags; drop `hasSyntheticReminder`, `memoryPathsReminderTarget`, `syntheticMarker` — acceptance: existing memory-path, rebuild-placement, loop-streak and MCP reminder tests pass (covers: S2.3; depends: T1)
-- [x] T3: inject the session environment reminder — acceptance: run-loop tests show it on the first window's user message for a main session, re-added after a boundary, present for a subagent, absent for a bounded-computation agent, and not duplicated when the user message already carries a Desktop-supplied part with the same tag (covers: S2.4, S2.5; depends: T2)
+- [x] T3: inject the session environment reminder — acceptance: run-loop tests show it on the first window's user message for a main session, re-added after a boundary, present for a subagent, absent for a bounded-computation agent, and not duplicated when the user message already carries a client-supplied part with the same tag (covers: S2.4, S2.5; depends: T2)
 
 ## Journey log
 

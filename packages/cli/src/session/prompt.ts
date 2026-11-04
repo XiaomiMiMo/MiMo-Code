@@ -5151,8 +5151,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // Resolve the agent for this iteration once. The window reminders,
           // the management hooks below (fireCheckpoints, overflow handler) and
           // the agent-not-found check later in the iteration reuse this binding.
-          // Bounded computation agents (native + hidden — currently title,
-          // summary, checkpoint-writer) are exempt from window reminders and
+          // Bounded computation agents (native + hidden — e.g. title, summary,
+          // compaction, checkpoint-writer) are exempt from window reminders and
           // context management;
           // see docs/superpowers/specs/2026-04-28-bounded-computation-agents-design.md
           const agent = yield* resolveStoredAgent(agents, lastUser.agent)
