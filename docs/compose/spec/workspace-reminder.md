@@ -9,13 +9,14 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2776
 
 ## Report
 
-**What was built** — Synthetic user reminders are identified by `metadata.reminder = { key, rev }` through `SessionReminder.tag` / `has` / `windowTarget` (`packages/cli/src/session/reminder.ts`) instead of substring-matching their text. `ensurePersistedUserSynthetic` dedupes by tag; memory paths (`memory-paths`, rev = session memory dir), loop streak (`loop-streak`) and MCP (`mcp`, rev = existing MCP marker) are tagged, and `hasSyntheticReminder`, `memoryPathsReminderTarget` and `syntheticMarker` are gone. The run loop now injects a session environment reminder (session directory, git repository root when inside git, platform) once per context window, tagged `session-env` with rev = `Instance.directory`, before memory paths; every loop except bounded-computation agents gets it, including subagents. The system prompt and the dynamic system prompt flag are unchanged. A client part carrying the same tag (e.g. from MiMo Desktop through `TextPartInput.metadata`) suppresses the engine copy. Follow-up in the Desktop repository: drop the `Working directory:` line from `runtimeContextNote`, keeping UI language.
+**What was built** — Synthetic user reminders are identified by `metadata.reminder = { key, rev }` through `SessionReminder.tag` / `has` / `windowTarget` (`packages/cli/src/session/reminder.ts`) instead of substring-matching their text. `ensurePersistedUserSynthetic` dedupes by tag; memory paths (`memory-paths`, rev = session memory dir), loop streak (`loop-streak`) and MCP (`mcp`, rev = existing MCP marker) are tagged, and `hasSyntheticReminder`, `memoryPathsReminderTarget` and `syntheticMarker` are gone. The run loop now injects a session environment reminder (session directory, git repository root when inside git, platform) once per context window, tagged `session-env` with rev = `Instance.directory`, before memory paths; every loop except bounded-computation agents gets it, including subagents. The system prompt and the dynamic system prompt flag are unchanged. A client part carrying the same tag (e.g. from MiMo Desktop through `TextPartInput.metadata`) suppresses the engine copy. Related fix: the flag-gated Claude environment block names the shell the bash tool actually runs (`Shell.acceptable()`) instead of `Shell.preferred()`. Follow-up in the Desktop repository: drop the `Working directory:` line from `runtimeContextNote`, keeping UI language.
 
 **Verification**
 
 - `bun typecheck` (packages/cli) — PASS.
 - `bun test test/session/synthetic-reminder.test.ts test/session/session-memory-dir-reminder-persist.test.ts test/session/rebuild-boundary-placement.test.ts test/session/title-first-turn.test.ts test/session/tool-gate-cancel.test.ts test/server/session-recovery.test.ts test/session/prompt-effect.test.ts test/actor/spawn.test.ts test/session/system.test.ts test/flag/dynamic-system-prompt-flag.test.ts` — 365 pass / 0 fail / 3 skip. The full suite is left to CI.
 - Mutation checks: forcing the session environment gate on fails the bounded-agent test; forcing it off fails the main-session and subagent tests; removing the dynamic-flag gate in `SystemPrompt.environment()` fails "loop injects the dynamic environment block only when the flag is set".
+- `bun test test/session/system.test.ts test/shell/shell.test.ts test/flag/dynamic-system-prompt-flag.test.ts` — 22 pass / 0 fail; the new `$SHELL=fish` case failed before the fix with `Shell: fish`.
 - `oxlint` on the new files — 0 warnings; touched files have no new warnings versus base.
 - Independent review: all acceptance criteria met; the one important finding (the flag-on test matched the session environment reminder) was fixed by asserting on system messages only.
 
@@ -91,6 +92,10 @@ The dynamic system prompt flag and `SystemPrompt.environment()` are unchanged; w
 ### S2.5 Reuse by MiMo Desktop
 
 Desktop already sends synthetic text parts with `metadata` through `TextPartInput`, which the engine stores verbatim. A Desktop part tagged with the same `key`/`rev` is recognized by `has`/`windowTarget`, so Desktop can mark its own reminders with namespaced keys and can supersede an engine reminder by sending the identical tag. The follow-up Desktop change removes the `Working directory:` line from `runtimeContextNote` (keeping UI language) because the engine now owns cwd.
+
+### S2.6 Related fix: shell named in the Claude environment block
+
+`SystemPrompt.environment()` (flag-gated, Claude template) advertised `Shell.preferred()`, while the bash tool runs `Shell.acceptable()`, which replaces blacklisted login shells (fish, nu) with a POSIX fallback. With `$SHELL` set to fish the block said `Shell: fish` while the bash tool description and execution used zsh. It now names `Shell.acceptable()`. `Shell.preferred()` stays for user-authored execution (`!` commands, command-template shell snippets, PTY), which handles fish and nu explicitly.
 
 ## [S3] Out of Scope
 
