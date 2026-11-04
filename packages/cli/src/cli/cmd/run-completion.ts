@@ -25,12 +25,16 @@ export function createCompletionTracker(opts: CreateOpts): CompletionTracker {
   let resolve!: () => void
   const completion = new Promise<void>((r) => { resolve = r })
 
-  const matchesSession = (e: unknown): boolean => {
-    const ev = e as { properties?: { sessionID?: string; part?: { sessionID?: string } } } | null
-    return !!ev && (
-      ev.properties?.sessionID === opts.sessionID ||
-      ev.properties?.part?.sessionID === opts.sessionID
-    )
+  // Until the session first runs it has no status record, which the poll reads
+  // as idle. So only a status showing it running starts the tracker; other
+  // session events can arrive before that and must not.
+  const isRunningStatusForSession = (e: unknown): boolean => {
+    const ev = e as { type?: string; properties?: { sessionID?: string; status?: { type?: string } } } | null
+    return !!ev
+      && ev.type === "session.status"
+      && ev.properties?.sessionID === opts.sessionID
+      && !!ev.properties?.status?.type
+      && ev.properties.status.type !== "idle"
   }
 
   const isIdleStatusForSession = (e: unknown): boolean => {
@@ -43,13 +47,16 @@ export function createCompletionTracker(opts: CreateOpts): CompletionTracker {
 
   const poll = async () => {
     if (done) return
+    // A reply that arrives after the first busy status may still have been
+    // read before it, so only a poll sent once started can end the run.
+    const wasStarted = started
     let info: StatusInfo | undefined
     try {
       info = await opts.query()
     } catch {
       return // transient failure; next tick will retry
     }
-    if (done || !started) return
+    if (done || !wasStarted) return
     if (!info || info.type === "idle") finish()
   }
 
@@ -67,7 +74,7 @@ export function createCompletionTracker(opts: CreateOpts): CompletionTracker {
     markStarted() { started = true },
     onEvent(event) {
       if (done) return
-      if (matchesSession(event)) started = true
+      if (isRunningStatusForSession(event)) started = true
       if (isIdleStatusForSession(event)) finish()
     },
     get done() { return done },
