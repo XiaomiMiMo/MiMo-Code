@@ -1,3 +1,4 @@
+import { modelMcpMetadata } from "@/mcp/apps"
 import z from "zod"
 import os from "os"
 import fs from "fs"
@@ -914,7 +915,7 @@ export const ToolScriptTool = Tool.define(
                       return {
                         title: result.title,
                         output: result.output,
-                        metadata: result.metadata,
+                        metadata: mcpDef ? modelMcpMetadata(result.metadata) : result.metadata,
                       }
                     const durationMs = Date.now() - start
                     subPart.state = {
@@ -937,7 +938,7 @@ export const ToolScriptTool = Tool.define(
                     return {
                       title: result.title,
                       output: result.output,
-                      metadata: result.metadata,
+                      metadata: mcpDef ? modelMcpMetadata(result.metadata) : result.metadata,
                       ...(structured !== undefined && { structured }),
                     }
                   },

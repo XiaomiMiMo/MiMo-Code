@@ -78,6 +78,8 @@ import { Inbox } from "../../src/inbox"
 import { Metrics } from "../../src/metrics"
 import { Database, eq, NotFoundError } from "../../src/storage"
 import { prefixCaptureRef } from "../../src/session/prefix-capture-ref"
+import { updateAppContext } from "../../src/mcp/app-context"
+import * as Storage from "../../src/storage/storage"
 import {
   currentMainHintToken,
   hintClaimBarrier,
@@ -1902,6 +1904,57 @@ it.live("persists auto as its own harness mode", () =>
         .map((message) => message.info)
         .filter((message): message is MessageV2.User => message.role === "user")
       expect(users.map((message) => message.harness)).toEqual(["auto", "auto"])
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+// [TP-R4-01][TP-R4-04] The session loop, not the LLM layer, decides which requests carry App context.
+it.live("[TP-R4-01][TP-R4-04] App context follows history in loop turns and stays out of compaction", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const compaction = yield* SessionCompaction.Service
+      const chat = yield* sessions.create({ title: "App context" })
+      const marker = "APP_CONTEXT_MARKER"
+      yield* updateAppContext(chat.id, "example", { structuredContent: { marker } }).pipe(
+        Effect.provide(Storage.defaultLayer),
+      )
+
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        noReply: true,
+        parts: [{ type: "text", text: "query before app context" }],
+      })
+      yield* llm.text("answer")
+      yield* prompt.loop({ sessionID: chat.id })
+
+      const turn = (yield* llm.inputs)[0]
+      expect(turn.messages).toBeArray()
+      if (!Array.isArray(turn.messages)) return
+      const messages = turn.messages.map((message) => JSON.stringify(message))
+      const context = messages.findIndex((message) => message.includes(marker))
+      expect(context).toBe(messages.length - 1)
+      expect(messages.findIndex((message) => message.includes("query before app context"))).toBeLessThan(context)
+      expect(messages[context]).toContain("Current MCP App context")
+
+      yield* compaction.create({ sessionID: chat.id, agent: "compaction", model: ref, auto: false })
+      const snapshot = yield* sessions.messages({ sessionID: chat.id })
+      yield* llm.text("summary")
+      expect(
+        yield* compaction.process({
+          parentID: snapshot.at(-1)!.info.id,
+          messages: snapshot,
+          sessionID: chat.id,
+          auto: false,
+        }),
+      ).toBe("continue")
+      const compactionRequest = (yield* llm.inputs)[1]
+      expect(JSON.stringify(compactionRequest)).toContain("1. Task Overview")
+      expect(JSON.stringify(compactionRequest)).not.toContain(marker)
     }),
     { git: true, config: providerCfg },
   ),
