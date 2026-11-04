@@ -214,22 +214,14 @@ globalThis.AI_SDK_LOG_WARNINGS = false
 export const LOOP_STREAK_REMINDER_MARKER = "repeating the same action without making progress"
 export const SESSION_MEMORY_DIR_MARKER = "Current session memory directory:"
 
-export function buildWorkspaceReminderText(input: {
-  directory: string
-  worktree: string
-  git: boolean
-  platform: string
-  shell: string
-}): string {
+export function buildSessionEnvReminderText(input: { directory: string; gitRoot?: string; platform: string }): string {
   return [
     "<system-reminder>",
-    "Workspace for this conversation:",
-    `- Working directory: ${input.directory}`,
-    `- Workspace root: ${input.worktree}`,
-    `- Git repository: ${input.git ? "yes" : "no"}`,
+    "Session environment:",
+    `- Session directory: ${input.directory}`,
+    input.gitRoot ? `- Git repository root: ${input.gitRoot}` : "- Not inside a git repository",
     `- Platform: ${input.platform}`,
-    `- Shell: ${input.shell}`,
-    "Relative paths in tool calls resolve against the working directory.",
+    "Relative paths in tool calls resolve against the session directory.",
     "</system-reminder>",
   ].join("\n")
 }
@@ -5172,18 +5164,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // ride on user messages, once per context window.
           if (!isBoundedComputation) {
             const ctx = yield* InstanceState.context
-            const reminder = { key: "workspace", rev: ctx.directory }
+            const reminder = { key: "session-env", rev: ctx.directory }
             const target = SessionReminder.windowTarget({ msgs, sessionID, reminder })
             if (target) {
               yield* ensurePersistedUserSynthetic({
                 message: target,
                 reminder,
-                text: buildWorkspaceReminderText({
+                text: buildSessionEnvReminderText({
                   directory: ctx.directory,
-                  worktree: ctx.worktree,
-                  git: ctx.project.vcs === "git",
+                  gitRoot: ctx.project.vcs === "git" ? ctx.worktree : undefined,
                   platform: process.platform,
-                  shell: Shell.name(Shell.preferred()),
                 }),
               })
             }

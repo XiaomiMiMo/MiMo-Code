@@ -5,5 +5,5 @@ import { SessionReminder } from "../../src/session/reminder"
 // pinning user parts compare everything else.
 export function isWindowReminder(part: MessageV2.Part) {
   const key = SessionReminder.tag(part)?.key
-  return key === "workspace" || key === "memory-paths"
+  return key === "session-env" || key === "memory-paths"
 }

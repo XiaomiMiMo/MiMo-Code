@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test"
 import {
   buildLoopStreakReminderText,
   buildMemoryPathsReminderText,
-  buildWorkspaceReminderText,
+  buildSessionEnvReminderText,
   LOOP_STREAK_REMINDER_MARKER,
   SESSION_MEMORY_DIR_MARKER,
   COMPOSE_REMINDER_MARKER,
@@ -67,27 +67,27 @@ describe("synthetic reminder text", () => {
     expect(texts(promoteComposeProtocolFirst([user, other]))).toEqual([user.text, other.text])
   })
 
-  test("workspace reminder names the directory, root, git state, platform and shell", () => {
-    const text = buildWorkspaceReminderText({
-      directory: "/tmp/example/app",
-      worktree: "/tmp/example",
-      git: true,
-      platform: "linux",
-      shell: "bash",
-    })
+  test("session environment reminder names the session directory, git root and platform", () => {
+    const text = buildSessionEnvReminderText({ directory: "/tmp/example/app", gitRoot: "/tmp/example", platform: "linux" })
     expect(text.startsWith("<system-reminder>")).toBe(true)
-    expect(text).toContain("- Working directory: /tmp/example/app")
-    expect(text).toContain("- Workspace root: /tmp/example")
-    expect(text).toContain("- Git repository: yes")
+    expect(text).toContain("- Session directory: /tmp/example/app")
+    expect(text).toContain("- Git repository root: /tmp/example")
     expect(text).toContain("- Platform: linux")
-    expect(text).toContain("- Shell: bash")
+    expect(text).not.toContain("Workspace")
+    expect(text).not.toContain("Shell")
+  })
+
+  test("session environment reminder outside git names no root", () => {
+    const text = buildSessionEnvReminderText({ directory: "/tmp/example", platform: "linux" })
+    expect(text).toContain("- Not inside a git repository")
+    expect(text).not.toContain("root")
   })
 })
 
 describe("SessionReminder.tag", () => {
   test("reads key and optional rev from a synthetic text part", () => {
-    expect(SessionReminder.tag(tagged({ key: "workspace", rev: "/tmp/example" }))).toEqual({
-      key: "workspace",
+    expect(SessionReminder.tag(tagged({ key: "session-env", rev: "/tmp/example" }))).toEqual({
+      key: "session-env",
       rev: "/tmp/example",
     })
     expect(SessionReminder.tag(tagged({ key: "loop-streak" }))).toEqual({ key: "loop-streak" })
@@ -95,23 +95,23 @@ describe("SessionReminder.tag", () => {
   })
 
   test("ignores non-synthetic, ignored and malformed parts", () => {
-    const meta = { [SessionReminder.METADATA_KEY]: { key: "workspace" } }
+    const meta = { [SessionReminder.METADATA_KEY]: { key: "session-env" } }
     expect(SessionReminder.tag(textPart("typed", false, false, meta))).toBeUndefined()
     expect(SessionReminder.tag(textPart("hidden", true, true, meta))).toBeUndefined()
     expect(SessionReminder.tag(textPart("plain", true))).toBeUndefined()
-    expect(SessionReminder.tag(tagged("workspace"))).toBeUndefined()
+    expect(SessionReminder.tag(tagged("session-env"))).toBeUndefined()
     expect(SessionReminder.tag(tagged({ key: "" }))).toBeUndefined()
     expect(SessionReminder.tag(tagged({ key: 1 }))).toBeUndefined()
-    expect(SessionReminder.tag(tagged({ key: "workspace", rev: 1 }))).toBeUndefined()
+    expect(SessionReminder.tag(tagged({ key: "session-env", rev: 1 }))).toBeUndefined()
   })
 })
 
 describe("SessionReminder.has", () => {
   test("matches key and rev, never text", () => {
-    const parts = [textPart("hi"), tagged({ key: "workspace", rev: "/tmp/example" })]
-    expect(SessionReminder.has(parts, { key: "workspace", rev: "/tmp/example" })).toBe(true)
-    expect(SessionReminder.has(parts, { key: "workspace", rev: "/tmp/other" })).toBe(false)
-    expect(SessionReminder.has(parts, { key: "workspace" })).toBe(false)
+    const parts = [textPart("hi"), tagged({ key: "session-env", rev: "/tmp/example" })]
+    expect(SessionReminder.has(parts, { key: "session-env", rev: "/tmp/example" })).toBe(true)
+    expect(SessionReminder.has(parts, { key: "session-env", rev: "/tmp/other" })).toBe(false)
+    expect(SessionReminder.has(parts, { key: "session-env" })).toBe(false)
     expect(SessionReminder.has(parts, { key: "memory-paths", rev: "/tmp/example" })).toBe(false)
     expect(SessionReminder.has([textPart(buildLoopStreakReminderText(3), true)], { key: "loop-streak" })).toBe(false)
     expect(SessionReminder.has([tagged({ key: "loop-streak" })], { key: "loop-streak" })).toBe(true)

@@ -2746,14 +2746,14 @@ it.live("loop injects the dynamic environment block only when the flag is set", 
   ),
 )
 
-it.live("the workspace reminder rides once on the window's first user message, outside the system prompt", () =>
+it.live("the session environment reminder rides once on the window's first user message, outside the system prompt", () =>
   withoutDynamicSystemPrompt(() =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const prompt = yield* SessionPrompt.Service
         const sessions = yield* Session.Service
         const chat = yield* sessions.create({
-          title: "Workspace reminder",
+          title: "Session env reminder",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
         const ask = (text: string) =>
@@ -2764,9 +2764,9 @@ it.live("the workspace reminder rides once on the window's first user message, o
         yield* llm.text("second")
         yield* ask("second query")
 
-        const workspace = { key: "workspace", rev: Instance.directory }
+        const sessionEnv = { key: "session-env", rev: Instance.directory }
         const users = (yield* sessions.messages({ sessionID: chat.id })).filter((m) => m.info.role === "user")
-        expect(users.map((m) => SessionReminder.has(m.parts, workspace))).toEqual([true, false])
+        expect(users.map((m) => SessionReminder.has(m.parts, sessionEnv))).toEqual([true, false])
 
         const inputs = yield* llm.inputs
         expect(inputs).toHaveLength(2)
@@ -2775,7 +2775,7 @@ it.live("the workspace reminder rides once on the window's first user message, o
           const system = JSON.stringify(messages.filter((m) => m.role === "system"))
           const rest = JSON.stringify(messages.filter((m) => m.role !== "system"))
           expect(system).not.toContain("Working directory:")
-          expect(rest.split(`- Working directory: ${Instance.directory}`)).toHaveLength(2)
+          expect(rest.split(`- Session directory: ${Instance.directory}`)).toHaveLength(2)
         }
       }),
       { git: true, config: providerCfg },
@@ -2792,7 +2792,7 @@ it.live("a client-supplied part with the same reminder tag suppresses the engine
         title: "Client reminder",
         permission: [{ permission: "*", pattern: "*", action: "allow" }],
       })
-      const workspace = { key: "workspace", rev: Instance.directory }
+      const sessionEnv = { key: "session-env", rev: Instance.directory }
       yield* llm.text("ok")
       yield* prompt.prompt({
         sessionID: chat.id,
@@ -2801,19 +2801,19 @@ it.live("a client-supplied part with the same reminder tag suppresses the engine
         parts: [
           {
             type: "text",
-            text: "<system-reminder>\nclient workspace\n</system-reminder>",
+            text: "<system-reminder>\nclient session env\n</system-reminder>",
             synthetic: true,
-            metadata: { [SessionReminder.METADATA_KEY]: workspace },
+            metadata: { [SessionReminder.METADATA_KEY]: sessionEnv },
           },
           { type: "text", text: "hello" },
         ],
       })
 
       const user = (yield* sessions.messages({ sessionID: chat.id })).find((m) => m.info.role === "user")!
-      expect(user.parts.filter((part) => SessionReminder.tag(part)?.key === "workspace")).toHaveLength(1)
+      expect(user.parts.filter((part) => SessionReminder.tag(part)?.key === "session-env")).toHaveLength(1)
       const serialized = JSON.stringify(yield* llm.inputs)
-      expect(serialized).toContain("client workspace")
-      expect(serialized).not.toContain("Workspace for this conversation:")
+      expect(serialized).toContain("client session env")
+      expect(serialized).not.toContain("Session environment:")
     }),
     { git: true, config: providerCfg },
   ),

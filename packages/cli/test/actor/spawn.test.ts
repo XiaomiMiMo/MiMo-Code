@@ -1696,13 +1696,13 @@ describe("Actor.spawn return-format injection (F21)", () => {
     ),
   )
 
-  it.live("a subagent's own window carries the workspace reminder but not memory paths", () =>
+  it.live("a subagent's own window carries the session environment reminder but not memory paths", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
         const session = yield* Session.Service
         const parent = yield* session.create({
-          title: "workspace reminder subagent",
+          title: "session env subagent",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
         yield* llm.text("done")
@@ -1722,21 +1722,21 @@ describe("Actor.spawn return-format injection (F21)", () => {
         const msgs = yield* session.messages({ sessionID: result.sessionID, agentID: "*" })
         const subAgentUser = msgs.find((m) => m.info.role === "user" && m.info.agentID === result.actorID)
         const tags = (subAgentUser?.parts ?? []).flatMap((part) => SessionReminder.tag(part) ?? [])
-        expect(tags).toContainEqual({ key: "workspace", rev: Instance.directory })
+        expect(tags).toContainEqual({ key: "session-env", rev: Instance.directory })
         expect(tags.some((tag) => tag.key === "memory-paths")).toBe(false)
-        expect(JSON.stringify(yield* llm.inputs)).toContain(`- Working directory: ${Instance.directory}`)
+        expect(JSON.stringify(yield* llm.inputs)).toContain(`- Session directory: ${Instance.directory}`)
       }),
       { git: true, config: providerCfg },
     ),
   )
 
-  it.live("a bounded-computation agent gets no workspace reminder", () =>
+  it.live("a bounded-computation agent gets no session environment reminder", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
         const session = yield* Session.Service
         const parent = yield* session.create({
-          title: "workspace reminder writer",
+          title: "session env writer",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
         yield* llm.text("done")
@@ -1757,7 +1757,7 @@ describe("Actor.spawn return-format injection (F21)", () => {
         const writerUsers = msgs.filter((m) => m.info.role === "user" && m.info.agentID === result.actorID)
         expect(writerUsers.length).toBeGreaterThan(0)
         for (const user of writerUsers)
-          expect(user.parts.some((part) => SessionReminder.tag(part)?.key === "workspace")).toBe(false)
+          expect(user.parts.some((part) => SessionReminder.tag(part)?.key === "session-env")).toBe(false)
       }),
       { git: true, config: providerCfg },
     ),
