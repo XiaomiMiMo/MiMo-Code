@@ -12,6 +12,7 @@ import { Session } from "../../src/session"
 import { checkpointPath } from "../../src/session/checkpoint-paths"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { SESSION_MEMORY_DIR_MARKER, SessionPrompt } from "../../src/session/prompt"
+import { SessionReminder } from "../../src/session/reminder"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { SessionTable } from "../../src/session/session.sql"
 import { Database, eq } from "../../src/storage"
@@ -105,12 +106,11 @@ describe("rebuild boundary placement", () => {
                   (message) => message.info.id > watermark.info.id,
                 )
                 expect(tail.map((message) => message.info.role)).toEqual(["user", "assistant", "assistant"])
-                const reminded = (message: { parts: MessageV2.Part[] }) =>
-                  message.parts.some(
-                    (part) => part.type === "text" && part.synthetic && part.text.includes(SESSION_MEMORY_DIR_MARKER),
-                  )
-                // The memory paths reminder of this context window sits on its first user message, before the tail.
-                expect(tail.some(reminded)).toBe(false)
+                const reminded = (message: { parts: MessageV2.Part[] }, key: string) =>
+                  message.parts.some((part) => SessionReminder.tag(part)?.key === key)
+                // The window reminders of this context window sit on its first user message, before the tail.
+                expect(tail.some((message) => reminded(message, "memory-paths"))).toBe(false)
+                expect(tail.some((message) => reminded(message, "session-env"))).toBe(false)
 
                 yield* prompt.command({
                   sessionID: session.id,
@@ -143,13 +143,16 @@ describe("rebuild boundary placement", () => {
                 const live = text(first[1]!)
                 expect(live).toContain("after rebuild")
                 expect(live).not.toContain("run the checks on alpha and beta")
-                // The new context window starts at the boundary, which carries its memory paths reminder.
+                // The new context window starts at the boundary, which carries its window reminders.
                 const persisted = (yield* sessions.messages({ sessionID: session.id })).find(
                   (message) => message.info.id === boundary.info.id,
                 )!
-                expect(reminded(persisted)).toBe(true)
+                expect(reminded(persisted, "memory-paths")).toBe(true)
+                expect(reminded(persisted, "session-env")).toBe(true)
                 expect(digest).toContain(SESSION_MEMORY_DIR_MARKER)
                 expect(live).not.toContain(SESSION_MEMORY_DIR_MARKER)
+                expect(digest).toContain(`- Session directory: ${tmp.path}`)
+                expect(live).not.toContain("Session environment:")
 
                 yield* say("next step")
                 const second = conversation(server.captures.at(-1)!.messages)

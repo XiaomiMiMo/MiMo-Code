@@ -7,6 +7,7 @@ import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { SystemPrompt } from "../../src/session/system"
+import { Shell } from "../../src/shell/shell"
 import { provideInstance, tmpdir } from "../fixture/fixture"
 import { ProviderTest } from "../fake/provider"
 
@@ -129,6 +130,41 @@ describe("session.system", () => {
         expect(gpt).not.toContain("Git user:")
       },
     })
+  })
+
+  test("the Claude environment names the shell the bash tool runs, not a blacklisted login shell", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const previous = process.env.SHELL
+    process.env.SHELL = "/tmp/example/bin/fish"
+    Shell.acceptable.reset()
+    Shell.preferred.reset()
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const prompt = await Effect.runPromise(
+            Effect.gen(function* () {
+              return yield* (yield* SystemPrompt.Service).environment(
+                ProviderTest.model({
+                  id: ModelID.make("claude-sonnet-4-6"),
+                  providerID: ProviderID.make("anthropic"),
+                  api: { id: "claude-sonnet-4-6" } as never,
+                }),
+                Date.UTC(2026, 6, 31),
+              )
+            }).pipe(Effect.provide(SystemPrompt.defaultLayer)),
+          )
+          const text = prompt.join("\n")
+          expect(text).toContain(` - Shell: ${Shell.name(Shell.acceptable())}`)
+          expect(text).not.toContain(" - Shell: fish")
+        },
+      })
+    } finally {
+      if (previous === undefined) delete process.env.SHELL
+      else process.env.SHELL = previous
+      Shell.acceptable.reset()
+      Shell.preferred.reset()
+    }
   })
 
   test("uses the selected system template to decide whether to render the Claude environment", async () => {

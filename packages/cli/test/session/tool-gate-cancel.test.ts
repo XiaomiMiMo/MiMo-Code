@@ -7,7 +7,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import type { Config } from "../../src/config"
 import { Deferred, Effect, Fiber, Layer } from "effect"
-import { SessionPrompt, SESSION_MEMORY_DIR_MARKER } from "../../src/session/prompt"
+import { SessionPrompt } from "../../src/session/prompt"
+import { isWindowReminder } from "../lib/reminder"
 import { Session } from "../../src/session"
 import { SessionRunState } from "../../src/session/run-state"
 import { MessageID } from "../../src/session/schema"
@@ -705,7 +706,7 @@ for (const recovery of ["send", "resume", "edit"] as const) {
                 expect(after).toHaveLength(2)
                 expect(after.some((message) => stopped.some((old) => old.info.id === message.info.id))).toBe(false)
                 expect(
-                  users[0].parts.filter((part) => !(part.type === "text" && part.text.includes(SESSION_MEMORY_DIR_MARKER))),
+                  users[0].parts.filter((part) => !isWindowReminder(part)),
                 ).toEqual([expect.objectContaining({ type: "text", text })])
                 expect(JSON.stringify(after)).not.toContain("First cold request")
               } else {

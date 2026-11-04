@@ -1,18 +1,23 @@
 import { describe, test, expect } from "bun:test"
 import {
-  hasSyntheticReminder,
   buildLoopStreakReminderText,
   buildMemoryPathsReminderText,
-  memoryPathsReminderTarget,
+  buildSessionEnvReminderText,
   LOOP_STREAK_REMINDER_MARKER,
   SESSION_MEMORY_DIR_MARKER,
   COMPOSE_REMINDER_MARKER,
 } from "../../src/session/prompt"
+import { SessionReminder } from "../../src/session/reminder"
 import { promoteComposeProtocolFirst } from "../../src/session/message-v2"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { SessionID, MessageID, PartID } from "../../src/session/schema"
 
-function textPart(text: string, synthetic?: boolean, ignored?: boolean): MessageV2.TextPart {
+function textPart(
+  text: string,
+  synthetic?: boolean,
+  ignored?: boolean,
+  metadata?: Record<string, unknown>,
+): MessageV2.TextPart {
   return {
     id: "p1" as PartID,
     sessionID: "ses_test" as SessionID,
@@ -21,7 +26,12 @@ function textPart(text: string, synthetic?: boolean, ignored?: boolean): Message
     text,
     ...(synthetic ? { synthetic: true } : {}),
     ...(ignored ? { ignored: true } : {}),
+    ...(metadata ? { metadata } : {}),
   }
+}
+
+function tagged(reminder: unknown, text = "<system-reminder>body</system-reminder>") {
+  return textPart(text, true, false, { [SessionReminder.METADATA_KEY]: reminder })
 }
 
 function message(
@@ -34,7 +44,7 @@ function message(
   return { info: { id: MessageID.make(id), sessionID, role, ...extra }, parts } as unknown as MessageV2.WithParts
 }
 
-describe("synthetic reminder markers", () => {
+describe("synthetic reminder text", () => {
   test("buildLoopStreakReminderText embeds the stable marker", () => {
     const text = buildLoopStreakReminderText(3)
     expect(text).toContain(LOOP_STREAK_REMINDER_MARKER)
@@ -47,20 +57,6 @@ describe("synthetic reminder markers", () => {
     expect(new Set(markers).size).toBe(markers.length)
   })
 
-  test("hasSyntheticReminder matches only non-ignored synthetic text parts", () => {
-    const marker = LOOP_STREAK_REMINDER_MARKER
-    expect(hasSyntheticReminder([], marker)).toBe(false)
-    expect(hasSyntheticReminder([textPart(`user asked about ${marker}`)], marker)).toBe(false)
-    expect(hasSyntheticReminder([textPart(marker, true)], marker)).toBe(true)
-    expect(hasSyntheticReminder([textPart(marker, true, true)], marker)).toBe(false)
-    expect(
-      hasSyntheticReminder(
-        [textPart("other synthetic", true), textPart(`<system-reminder>${marker}</system-reminder>`, true)],
-        marker,
-      ),
-    ).toBe(true)
-  })
-
   test("promoteComposeProtocolFirst moves compose synthetic to head after DB order", () => {
     const user = textPart("do the task")
     const compose = textPart(`\n<system-reminder>\n${COMPOSE_REMINDER_MARKER}...\n`, true)
@@ -71,22 +67,68 @@ describe("synthetic reminder markers", () => {
     expect(texts(promoteComposeProtocolFirst([user, other]))).toEqual([user.text, other.text])
   })
 
-  test("buildLoopStreakReminderText marker dedupes via hasSyntheticReminder", () => {
-    const text = buildLoopStreakReminderText(3)
-    expect(hasSyntheticReminder([textPart(text, true)], LOOP_STREAK_REMINDER_MARKER)).toBe(true)
+  test("session environment reminder names the session directory, git root and platform", () => {
+    const text = buildSessionEnvReminderText({ directory: "/tmp/example/app", gitRoot: "/tmp/example", platform: "linux" })
+    expect(text.startsWith("<system-reminder>")).toBe(true)
+    expect(text).toContain("- Session directory: /tmp/example/app")
+    expect(text).toContain("- Git repository root: /tmp/example")
+    expect(text).toContain("- Platform: linux")
+    expect(text).not.toContain("Workspace")
+    expect(text).not.toContain("Shell")
+  })
+
+  test("session environment reminder outside git names no root", () => {
+    const text = buildSessionEnvReminderText({ directory: "/tmp/example", platform: "linux" })
+    expect(text).toContain("- Not inside a git repository")
+    expect(text).not.toContain("root")
   })
 })
 
-describe("memory paths reminder", () => {
+describe("SessionReminder.tag", () => {
+  test("reads key and optional rev from a synthetic text part", () => {
+    expect(SessionReminder.tag(tagged({ key: "session-env", rev: "/tmp/example" }))).toEqual({
+      key: "session-env",
+      rev: "/tmp/example",
+    })
+    expect(SessionReminder.tag(tagged({ key: "loop-streak" }))).toEqual({ key: "loop-streak" })
+    expect(SessionReminder.tag(tagged({ key: "loop-streak", rev: null }))).toEqual({ key: "loop-streak" })
+  })
+
+  test("ignores non-synthetic, ignored and malformed parts", () => {
+    const meta = { [SessionReminder.METADATA_KEY]: { key: "session-env" } }
+    expect(SessionReminder.tag(textPart("typed", false, false, meta))).toBeUndefined()
+    expect(SessionReminder.tag(textPart("hidden", true, true, meta))).toBeUndefined()
+    expect(SessionReminder.tag(textPart("plain", true))).toBeUndefined()
+    expect(SessionReminder.tag(tagged("session-env"))).toBeUndefined()
+    expect(SessionReminder.tag(tagged({ key: "" }))).toBeUndefined()
+    expect(SessionReminder.tag(tagged({ key: 1 }))).toBeUndefined()
+    expect(SessionReminder.tag(tagged({ key: "session-env", rev: 1 }))).toBeUndefined()
+  })
+})
+
+describe("SessionReminder.has", () => {
+  test("matches key and rev, never text", () => {
+    const parts = [textPart("hi"), tagged({ key: "session-env", rev: "/tmp/example" })]
+    expect(SessionReminder.has(parts, { key: "session-env", rev: "/tmp/example" })).toBe(true)
+    expect(SessionReminder.has(parts, { key: "session-env", rev: "/tmp/other" })).toBe(false)
+    expect(SessionReminder.has(parts, { key: "session-env" })).toBe(false)
+    expect(SessionReminder.has(parts, { key: "memory-paths", rev: "/tmp/example" })).toBe(false)
+    expect(SessionReminder.has([textPart(buildLoopStreakReminderText(3), true)], { key: "loop-streak" })).toBe(false)
+    expect(SessionReminder.has([tagged({ key: "loop-streak" })], { key: "loop-streak" })).toBe(true)
+  })
+})
+
+describe("SessionReminder.windowTarget", () => {
   const sessionID = SessionID.make("ses_child")
   const parentID = SessionID.make("ses_parent")
   const dir = "/tmp/example/memory/sessions/ses_child"
   const parentDir = "/tmp/example/memory/sessions/ses_parent"
-  const projectMemoryFile = "/tmp/example/memory/projects/prj_example/MEMORY.md"
-  const reminderText = (sessionDir: string) => buildMemoryPathsReminderText({ projectMemoryFile, sessionDir })
+  const reminder = { key: "memory-paths", rev: dir }
+  const target = (msgs: MessageV2.WithParts[]) => SessionReminder.windowTarget({ msgs, sessionID, reminder })
 
-  test("text carries the real project memory file, the marked session directory and both placeholders", () => {
-    const text = reminderText(dir)
+  test("memory paths text carries the real project memory file, the session directory and both placeholders", () => {
+    const projectMemoryFile = "/tmp/example/memory/projects/prj_example/MEMORY.md"
+    const text = buildMemoryPathsReminderText({ projectMemoryFile, sessionDir: dir })
     expect(text).toContain(`- Project memory: ${projectMemoryFile}`)
     expect(text).toContain(`${SESSION_MEMORY_DIR_MARKER} ${dir}/`)
     expect(text).toContain("<project_id>")
@@ -96,7 +138,7 @@ describe("memory paths reminder", () => {
 
   test("targets the first own user message of the window", () => {
     const first = message("msg_1", sessionID, "user", [textPart("hello")])
-    expect(memoryPathsReminderTarget({ msgs: [first], sessionID, dir })).toBe(first)
+    expect(target([first])).toBe(first)
   })
 
   test("an answered first message moves the reminder to the newest unanswered user message", () => {
@@ -106,9 +148,9 @@ describe("memory paths reminder", () => {
       message("msg_2", sessionID, "assistant", [], { parentID: "msg_1" }),
       message("msg_3", sessionID, "user", [textPart("next")]),
     ]
-    expect(memoryPathsReminderTarget({ msgs: legacy, sessionID, dir })).toBe(legacy[2])
+    expect(target(legacy)).toBe(legacy[2])
     const answered = [...legacy, message("msg_4", sessionID, "assistant", [], { parentID: "msg_3" })]
-    expect(memoryPathsReminderTarget({ msgs: answered, sessionID, dir })).toBeUndefined()
+    expect(target(answered)).toBeUndefined()
   })
 
   test("a batched input sent before a reply counts as sent though it is never a parentID", () => {
@@ -117,15 +159,14 @@ describe("memory paths reminder", () => {
       message("msg_2", sessionID, "user", [textPart("second of batch")]),
       message("msg_3", sessionID, "assistant", [], { parentID: "msg_2" }),
     ]
-    expect(memoryPathsReminderTarget({ msgs, sessionID, dir })).toBeUndefined()
+    expect(target(msgs)).toBeUndefined()
   })
 
   test("never targets a contextFrom parent message", () => {
-    const msgs = [message("msg_1", parentID, "user", [textPart("parent")])]
-    expect(memoryPathsReminderTarget({ msgs, sessionID, dir })).toBeUndefined()
+    expect(target([message("msg_1", parentID, "user", [textPart("parent")])])).toBeUndefined()
   })
 
-  test("a checkpoint rebuild boundary is targeted even though its text names the directory", () => {
+  test("a checkpoint rebuild boundary is targeted", () => {
     const boundary = message("msg_5", sessionID, "user", [
       {
         ...textPart(""),
@@ -136,7 +177,7 @@ describe("memory paths reminder", () => {
       } as MessageV2.Part,
       textPart(`# Session checkpoint\n\nFile: ${dir}/checkpoint.md`, true),
     ])
-    expect(memoryPathsReminderTarget({ msgs: [boundary], sessionID, dir })).toBe(boundary)
+    expect(target([boundary])).toBe(boundary)
   })
 
   test("a compaction boundary is targeted despite its summary reply", () => {
@@ -148,32 +189,34 @@ describe("memory paths reminder", () => {
       message("msg_6", sessionID, "assistant", [textPart("summary")], { parentID: "msg_5", summary: true }),
       message("msg_7", sessionID, "user", [textPart("continue")]),
     ]
-    expect(memoryPathsReminderTarget({ msgs, sessionID, dir })).toBe(boundary)
+    expect(target(msgs)).toBe(boundary)
   })
 
-  test("skips only when this session's reminder is already in the window", () => {
+  test("skips only when this session's tagged reminder is already in the window", () => {
     const withReminder = [
-      message("msg_1", sessionID, "user", [textPart("hi"), textPart(reminderText(dir), true)]),
+      message("msg_1", sessionID, "user", [textPart("hi"), tagged(reminder)]),
       message("msg_2", sessionID, "user", [textPart("again")]),
     ]
-    expect(memoryPathsReminderTarget({ msgs: withReminder, sessionID, dir })).toBeUndefined()
+    expect(target(withReminder)).toBeUndefined()
 
-    const typed = message("msg_1", sessionID, "user", [textPart(reminderText(dir))])
-    expect(memoryPathsReminderTarget({ msgs: [typed], sessionID, dir })).toBe(typed)
+    // Identity is the tag, so an untagged copy of the text does not count.
+    const untagged = message("msg_1", sessionID, "user", [
+      textPart(buildMemoryPathsReminderText({ projectMemoryFile: "/tmp/example/MEMORY.md", sessionDir: dir }), true),
+    ])
+    expect(target([untagged])).toBe(untagged)
   })
 
-  test("a fork copy showing the parent's directory gets the child's reminder on the newest message", () => {
+  test("a fork copy tagged with the parent's rev gets the child's reminder on the newest message", () => {
     const forked = [
-      message("msg_1", sessionID, "user", [textPart("hi"), textPart(reminderText(parentDir), true)]),
+      message("msg_1", sessionID, "user", [textPart("hi"), tagged({ key: "memory-paths", rev: parentDir })]),
       message("msg_2", sessionID, "assistant", [], { parentID: "msg_1" }),
       message("msg_3", sessionID, "user", [textPart("fork question")]),
     ]
-    expect(memoryPathsReminderTarget({ msgs: forked, sessionID, dir })).toBe(forked[2])
+    expect(target(forked)).toBe(forked[2])
   })
 
   test("contextFrom history without any reminder skips the parent's messages", () => {
     const own = message("msg_9", sessionID, "user", [textPart("child task")])
-    const msgs = [message("msg_1", parentID, "user", [textPart("parent")]), own]
-    expect(memoryPathsReminderTarget({ msgs, sessionID, dir })).toBe(own)
+    expect(target([message("msg_1", parentID, "user", [textPart("parent")]), own])).toBe(own)
   })
 })

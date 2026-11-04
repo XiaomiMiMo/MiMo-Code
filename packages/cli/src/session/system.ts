@@ -99,7 +99,7 @@ export const layer = Layer.effect(
             ` - Primary working directory: ${Instance.directory}`,
             ` - Is a git repository: ${project.vcs === "git" ? "true" : "false"}`,
             ` - Platform: ${process.platform}`,
-            ` - Shell: ${Shell.name(Shell.preferred())}`,
+            ` - Shell: ${Shell.name(Shell.acceptable())}`,
             ` - OS Version: ${os.type()} ${os.release()}`,
             ` - You are powered by the model named ${model.name}. The exact model ID is ${model.providerID}/${model.api.id}.`,
             ``,
