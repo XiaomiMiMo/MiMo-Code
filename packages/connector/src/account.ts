@@ -72,6 +72,11 @@ export class SignedInAccount {
     await this.options.secrets.set(SECRET, JSON.stringify(StoredSession.parse(session)))
   }
 
+  /** The account session kept now, without renewing it. */
+  async sessionId(): Promise<string | undefined> {
+    return (await this.load())?.accountSessionId
+  }
+
   /** The current account, renewed first when due; undefined when signed out. */
   async account(): Promise<ConnectorAccount | undefined> {
     let session = await this.load()

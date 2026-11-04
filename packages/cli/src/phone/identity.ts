@@ -5,11 +5,17 @@
 // (`identity issue`, file `cli.json`). The file is named explicitly by
 // MIMOCODE_PHONE_DEBUG_IDENTITY; nothing is searched for or guessed.
 
-import type { ConnectorAccount } from "@mimo-ai/connector"
+import type { ConnectorAccount, StoredSession } from "@mimo-ai/connector"
 import { readFile } from "node:fs/promises"
 import z from "zod"
 
 export const DEBUG_IDENTITY_ENV = "MIMOCODE_PHONE_DEBUG_IDENTITY"
+/**
+ * A signed-in account session handed over from the account service's sign-in
+ * (until MiMo Code signs in by itself). Imported once into protected storage;
+ * the stored copy is renewed from then on and the file is no longer read.
+ */
+export const ACCOUNT_SESSION_ENV = "MIMOCODE_PHONE_ACCOUNT_SESSION"
 
 const DebugIdentity = z.object({
   version: z.literal(1),
@@ -56,5 +62,63 @@ export async function loadDebugIdentity(
     subject: parsed.subject,
     accountSessionId: parsed.accountSessionId,
     accessToken: parsed.accessToken,
+  }
+}
+
+const Handoff = z.object({
+  accountOrigin: z.string().url(),
+  connectOrigin: z.string().url(),
+  session: z.object({
+    accountSessionId: z.string(),
+    subject: z.string().min(1),
+    environment: z.string().min(1),
+    accessExpiresAt: z.string(),
+    refreshExpiresAt: z.string(),
+    renewAfter: z.string().optional(),
+  }),
+  credentials: z.object({
+    tokenType: z.literal("Bearer"),
+    accessToken: z.string(),
+    refreshToken: z.string(),
+    logoutToken: z.string().optional(),
+  }),
+})
+
+/** Read a handed-over account session; origins must be plain HTTPS origins. */
+export async function readAccountSession(
+  file: string | undefined,
+  now: () => number = Date.now,
+): Promise<StoredSession | IdentityProblem> {
+  if (!file) return "missing"
+  let raw: string
+  try {
+    raw = await readFile(file, "utf8")
+  } catch {
+    return "unreadable"
+  }
+  let handoff: z.infer<typeof Handoff>
+  try {
+    handoff = Handoff.parse(JSON.parse(raw))
+  } catch {
+    return "invalid"
+  }
+  for (const origin of [handoff.accountOrigin, handoff.connectOrigin]) {
+    const url = new URL(origin)
+    if (url.protocol !== "https:" || url.origin !== origin.replace(/\/$/, "")) return "invalid"
+  }
+  if (Date.parse(handoff.session.refreshExpiresAt) <= now()) return "expired"
+  return {
+    version: 1,
+    accountOrigin: new URL(handoff.accountOrigin).origin,
+    connectOrigin: new URL(handoff.connectOrigin).origin,
+    environment: handoff.session.environment,
+    subject: handoff.session.subject,
+    accountSessionId: handoff.session.accountSessionId,
+    accessToken: handoff.credentials.accessToken,
+    accessExpiresAt: handoff.session.accessExpiresAt,
+    renewAfter: handoff.session.renewAfter,
+    refreshToken: handoff.credentials.refreshToken,
+    refreshExpiresAt: handoff.session.refreshExpiresAt,
+    logoutToken: handoff.credentials.logoutToken,
   }
 }
