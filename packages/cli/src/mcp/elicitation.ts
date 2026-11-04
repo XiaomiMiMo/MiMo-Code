@@ -9,16 +9,17 @@ export * as McpElicitation from "./elicitation"
 
 interface Call {
   sessionID?: SessionID
+  turnID?: string
   controller: AbortController
 }
 const calls = new WeakMap<Client, Set<Call>>()
 
 // MCP elicitation carries no parent tools/call ID. Never use a last-session-wins
 // pointer: overlapping calls are ambiguous, including after one has finished.
-export function beginCall(client: Client, sessionID?: string, signal?: AbortSignal) {
+export function beginCall(client: Client, sessionID?: string, signal?: AbortSignal, turnID?: string) {
   const active = calls.get(client) ?? new Set<Call>()
   calls.set(client, active)
-  const call: Call = { sessionID: sessionID ? SessionID.make(sessionID) : undefined, controller: new AbortController() }
+  const call: Call = { sessionID: sessionID ? SessionID.make(sessionID) : undefined, turnID, controller: new AbortController() }
   const abort = () => call.controller.abort()
   signal?.addEventListener("abort", abort, { once: true })
   if (signal?.aborted) abort()
@@ -32,6 +33,14 @@ export function beginCall(client: Client, sessionID?: string, signal?: AbortSign
     signal?.removeEventListener("abort", abort)
     active.delete(call)
   }
+}
+
+/** Only the one active parent call may read native-app policy for its own turn. */
+export function ownsTurn(client: Client, sessionID: string, turnID: string, signal?: AbortSignal): boolean {
+  const active = calls.get(client)
+  const call = active?.size === 1 ? [...active][0] : undefined
+  return !!call?.sessionID && call.sessionID === sessionID && call.turnID === turnID &&
+    !call.controller.signal.aborted && !signal?.aborted
 }
 
 export function cancelAll(client: Client) {

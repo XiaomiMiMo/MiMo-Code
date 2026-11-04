@@ -36,6 +36,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { McpSampling } from "./sampling"
 import { McpElicitation } from "./elicitation"
+import * as McpNativeAppPolicy from "./native-app-policy"
+import { CLIENT_OPTIONS, TURN_LIFECYCLE_CAPABILITY, TURN_LIFECYCLE_VERSION } from "./client-options"
+export { CLIENT_OPTIONS, TURN_LIFECYCLE_CAPABILITY, TURN_LIFECYCLE_VERSION } from "./client-options"
 import { SessionID } from "@/session/schema"
 
 const log = Log.create({ service: "mcp" })
@@ -89,32 +92,11 @@ export const Failed = NamedError.create(
 
 type MCPClient = ManagedClient
 
-export const TURN_LIFECYCLE_CAPABILITY = "com.xiaomi.mimo/turn-lifecycle"
 export const TURN_LIFECYCLE_NOTIFICATION = `notifications/${TURN_LIFECYCLE_CAPABILITY}`
-export const TURN_LIFECYCLE_VERSION = 1
 export const TURN_LIFECYCLE_NOTIFICATION_TIMEOUT = 1_000
 // A send that has already outlived the per-turn budget can never be useful to wait
 // on again, so later turns abandon it instead of queueing behind it forever.
 export const TURN_LIFECYCLE_STUCK_TIMEOUT = TURN_LIFECYCLE_NOTIFICATION_TIMEOUT
-
-/**
- * Capabilities MiMoCode declares in `initialize`. Exported so tests assert on the
- * SAME object the client is constructed with rather than a copy that could drift.
- */
-export const CLIENT_OPTIONS = {
-  capabilities: {
-    // Declared because we register a `sampling/createMessage` request handler
-    // below; the SDK's assertRequestHandlerCapability refuses the registration
-    // without it. Intentionally an empty object: `sampling.tools` and
-    // `sampling.context` are NOT implemented, and declaring them would invite
-    // servers to send `tools`/`includeContext` payloads we would have to reject.
-    sampling: {},
-    elicitation: { form: {} },
-    experimental: {
-      [TURN_LIFECYCLE_CAPABILITY]: { version: TURN_LIFECYCLE_VERSION },
-    },
-  },
-}
 
 interface PendingTurnLifecycleNotification {
   readonly promise: Promise<void>
@@ -386,7 +368,7 @@ export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?:
       // this call is in flight can address its approval prompt at this session.
       if (context) McpSampling.setActiveSession(client, SessionID.make(context.sessionId))
       const progress = toolPresentationProgress(options.experimental_context)
-      const finish = McpElicitation.beginCall(client, context?.sessionId, options.abortSignal)
+      const finish = McpElicitation.beginCall(client, context?.sessionId, options.abortSignal, context?.turnId)
       try {
         return await client.callTool(
           {
@@ -822,6 +804,7 @@ export const layer = Layer.effect(
       // re-resolved from user config alone at sampling time.
       McpSampling.serve(name, client, bridge, undefined, undefined, sampling)
       McpElicitation.serve(name, client, bridge)
+      McpNativeAppPolicy.serve(client)
     }
 
     const state = yield* InstanceState.make<State>(

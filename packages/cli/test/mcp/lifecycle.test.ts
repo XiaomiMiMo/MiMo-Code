@@ -347,6 +347,7 @@ test(
             elicitation: { form: {} },
             experimental: {
               "com.xiaomi.mimo/turn-lifecycle": { version: 1 },
+              "com.xiaomi.mimo/native-app-policy": { version: 1 },
             },
           },
         },
