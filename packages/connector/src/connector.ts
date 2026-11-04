@@ -27,6 +27,8 @@ const RECONNECT_MIN_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 /** A generation that stayed up this long resets the reconnect backoff. */
 const STABLE_MS = 60_000
+/** How often the account is read again, so short-lived access tokens are renewed in time. */
+const ACCOUNT_CHECK_MS = 30_000
 const READ_ONLY: Consent["scopes"] = ["sessions:list", "sessions:read"]
 const READ_SEND: Consent["scopes"] = ["sessions:list", "sessions:read", "sessions:send"]
 
@@ -115,6 +117,7 @@ export class Connector {
   /** Reconciles and pairing settlement run one at a time: each reads and rewrites the consents. */
   private serial: Promise<unknown> = Promise.resolve()
   private reconcileTimer: ReturnType<typeof setTimeout> | undefined
+  private accountTimer: ReturnType<typeof setInterval> | undefined
 
   constructor(private readonly options: ConnectorOptions) {
     this.state = new StateFile(options.stateFile, options.secrets, options.clock)
@@ -164,7 +167,25 @@ export class Connector {
       return this.publish({ state: "unavailable", reason: runtime })
     }
     this.runtime = runtime
+    this.watchAccount(runtime, session)
     await this.connect(session)
+  }
+
+  /** Keep the runtime on a current access token; a changed or ended sign-in starts over. */
+  private watchAccount(runtime: Runtime, session: number): void {
+    clearInterval(this.accountTimer)
+    this.accountTimer = setInterval(async () => {
+      const next = await this.options.account().catch(() => runtime.account)
+      if (session !== this.session || this.runtime !== runtime) return
+      const same =
+        next &&
+        next.subject === runtime.account.subject &&
+        next.environment === runtime.account.environment &&
+        next.origin === runtime.account.origin &&
+        next.accountSessionId === runtime.account.accountSessionId
+      if (same) runtime.account = next
+      else if (this.generation) this.lost()
+    }, ACCOUNT_CHECK_MS)
   }
 
   /** Go offline. Bindings and consents are kept; phones see this computer as offline. */
@@ -172,6 +193,7 @@ export class Connector {
     this.enabled = false
     this.session += 1
     clearTimeout(this.reconnectTimer)
+    clearInterval(this.accountTimer)
     if (this.pairing) this.pairing.cancelled = true
     this.endGeneration()
     this.runtime = undefined
@@ -250,7 +272,13 @@ export class Connector {
     ) {
       deviceId = installation.deviceId
     }
-    const http = new ConnectHttp({ account: () => account, key, deviceId: () => deviceId, client: this.options.client })
+    const current = { account }
+    const http = new ConnectHttp({
+      account: () => current.account,
+      key,
+      deviceId: () => deviceId,
+      client: this.options.client,
+    })
     const api = new ConnectApi(http)
     try {
       if (!(await api.offersCliProfile())) return "service_without_cli"
@@ -273,7 +301,17 @@ export class Connector {
       if (error instanceof ConnectError && error.code === "conflict") return "registration_conflict"
       throw error
     }
-    return { account, http, api, deviceId }
+    return {
+      get account() {
+        return current.account
+      },
+      set account(next) {
+        current.account = next
+      },
+      http,
+      api,
+      deviceId,
+    }
   }
 
   private async deviceKey(): Promise<DeviceKey | undefined> {
@@ -341,6 +379,7 @@ export class Connector {
     const wait = Math.max(backoff, cooldown, this.runtime?.http.cooldownRemainingMs() ?? 0)
     this.reconnectAttempts += 1
     this.publish({ state: "reconnecting", retryInMs: wait, phones: this.lastPhones })
+    clearInterval(this.accountTimer)
     this.runtime = undefined
     const session = this.session
     clearTimeout(this.reconnectTimer)
