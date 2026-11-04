@@ -2734,9 +2734,12 @@ it.live("loop injects the dynamic environment block only when the flag is set", 
 
         yield* prompt.loop({ sessionID: chat.id })
 
-        const inputs = JSON.stringify(yield* llm.inputs)
-        expect(inputs).toContain("Working directory:")
-        expect(inputs).toContain(marker)
+        const inputs = yield* llm.inputs
+        const system = ((inputs[0].messages ?? []) as { role: string; content: unknown }[])
+          .flatMap((message) => message.role === "system" && typeof message.content === "string" ? [message.content] : [])
+          .join("\n")
+        expect(system).toContain(`  Working directory: ${Instance.directory}`)
+        expect(JSON.stringify(inputs)).toContain(marker)
       }),
       { git: true, config: providerCfg },
     ),
