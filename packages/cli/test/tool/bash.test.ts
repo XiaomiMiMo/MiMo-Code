@@ -1423,6 +1423,34 @@ describe("tool.bash abort", () => {
     })
   }, 15_000)
 
+  test.skipIf(process.platform === "win32")("returns on timeout when a detached child holds stdout open", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const script = `const child = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 6000)"], {
+          detached: true,
+          stdio: ["ignore", "inherit", "inherit"],
+        }); child.unref(); console.log("parent exited");`
+        const started = performance.now()
+        const result = await Effect.runPromise(
+          bash.execute(
+            {
+              command: `${bin} -e ${evalarg(script)}`,
+              description: "Run a detached child holding stdout",
+              timeout: 300,
+            },
+            ctx,
+          ),
+        )
+        expect(result.output).toContain("parent exited")
+        expect(result.output).toContain("bash tool terminated command after exceeding timeout")
+        expect(performance.now() - started).toBeLessThan(4000)
+      },
+    })
+  }, 15_000)
+
   test.skipIf(process.platform === "win32")("captures stderr in output", async () => {
     await Instance.provide({
       directory: projectRoot,
