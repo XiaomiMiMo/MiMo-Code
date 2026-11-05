@@ -33,6 +33,7 @@ import {
 } from "./tool-attachment"
 import { isSkillCatalogReminder } from "./skill-catalog"
 import { collapseCheckpointTail } from "./tail-digest"
+import { isRecord } from "@/util/record"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
@@ -598,6 +599,30 @@ export const Part = z
   })
 export type Part = z.infer<typeof Part>
 
+/**
+ * `state.input` is a record in every `ToolState` variant, but a model can emit a
+ * tool call whose arguments are a bare number, string, boolean or array. That
+ * value reaches `ToolState` unchanged and fails part validation, so the write is
+ * rejected and the whole turn dies on a ZodError before the tool ever runs.
+ * Coerce at the boundary instead: the tool's own argument validation then
+ * rejects the empty object with an agent-recoverable message, and the model gets
+ * a chance to re-issue the call.
+ */
+export function toolInput(value: unknown): Record<string, any> {
+  return isRecord(value) ? value : {}
+}
+
+/**
+ * A part row written before `toolInput` guarded the write path can still carry a
+ * non-record `state.input` — a legacy JSON-storage migration, an older build, or
+ * a session imported from another tool. Validation is what turns one such row
+ * into an unopenable session, so heal it on read instead of rejecting the part.
+ */
+export function withToolInput(part: Part): Part {
+  if (part.type !== "tool" || isRecord(part.state.input)) return part
+  return { ...part, state: { ...part.state, input: {} } }
+}
+
 export const Assistant = Base.extend({
   role: z.literal("assistant"),
   time: z.object({
@@ -805,12 +830,12 @@ const info = (row: typeof MessageTable.$inferSelect) =>
   }) as Info
 
 const part = (row: typeof PartTable.$inferSelect) =>
-  ({
+  withToolInput({
     ...row.data,
     id: row.id,
     sessionID: row.session_id,
     messageID: row.message_id,
-  }) as Part
+  } as Part)
 
 /** Stable substring for the compose-agent synthetic protocol (request-order head). */
 export const COMPOSE_REMINDER_MARKER = "MiMoCode Compose Agent"
@@ -1453,17 +1478,7 @@ export function parts(message_id: MessageID) {
   const rows = Database.use((db) =>
     db.select().from(PartTable).where(eq(PartTable.message_id, message_id)).orderBy(PartTable.id).all(),
   )
-  return promoteComposeProtocolFirst(
-    rows.map(
-      (row) =>
-        ({
-          ...row.data,
-          id: row.id,
-          sessionID: row.session_id,
-          messageID: row.message_id,
-        }) as Part,
-    ),
-  )
+  return promoteComposeProtocolFirst(rows.map(part))
 }
 
 export function get(input: { sessionID: SessionID; messageID: MessageID }): WithParts {

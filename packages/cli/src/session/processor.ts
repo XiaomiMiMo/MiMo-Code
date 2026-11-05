@@ -652,6 +652,13 @@ export const layer: Layer.Layer<
             // A tool call may already have caused an external side effect before
             // the provider stream fails. Replaying the whole model step is unsafe.
             ctx.retrySafe = false
+            if (!isRecord(value.input)) {
+              log.warn("tool call arguments are not a JSON object", {
+                tool: value.toolName,
+                callID: value.toolCallId,
+                received: Array.isArray(value.input) ? "array" : typeof value.input,
+              })
+            }
             yield* updateToolCall(value.toolCallId, (match) => ({
               ...match,
               tool: value.toolName,
@@ -659,7 +666,7 @@ export const layer: Layer.Layer<
                 !match.metadata?.providerExecuted && !value.providerExecuted ? "not-started" : undefined),
               state: match.state.status !== "pending" ? match.state : {
                 status: "running",
-                input: value.input,
+                input: MessageV2.toolInput(value.input),
                 time: { start: Date.now() },
               },
               metadata: match.metadata?.providerExecuted || value.providerExecuted
