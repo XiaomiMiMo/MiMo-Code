@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test"
 import {
   actorToolBody,
   actorToolCompleteKey,
+  actorToolLabel,
   actorToolOutcomeFailed,
   actorToolPendingLabel,
   isActorToolRunning,
 } from "@/cli/cmd/tui/routes/session/actor-tool-state"
+import { Locale } from "@/util"
 
 describe("actor tool running state", () => {
   test("keeps a completed spawn active while its background actor runs", () => {
@@ -188,5 +190,42 @@ describe("actor tool body", () => {
     expect(
       actorToolBody({ action: "wait", partStatus: "completed", description: "Review fix", title: "Actor wait: idle" }),
     ).toBe("Waited for — Review fix")
+  })
+})
+
+describe("actor tool label", () => {
+  test("uses the healthy string values", () => {
+    expect(actorToolLabel("explore", undefined)).toBe("explore")
+    expect(actorToolLabel("general", "explore")).toBe("general")
+    expect(actorToolLabel(undefined, "explore")).toBe("explore")
+    expect(actorToolLabel(undefined, undefined)).toBe("General")
+  })
+
+  test("rejects persisted values that are not strings", () => {
+    // subagent_type is model-emitted and stored verbatim, so every JSON type can
+    // arrive here on a replay of an older session.
+    for (const bad of [["general", "general"], 71, true, { type: "general" }, null]) {
+      expect(actorToolLabel(bad, undefined)).toBe("General")
+      expect(actorToolLabel(undefined, bad)).toBe("General")
+      expect(actorToolLabel(bad, bad)).toBe("General")
+    }
+  })
+
+  test("does not crash the header, which titlecases the label", () => {
+    // index.tsx: Locale.titlecase(actorToolLabel(input().subagent_type, actorEntry()?.agent))
+    // Locale.titlecase calls .replace, so an array label threw here before the guard.
+    expect(() => Locale.titlecase(actorToolLabel(["general", "general"], undefined))).not.toThrow()
+    expect(Locale.titlecase(actorToolLabel(["general", "general"], undefined))).toBe("General")
+  })
+
+  test("keeps a malformed subagent_type out of the task body", () => {
+    const body = actorToolBody({
+      action: "spawn",
+      partStatus: "running",
+      description: "Map the provider registry",
+      subagentType: ["general", "general"],
+    })
+    expect(body).not.toContain("general,general")
+    expect(body).toBe("Background General Task — Map the provider registry")
   })
 })
