@@ -287,4 +287,23 @@ describe("ToolRegistry.tools: toolset selection", () => {
     ),
   )
 
+  for (const enabled of [false, true]) {
+    it.live(`registers mcp_events only when experimental.mcp_events.enabled is ${enabled}`, () =>
+      provideTmpdirInstance(
+        () =>
+          Effect.gen(function* () {
+            const reg = yield* ToolRegistry.Service
+            const agents = yield* Agent.Service
+            const build = yield* agents.get("build")
+            const registered = yield* reg.registered({
+              providerID: ProviderID.make("xiaomi"),
+              modelID: ModelID.make("mimo-v2.6"),
+              agent: build,
+            })
+            expect(registered.some((tool) => tool.id === "mcp_events")).toBe(enabled)
+          }),
+        { config: { experimental: { mcp_events: { enabled } } } },
+      ),
+    )
+  }
 })
