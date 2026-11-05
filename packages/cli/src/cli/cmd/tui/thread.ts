@@ -1,5 +1,4 @@
 import { cmd } from "@/cli/cmd/cmd"
-import { tui } from "./app"
 import { Rpc } from "@/util"
 import { type rpc } from "./worker"
 import path from "path"
@@ -353,6 +352,9 @@ export const TuiThreadCommand = cmd({
       }, 1000).unref?.()
 
       try {
+        // Imported here so short-lived commands (--version, --help, run, serve)
+        // never load the renderer and extract its native library.
+        const { tui } = await import("./app")
         await tui({
           url: transport.url,
           async onSnapshot() {
