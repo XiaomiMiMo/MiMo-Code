@@ -10,7 +10,6 @@ import { SplitBorder } from "../../component/border"
 import { useSync } from "../../context/sync"
 import { useTextareaKeybindings } from "../../component/textarea-keybindings"
 import path from "path"
-import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import { Keybind } from "@/util"
 import { Locale } from "@/util"
 import { trimDiff } from "@/util/trim-diff"
@@ -18,34 +17,9 @@ import { Global } from "@/global"
 import { useDialog } from "../../ui/dialog"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../context/tui-config"
+import { filetype, normalizePath } from "./tool-path"
 
 type PermissionStage = "permission" | "always" | "reject"
-
-function normalizePath(input?: string) {
-  if (!input) return ""
-
-  const cwd = process.cwd()
-  const home = Global.Path.home
-  const absolute = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const relative = path.relative(cwd, absolute)
-
-  if (!relative) return "."
-  if (!relative.startsWith("..")) return relative
-
-  // outside cwd - use ~ or absolute
-  if (home && (absolute === home || absolute.startsWith(home + path.sep))) {
-    return absolute.replace(home, "~")
-  }
-  return absolute
-}
-
-function filetype(input?: string) {
-  if (!input) return "none"
-  const ext = path.extname(input)
-  const language = LANGUAGE_EXTENSIONS[ext]
-  if (["typescriptreact", "javascriptreact", "javascript"].includes(language)) return "typescript"
-  return language
-}
 
 function EditBody(props: { request: PermissionRequest }) {
   const themeState = useTheme()
@@ -306,7 +280,7 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
               const filepath = typeof raw === "string" ? raw : ""
               return {
                 icon: "→",
-                title: `Edit ${normalizePath(filepath)}`,
+                title: `Edit ${normalizePath(filepath, { home: Global.Path.home })}`,
                 body: <EditBody request={props.request} />,
               }
             }
@@ -322,11 +296,11 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
               const filePath = fromInput || fromPattern
               return {
                 icon: "→",
-                title: `Read ${normalizePath(filePath)}`,
+                title: `Read ${normalizePath(filePath, { home: Global.Path.home })}`,
                 body: (
                   <Show when={filePath}>
                     <box paddingLeft={1}>
-                      <text fg={theme.textMuted}>{"Path: " + normalizePath(filePath)}</text>
+                      <text fg={theme.textMuted}>{"Path: " + normalizePath(filePath, { home: Global.Path.home })}</text>
                     </box>
                   </Show>
                 ),
@@ -368,11 +342,11 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
               const dir = typeof raw === "string" ? raw : ""
               return {
                 icon: "→",
-                title: `List ${normalizePath(dir)}`,
+                title: `List ${normalizePath(dir, { home: Global.Path.home })}`,
                 body: (
                   <Show when={dir}>
                     <box paddingLeft={1}>
-                      <text fg={theme.textMuted}>{"Path: " + normalizePath(dir)}</text>
+                      <text fg={theme.textMuted}>{"Path: " + normalizePath(dir, { home: Global.Path.home })}</text>
                     </box>
                   </Show>
                 ),
@@ -484,7 +458,7 @@ function PermissionRequestPrompt(props: { request: PermissionRequest }) {
                 typeof pattern === "string" ? (pattern.includes("*") ? path.dirname(pattern) : pattern) : undefined
 
               const raw = parent ?? filepath ?? derived
-              const dir = normalizePath(raw)
+              const dir = normalizePath(raw, { home: Global.Path.home })
               const patterns = (props.request.patterns ?? []).filter((p): p is string => typeof p === "string")
 
               return {
