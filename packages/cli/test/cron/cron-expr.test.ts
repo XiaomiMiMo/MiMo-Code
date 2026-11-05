@@ -13,6 +13,52 @@ test("rejects malformed", () => {
   expect(parseCronExpression("* * * * * *")).toBeNull() // 6 fields
 })
 
+test.each([
+  "5abc",
+  "5.5",
+  "5e1",
+  "0x10",
+  "+5",
+  "*/2abc",
+  "*/1.5",
+  "*/2/3",
+  "*/",
+  "1-5/",
+  "1-5-9",
+  "1-5abc",
+  "1//2",
+  "1,5abc",
+  "1,,5",
+  "1,",
+])("rejects the entire malformed field %s", (field) => {
+  const expression = `${field} * * * *`
+  expect(parseCronExpression(expression)).toBeNull()
+  expect(computeNextCronRun(expression, new Date("2026-06-29T12:00:00Z"))).toBeNull()
+})
+
+test.each(["0 5abc * * *", "0 0 5abc * *", "0 0 * 5abc *", "0 0 * * 5abc"])(
+  "validates every cron field in %s",
+  (expression) => {
+    expect(parseCronExpression(expression)).toBeNull()
+  },
+)
+
+test.each([
+  ["0,15,30,45", [0, 15, 30, 45]],
+  ["10-14", [10, 11, 12, 13, 14]],
+  ["10-20/4", [10, 14, 18]],
+  ["50/3", [50, 53, 56, 59]],
+  ["8,1,4-8/2", [1, 4, 6, 8]],
+  ["00,05", [0, 5]],
+  ["*/30", [0, 30]],
+] as const)("preserves valid numeric field %s", (field, expected) => {
+  expect(parseCronExpression(`${field} * * * *`)?.minute).toEqual([...expected])
+})
+
+test.each(["60", "-1", "5-1", "1-60", "*/0", "1-5/0"])("rejects invalid bounds or step %s", (field) => {
+  expect(parseCronExpression(`${field} * * * *`)).toBeNull()
+})
+
 test("nextRun for '*/5 * * * *' at 12:03 returns 12:05", () => {
   const next = computeNextCronRun("*/5 * * * *", new Date("2026-06-29T12:03:00Z"))
   expect(next?.toISOString()).toBe("2026-06-29T12:05:00.000Z")
