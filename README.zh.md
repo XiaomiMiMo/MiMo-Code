@@ -390,7 +390,7 @@ MiMoCode 使用 JSON/JSONC 配置文件，并提供 JSON Schema 以获得编辑�
 | TUI 配置 | `.mimocode/tui.json` | `~/.config/mimocode/tui.json` |
 | 认证凭据 | — | `~/.local/share/mimocode/auth.json` |
 
-> Windows 下 XDG 路径位于 `%LOCALAPPDATA%\mimocode\`。可通过 `MIMOCODE_HOME` 环境变量覆盖所有路径。
+> 所有平台的默认路径均相对于用户主目录。将 `MIMOCODE_HOME` 设为绝对路径，可以把四个目录集中到同一根目录下。
 
 ### JSON Schema
 
@@ -421,13 +421,13 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
 
 除配置文件外，MiMoCode 在 XDG 路径（或 `$MIMOCODE_HOME`）下存储运行时数据：
 
-| 目录 | 默认路径（Linux） | 内容 |
+| 目录 | 默认路径 | 内容 |
 |------|------------------|------|
 | data | `~/.local/share/mimocode/` | SQLite 数据库、认证凭据（`auth.json`）、记忆、日志 |
 | state | `~/.local/state/mimocode/` | TUI 偏好设置（`kv.json`）、最近使用模型（`model.json`） |
 | cache | `~/.cache/mimocode/` | 语言服务器、缓存的模型目录、技能 |
 
-如需删除已存储的凭据，删除 data 目录下的 `auth.json` 即可。macOS 下 XDG data 默认为 `~/Library/Application Support/mimocode/`。
+如需删除已存储的凭据，删除实际使用的 data 目录下的 `auth.json` 即可。
 
 </details>
 
