@@ -1,3 +1,4 @@
+import { InboxController } from "../../src/inbox"
 import { ActorExecution } from "../../src/actor/execution"
 import { afterEach, describe, expect } from "bun:test"
 import { Deferred, Effect, Exit, Fiber, Layer, Scheduler } from "effect"
@@ -166,6 +167,31 @@ describe("ActorWaiter.status — actual execution and fresh registry projection"
       }),
     ),
   )
+
+  it.live("a peer wait observes its caller lane and leaves the child running", provideTmpdirInstance(() =>
+    Effect.gen(function* () {
+      const { entry, waiter, executions } = yield* statusFixture
+      const inbox = yield* InboxController.Service
+      const execution = yield* Effect.acquireRelease(executions.reserve(entry.sessionID, entry.actorID), executions.release)
+      const caller = { sessionID: entry.sessionID, agentID: "worker-example" }
+      const revision = yield* inbox.observeInput(caller, -1)
+      const waiting = yield* waiter.wait({ sessionID: entry.sessionID, actor_id: entry.actorID, caller, afterRevision: revision, timeout_ms: 2000 }).pipe(Effect.forkScoped)
+      const accept = (agentID: string) => {
+        const messageID = MessageID.ascending()
+        return inbox.accept({ lane: { sessionID: entry.sessionID, agentID },
+          message: { id: messageID, sessionID: entry.sessionID, agentID, role: "user", agent: "build", time: { created: Date.now() }, model: { providerID: ProviderID.make("test"), modelID: ModelID.make("model") } },
+          parts: [{ id: PartID.ascending(), sessionID: entry.sessionID, messageID, type: "text", text: "Example follow-up" }], type: "prompt", idempotencyKey: messageID,
+        })
+      }
+      yield* accept("main")
+      yield* Effect.sleep("20 millis")
+      expect(waiting.pollUnsafe()).toBeUndefined()
+      yield* accept(caller.agentID)
+      expect((yield* Fiber.join(waiting)).status).toBe("interrupted")
+      expect(yield* executions.current(entry.sessionID, entry.actorID)).toBe(execution)
+      expect(yield* Deferred.isDone(execution.done)).toBe(false)
+    }).pipe(Effect.provide(InboxController.defaultLayer)),
+  ))
 
   for (const outcome of ["success", "failure", "cancelled"] as const) {
     it.live(

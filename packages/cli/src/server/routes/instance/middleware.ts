@@ -1,3 +1,5 @@
+import { ownsWorktree } from "@/superagent/dispatcher"
+import { prepareWorkspace } from "@/superagent/runtime"
 import type { MiddlewareHandler } from "hono"
 import { Instance } from "@/project/instance"
 import { InstanceBootstrap } from "@/project/bootstrap"
@@ -29,7 +31,7 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
     // machine. An operator who sets the password themselves keeps the old freedom.
     if (!Flag.MIMOCODE_SERVER_PASSWORD_SUPPLIED) {
       const cwd = Filesystem.resolve(process.cwd())
-      if (!Filesystem.contains(cwd, directory)) {
+      if (!Filesystem.contains(cwd, directory) && !ownsWorktree(cwd, directory)) {
         // Keep the 403 and the prose message; add a stable `code` so a client can
         // tell this policy rejection apart from a transport failure and surface it
         // instead of dying (see ./access.ts).
@@ -47,6 +49,7 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
     return WorkspaceContext.provide({
       workspaceID,
       async fn() {
+        await prepareWorkspace(directory)
         return Instance.provide({
           directory,
           init: () => AppRuntime.runPromise(InstanceBootstrap),

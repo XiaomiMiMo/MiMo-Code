@@ -14,6 +14,7 @@ import { LSP } from "@/lsp"
 import { Command } from "@/command"
 import { QuestionRoutes } from "./question"
 import { PermissionRoutes } from "./permission"
+import { SuperagentRoutes } from "./superagent"
 import { WorkflowRoutes } from "./workflows"
 import { BashInteractiveRoutes } from "./bash-interactive"
 import { Flag } from "@/flag/flag"
@@ -60,6 +61,7 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket): Hono => {
     .route("/session", SessionRoutes())
     .route("/permission", PermissionRoutes())
     .route("/workflows", WorkflowRoutes())
+    .route("/superagent", SuperagentRoutes())
     .route("/question", QuestionRoutes())
     .route("/bash-interactive", BashInteractiveRoutes())
     .route("/provider", ProviderRoutes())

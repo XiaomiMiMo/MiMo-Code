@@ -1,3 +1,4 @@
+import * as Daemon from "@/server/daemon"
 import { Server } from "../../server/server"
 import { cmd } from "./cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
@@ -9,6 +10,7 @@ export const ServeCommand = cmd({
   builder: (yargs) => withNetworkOptions(yargs),
   describe: "starts a headless mimocode server",
   handler: async (args) => {
+    Daemon.prepare()
     const opts = await resolveNetworkOptions(args)
     const isLoopback = opts.hostname === "127.0.0.1" || opts.hostname === "localhost" || opts.hostname === "::1"
 
@@ -25,10 +27,14 @@ export const ServeCommand = cmd({
     // Server.listen publishes this process into the llm-server address registry
     // (cwd) and unpublishes on stop, so `mimo llm-server issue` can resolve base_url.
     const server = await Server.listen(opts)
+    await Daemon.publish(server)
     console.log(`mimocode server listening on http://${server.hostname}:${server.port}`)
 
     // Force-close: graceful stop waits on live SSE/WS streams, and Ctrl-C would hang.
-    const shutdown = () => server.stop(true)
+    const shutdown = async () => {
+      await server.stop(true)
+      await Daemon.withdraw()
+    }
     const onSignal = () => {
       void shutdown()
         .then(() => process.exit(0))

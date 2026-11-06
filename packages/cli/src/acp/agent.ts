@@ -1171,7 +1171,7 @@ export class Agent implements ACPAgent {
             {
               directory,
               name: key,
-              config: mcp,
+              config: { ...mcp, alwaysDirectTools: mcp.alwaysDirectTools ? [...mcp.alwaysDirectTools] : undefined },
             },
             { throwOnError: true },
           )

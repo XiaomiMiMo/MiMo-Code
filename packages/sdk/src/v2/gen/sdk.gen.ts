@@ -197,6 +197,14 @@ import type {
   SessionUpdateErrors,
   SessionUpdateResponses,
   SubtaskPartInput,
+  SuperagentActResponses,
+  SuperagentChannelsResponses,
+  SuperagentGetResponses,
+  SuperagentInputResponses,
+  SuperagentListResponses,
+  SuperagentMasterInputResponses,
+  SuperagentOverviewResponses,
+  SuperagentRetryDeliveryResponses,
   SyncHistoryListErrors,
   SyncHistoryListResponses,
   SyncReplayErrors,
@@ -3632,6 +3640,287 @@ export class Workflow extends HeyApiClient {
   }
 }
 
+export class Superagent extends HeyApiClient {
+  /**
+   * Read workspace tasks, native Agents, Todo, usage and delivery problems
+   */
+  public overview<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SuperagentOverviewResponses, unknown, ThrowOnError>({
+      url: "/superagent",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Send a natural-language request to the workspace Router
+   */
+  public masterInput<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      text?: string
+      attachments?: Array<{
+        url: string
+        mime: string
+        filename?: string
+      }>
+      model?: {
+        providerID: string
+        modelID: string
+        variant?: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "text" },
+            { in: "body", key: "attachments" },
+            { in: "body", key: "model" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SuperagentMasterInputResponses, unknown, ThrowOnError>({
+      url: "/superagent/master/inputs",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * List workspace tasks
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SuperagentListResponses, unknown, ThrowOnError>({
+      url: "/superagent/tickets",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Read a task and its activity
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      ticketId: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "ticketId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SuperagentGetResponses, unknown, ThrowOnError>({
+      url: "/superagent/tickets/{ticketId}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Send feedback to the original task Worker
+   */
+  public input<ThrowOnError extends boolean = false>(
+    parameters: {
+      ticketId: string
+      directory?: string
+      workspace?: string
+      text?: string
+      attachments?: Array<{
+        url: string
+        mime: string
+        filename?: string
+      }>
+      model?: {
+        providerID: string
+        modelID: string
+        variant?: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "ticketId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "text" },
+            { in: "body", key: "attachments" },
+            { in: "body", key: "model" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SuperagentInputResponses, unknown, ThrowOnError>({
+      url: "/superagent/tickets/{ticketId}/inputs",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Stop or resume a task
+   */
+  public act<ThrowOnError extends boolean = false>(
+    parameters: {
+      ticketId: string
+      directory?: string
+      workspace?: string
+      action?: "cancel" | "resume"
+      text?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "ticketId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "action" },
+            { in: "body", key: "text" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SuperagentActResponses, unknown, ThrowOnError>({
+      url: "/superagent/tickets/{ticketId}/actions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Retry a failed delivery after inspecting the original thread
+   */
+  public retryDelivery<ThrowOnError extends boolean = false>(
+    parameters: {
+      actionId: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "actionId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SuperagentRetryDeliveryResponses, unknown, ThrowOnError>({
+      url: "/superagent/deliveries/{actionId}/retry",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Read configured Channel health
+   */
+  public channels<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SuperagentChannelsResponses, unknown, ThrowOnError>({
+      url: "/superagent/channels",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Question extends HeyApiClient {
   /**
    * List pending questions
@@ -5480,6 +5769,11 @@ export class OpencodeClient extends HeyApiClient {
   private _workflow?: Workflow
   get workflow(): Workflow {
     return (this._workflow ??= new Workflow({ client: this.client }))
+  }
+
+  private _superagent?: Superagent
+  get superagent(): Superagent {
+    return (this._superagent ??= new Superagent({ client: this.client }))
   }
 
   private _question?: Question

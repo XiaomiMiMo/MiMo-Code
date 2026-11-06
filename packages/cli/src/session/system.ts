@@ -50,7 +50,8 @@ export function provider(model: Provider.Model, harness?: HarnessMode) {
 }
 
 export function agent(agent: Agent.Info, model: Provider.Model, harness?: HarnessMode) {
-  return agent.prompt ? [agent.prompt] : provider(model, harness)
+  if (!agent.prompt) return provider(model, harness)
+  return agent.inheritProviderPrompt ? [...provider(model, harness), agent.prompt] : [agent.prompt]
 }
 
 export interface Interface {
