@@ -107,11 +107,7 @@ export const ActorTool = Tool.define(
         description: z.string().min(1).describe("A short (3-5 words) description of the task."),
         prompt: z.string().min(1).describe("The task for the agent to perform."),
         subagent_type: subagentTypeEnum.describe("The type of specialized agent to use for this task."),
-        model: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(MODEL_PARAM_DESCRIPTION),
+        model: z.string().min(1).optional().describe(MODEL_PARAM_DESCRIPTION),
         timeout_ms: timeoutField,
         command: z.string().min(1).optional().describe("(optional) The command that triggered this task."),
         task_id: z
@@ -138,11 +134,7 @@ export const ActorTool = Tool.define(
         description: z.string().min(1).describe("A short (3-5 words) description of the task."),
         prompt: z.string().min(1).describe("The task for the agent to perform."),
         subagent_type: subagentTypeEnum.describe("The type of specialized agent to use for this task."),
-        model: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(MODEL_PARAM_DESCRIPTION),
+        model: z.string().min(1).optional().describe(MODEL_PARAM_DESCRIPTION),
         command: z.string().min(1).optional().describe("(optional) The command that triggered this task."),
         task_id: z
           .string()
@@ -201,8 +193,16 @@ export const ActorTool = Tool.define(
 
       const modelsSchema = z.strictObject({
         action: z.literal("models"),
-        vision: z.boolean().optional().describe("(optional) If true, list only vision-capable models (models that accept image input)."),
-        limit: z.number().int().positive().optional().describe("(optional) Max number of models to return. Default 50."),
+        vision: z
+          .boolean()
+          .optional()
+          .describe("(optional) If true, list only vision-capable models (models that accept image input)."),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("(optional) Max number of models to return. Default 50."),
       })
 
       const parameters = z.strictObject({
@@ -272,7 +272,7 @@ export const ActorTool = Tool.define(
           return undefined
         })
 
-        if (op.action ==="send") {
+        if (op.action === "send") {
           const inboxSvc = inboxServiceRef.current
           if (!inboxSvc) {
             return yield* Effect.fail(
@@ -285,7 +285,7 @@ export const ActorTool = Tool.define(
               receiverSessionID: targetSid,
               receiverActorID: op.to_actor_id,
               senderSessionID: ctx.sessionID,
-              senderActorID: ctx.agent ?? "main",
+              senderActorID: ctx.actorID ?? "main",
               content: op.content,
               ...(op.type !== undefined ? { type: op.type } : {}),
             })
@@ -317,7 +317,7 @@ export const ActorTool = Tool.define(
           }
         }
 
-        if (op.action ==="status") {
+        if (op.action === "status") {
           const found = yield* findActor(op.actor_id)
           if (!found) return unknownResponse("status", op.actor_id)
           const entry = yield* waiter.status(found.entry)
@@ -342,13 +342,14 @@ export const ActorTool = Tool.define(
           }
         }
 
-        if (op.action ==="wait") {
+        if (op.action === "wait") {
           const found = yield* findActor(op.actor_id)
           if (!found) return unknownResponse("wait", op.actor_id)
           const snap = yield* waiter.wait({
             sessionID: found.sessionID,
             actor_id: op.actor_id,
             timeout_ms: op.timeout_ms,
+            caller: { sessionID: ctx.sessionID, agentID: ctx.actorID ?? "main" },
           })
           const title =
             snap.status === "interrupted"
@@ -369,7 +370,7 @@ export const ActorTool = Tool.define(
           }
         }
 
-        if (op.action ==="cancel") {
+        if (op.action === "cancel") {
           const found = yield* findActor(op.actor_id)
           if (!found) return unknownResponse("cancel", op.actor_id)
           const entry = found.entry
@@ -419,11 +420,19 @@ export const ActorTool = Tool.define(
           const shown = ordered.slice(0, limit)
           const lines = shown.map((m) => `${m.providerID}/${m.id}${m.capabilities.input.image ? " (vision)" : ""}`)
           const header = op.vision ? `Vision-capable models` : `Available models`
-          const more = ordered.length > shown.length ? `\n… and ${ordered.length - shown.length} more (raise --limit)` : ""
-          const output = shown.length === 0
-            ? (op.vision ? "No vision-capable models are configured. Configure a vision model or use an OCR tool." : "No models are configured.")
-            : `${header} (${shown.length} of ${ordered.length}):\n${lines.join("\n")}${more}\nPass any of these to actor --model.`
-          return { title: header, output, metadata: { count: shown.length, total: ordered.length, vision: !!op.vision } as Record<string, any> }
+          const more =
+            ordered.length > shown.length ? `\n… and ${ordered.length - shown.length} more (raise --limit)` : ""
+          const output =
+            shown.length === 0
+              ? op.vision
+                ? "No vision-capable models are configured. Configure a vision model or use an OCR tool."
+                : "No models are configured."
+              : `${header} (${shown.length} of ${ordered.length}):\n${lines.join("\n")}${more}\nPass any of these to actor --model.`
+          return {
+            title: header,
+            output,
+            metadata: { count: shown.length, total: ordered.length, vision: !!op.vision } as Record<string, any>,
+          }
         }
 
         // op.action ==="run" or "spawn" — schema guarantees
@@ -527,9 +536,10 @@ export const ActorTool = Tool.define(
         const actor = yield* requireActor()
         let actorID: string | undefined
         let afterRevision: number | undefined
-        const notifyOnCompletion = op.action === "run"
-          ? yield* Effect.acquireRelease(Deferred.make<boolean>(), (decision) => Deferred.succeed(decision, false))
-          : undefined
+        const notifyOnCompletion =
+          op.action === "run"
+            ? yield* Effect.acquireRelease(Deferred.make<boolean>(), (decision) => Deferred.succeed(decision, false))
+            : undefined
         if (op.action === "run") {
           function cancelHandler() {
             if (actorID) bridge.fork(actor.cancel(ctx.sessionID, actorID, "graceful"))
@@ -540,11 +550,13 @@ export const ActorTool = Tool.define(
           )
           if (ctx.abort.aborted) return yield* Effect.interrupt
           const tq = inboxControllerRef.current
-          if (tq) afterRevision = yield* tq.observeInput({ sessionID: ctx.sessionID, agentID: "main" }, -1)
+          if (tq)
+            afterRevision = yield* tq.observeInput({ sessionID: ctx.sessionID, agentID: ctx.actorID ?? "main" }, -1)
         }
         const spawnResult = yield* actor.spawn({
           mode: "subagent",
           sessionID: ctx.sessionID,
+          parentActorID: ctx.actorID ?? "main",
           agentType: next.name,
           description: op.description,
           task: prompt,
@@ -558,8 +570,7 @@ export const ActorTool = Tool.define(
           task_id: effectiveTaskId,
           onActorID: (id) => {
             actorID = id
-            if (op.action === "run" && ctx.abort.aborted)
-              bridge.fork(actor.cancel(ctx.sessionID, id, "graceful"))
+            if (op.action === "run" && ctx.abort.aborted) bridge.fork(actor.cancel(ctx.sessionID, id, "graceful"))
           },
           onReady: ({ actorID, sessionID }) =>
             ctx.metadata({
@@ -571,7 +582,7 @@ export const ActorTool = Tool.define(
             : {}),
         })
 
-        if (op.action ==="spawn") {
+        if (op.action === "spawn") {
           return {
             title: op.description,
             metadata: { sessionId: spawnResult.sessionID, actorId: spawnResult.actorID, model },
@@ -581,12 +592,15 @@ export const ActorTool = Tool.define(
           }
         }
 
-        const snap = yield* waiter.wait({
-          sessionID: spawnResult.sessionID,
-          actor_id: spawnResult.actorID,
-          timeout_ms: op.timeout_ms,
-          afterRevision,
-        }).pipe(Effect.raceFirst(Deferred.await(spawnResult.outcome).pipe(Effect.as(undefined))))
+        const snap = yield* waiter
+          .wait({
+            sessionID: spawnResult.sessionID,
+            actor_id: spawnResult.actorID,
+            timeout_ms: op.timeout_ms,
+            afterRevision,
+            caller: { sessionID: ctx.sessionID, agentID: ctx.actorID ?? "main" },
+          })
+          .pipe(Effect.raceFirst(Deferred.await(spawnResult.outcome).pipe(Effect.as(undefined))))
         if (snap && (snap.status === "interrupted" || snap.status === "timeout")) {
           if (notifyOnCompletion) yield* Deferred.succeed(notifyOnCompletion, !ctx.abort.aborted)
           return {
@@ -620,7 +634,11 @@ export const ActorTool = Tool.define(
         // snapshot as a regular tool result — that's a different contract.)
         if (outcome.status === "failure") {
           const partial = outcome.structured !== undefined ? JSON.stringify(outcome.structured) : outcome.finalText
-          return yield* Effect.fail(new Error(`Tool execution failed: ${outcome.error ?? "unknown"}${partial === undefined ? "" : `\nPartial result: ${partial}`}`))
+          return yield* Effect.fail(
+            new Error(
+              `Tool execution failed: ${outcome.error ?? "unknown"}${partial === undefined ? "" : `\nPartial result: ${partial}`}`,
+            ),
+          )
         }
 
         const resultText =

@@ -362,59 +362,63 @@ describe("postStop progress.md is gated by the subagent's write permission", () 
   )
 
   // CONTRAST (scripted LLM): the SAME path with `explore` (read-only). explore's "*":deny
-  // makes canWrite=false (computed in forkWork from agentInfo.permission), so the postStop
+  // makes canWrite=false. Role/Actor tool whitelists must have the same effect, so the postStop
   // progress checker SKIPS — no nudge, no wasted re-entry turns — and no progress.md lands.
   // explore's findings are delivered to the caller via finalText, which is the read-only
   // contract. (Contrast: the `general` case above, where canWrite=true and the file lands.)
-  it.live("explore bound to task_id skips the progress check (no journal, clean finish)", () =>
-    provideTmpdirServer(
-      Effect.fnUntraced(function* ({ llm }) {
-        const actor = yield* Actor.Service
-        const session = yield* Session.Service
-        const tasks = yield* TaskRegistry.Service
+  for (const { agentType, tools } of [
+    { agentType: "explore", tools: "INHERIT" as const },
+    { agentType: "general", tools: ["read"] },
+  ])
+    it.live(`${agentType} tools=${JSON.stringify(tools)} bound to task skips impossible journal writes`, () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const actor = yield* Actor.Service
+          const session = yield* Session.Service
+          const tasks = yield* TaskRegistry.Service
 
-        const parent = yield* session.create({ title: "explore progress skip" })
-        const task = yield* tasks.create({ session_id: parent.id, summary: "probe" })
-        const target = progressPath(parent.id, task.id)
+          const parent = yield* session.create({ title: "explore progress skip" })
+          const task = yield* tasks.create({ session_id: parent.id, summary: "probe" })
+          const target = progressPath(parent.id, task.id)
 
-        // Single turn: explore delivers findings as finalText. postStop must NOT re-prompt
-        // (canWrite=false → checker skips), so one terminal turn is all that's consumed.
-        // Extra slack turns are provided but should go unused.
-        yield* llm.text("**Status**: success\n**Summary**: explored, findings in body")
-        yield* llm.text("**Status**: success\n**Summary**: (unused)")
-        yield* llm.text("**Status**: success\n**Summary**: (unused)")
+          // Single turn: explore delivers findings as finalText. postStop must NOT re-prompt
+          // (canWrite=false → checker skips), so one terminal turn is all that's consumed.
+          // Extra slack turns are provided but should go unused.
+          yield* llm.text("**Status**: success\n**Summary**: explored, findings in body")
+          yield* llm.text("**Status**: success\n**Summary**: (unused)")
+          yield* llm.text("**Status**: success\n**Summary**: (unused)")
 
-        const result = yield* actor.spawn({
-          mode: "subagent",
-          sessionID: parent.id,
-          agentType: "explore",
-          task: "look around",
-          context: "none",
-          tools: "INHERIT",
-          background: false,
-          model: ref,
-          task_id: task.id,
-        })
-        expect(result.actorID).toBe("explore-1")
+          const result = yield* actor.spawn({
+            mode: "subagent",
+            sessionID: parent.id,
+            agentType,
+            task: "look around",
+            context: "none",
+            tools,
+            background: false,
+            model: ref,
+            task_id: task.id,
+          })
+          expect(result.actorID).toBe(`${agentType}-1`)
 
-        const outcome = yield* Deferred.await(result.outcome).pipe(Effect.timeout("30 seconds"))
-        // Spawn completes cleanly (not stuck on an impossible write nudge).
-        expect(outcome.status).toBe("success")
+          const outcome = yield* Deferred.await(result.outcome).pipe(Effect.timeout("30 seconds"))
+          // Spawn completes cleanly (not stuck on an impossible write nudge).
+          expect(outcome.status).toBe("success")
 
-        // Zero wasted re-entries: a skipped read-only agent consumes exactly ONE LLM turn
-        // (the single delivery turn). The old re-prompt loop would have consumed more.
-        // The 2 extra scripted slack turns above must go unused.
-        const turns = yield* llm.calls
-        expect(turns).toBe(1)
+          // Zero wasted re-entries: a skipped read-only agent consumes exactly ONE LLM turn
+          // (the single delivery turn). The old re-prompt loop would have consumed more.
+          // The 2 extra scripted slack turns above must go unused.
+          const turns = yield* llm.calls
+          expect(turns).toBe(1)
 
-        const fs = yield* AppFileSystem.Service
-        const exists = yield* fs.existsSafe(target)
-        // No journal: read-only explore is not asked to maintain task progress.
-        expect(exists).toBe(false)
-      }),
-      { git: true, config: providerCfg },
-    ),
-  )
+          const fs = yield* AppFileSystem.Service
+          const exists = yield* fs.existsSafe(target)
+          // No journal: read-only explore is not asked to maintain task progress.
+          expect(exists).toBe(false)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    )
 
   // memory.disable_write: true — the write gate hard-rejects progress.md, so the
   // checker must not nudge at all. If it did, the subagent would loop

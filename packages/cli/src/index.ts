@@ -14,6 +14,8 @@ import { Installation } from "./installation"
 import { InstallationVersion } from "./installation/version"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { FormatError } from "./cli/error"
+import { DaemonCommand } from "./cli/cmd/daemon"
+import { Flock } from "@mimo-ai/shared/util/flock"
 import { ServeCommand } from "./cli/cmd/serve"
 import { LlmServerCommand } from "./cli/cmd/llm-server"
 import { Filesystem } from "./util"
@@ -34,7 +36,6 @@ import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
 import path from "path"
 import { readdirSync, unlinkSync } from "fs"
-import { Global } from "./global"
 import { JsonMigration } from "./storage"
 import { Database } from "./storage"
 import { ClaudeImport } from "./session/claude-import"
@@ -124,41 +125,46 @@ const cli = yargs(args)
       run_id: processMetadata.runID,
     })
 
-    const marker = path.join(Global.Path.data, "mimocode.db")
-    if (!(await Filesystem.exists(marker))) {
-      const tty = process.stderr.isTTY
-      process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
-      const width = 36
-      const orange = "\x1b[38;5;214m"
-      const muted = "\x1b[0;2m"
-      const reset = "\x1b[0m"
-      let last = -1
-      if (tty) process.stderr.write("\x1b[?25l")
-      try {
-        await JsonMigration.run(drizzle({ client: Database.Client().$client }), {
-          progress: (event) => {
-            const percent = Math.floor((event.current / event.total) * 100)
-            if (percent === last && event.current !== event.total) return
-            last = percent
-            if (tty) {
-              const fill = Math.round((percent / 100) * width)
-              const bar = `${"■".repeat(fill)}${"･".repeat(width - fill)}`
-              process.stderr.write(
-                `\r${orange}${bar} ${percent.toString().padStart(3)}%${reset} ${muted}${event.label.padEnd(12)} ${event.current}/${event.total}${reset}`,
-              )
-              if (event.current === event.total) process.stderr.write("\n")
-            } else {
-              process.stderr.write(`sqlite-migration:${percent}${EOL}`)
-            }
-          },
-        })
-      } finally {
-        if (tty) process.stderr.write("\x1b[?25h")
-        else {
-          process.stderr.write(`sqlite-migration:done${EOL}`)
+    // Service management clients never open the task database. Serialize first-run
+    // import for other commands before either process opens SQLite.
+    if (opts._[0] !== "daemon") {
+      await using _migrationLock = await Flock.acquire(`database-init:${Database.Path}`)
+      const marker = Database.Path
+      if (marker !== ":memory:" && !(await Filesystem.exists(marker))) {
+        const tty = process.stderr.isTTY
+        process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
+        const width = 36
+        const orange = "\x1b[38;5;214m"
+        const muted = "\x1b[0;2m"
+        const reset = "\x1b[0m"
+        let last = -1
+        if (tty) process.stderr.write("\x1b[?25l")
+        try {
+          await JsonMigration.run(drizzle({ client: Database.Client().$client }), {
+            progress: (event) => {
+              const percent = Math.floor((event.current / event.total) * 100)
+              if (percent === last && event.current !== event.total) return
+              last = percent
+              if (tty) {
+                const fill = Math.round((percent / 100) * width)
+                const bar = `${"■".repeat(fill)}${"･".repeat(width - fill)}`
+                process.stderr.write(
+                  `\r${orange}${bar} ${percent.toString().padStart(3)}%${reset} ${muted}${event.label.padEnd(12)} ${event.current}/${event.total}${reset}`,
+                )
+                if (event.current === event.total) process.stderr.write("\n")
+              } else {
+                process.stderr.write(`sqlite-migration:${percent}${EOL}`)
+              }
+            },
+          })
+        } finally {
+          if (tty) process.stderr.write("\x1b[?25h")
+          else {
+            process.stderr.write(`sqlite-migration:done${EOL}`)
+          }
         }
+        process.stderr.write("Database migration complete." + EOL)
       }
-      process.stderr.write("Database migration complete." + EOL)
     }
 
     // Opt-in import of Claude Code sessions into SQLite. Runs once per process
@@ -179,7 +185,9 @@ const cli = yargs(args)
         const binDir = path.dirname(process.execPath)
         for (const entry of readdirSync(binDir)) {
           if (entry.startsWith("mimo.exe.old_")) {
-            try { unlinkSync(path.join(binDir, entry)) } catch {}
+            try {
+              unlinkSync(path.join(binDir, entry))
+            } catch {}
           }
         }
       } catch {}
@@ -200,6 +208,7 @@ const cli = yargs(args)
   .command(UpgradeCommand)
   .command(UninstallCommand)
   .command(ServeCommand)
+  .command(DaemonCommand)
   .command(LlmServerCommand)
   // Web command temporarily disabled
   // .command(WebCommand)

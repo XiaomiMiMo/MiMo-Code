@@ -1,4 +1,12 @@
-import { BoxRenderable, RGBA, TextareaRenderable, MouseEvent, PasteEvent, decodePasteBytes, TextAttributes } from "@opentui/core"
+import {
+  BoxRenderable,
+  RGBA,
+  TextareaRenderable,
+  MouseEvent,
+  PasteEvent,
+  decodePasteBytes,
+  TextAttributes,
+} from "@opentui/core"
 import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
@@ -58,6 +66,8 @@ export type PromptProps = {
   visible?: boolean
   disabled?: boolean
   onSubmit?: () => void
+  onSend?: (prompt: PromptInfo) => Promise<boolean>
+  recipient?: { agent: string; model: string; provider?: string; hint: string }
   ref?: (ref: PromptRef | undefined) => void
   hint?: JSX.Element
   right?: JSX.Element
@@ -69,6 +79,7 @@ export type PromptProps = {
 }
 
 export type PromptRef = {
+  readonly interceptsEscape?: boolean
   focused: boolean
   current: PromptInfo
   set(prompt: PromptInfo): void
@@ -96,15 +107,20 @@ function fadeColor(color: RGBA, alpha: number) {
 let stashed: { prompt: PromptInfo; cursor: number } | undefined
 
 // Module-level voice state: survives component remounts and route changes
-let activeVoice: {
-  handle: Voice.StreamingHandle
-  pending: number
-  applyFromBase: (base: { value: string; range: VoiceEdit.EditorRange | null }, target: VoiceEdit.VoiceTextTarget) => void
-  getSnapshot: () => { value: string; range: VoiceEdit.EditorRange | null }
-  submit: () => Promise<unknown>
-  setState: (type: "listening" | "speaking" | "processing" | "finishing" | "idle") => void
-  showError: (msg: string) => void
-} | undefined
+let activeVoice:
+  | {
+      handle: Voice.StreamingHandle
+      pending: number
+      applyFromBase: (
+        base: { value: string; range: VoiceEdit.EditorRange | null },
+        target: VoiceEdit.VoiceTextTarget,
+      ) => void
+      getSnapshot: () => { value: string; range: VoiceEdit.EditorRange | null }
+      submit: () => Promise<unknown>
+      setState: (type: "listening" | "speaking" | "processing" | "finishing" | "idle") => void
+      showError: (msg: string) => void
+    }
+  | undefined
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -272,10 +288,13 @@ export function Prompt(props: PromptProps) {
     const initialCreds = voiceControlEnabled() ? controlCreds : asrCreds
     if ("error" in initialCreds) {
       const vars = { provider: initialCreds.providerID, model: initialCreds.model }
-      const msg = !voiceConfig ? t("tui.voice.error.no_auth")
-        : initialCreds.error === "not_found" ? t("tui.voice.error.provider_not_found", vars)
-        : initialCreds.error === "no_url" ? t("tui.voice.error.no_url", vars)
-        : t("tui.voice.error.no_auth_provider", vars)
+      const msg = !voiceConfig
+        ? t("tui.voice.error.no_auth")
+        : initialCreds.error === "not_found"
+          ? t("tui.voice.error.provider_not_found", vars)
+          : initialCreds.error === "no_url"
+            ? t("tui.voice.error.no_url", vars)
+            : t("tui.voice.error.no_auth_provider", vars)
       toast.show({ message: msg, variant: "error" })
       return
     }
@@ -315,49 +334,54 @@ export function Prompt(props: PromptProps) {
         }
 
         if (useControl) {
-          voiceControlChain = voiceControlChain.then(async () => {
-            try {
-              if (!activeVoice) return
-              av.setState("processing")
-              const snap = av.getSnapshot()
-              const contextText = VoiceEdit.controlContextText(snap.value, snap.range)
+          voiceControlChain = voiceControlChain
+            .then(async () => {
+              try {
+                if (!activeVoice) return
+                av.setState("processing")
+                const snap = av.getSnapshot()
+                const contextText = VoiceEdit.controlContextText(snap.value, snap.range)
 
-              const ctrl = await Voice.processVoiceControl({
-                audio: segment.audio,
-                apiKey: creds.apiKey,
-                baseUrl: creds.baseUrl,
-                model: resolved.control.model,
-                contextText,
-                sendEnabled: voiceSendEnabled(),
-              })
+                const ctrl = await Voice.processVoiceControl({
+                  audio: segment.audio,
+                  apiKey: creds.apiKey,
+                  baseUrl: creds.baseUrl,
+                  model: resolved.control.model,
+                  contextText,
+                  sendEnabled: voiceSendEnabled(),
+                })
 
-              if (ctrl.ok) {
-                // Drop stale mutations: user edited the prompt while the model was thinking.
-                const now = av.getSnapshot()
-                if (now.value === snap.value) {
-                  for (const action of ctrl.actions) {
-                    if (action.action === "insert") av.applyFromBase(snap, { kind: "insert", text: action.text })
-                    else if (action.action === "set") av.applyFromBase(snap, { kind: "set", text: action.text })
-                    else if (action.action === "set_with_cursor") av.applyFromBase(snap, { kind: "set_with_cursor", placement: action.placement })
-                    else if (action.action === "send") {
-                      const after = av.getSnapshot().value
-                      if (voiceSendEnabled() && after.trim()) await av.submit()
-                      else if (!after.trim()) av.showError(t("tui.voice.error.empty_send"))
+                if (ctrl.ok) {
+                  // Drop stale mutations: user edited the prompt while the model was thinking.
+                  const now = av.getSnapshot()
+                  if (now.value === snap.value) {
+                    for (const action of ctrl.actions) {
+                      if (action.action === "insert") av.applyFromBase(snap, { kind: "insert", text: action.text })
+                      else if (action.action === "set") av.applyFromBase(snap, { kind: "set", text: action.text })
+                      else if (action.action === "set_with_cursor")
+                        av.applyFromBase(snap, { kind: "set_with_cursor", placement: action.placement })
+                      else if (action.action === "send") {
+                        const after = av.getSnapshot().value
+                        if (voiceSendEnabled() && after.trim()) await av.submit()
+                        else if (!after.trim()) av.showError(t("tui.voice.error.empty_send"))
+                      }
                     }
+                  } else {
+                    av.showError(t("tui.voice.error.stale"))
                   }
                 } else {
-                  av.showError(t("tui.voice.error.stale"))
+                  av.showError(
+                    ctrl.reason === "protocol" ? t("tui.voice.error.protocol") : t("tui.voice.error.network"),
+                  )
                 }
-              } else {
-                av.showError(ctrl.reason === "protocol" ? t("tui.voice.error.protocol") : t("tui.voice.error.network"))
+              } finally {
+                av.pending--
+                if (activeVoice === av && voiceState() !== "speaking")
+                  av.setState(av.pending > 0 ? "processing" : "listening")
+                if (!activeVoice && av.pending <= 0) av.setState("idle")
               }
-            } finally {
-              av.pending--
-              if (activeVoice === av && voiceState() !== "speaking")
-                av.setState(av.pending > 0 ? "processing" : "listening")
-              if (!activeVoice && av.pending <= 0) av.setState("idle")
-            }
-          }).catch(() => {})
+            })
+            .catch(() => {})
         } else {
           const asrSnap = av.getSnapshot()
           Voice.transcribeAudio({
@@ -365,32 +389,37 @@ export function Prompt(props: PromptProps) {
             apiKey: creds.apiKey,
             baseUrl: creds.baseUrl,
             model: resolved.asr.model,
-          }).then((text) => {
-            if (text) {
-              // ASR has no send command — always dictate, including「发送」/"send it".
-              // Unchanged buffer → apply from request snapshot (caret/selection).
-              // Buffer changed mid-transcription → dictate at the end, never a live caret.
-              const now = av.getSnapshot()
-              if (now.value === asrSnap.value) {
-                const range = asrSnap.range ?? { start: asrSnap.value.length, end: asrSnap.value.length }
-                av.applyFromBase(asrSnap, VoiceEdit.asrInsertTarget(asrSnap.value, range, text))
-              } else {
-                const endRange = { start: now.value.length, end: now.value.length }
-                av.applyFromBase({ value: now.value, range: endRange }, VoiceEdit.asrInsertTarget(now.value, endRange, text))
-              }
-            } else {
-              av.showError(t("tui.voice.error.network"))
-            }
-            av.pending--
-            if (activeVoice === av && voiceState() !== "speaking")
-              av.setState(av.pending > 0 ? "processing" : "listening")
-            if (!activeVoice && av.pending <= 0) av.setState("idle")
-          }).catch(() => {
-            av.pending--
-            if (activeVoice === av && voiceState() !== "speaking")
-              av.setState(av.pending > 0 ? "processing" : "listening")
-            if (!activeVoice && av.pending <= 0) av.setState("idle")
           })
+            .then((text) => {
+              if (text) {
+                // ASR has no send command — always dictate, including「发送」/"send it".
+                // Unchanged buffer → apply from request snapshot (caret/selection).
+                // Buffer changed mid-transcription → dictate at the end, never a live caret.
+                const now = av.getSnapshot()
+                if (now.value === asrSnap.value) {
+                  const range = asrSnap.range ?? { start: asrSnap.value.length, end: asrSnap.value.length }
+                  av.applyFromBase(asrSnap, VoiceEdit.asrInsertTarget(asrSnap.value, range, text))
+                } else {
+                  const endRange = { start: now.value.length, end: now.value.length }
+                  av.applyFromBase(
+                    { value: now.value, range: endRange },
+                    VoiceEdit.asrInsertTarget(now.value, endRange, text),
+                  )
+                }
+              } else {
+                av.showError(t("tui.voice.error.network"))
+              }
+              av.pending--
+              if (activeVoice === av && voiceState() !== "speaking")
+                av.setState(av.pending > 0 ? "processing" : "listening")
+              if (!activeVoice && av.pending <= 0) av.setState("idle")
+            })
+            .catch(() => {
+              av.pending--
+              if (activeVoice === av && voiceState() !== "speaking")
+                av.setState(av.pending > 0 ? "processing" : "listening")
+              if (!activeVoice && av.pending <= 0) av.setState("idle")
+            })
         }
       },
       onActiveChange: (active) => {
@@ -398,7 +427,12 @@ export function Prompt(props: PromptProps) {
       },
       onError: (err) => {
         const msg = err.message || ""
-        if (msg.includes("no default audio") || msg.includes("not found") || msg.includes("Cannot open") || msg.includes("ALSA")) {
+        if (
+          msg.includes("no default audio") ||
+          msg.includes("not found") ||
+          msg.includes("Cannot open") ||
+          msg.includes("ALSA")
+        ) {
           av.showError(t("tui.voice.error.no_device"))
         } else {
           av.showError(`${t("tui.voice.error.recorder_failed")}: ${msg}`)
@@ -535,8 +569,7 @@ export function Prompt(props: PromptProps) {
     const result = Model.computeContextUsage({
       messages: msg,
       window: win,
-      checkpointCoverage: (id) =>
-        (sync.data.part[id] ?? []).find((p) => p.type === "checkpoint")?.coveredUpTo,
+      checkpointCoverage: (id) => (sync.data.part[id] ?? []).find((p) => p.type === "checkpoint")?.coveredUpTo,
     })
     if (!result) return
     return {
@@ -827,7 +860,9 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
-        title: voiceControlEnabled() ? t("tui.command.voice.control.title_on") : t("tui.command.voice.control.title_off"),
+        title: voiceControlEnabled()
+          ? t("tui.command.voice.control.title_on")
+          : t("tui.command.voice.control.title_off"),
         value: "voice.control",
         category: "prompt",
         slash: {
@@ -847,6 +882,9 @@ export function Prompt(props: PromptProps) {
   })
 
   const ref: PromptRef = {
+    get interceptsEscape() {
+      return store.mode === "shell" || !!autocomplete?.visible || !!ghost()
+    },
     get focused() {
       return input.focused
     },
@@ -1075,7 +1113,7 @@ export function Prompt(props: PromptProps) {
       setStore("prompt", "input", input.plainText)
       syncExtmarksWithPromptParts()
     }
-    if (props.disabled) return false
+    if (props.disabled || props.visible === false) return false
     if (autocomplete?.visible) return false
     if (!store.prompt.input) return false
     const agent = local.agent.current()
@@ -1084,6 +1122,35 @@ export function Prompt(props: PromptProps) {
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
       void exit()
       return true
+    }
+    if (props.onSend && (store.mode !== "shell" || !props.sessionID)) {
+      submitLock = true
+      try {
+        const marks = input.extmarks.getAllForTypeId(promptPartTypeId).flatMap((mark) => {
+          const index = store.extmarkToPartIndex.get(mark.id)
+          const part = index == null ? undefined : store.prompt.parts[index]
+          return part?.type === "text" && part.text ? [{ start: mark.start, end: mark.end, text: part.text }] : []
+        })
+        const inputText = expandPlaceholders(store.prompt.input, marks)
+        const clientSlash = command.slashes().find((item) => item.display === inputText.trim())
+        const sent = clientSlash
+          ? (clientSlash.onSelect?.(), true)
+          : await props.onSend({ ...store.prompt, input: inputText, mode: store.mode })
+        if (!sent) return false
+        history.append({ ...store.prompt, mode: store.mode })
+        input.extmarks.clear()
+        setStore("prompt", { input: "", parts: [] })
+        setStore("extmarkToPartIndex", new Map())
+        setStore("mode", "normal")
+        input.clear()
+        props.onSubmit?.()
+        return true
+      } catch (error) {
+        toast.show({ message: error instanceof Error ? error.message : String(error), variant: "error" })
+        return false
+      } finally {
+        submitLock = false
+      }
     }
     const selectedModel = local.model.current()
     if (!selectedModel) {
@@ -1121,166 +1188,164 @@ export function Prompt(props: PromptProps) {
 
     submitLock = true
     try {
+      let sessionID = props.sessionID
+      if (sessionID == null) {
+        const res = await sdk.client.session.create({ workspace: props.workspaceID })
 
-    let sessionID = props.sessionID
-    if (sessionID == null) {
-      const res = await sdk.client.session.create({ workspace: props.workspaceID })
+        if (res.error) {
+          console.log("Creating a session failed:", res.error)
 
-      if (res.error) {
-        console.log("Creating a session failed:", res.error)
-
-        toast.show({
-          message: "Creating a session failed. Open console for more details.",
-          variant: "error",
-        })
-
-        return true
-      }
-
-      sessionID = res.data.id
-    }
-
-    const messageID = MessageID.ascending()
-
-    // Expand pasted text inline before submitting. Extmark offsets are
-    // display-width based while plainText is UTF-16, so expandPlaceholders
-    // bridges the two coordinate systems (otherwise CJK content desyncs them).
-    const marks = input.extmarks
-      .getAllForTypeId(promptPartTypeId)
-      .flatMap((extmark: { id: number; start: number; end: number }) => {
-        const partIndex = store.extmarkToPartIndex.get(extmark.id)
-        if (partIndex === undefined) return []
-        const part = store.prompt.parts[partIndex]
-        if (part?.type !== "text" || !part.text) return []
-        return [{ start: extmark.start, end: extmark.end, text: part.text }]
-      })
-    const inputText = expandPlaceholders(store.prompt.input, marks)
-
-    // Filter out text parts (pasted content) since they're now expanded inline
-    const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")
-
-    // Capture mode before it gets reset
-    const currentMode = store.mode
-    const variant = local.model.variant.current()
-
-    const clientSlash = inputText.startsWith("/")
-      ? command.slashes().find((s) => s.display === inputText.trim())
-      : undefined
-    const serverSlash = resolvePromptCommand(inputText, sync.data.command, t, pickedSkill)
-
-    if (store.mode === "shell") {
-      void sdk.client.session.shell({
-        sessionID,
-        agent: agent.name,
-        model: {
-          providerID: selectedModel.providerID,
-          modelID: selectedModel.modelID,
-        },
-        command: inputText,
-      })
-      setStore("mode", "normal")
-    } else if (inputText.startsWith("/btw ")) {
-      // Inline side-question form: `/btw <question>` on the prompt line. Client
-      // slashes match the exact `/btw` token and drop args, so handle the
-      // arg-bearing form here. Show a busy/spinner dialog immediately for
-      // instant feedback across the blocking fork-query, then swap in the
-      // answer. READ-ONLY + EPHEMERAL: render the answer in a dismissible
-      // dialog, never inject it into the conversation.
-      const question = inputText.slice("/btw ".length).trim()
-      if (question)
-        void DialogPrompt.busy(
-          dialog,
-          "/btw",
-          question,
-          (active) =>
-            sdk.client.session
-              .ask({
-                sessionID,
-                question,
-                providerID: selectedModel.providerID,
-                modelID: selectedModel.modelID,
-              })
-              .then((res) => {
-                if (!active()) return
-                return DialogAlert.show(dialog, "/btw", res.data?.answer ?? "(no answer)")
-              })
-              .catch((err) => {
-                if (!active()) return
-                dialog.clear()
-                toast.show({
-                  message: err instanceof Error ? err.message : "Failed to ask side question",
-                  variant: "error",
-                })
-              }),
-          { busyText: t("tui.command.session.ask.busy") },
-        )
-    } else if (clientSlash) {
-      clientSlash.onSelect?.()
-    } else if (serverSlash) {
-      void sdk.client.session.command({
-        sessionID,
-        ...serverSlash,
-        agent: agent.name,
-        model: `${selectedModel.providerID}/${selectedModel.modelID}`,
-        titleLocale: language.intl(),
-        messageID,
-        variant,
-        parts: nonTextParts
-          .filter((x) => x.type === "file")
-          .map((x) => ({
-            id: PartID.ascending(),
-            ...x,
-          })),
-      })
-    } else {
-      sdk.client.session
-        .promptAsync({
-          sessionID,
-          ...selectedModel,
-          messageID,
-          agent: agent.name,
-          model: selectedModel,
-          titleLocale: language.intl(),
-          variant,
-          parts: [
-            {
-              id: PartID.ascending(),
-              type: "text",
-              text: inputText,
-            },
-            ...nonTextParts.map(assign),
-          ],
-        })
-        .catch((err) => {
           toast.show({
-            message: err instanceof Error ? err.message : "Failed to send message",
+            message: "Creating a session failed. Open console for more details.",
             variant: "error",
           })
-        })
-    }
-    history.append({
-      ...store.prompt,
-      mode: currentMode,
-    })
-    input.extmarks.clear()
-    setStore("prompt", {
-      input: "",
-      parts: [],
-    })
-    setStore("extmarkToPartIndex", new Map())
-    props.onSubmit?.()
 
-    // temporary hack to make sure the message is sent
-    if (!props.sessionID)
-      setTimeout(() => {
-        route.navigate({
-          type: "session",
+          return true
+        }
+
+        sessionID = res.data.id
+      }
+
+      const messageID = MessageID.ascending()
+
+      // Expand pasted text inline before submitting. Extmark offsets are
+      // display-width based while plainText is UTF-16, so expandPlaceholders
+      // bridges the two coordinate systems (otherwise CJK content desyncs them).
+      const marks = input.extmarks
+        .getAllForTypeId(promptPartTypeId)
+        .flatMap((extmark: { id: number; start: number; end: number }) => {
+          const partIndex = store.extmarkToPartIndex.get(extmark.id)
+          if (partIndex === undefined) return []
+          const part = store.prompt.parts[partIndex]
+          if (part?.type !== "text" || !part.text) return []
+          return [{ start: extmark.start, end: extmark.end, text: part.text }]
+        })
+      const inputText = expandPlaceholders(store.prompt.input, marks)
+
+      // Filter out text parts (pasted content) since they're now expanded inline
+      const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")
+
+      // Capture mode before it gets reset
+      const currentMode = store.mode
+      const variant = local.model.variant.current()
+
+      const clientSlash = inputText.startsWith("/")
+        ? command.slashes().find((s) => s.display === inputText.trim())
+        : undefined
+      const serverSlash = resolvePromptCommand(inputText, sync.data.command, t, pickedSkill)
+
+      if (store.mode === "shell") {
+        void sdk.client.session.shell({
           sessionID,
+          agent: agent.name,
+          model: {
+            providerID: selectedModel.providerID,
+            modelID: selectedModel.modelID,
+          },
+          command: inputText,
         })
-      }, 50)
-    input.clear()
-    return true
+        setStore("mode", "normal")
+      } else if (inputText.startsWith("/btw ")) {
+        // Inline side-question form: `/btw <question>` on the prompt line. Client
+        // slashes match the exact `/btw` token and drop args, so handle the
+        // arg-bearing form here. Show a busy/spinner dialog immediately for
+        // instant feedback across the blocking fork-query, then swap in the
+        // answer. READ-ONLY + EPHEMERAL: render the answer in a dismissible
+        // dialog, never inject it into the conversation.
+        const question = inputText.slice("/btw ".length).trim()
+        if (question)
+          void DialogPrompt.busy(
+            dialog,
+            "/btw",
+            question,
+            (active) =>
+              sdk.client.session
+                .ask({
+                  sessionID,
+                  question,
+                  providerID: selectedModel.providerID,
+                  modelID: selectedModel.modelID,
+                })
+                .then((res) => {
+                  if (!active()) return
+                  return DialogAlert.show(dialog, "/btw", res.data?.answer ?? "(no answer)")
+                })
+                .catch((err) => {
+                  if (!active()) return
+                  dialog.clear()
+                  toast.show({
+                    message: err instanceof Error ? err.message : "Failed to ask side question",
+                    variant: "error",
+                  })
+                }),
+            { busyText: t("tui.command.session.ask.busy") },
+          )
+      } else if (clientSlash) {
+        clientSlash.onSelect?.()
+      } else if (serverSlash) {
+        void sdk.client.session.command({
+          sessionID,
+          ...serverSlash,
+          agent: agent.name,
+          model: `${selectedModel.providerID}/${selectedModel.modelID}`,
+          titleLocale: language.intl(),
+          messageID,
+          variant,
+          parts: nonTextParts
+            .filter((x) => x.type === "file")
+            .map((x) => ({
+              id: PartID.ascending(),
+              ...x,
+            })),
+        })
+      } else {
+        sdk.client.session
+          .promptAsync({
+            sessionID,
+            ...selectedModel,
+            messageID,
+            agent: agent.name,
+            model: selectedModel,
+            titleLocale: language.intl(),
+            variant,
+            parts: [
+              {
+                id: PartID.ascending(),
+                type: "text",
+                text: inputText,
+              },
+              ...nonTextParts.map(assign),
+            ],
+          })
+          .catch((err) => {
+            toast.show({
+              message: err instanceof Error ? err.message : "Failed to send message",
+              variant: "error",
+            })
+          })
+      }
+      history.append({
+        ...store.prompt,
+        mode: currentMode,
+      })
+      input.extmarks.clear()
+      setStore("prompt", {
+        input: "",
+        parts: [],
+      })
+      setStore("extmarkToPartIndex", new Map())
+      props.onSubmit?.()
 
+      // temporary hack to make sure the message is sent
+      if (!props.sessionID)
+        setTimeout(() => {
+          route.navigate({
+            type: "session",
+            sessionID,
+          })
+        }, 50)
+      input.clear()
+      return true
     } finally {
       submitLock = false
     }
@@ -1637,7 +1702,7 @@ export function Prompt(props: PromptProps) {
                 }
                 if (keybind.match("app_exit", e)) {
                   if (store.prompt.input === "") {
-                    if (props.sessionID && status().type !== "idle") {
+                    if (!props.onSend && props.sessionID && status().type !== "idle") {
                       void sdk.client.session.abort({ sessionID: props.sessionID })
                       e.preventDefault()
                       return
@@ -1754,7 +1819,7 @@ export function Prompt(props: PromptProps) {
                   {(agent) => (
                     <>
                       <text fg={fadeColor(highlight(), agentMetaAlpha())}>
-                        {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().name)}
+                        {props.recipient?.agent ?? (store.mode === "shell" ? "Shell" : Locale.titlecase(agent().name))}
                       </text>
                       <Show when={store.mode === "normal"}>
                         <box flexDirection="row" gap={1}>
@@ -1763,12 +1828,12 @@ export function Prompt(props: PromptProps) {
                             flexShrink={0}
                             fg={fadeColor(keybind.leader ? theme.textMuted : theme.text, modelMetaAlpha())}
                           >
-                            {local.model.parsed().model}
+                            {props.recipient?.model ?? local.model.parsed().model}
                           </text>
                           <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>
-                            {currentProviderLabel()}
+                            {props.recipient ? props.recipient.provider : currentProviderLabel()}
                           </text>
-                          <Show when={showVariant()}>
+                          <Show when={!props.recipient && showVariant()}>
                             <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
                             <text>
                               <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
@@ -1788,9 +1853,7 @@ export function Prompt(props: PromptProps) {
                 </Show>
               </box>
               <box flexDirection="row" gap={1} alignItems="center">
-                <Show when={hasRightContent()}>
-                  {props.right}
-                </Show>
+                <Show when={hasRightContent()}>{props.right}</Show>
                 <Show when={voiceEnabled()}>
                   <Switch>
                     <Match when={voiceState() === "idle"}>
@@ -1814,7 +1877,9 @@ export function Prompt(props: PromptProps) {
                       </text>
                     </Match>
                     <Match when={voiceState() === "finishing"}>
-                      <text fg={theme.textMuted} selectable={false}>{"[ 🎙  .... ]"}</text>
+                      <text fg={theme.textMuted} selectable={false}>
+                        {"[ 🎙  .... ]"}
+                      </text>
                     </Match>
                   </Switch>
                 </Show>
@@ -1971,7 +2036,17 @@ export function Prompt(props: PromptProps) {
                       )}
                     </Show>
                     <text fg={theme.text}>
-                      {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>{t("tui.prompt.hint.switch_mode")}</span>
+                      <Show
+                        when={props.recipient}
+                        fallback={
+                          <>
+                            {keybind.print("agent_cycle")}{" "}
+                            <span style={{ fg: theme.textMuted }}>{t("tui.prompt.hint.switch_mode")}</span>
+                          </>
+                        }
+                      >
+                        <span style={{ fg: theme.textMuted }}>{props.recipient?.hint}</span>
+                      </Show>
                     </text>
                     <text fg={theme.text}>
                       {keybind.print("command_list")}{" "}

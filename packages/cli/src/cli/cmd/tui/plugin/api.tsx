@@ -81,11 +81,16 @@ function routeNavigate(route: ReturnType<typeof useRoute>, name: string, params?
     return
   }
 
+  if (name === "superagent") {
+    route.navigate({ type: "superagent" })
+    return
+  }
   route.navigate({ type: "plugin", id: name, data: params })
 }
 
 function routeCurrent(route: ReturnType<typeof useRoute>): TuiPluginApi["route"]["current"] {
   if (route.data.type === "home") return { name: "home" }
+  if (route.data.type === "superagent") return { name: "superagent" }
   if (route.data.type === "session") {
     return {
       name: "session",

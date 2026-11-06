@@ -11,6 +11,7 @@ import { MemoryTool } from "./memory"
 import { ReadTool, describeMedia } from "./read"
 import { ViewImageTool } from "./view-image"
 import { ActorTool } from "./actor"
+import * as SuperagentTools from "./superagent"
 import { TaskTool } from "./task"
 import { CronTool } from "./cron"
 import { WorkflowTool } from "./workflow"
@@ -39,8 +40,7 @@ import { LspTool } from "./lsp"
 import * as Truncate from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
 import { Effect, Exit, Layer, Context } from "effect"
-import { FetchHttpClient, HttpClient } from "effect/unstable/http"
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
+import { FetchHttpClient } from "effect/unstable/http"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { Ripgrep } from "../file/ripgrep"
 import { Format } from "../format"
@@ -64,7 +64,6 @@ import { SessionCheckpoint } from "@/session/checkpoint"
 import { TaskRegistry } from "@/task/registry"
 import { defaultLayer as SchedulerDefaultLayer } from "@/cron/scheduler"
 import { Auth } from "@/auth"
-import * as BashInteractive from "./bash-interactive"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
 import { GPT_TOP_LEVEL_TOOLS, TOOL_SCRIPT_EXCLUDED, toolScriptRegistry } from "./tool-script-ref"
@@ -140,6 +139,7 @@ export const layer = Layer.effect(
     const truncate = yield* Truncate.Service
     const provider = yield* Provider.Service
 
+    const superagent = yield* Effect.all(Object.values(SuperagentTools))
     const invalid = yield* InvalidTool
     const actor = yield* ActorTool
     const read = yield* ReadTool
@@ -186,28 +186,30 @@ export const layer = Layer.effect(
                   worktree: ctx.worktree,
                 }
                 return yield* ToolSettlement.promise(
-                  (signal) => def.execute(args as any, {
-                    ...pluginCtx,
-                    abort: AbortSignal.any([toolCtx.abort, signal]),
-                  }),
-                  (exit) => Effect.gen(function* () {
-                    const result = Exit.isSuccess(exit) ? exit.value : yield* Effect.failCause(exit.cause)
-                    const output = typeof result === "string" ? result : result.output
-                    const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
-                    const info = yield* agent.get(toolCtx.agent)
-                    const out = yield* truncate.output(output, {}, info)
-                    const normalized = {
-                      title: "",
-                      output: out.truncated ? out.content : output,
-                      metadata: {
-                        ...metadata,
-                        truncated: out.truncated,
-                        ...(out.truncated && { outputPath: out.outputPath }),
-                      },
-                    }
-                    yield* ToolSettlement.record(toolCtx.callID, Effect.succeed(normalized))
-                    return normalized
-                  }),
+                  (signal) =>
+                    def.execute(args as any, {
+                      ...pluginCtx,
+                      abort: AbortSignal.any([toolCtx.abort, signal]),
+                    }),
+                  (exit) =>
+                    Effect.gen(function* () {
+                      const result = Exit.isSuccess(exit) ? exit.value : yield* Effect.failCause(exit.cause)
+                      const output = typeof result === "string" ? result : result.output
+                      const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
+                      const info = yield* agent.get(toolCtx.agent)
+                      const out = yield* truncate.output(output, {}, info)
+                      const normalized = {
+                        title: "",
+                        output: out.truncated ? out.content : output,
+                        metadata: {
+                          ...metadata,
+                          truncated: out.truncated,
+                          ...(out.truncated && { outputPath: out.outputPath }),
+                        },
+                      }
+                      yield* ToolSettlement.record(toolCtx.callID, Effect.succeed(normalized))
+                      return normalized
+                    }),
                 ).pipe(Effect.orDie)
               }),
           }
@@ -279,6 +281,7 @@ export const layer = Layer.effect(
             tool.memory,
             tool.history,
             tool.task,
+            ...(yield* Effect.all(superagent.map((t) => Tool.init(t as Tool.Info)))),
             tool.toolscript,
             ...(Flag.MIMOCODE_EXPERIMENTAL_CRON ? [tool.cron] : []),
             ...(Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL ? [tool.workflow] : []),
@@ -317,9 +320,7 @@ export const layer = Layer.effect(
     })
 
     const describeTask = Effect.fn("ToolRegistry.describeTask")(function* (agent: Agent.Info) {
-      const items = (yield* agents.list()).filter(
-        (item) => item.mode !== "primary" && !item.hidden,
-      )
+      const items = (yield* agents.list()).filter((item) => item.mode !== "primary" && !item.hidden)
       const filtered = items.filter(
         (item) => Permission.evaluate("task", item.name, agent.permission).action !== "deny",
       )
@@ -343,6 +344,15 @@ export const layer = Layer.effect(
     }) {
       const useGPTTools = usesGPTToolset(input.modelID, input.harness, input.apiModelID, input.family)
       let filtered = (yield* all()).filter((tool) => {
+        if (tool.id.startsWith("superagent_")) {
+          const allowed =
+            input.agent.name === "superagent-router"
+              ? ["superagent_read", "superagent_route", "superagent_reply"]
+              : input.agent.name === "superagent-worker"
+                ? ["superagent_report", "superagent_threads"]
+                : []
+          if (!allowed.includes(tool.id)) return false
+        }
         if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) return Flag.MIMOCODE_ENABLE_EXA
 
@@ -356,6 +366,8 @@ export const layer = Layer.effect(
           tool.id === GlobTool.id ||
           tool.id === NotebookEditTool.id
         )
+          // Read-only investigators have no shell fallback in the GPT toolset.
+          // Keep their dedicated file tools available through the exec gateway.
           return !useGPTTools
 
         return true
@@ -425,16 +437,18 @@ export const layer = Layer.effect(
       includeHidden: boolean,
     ) {
       const availableTools = yield* available(input)
-      const selected = availableTools.useGPTTools && !includeHidden
-        ? availableTools.filtered.filter((tool) => GPT_TOP_LEVEL_TOOLS.has(tool.id))
-        : availableTools.filtered
+      const selected =
+        availableTools.useGPTTools && !includeHidden
+          ? availableTools.filtered.filter((tool) => GPT_TOP_LEVEL_TOOLS.has(tool.id))
+          : availableTools.filtered
 
       return yield* Effect.forEach(
         selected,
         Effect.fnUntraced(function* (tool: Tool.Def) {
           using _ = log.time(tool.id)
           const output = {
-            description: tool.id === BashTool.id && availableTools.useGPTTools ? bashDescription(true) : tool.description,
+            description:
+              tool.id === BashTool.id && availableTools.useGPTTools ? bashDescription(true) : tool.description,
             parameters: tool.parameters,
           }
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)

@@ -56,10 +56,19 @@ export function resolveDrainSeed(
         m.info.model.providerID !== "system" &&
         "agent" in m.info &&
         m.info.agent !== "system",
-      { agentID: actor?.mode === "peer" ? "*" : actorID },
+      { agentID: actorID },
     )
-    if (Option.isSome(match)) {
-      const info = match.value.info
+    // Peer Sessions contain independent subagent slices too. Only the peer's
+    // own history may seed its role/model; a child's last user message must not
+    // turn the next peer input into a turn of that child agent.
+    const seed = Option.isSome(match) || actor?.mode !== "peer"
+      ? match
+      : yield* sessions.findMessage(sessionID, m =>
+          m.info.role === "user" && m.info.agent === actor.agent && m.info.model.providerID !== "system",
+          { agentID: "main" },
+        )
+    if (Option.isSome(seed)) {
+      const info = seed.value.info
       if ("model" in info && info.model && "agent" in info) return { agent: info.agent, model: info.model }
     }
     const resolver = defaultModelRef.current
@@ -79,6 +88,7 @@ export interface AgentInput {
   content: string
   type?: string
   legacyInboxID?: string
+  idempotencyKey?: string
 }
 
 export interface Interface {
@@ -141,6 +151,7 @@ export const layer = Layer.effect(
         }],
         type,
         legacyInboxID: input.legacyInboxID,
+        idempotencyKey: input.idempotencyKey,
         senderSessionID: input.senderSessionID,
         senderActorID: input.senderActorID,
       }, guard)

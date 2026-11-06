@@ -19,6 +19,7 @@ import {
 } from "@/util/media"
 import { shrinkAttachment } from "@/provider/image"
 import { classifyAssistantStep } from "./classify"
+import { terminalReport } from "@/superagent/terminal"
 import { Log, Token } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
@@ -5151,13 +5152,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // Resolve the agent for this iteration once. The window reminders,
           // the management hooks below (fireCheckpoints, overflow handler) and
           // the agent-not-found check later in the iteration reuse this binding.
-          // Bounded computation agents (native + hidden — e.g. title, summary,
+          // Bounded computation agents (native + hidden subagents — e.g. title, summary,
           // compaction, checkpoint-writer) are exempt from window reminders and
           // context management;
           // see docs/superpowers/specs/2026-04-28-bounded-computation-agents-design.md
           const agent = yield* resolveStoredAgent(agents, lastUser.agent)
           const isBoundedComputation =
-            agent?.native === true && agent?.hidden === true
+            agent?.native === true && agent?.hidden === true && agent.mode === "subagent"
 
           // The system prompt stays byte-identical across projects and sessions
           // (no cwd, `<project_id>` / `<session_id>` placeholders); the real values
@@ -5847,6 +5848,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
                   if (result === "superseded") return "continue" as const
 
+                  if (terminalReport(handle.message.agent, MessageV2.parts(handle.message.id))) {
+                    handle.message.finish = "stop"
+                    yield* sessions.updateMessage(handle.message)
+                    return "break" as const
+                  }
+
                   if (
                     result === "continue" &&
                     (yield* autoContinueOutputLength({ lastUser, assistant: handle.message }))
@@ -6144,6 +6151,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 )
 
                 if (result === "superseded") return "continue" as const
+
+                if (terminalReport(handle.message.agent, MessageV2.parts(handle.message.id))) {
+                  handle.message.finish = "stop"
+                  yield* sessions.updateMessage(handle.message)
+                  return "break" as const
+                }
 
                 if (handle.message.time.completed && !handle.message.error) {
                   yield* SessionPrefixSnapshot.advance({

@@ -498,6 +498,17 @@ export type Info = z.output<typeof Info> & {
   mcp_origins?: Record<string, ConfigMCP.Origin>
 }
 
+// Hosts can carry execution settings into isolated worktrees without writing
+// provider credentials into files that could become candidate artifacts.
+const runtimeDefaults = new Map<string, Info>()
+export function setRuntimeDefaults(directory: string, source: Info) {
+  const next: Info = {}
+  for (const key of [...MODEL_KEYS, "permission", "agent"] as const) Object.assign(next, { [key]: clone(source[key]) })
+  const changed = JSON.stringify(runtimeDefaults.get(directory)) !== JSON.stringify(next)
+  runtimeDefaults.set(directory, next)
+  return changed
+}
+
 type State = {
   config: Info
   directories: string[]
@@ -978,6 +989,8 @@ export const layer = Layer.effect(
           const defaults = yield* loadConfig(process.env.MIMOCODE_CONFIG_DEFAULTS, { dir: ctx.directory, source: "MIMOCODE_CONFIG_DEFAULTS" })
           result = mergeConfigConcatArrays(defaults, result)
         }
+        const inherited = runtimeDefaults.get(ctx.directory)
+        if (inherited) result = mergeConfigConcatArrays(result, inherited)
         return {
           config: result,
           directories,

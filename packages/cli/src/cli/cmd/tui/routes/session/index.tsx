@@ -1,3 +1,4 @@
+import { TaskContextBar, sendTask, backTask } from "../superagent-context"
 import {
   createContext,
   createEffect,
@@ -22,22 +23,10 @@ import { Spinner } from "@tui/component/spinner"
 import { selectedForeground, useTheme } from "@tui/context/theme"
 import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA, MouseEvent } from "@opentui/core"
 import { Prompt, type PromptRef } from "@tui/component/prompt"
-import type {
-  AssistantMessage,
-  Part,
-  Provider,
-  ToolPart,
-  UserMessage,
-  TextPart,
-  ReasoningPart,
-} from "@mimo-ai/sdk/v2"
+import type { AssistantMessage, Part, Provider, ToolPart, UserMessage, TextPart, ReasoningPart } from "@mimo-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util"
-import {
-  recoverErrorMessage,
-  runSessionRecover,
-  type RecoverCandidate,
-} from "./recover-flow"
+import { recoverErrorMessage, runSessionRecover, type RecoverCandidate } from "./recover-flow"
 import { verifySessionRenderable, type SessionActorInput } from "@/session/visibility"
 import type { Tool } from "@/tool"
 import type { ReadTool } from "@/tool/read"
@@ -101,7 +90,6 @@ import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import * as Model from "../../util/model"
 import { formatTranscript } from "../../util/transcript"
-import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { getScrollAcceleration } from "../../util/scroll"
 import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
@@ -133,6 +121,7 @@ export const sessionViewContext = createContext<{
   providers: () => ReadonlyMap<string, Provider>
   sync: ReturnType<typeof useSync>
   tui: ReturnType<typeof useTuiConfig>
+  onOpenAgent?: (sessionID: string, actorID: string) => void
 }>()
 
 function use() {
@@ -181,7 +170,7 @@ export function Session() {
   const questions = createMemo(() => sync.data.question[route.sessionID] ?? [])
   const visible = createMemo(
     () =>
-      currentAgentID() === "main" &&
+      (currentAgentID() === "main" || route.task?.role === "worker" || route.task?.role === "router") &&
       permissions().length === 0 &&
       questions().length === 0,
   )
@@ -309,6 +298,7 @@ export function Session() {
         await sync.bootstrap({ fatal: false })
       } catch (e) {}
     }
+    if (route.task && result.data.directory !== sdk.directory) sdk.switchDirectory(result.data.directory)
     await sync.session.sync(route.sessionID)
     if (scroll) scroll.scrollBy(100_000)
   })
@@ -361,22 +351,6 @@ export function Session() {
 
   // Allow exit when in child session (prompt is hidden)
   const exit = useExit()
-
-  createEffect(() => {
-    const title = Locale.truncate(session()?.title ?? "", 50)
-    const pad = (text: string) => text.padEnd(10, " ")
-    const weak = (text: string) => UI.Style.TEXT_DIM + pad(text) + UI.Style.TEXT_NORMAL
-    const logo = UI.logo("  ").split(/\r?\n/)
-    return exit.message.set(
-      [
-        ...logo,
-        ``,
-        `  ${weak("Session")}${UI.Style.TEXT_NORMAL_BOLD}${title}${UI.Style.TEXT_NORMAL}`,
-        `  ${weak("Continue")}${UI.Style.TEXT_NORMAL_BOLD}mimo -s ${session()?.id}${UI.Style.TEXT_NORMAL}`,
-        ``,
-      ].join("\n"),
-    )
-  })
 
   useKeyboard((evt) => {
     if (currentAgentID() === "main") return
@@ -473,12 +447,7 @@ export function Session() {
     if (fullRoute.data.type !== "session") return
     const cur = currentAgentID()
     const idx = list.findIndex((a) => a.actor_id === cur)
-    const next =
-      idx === -1
-        ? direction === 1
-          ? 0
-          : list.length - 1
-        : (idx + direction + list.length) % list.length
+    const next = idx === -1 ? (direction === 1 ? 0 : list.length - 1) : (idx + direction + list.length) % list.length
     navigate({ ...fullRoute.data, agentID: list[next].actor_id, fromWorkflowRunID: undefined })
   }
 
@@ -1147,8 +1116,13 @@ export function Session() {
       keybind: "session_parent",
       category: "session",
       hidden: true,
-      enabled: currentAgentID() !== "main" || !!workflowRunID() || !!session()?.parentID,
+      enabled: !!route.task || currentAgentID() !== "main" || !!workflowRunID() || !!session()?.parentID,
       onSelect: (dialog) => {
+        if (route.task) {
+          backTask(sdk, fullRoute, route.task)
+          dialog.clear()
+          return
+        }
         // Workflow page → back to the conversation (parallels agentID → main).
         if (fullRoute.data.type === "session" && workflowRunID()) {
           navigate({ ...fullRoute.data, workflowRunID: undefined })
@@ -1157,7 +1131,13 @@ export function Session() {
         }
         // Agent opened FROM a workflow page → back returns to that workflow.
         if (fullRoute.data.type === "session" && currentAgentID() !== "main" && fromWorkflowRunID()) {
-          navigate({ ...fullRoute.data, sessionID: sync.data.workflow[fromWorkflowRunID()!]?.sessionID ?? route.sessionID, agentID: undefined, fromWorkflowRunID: undefined, workflowRunID: fromWorkflowRunID() })
+          navigate({
+            ...fullRoute.data,
+            sessionID: sync.data.workflow[fromWorkflowRunID()!]?.sessionID ?? route.sessionID,
+            agentID: undefined,
+            fromWorkflowRunID: undefined,
+            workflowRunID: fromWorkflowRunID(),
+          })
           dialog.clear()
           return
         }
@@ -1224,7 +1204,15 @@ export function Session() {
   })
 
   // snap to bottom when session changes
-  createEffect(on(() => route.sessionID, () => { scrollByAgent.clear(); toBottom() }))
+  createEffect(
+    on(
+      () => route.sessionID,
+      () => {
+        scrollByAgent.clear()
+        toBottom()
+      },
+    ),
+  )
 
   // save/restore scroll position when switching between agent views
   createEffect(
@@ -1285,10 +1273,15 @@ export function Session() {
         providers,
         sync,
         tui: tuiConfig,
+        onOpenAgent: route.task
+          ? (sessionID, actorID) =>
+              navigate({ type: "session", sessionID, agentID: actorID, task: { ...route.task!, role: "helper" } })
+          : undefined,
       }}
     >
       <box flexDirection="row">
         <box flexGrow={1} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1} onMouse={onWheel}>
+          <Show when={route.task}>{(task) => <TaskContextBar task={task()} />}</Show>
           <Show
             when={!workflowRunID()}
             fallback={
@@ -1296,169 +1289,201 @@ export function Session() {
                 runID={workflowRunID()!}
                 onBack={() => navigate({ ...route, workflowRunID: undefined })}
                 onOpenAgent={(actorID, sessionID) =>
-                  navigate({ ...route, sessionID: sessionID ?? route.sessionID, workflowRunID: undefined, agentID: actorID, fromWorkflowRunID: workflowRunID() })
+                  navigate({
+                    ...route,
+                    sessionID: sessionID ?? route.sessionID,
+                    workflowRunID: undefined,
+                    agentID: actorID,
+                    fromWorkflowRunID: workflowRunID(),
+                  })
                 }
                 onOpenChild={(childRunID) => navigate({ ...route, workflowRunID: childRunID })}
               />
             }
           >
-          
-          <Show when={session()}>
-            <scrollbox
-              ref={(r) => (scroll = r)}
-              viewportOptions={{
-                paddingRight: 1,
-              }}
-              verticalScrollbarOptions={{
-                paddingLeft: 1,
-                visible: true,
-                trackOptions: {
-                  backgroundColor: scrollbarVisible() ? theme.backgroundElement : theme.background,
-                  foregroundColor: scrollbarVisible() ? theme.border : theme.background,
-                },
-              }}
-              stickyScroll={true}
-              stickyStart="bottom"
-              flexGrow={1}
-              scrollAcceleration={scrollAcceleration()}
-            >
-              <box height={1} />
-              <For each={messages()}>
-                {(message, index) => (
-                  <Switch>
-                    <Match when={message.id === revert()?.messageID}>
-                      {(function () {
-                        const command = useCommandDialog()
-                        const [hover, setHover] = createSignal(false)
-                        const dialog = useDialog()
+            <Show when={session()}>
+              <scrollbox
+                ref={(r) => (scroll = r)}
+                viewportOptions={{
+                  paddingRight: 1,
+                }}
+                verticalScrollbarOptions={{
+                  paddingLeft: 1,
+                  visible: true,
+                  trackOptions: {
+                    backgroundColor: scrollbarVisible() ? theme.backgroundElement : theme.background,
+                    foregroundColor: scrollbarVisible() ? theme.border : theme.background,
+                  },
+                }}
+                stickyScroll={true}
+                stickyStart="bottom"
+                flexGrow={1}
+                scrollAcceleration={scrollAcceleration()}
+              >
+                <box height={1} />
+                <For each={messages()}>
+                  {(message, index) => (
+                    <Switch>
+                      <Match when={message.id === revert()?.messageID}>
+                        {(function () {
+                          const command = useCommandDialog()
+                          const [hover, setHover] = createSignal(false)
+                          const dialog = useDialog()
 
-                        const handleUnrevert = async () => {
-                          const confirmed = await DialogConfirm.show(
-                            dialog,
-                            "Confirm Redo",
-                            "Are you sure you want to restore the reverted messages?",
-                          )
-                          if (confirmed) {
-                            command.trigger("session.redo")
+                          const handleUnrevert = async () => {
+                            const confirmed = await DialogConfirm.show(
+                              dialog,
+                              "Confirm Redo",
+                              "Are you sure you want to restore the reverted messages?",
+                            )
+                            if (confirmed) {
+                              command.trigger("session.redo")
+                            }
                           }
-                        }
 
-                        return (
-                          <box
-                            onMouseOver={() => setHover(true)}
-                            onMouseOut={() => setHover(false)}
-                            onMouseUp={handleUnrevert}
-                            marginTop={1}
-                            flexShrink={0}
-                            border={["left"]}
-                            customBorderChars={SplitBorder.customBorderChars}
-                            borderColor={theme.backgroundPanel}
-                          >
+                          return (
                             <box
-                              paddingTop={1}
-                              paddingBottom={1}
-                              paddingLeft={2}
-                              backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+                              onMouseOver={() => setHover(true)}
+                              onMouseOut={() => setHover(false)}
+                              onMouseUp={handleUnrevert}
+                              marginTop={1}
+                              flexShrink={0}
+                              border={["left"]}
+                              customBorderChars={SplitBorder.customBorderChars}
+                              borderColor={theme.backgroundPanel}
                             >
-                              <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
-                              <text fg={theme.textMuted}>
-                                <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
-                                restore
-                              </text>
-                              <Show when={revert()!.diffFiles?.length}>
-                                <box marginTop={1}>
-                                  <For each={revert()!.diffFiles}>
-                                    {(file) => (
-                                      <text fg={theme.text}>
-                                        {file.filename}
-                                        <Show when={file.additions > 0}>
-                                          <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
-                                        </Show>
-                                        <Show when={file.deletions > 0}>
-                                          <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
-                                        </Show>
-                                      </text>
-                                    )}
-                                  </For>
-                                </box>
-                              </Show>
+                              <box
+                                paddingTop={1}
+                                paddingBottom={1}
+                                paddingLeft={2}
+                                backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+                              >
+                                <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
+                                <text fg={theme.textMuted}>
+                                  <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
+                                  restore
+                                </text>
+                                <Show when={revert()!.diffFiles?.length}>
+                                  <box marginTop={1}>
+                                    <For each={revert()!.diffFiles}>
+                                      {(file) => (
+                                        <text fg={theme.text}>
+                                          {file.filename}
+                                          <Show when={file.additions > 0}>
+                                            <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
+                                          </Show>
+                                          <Show when={file.deletions > 0}>
+                                            <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
+                                          </Show>
+                                        </text>
+                                      )}
+                                    </For>
+                                  </box>
+                                </Show>
+                              </box>
                             </box>
-                          </box>
-                        )
-                      })()}
-                    </Match>
-                    <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
-                      <></>
-                    </Match>
-                    <Match when={message.role === "user"}>
-                      <UserMessageView
-                        index={index()}
-                        onMouseUp={() => {
-                          if (renderer.getSelection()?.getSelectedText()) return
-                          dialog.replace(() => (
-                            <DialogMessage
-                              messageID={message.id}
-                              sessionID={route.sessionID}
-                              setPrompt={(promptInfo) => prompt?.set(promptInfo)}
-                            />
-                          ))
-                        }}
-                        message={message as UserMessage}
-                        parts={sync.data.part[message.id] ?? []}
-                        pending={pending()}
-                      />
-                    </Match>
-                    <Match when={message.role === "assistant"}>
-                      <AssistantMessage
-                        last={lastAssistant()?.id === message.id}
-                        message={message as AssistantMessage}
-                        parts={sync.data.part[message.id] ?? []}
-                        recoverable={(() => {
-                          const c = recoveryCandidate()
-                          return !!(c && c.kind === "assistant" && c.assistantMessageID === message.id && sync.session.status(route.sessionID) === "idle")
+                          )
                         })()}
-                        recovering={sync.data.session_recovery_active[route.sessionID] === message.id}
-                        onRecover={recover}
-                      />
-                    </Match>
-                  </Switch>
-                )}
-              </For>
-            </scrollbox>
-            <box flexShrink={0}>
-              <Show when={permissions().length > 0}>
-                <PermissionPrompt request={permissions()[0]} />
-              </Show>
-              <Show when={permissions().length === 0 && questions().length > 0}>
-                <QuestionPrompt request={questions()[0]} />
-              </Show>
-              <Show when={currentAgentID() !== "main"}>
-                <SubagentFooter />
-              </Show>
-              <Show when={visible()}>
-                <TuiPluginRuntime.Slot
-                  name="session_prompt"
-                  mode="replace"
-                  session_id={route.sessionID}
-                  visible={visible()}
-                  disabled={disabled()}
-                  on_submit={toBottom}
-                  ref={bind}
+                      </Match>
+                      <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
+                        <></>
+                      </Match>
+                      <Match when={message.role === "user"}>
+                        <UserMessageView
+                          index={index()}
+                          onMouseUp={() => {
+                            if (renderer.getSelection()?.getSelectedText()) return
+                            dialog.replace(() => (
+                              <DialogMessage
+                                messageID={message.id}
+                                sessionID={route.sessionID}
+                                setPrompt={(promptInfo) => prompt?.set(promptInfo)}
+                              />
+                            ))
+                          }}
+                          message={message as UserMessage}
+                          parts={sync.data.part[message.id] ?? []}
+                          pending={pending()}
+                        />
+                      </Match>
+                      <Match when={message.role === "assistant"}>
+                        <AssistantMessageView
+                          last={lastAssistant()?.id === message.id}
+                          message={message as AssistantMessage}
+                          parts={sync.data.part[message.id] ?? []}
+                          recoverable={(() => {
+                            const c = recoveryCandidate()
+                            return !!(
+                              c &&
+                              c.kind === "assistant" &&
+                              c.assistantMessageID === message.id &&
+                              sync.session.status(route.sessionID) === "idle"
+                            )
+                          })()}
+                          recovering={sync.data.session_recovery_active[route.sessionID] === message.id}
+                          onRecover={recover}
+                        />
+                      </Match>
+                    </Switch>
+                  )}
+                </For>
+              </scrollbox>
+              <box flexShrink={0}>
+                <Show when={permissions().length > 0}>
+                  <PermissionPrompt request={permissions()[0]} />
+                </Show>
+                <Show when={permissions().length === 0 && questions().length > 0}>
+                  <QuestionPrompt request={questions()[0]} />
+                </Show>
+                <Show
+                  when={currentAgentID() !== "main" && route.task?.role !== "worker" && route.task?.role !== "router"}
                 >
-                  <Prompt
+                  <SubagentFooter />
+                </Show>
+                <Show when={visible()}>
+                  <TuiPluginRuntime.Slot
+                    name="session_prompt"
+                    mode="replace"
+                    session_id={route.sessionID}
                     visible={visible()}
-                    ref={bind}
                     disabled={disabled()}
-                    onSubmit={() => {
-                      toBottom()
-                    }}
-                    sessionID={route.sessionID}
-                    right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
-                  />
-                </TuiPluginRuntime.Slot>
-              </Show>
-            </box>
-          </Show>
+                    on_submit={toBottom}
+                    ref={bind}
+                  >
+                    <Prompt
+                      visible={visible()}
+                      onSend={
+                        route.task && route.task.role !== "helper"
+                          ? (value) => sendTask(sdk, route.task!, value, local.model.current())
+                          : undefined
+                      }
+                      recipient={
+                        route.task && route.task.role !== "helper"
+                          ? {
+                              agent: route.task.role === "router" ? "Router" : "Worker",
+                              model: local.model.current()?.modelID ?? "",
+                              hint: route.task.ticketId
+                                ? language.effective().startsWith("zh")
+                                  ? "直接补充需求、回答问题，原 Worker 继续处理"
+                                  : "Follow up with this task Worker"
+                                : language.effective().startsWith("zh")
+                                  ? "描述新需求或查询任务状态"
+                                  : "Describe a request or ask status",
+                            }
+                          : undefined
+                      }
+                      ref={bind}
+                      disabled={disabled()}
+                      onSubmit={() => {
+                        toBottom()
+                      }}
+                      sessionID={route.sessionID}
+                      right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
+                    />
+                  </TuiPluginRuntime.Slot>
+                </Show>
+              </box>
+            </Show>
           </Show>
           <Toast />
         </box>
@@ -1510,10 +1535,12 @@ export function UserMessageView(props: {
   onMouseUp: () => void
   index: number
   pending?: string
+  agentID?: string
 }) {
   const ctx = use()
   const local = useLocal()
-  const currentAgentID = useCurrentAgentID()
+  const routeAgentID = useCurrentAgentID()
+  const currentAgentID = () => props.agentID ?? routeAgentID()
   const text = createMemo(() => props.parts.flatMap((x) => (x.type === "text" && !x.synthetic ? [x] : []))[0])
   // Cron-fired synthetic prompts: surface as a one-line clock row instead of
   // hiding them. Backend (cron-bridge.ts:onFire) stores the ISO timestamp at
@@ -1522,7 +1549,8 @@ export function UserMessageView(props: {
   const cronFire = createMemo(() => {
     return props.parts.flatMap((x) => {
       if (x.type !== "text" || !x.synthetic) return []
-      const origin = (x.metadata as { origin?: { kind?: string; firedAt?: string; kindOfTask?: string } } | undefined)?.origin
+      const origin = (x.metadata as { origin?: { kind?: string; firedAt?: string; kindOfTask?: string } } | undefined)
+        ?.origin
       if (origin?.kind !== "cron") return []
       return [{ part: x, firedAt: origin.firedAt, kindOfTask: origin.kindOfTask ?? "cron" }]
     })[0]
@@ -1594,7 +1622,13 @@ export function UserMessageView(props: {
             return Number.isNaN(date.getTime()) ? iso : Locale.todayTimeOrDateTime(date.getTime())
           })
           return (
-            <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
+            <box
+              id={props.message.id}
+              marginTop={props.index === 0 ? 0 : 1}
+              paddingLeft={2}
+              flexDirection="row"
+              gap={1}
+            >
               <text fg={theme.textMuted}>
                 <span style={{ bg: theme.backgroundElement, fg: theme.primary, bold: true }}> 🕒 cron fire </span>
                 <span style={{ fg: theme.textMuted }}> {stamp()} </span>
@@ -1611,14 +1645,21 @@ export function UserMessageView(props: {
           // structured rows rather than raw <actor-notification> XML.
           const style = createMemo(() => {
             const s = note().status
-            if (s === "completed") return { icon: "✓", fg: theme.success, label: t("tui.session.actor_status.completed") }
+            if (s === "completed")
+              return { icon: "✓", fg: theme.success, label: t("tui.session.actor_status.completed") }
             if (s === "failed") return { icon: "✗", fg: theme.error, label: t("tui.session.actor_status.failed") }
             if (s === "stalled") return { icon: "⏳", fg: theme.warning, label: t("tui.session.actor_status.stalled") }
             if (s === "ended") return { icon: "⊙", fg: theme.textMuted, label: t("tui.session.actor_status.ended") }
             return { icon: "⊜", fg: theme.textMuted, label: t("tui.session.actor_status.cancelled") }
           })
           return (
-            <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
+            <box
+              id={props.message.id}
+              marginTop={props.index === 0 ? 0 : 1}
+              paddingLeft={2}
+              flexDirection="row"
+              gap={1}
+            >
               <text fg={theme.textMuted}>
                 <span style={{ bg: theme.backgroundElement, fg: style().fg, bold: true }}>
                   {" "}
@@ -1628,7 +1669,11 @@ export function UserMessageView(props: {
                 <Show when={note().summary}>
                   <span style={{ fg: theme.textMuted }}> — {note().summary}</span>
                 </Show>
-                <ActorNotificationWarnings warnings={note().warnings} label={t("tui.session.actor_warning")} color={theme.warning} />
+                <ActorNotificationWarnings
+                  warnings={note().warnings}
+                  label={t("tui.session.actor_warning")}
+                  color={theme.warning}
+                />
               </text>
             </box>
           )
@@ -1689,9 +1734,7 @@ export function UserMessageView(props: {
             fallback={
               <Show when={ctx.showTimestamps()}>
                 <text fg={theme.textMuted}>
-                  <span style={{ fg: theme.textMuted }}>
-                    {Locale.todayTimeOrDateTime(props.message.time.created)}
-                  </span>
+                  <span style={{ fg: theme.textMuted }}>{Locale.todayTimeOrDateTime(props.message.time.created)}</span>
                 </text>
               </Show>
             }
@@ -1706,13 +1749,14 @@ export function UserMessageView(props: {
   )
 }
 
-function AssistantMessage(props: {
+export function AssistantMessageView(props: {
   message: AssistantMessage
   parts: Part[]
   last: boolean
   recoverable: boolean
   recovering: boolean
   onRecover: (assistantMessageID: string) => Promise<void>
+  hideMetadata?: boolean
 }) {
   const ctx = use()
   const local = useLocal()
@@ -1724,9 +1768,7 @@ function AssistantMessage(props: {
   const [copyHover, setCopyHover] = createSignal(false)
   const [recoverHover, setRecoverHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
-  const model = createMemo(() =>
-    Model.name(ctx.providers(), props.message.providerID, props.message.modelID),
-  )
+  const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
 
   const final = createMemo(() => isFinalAssistantFinish(props.message.finish))
 
@@ -1817,7 +1859,9 @@ function AssistantMessage(props: {
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
             {keybind.print("session_child_first")}
-            <span style={{ fg: theme.textMuted }}>{hasWorkflowPart() ? " view workflow agents" : " view subagents"}</span>
+            <span style={{ fg: theme.textMuted }}>
+              {hasWorkflowPart() ? " view workflow agents" : " view subagents"}
+            </span>
           </text>
         </box>
       </Show>
@@ -1825,7 +1869,7 @@ function AssistantMessage(props: {
         <ErrorBlock error={props.message.error!} />
       </Show>
       <Switch>
-        <Match when={showFooter()}>
+        <Match when={showFooter() && !props.hideMetadata}>
           <box paddingLeft={3} flexDirection="row" justifyContent="space-between" marginTop={1}>
             <text>
               <span
@@ -1872,11 +1916,7 @@ function AssistantMessage(props: {
               </box>
             </Show>
             <Show when={props.message.time.completed}>
-              <box
-                onMouseOver={() => setCopyHover(true)}
-                onMouseOut={() => setCopyHover(false)}
-                onMouseUp={handleCopy}
-              >
+              <box onMouseOver={() => setCopyHover(true)} onMouseOut={() => setCopyHover(false)} onMouseUp={handleCopy}>
                 <text fg={copyHover() ? theme.text : theme.textMuted}>⎘ copy</text>
               </box>
             </Show>
@@ -2366,16 +2406,15 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   )
 }
 
-function ExecSubtoolRow(props: {
-  part: ExecSubPartSnapshot
-  parent: ToolPart
-  message: AssistantMessage
-}) {
+function ExecSubtoolRow(props: { part: ExecSubPartSnapshot; parent: ToolPart; message: AssistantMessage }) {
   const synthetic = createMemo(() => {
     const state = props.part.state
-    const input = state.input && typeof state.input === "object" && !Array.isArray(state.input)
-      ? state.input
-      : state.input === undefined ? {} : { value: state.input }
+    const input =
+      state.input && typeof state.input === "object" && !Array.isArray(state.input)
+        ? state.input
+        : state.input === undefined
+          ? {}
+          : { value: state.input }
     return {
       id: props.part.callID as ToolPart["id"],
       sessionID: props.parent.sessionID,
@@ -2386,24 +2425,28 @@ function ExecSubtoolRow(props: {
       state: {
         status: state.status,
         input,
-        ...(state.status === "running" ? {
-          title: state.title,
-          ...(state.metadata ? { metadata: state.metadata } : {}),
-          time: state.time,
-        } : state.status === "completed" ? {
-          title: state.title ?? props.part.tool,
-          output: state.output ?? "",
-          metadata: state.metadata ?? {},
-          time: { start: state.time.start, end: state.time.end ?? state.time.start },
-          ...(state.attachments ? { attachments: state.attachments } : {}),
-          ...(state.providerOutput !== undefined ? { providerOutput: state.providerOutput } : {}),
-          ...(state.providerMetadata ? { providerMetadata: state.providerMetadata } : {}),
-        } : {
-          error: state.error ?? "Tool failed",
-          ...(state.metadata ? { metadata: state.metadata } : {}),
-          time: { start: state.time.start, end: state.time.end ?? state.time.start },
-          ...(state.attachments ? { attachments: state.attachments } : {}),
-        }),
+        ...(state.status === "running"
+          ? {
+              title: state.title,
+              ...(state.metadata ? { metadata: state.metadata } : {}),
+              time: state.time,
+            }
+          : state.status === "completed"
+            ? {
+                title: state.title ?? props.part.tool,
+                output: state.output ?? "",
+                metadata: state.metadata ?? {},
+                time: { start: state.time.start, end: state.time.end ?? state.time.start },
+                ...(state.attachments ? { attachments: state.attachments } : {}),
+                ...(state.providerOutput !== undefined ? { providerOutput: state.providerOutput } : {}),
+                ...(state.providerMetadata ? { providerMetadata: state.providerMetadata } : {}),
+              }
+            : {
+                error: state.error ?? "Tool failed",
+                ...(state.metadata ? { metadata: state.metadata } : {}),
+                time: { start: state.time.start, end: state.time.end ?? state.time.start },
+                ...(state.attachments ? { attachments: state.attachments } : {}),
+              }),
       },
     } as ToolPart
   })
@@ -2532,7 +2575,12 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         <box gap={1}>
           <text fg={theme.textMuted}>{((props.input.code as string | undefined) ?? "").trim()}</text>
           <Show when={subParts().length > 0}>
-            <ExecSubtoolGroup parts={subParts()} parent={props.part} message={props.message} clearParentHover={hoverControl.clear} />
+            <ExecSubtoolGroup
+              parts={subParts()}
+              parent={props.part}
+              message={props.message}
+              clearParentHover={hoverControl.clear}
+            />
           </Show>
           <text fg={theme.textMuted}>Click to collapse</text>
         </box>
@@ -2604,11 +2652,14 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
   // Non-"run" ops (status/wait/cancel/resume) are one-shot control calls with no
   // live transcript — keep them as a compact inline line.
   return (
-    <Show when={operation() === "run"} fallback={
-      <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
-        {`workflow ${operation()}${runID() ? ` ${runID()}` : ""}`}
-      </InlineTool>
-    }>
+    <Show
+      when={operation() === "run"}
+      fallback={
+        <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
+          {`workflow ${operation()}${runID() ? ` ${runID()}` : ""}`}
+        </InlineTool>
+      }
+    >
       <WorkflowPanel
         name={name()}
         status={status()}
@@ -2687,7 +2738,14 @@ function WorkflowPanel(props: {
       }}
     >
       <box flexDirection="row" gap={1} paddingLeft={3}>
-        <Show when={props.running} fallback={<text fg={theme.accent} attributes={TextAttributes.BOLD}>⚡</text>}>
+        <Show
+          when={props.running}
+          fallback={
+            <text fg={theme.accent} attributes={TextAttributes.BOLD}>
+              ⚡
+            </text>
+          }
+        >
           <Spinner color={theme.accent} />
         </Show>
         <text attributes={TextAttributes.BOLD} fg={theme.accent}>
@@ -2736,10 +2794,7 @@ function WorkflowPanel(props: {
           </Show>
           <For each={entries()}>
             {(e) => (
-              <Show
-                when={e.kind === "phase"}
-                fallback={<text fg={theme.text}>{e.text}</text>}
-              >
+              <Show when={e.kind === "phase"} fallback={<text fg={theme.text}>{e.text}</text>}>
                 <text fg={theme.accent} attributes={TextAttributes.BOLD}>
                   ▸ {e.text}
                 </text>
@@ -2889,11 +2944,7 @@ function WorkflowPage(props: {
           </Show>
         </box>
       </Show>
-      <scrollbox
-        ref={(r) => (pageScroll = r)}
-        flexGrow={1}
-        scrollAcceleration={scrollAcceleration()}
-      >
+      <scrollbox ref={(r) => (pageScroll = r)} flexGrow={1} scrollAcceleration={scrollAcceleration()}>
         <WorkflowTree
           nodes={structure()}
           onOpenChild={props.onOpenChild}
@@ -2926,7 +2977,6 @@ function CollapsibleError(props: { error: string; paddingLeft?: number }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const [expanded, setExpanded] = createSignal(false)
-
 
   const lineCount = createMemo(() => props.error.split("\n").length)
 
@@ -3042,7 +3092,11 @@ function InlineTool(props: {
           <Spinner color={fg()} children={props.children} />
         </Match>
         <Match when={true}>
-          <text paddingLeft={3} fg={fg()} attributes={denied() || recoverable() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}>
+          <text
+            paddingLeft={3}
+            fg={fg()}
+            attributes={denied() || recoverable() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}
+          >
             <Show fallback={<>~ {props.pending}</>} when={props.complete}>
               {props.icon} {props.children}
             </Show>
@@ -3283,13 +3337,7 @@ function Read(props: ToolProps<typeof ReadTool>) {
 function ViewImage(props: ToolProps<typeof ViewImageTool>) {
   const isRunning = createMemo(() => props.part.state.status === "running")
   return (
-    <InlineTool
-      icon="◉"
-      pending="Viewing image..."
-      complete={props.input.path}
-      spinner={isRunning()}
-      part={props.part}
-    >
+    <InlineTool icon="◉" pending="Viewing image..." complete={props.input.path} spinner={isRunning()} part={props.part}>
       View image {normalizePath(props.input.path!)} {input(props.input, ["path"])}
     </InlineTool>
   )
@@ -3333,6 +3381,7 @@ function WebSearch(props: ToolProps<typeof WebSearchTool>) {
 }
 
 function Task(props: ToolProps<typeof ActorTool>) {
+  const ctx = use()
   const route = useRoute()
   const sync = useSync()
 
@@ -3376,15 +3425,12 @@ function Task(props: ToolProps<typeof ActorTool>) {
   const inputAction = createMemo(() => input().action)
 
   const metaActorId = createMemo(
-    () =>
-      (props.metadata.actorId as string | undefined) ??
-      (props.metadata.receiver_actor_id as string | undefined),
+    () => (props.metadata.actorId as string | undefined) ?? (props.metadata.receiver_actor_id as string | undefined),
   )
 
   const metaSessionId = createMemo(
     () =>
-      (props.metadata.sessionId as string | undefined) ??
-      (props.metadata.receiver_session_id as string | undefined),
+      (props.metadata.sessionId as string | undefined) ?? (props.metadata.receiver_session_id as string | undefined),
   )
 
   const actorEntry = createMemo(() => {
@@ -3430,7 +3476,10 @@ function Task(props: ToolProps<typeof ActorTool>) {
       actorDescription: actorEntry()?.description ?? sendTargetEntry()?.description,
       toActorId: input().to_actor_id,
       actorId: input().actor_id,
-      title: props.part.state.status === "running" || props.part.state.status === "completed" ? props.part.state.title : undefined,
+      title:
+        props.part.state.status === "running" || props.part.state.status === "completed"
+          ? props.part.state.title
+          : undefined,
     }),
   )
 
@@ -3442,8 +3491,7 @@ function Task(props: ToolProps<typeof ActorTool>) {
     if (action === "send" || action === "models") return
     const session = targetSession()
     const bucket = targetBucket()
-    if (session && !sync.data.message[session]?.[bucket]?.length)
-      void sync.session.sync(session)
+    if (session && !sync.data.message[session]?.[bucket]?.length) void sync.session.sync(session)
   })
 
   const messages = createMemo(() => sync.data.message[targetSession() ?? ""]?.[targetBucket()] ?? [])
@@ -3532,11 +3580,11 @@ function Task(props: ToolProps<typeof ActorTool>) {
         const session = targetSession()
         if (!session) return
         const actor = targetBucket()
-        if (
-          route.data.type === "session" &&
-          session === route.data.sessionID &&
-          actor !== "main"
-        ) {
+        if (ctx.onOpenAgent) {
+          ctx.onOpenAgent(session, actor)
+          return
+        }
+        if (route.data.type === "session" && session === route.data.sessionID && actor !== "main") {
           route.navigate({ ...route.data, agentID: actor })
           return
         }

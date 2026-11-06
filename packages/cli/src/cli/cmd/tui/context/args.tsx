@@ -1,6 +1,7 @@
 import { createSimpleContext } from "./helper"
 
 export interface Args {
+  taskCenter?: boolean
   model?: string
   agent?: string
   prompt?: string

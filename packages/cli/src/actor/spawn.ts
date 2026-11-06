@@ -425,19 +425,17 @@ export const layer = Layer.effect(
 
         const actorMode = input.actorMode
 
-        // Writability of THIS agent, derived from the same predicate the runtime uses to
-        // strip the Write tool (llm.ts resolveTools → Permission.disabled). Read-only agents
-        // (e.g. explore: "*":deny) → canWrite=false → postStop progress check is skipped for
-        // them (they cannot satisfy a "write the journal" nudge; their findings return via
-        // finalText). Agent-static: uses agentInfo.permission ONLY, not the session-merged
-        // ruleset resolveTools builds (merge(agent, session)). So canWrite diverges from
-        // runtime tool-stripping only under a session-level override — e.g. session "*":allow
-        // un-stripping a read-only agent's write (we skip though runtime allows), or session
-        // "*":deny on a writable agent (we nudge though runtime strips). Both are deliberately
-        // ignored: not reachable in normal usage (mimo run sets no such rule, spawn doesn't
-        // rewrite session.permission). See spec §Decision. Unknown agent → fail-open (true).
+        // A progress-journal nudge requires the actual Write tool. Role/Actor
+        // whitelists and hard permissions can remove it even when the agent's
+        // base permission defaults allow writing. Findings from read-only
+        // investigators are delivered via finalText, without another model turn.
         const forkAgentInfo = yield* agents.get(input.agentType)
-        const canWrite = forkAgentInfo ? !Permission.disabled(["write"], forkAgentInfo.permission).has("write") : true
+        const actorTools = (yield* actorReg.get(input.sessionID, input.actorID))?.tools
+        const canWrite =
+          (!forkAgentInfo ||
+            ((!forkAgentInfo.toolAllowlist || forkAgentInfo.toolAllowlist.includes("write")) &&
+              !Permission.disabled(["write"], Agent.runtimePermission(forkAgentInfo)).has("write"))) &&
+          (!actorTools || actorTools === "INHERIT" || actorTools.includes("write"))
 
         const work = runTurn(
           input.sessionID,

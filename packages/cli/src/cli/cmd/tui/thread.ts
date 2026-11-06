@@ -1,63 +1,16 @@
 import { cmd } from "@/cli/cmd/cmd"
 import { tui } from "./app"
-import { Rpc } from "@/util"
-import { type rpc } from "./worker"
 import path from "path"
-import { fileURLToPath } from "url"
 import { UI } from "@/cli/ui"
-import { Log } from "@/util"
-import { errorMessage } from "@/util/error"
-import { withTimeout } from "@/util/timeout"
-import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "@/cli/network"
+import * as Daemon from "@/server/daemon"
 import { Filesystem } from "@/util"
-import type { GlobalEvent } from "@mimo-ai/sdk/v2"
-import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
-import { writeHeapSnapshot } from "v8"
 import { TuiConfig } from "./config/tui"
-import { MIMOCODE_PROCESS_ROLE, MIMOCODE_RUN_ID, ensureRunID, sanitizedProcessEnv } from "@/util/mimo-process"
 import { checkTrust, markTrusted } from "@/project/workspace-trust"
 import { t } from "@/cli/i18n"
 
 declare global {
   const MIMOCODE_WORKER_PATH: string
-}
-
-type RpcClient = ReturnType<typeof Rpc.client<typeof rpc>>
-
-function createWorkerFetch(client: RpcClient): typeof fetch {
-  const fn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const request = new Request(input, init)
-    const body = request.body ? await request.text() : undefined
-    const result = await client.call("fetch", {
-      url: request.url,
-      method: request.method,
-      headers: Object.fromEntries(request.headers.entries()),
-      body,
-    })
-    return new Response(result.body, {
-      status: result.status,
-      headers: result.headers,
-    })
-  }
-  return fn as typeof fetch
-}
-
-function createEventSource(client: RpcClient): EventSource {
-  return {
-    subscribe: async (handler) => {
-      return client.on<GlobalEvent>("global.event", (e) => {
-        handler(e)
-      })
-    },
-  }
-}
-
-async function target() {
-  if (typeof MIMOCODE_WORKER_PATH !== "undefined") return MIMOCODE_WORKER_PATH
-  const dist = new URL("./cli/cmd/tui/worker.js", import.meta.url)
-  if (await Filesystem.exists(fileURLToPath(dist))) return dist
-  return new URL("./worker.ts", import.meta.url)
 }
 
 async function input(value?: string) {
@@ -158,7 +111,7 @@ export const TuiThreadCommand = cmd({
   command: "$0 [project]",
   describe: "start mimocode tui",
   builder: (yargs) =>
-    withNetworkOptions(yargs)
+    yargs
       .positional("project", {
         type: "string",
         describe: "path to start mimocode in",
@@ -228,7 +181,6 @@ export const TuiThreadCommand = cmd({
       const next = args.project
         ? Filesystem.resolve(path.isAbsolute(args.project) ? args.project : path.join(root, args.project))
         : Filesystem.resolve(process.cwd())
-      const file = await target()
       try {
         process.chdir(next)
       } catch {
@@ -263,123 +215,27 @@ export const TuiThreadCommand = cmd({
         process.env.MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS = "1"
       }
 
-      const env = sanitizedProcessEnv({
-        [MIMOCODE_PROCESS_ROLE]: "worker",
-        [MIMOCODE_RUN_ID]: ensureRunID(),
-      })
-
-      const worker = new Worker(file, {
-        env,
-      })
-      worker.onerror = (e) => {
-        Log.Default.error("thread error", {
-          message: e.message,
-          filename: e.filename,
-          lineno: e.lineno,
-          colno: e.colno,
-          error: e.error,
-        })
-      }
-
-      const client = Rpc.client<typeof rpc>(worker)
-      const error = (e: unknown) => {
-        Log.Default.error("process error", { error: errorMessage(e) })
-      }
-      const reload = () => {
-        client.call("reload", undefined).catch((err) => {
-          Log.Default.warn("worker reload failed", {
-            error: errorMessage(err),
-          })
-        })
-      }
-      process.on("uncaughtException", error)
-      process.on("unhandledRejection", error)
-      process.on("SIGUSR2", reload)
-
-      let stopped = false
-      const stop = async () => {
-        if (stopped) return
-        stopped = true
-        process.off("uncaughtException", error)
-        process.off("unhandledRejection", error)
-        process.off("SIGUSR2", reload)
-        await withTimeout(client.call("shutdown", undefined), 5000).catch((error) => {
-          Log.Default.warn("worker shutdown failed", {
-            error: errorMessage(error),
-          })
-        })
-        worker.terminate()
-      }
-
       const prompt = await input(args.prompt)
       const config = await TuiConfig.get()
-
-      const network = resolveNetworkOptionsNoConfig(args)
-      const external =
-        process.argv.includes("--port") ||
-        process.argv.includes("--hostname") ||
-        process.argv.includes("--mdns") ||
-        network.mdns ||
-        network.port !== 0 ||
-        network.hostname !== "127.0.0.1"
-
-      const transport = external
-        ? {
-            url: (await client.call("server", network)).url,
-            fetch: undefined,
-            events: undefined,
-          }
-        : {
-            url: "http://opencode.internal",
-            fetch: createWorkerFetch(client),
-            events: createEventSource(client),
-          }
-
-      // Bind a loopback listener even when this TUI talks to the worker in-process.
-      // The transport above stays as it was on purpose: routing the TUI's own traffic
-      // through TCP and JSON would be a pointless downgrade. What the socket is for is
-      // everything OUTSIDE this process — the OpenAI-compatible `/v1` surface a skill or
-      // subprocess borrows a model through, which cannot exist without one. Awaited
-      // rather than fired off, so a consumer spawned in the first turn finds it already
-      // there; the call is idempotent and generates its own credential.
-      if (!external) {
-        await client
-          .call("server", undefined)
-          .catch((error) => Log.Default.warn("failed to bind loopback listener", { error: errorMessage(error) }))
-      }
-
-      setTimeout(() => {
-        client.call("checkUpgrade", { directory: cwd }).catch(() => {})
-      }, 1000).unref?.()
-
-      try {
-        await tui({
-          url: transport.url,
-          async onSnapshot() {
-            const tui = writeHeapSnapshot("tui.heapsnapshot")
-            const server = await client.call("snapshot", undefined)
-            return [tui, server]
-          },
-          config,
-          directory: cwd,
-          fetch: transport.fetch,
-          events: transport.events,
-          args: {
-            continue: args.continue,
-            sessionID: args.session,
-            agent: args.agent,
-            model: args.model,
-            prompt,
-            fork: args.fork,
-            neverAsk: args["never-ask"],
-          },
-        })
-      } finally {
-        await stop()
-      }
+      const service = await Daemon.ensure(cwd)
+      await tui({
+        url: service.url,
+        headers: Daemon.headers(service),
+        config,
+        directory: cwd,
+        args: {
+          continue: args.continue,
+          sessionID: args.session,
+          agent: args.agent,
+          model: args.model,
+          prompt,
+          fork: args.fork,
+          neverAsk: args["never-ask"],
+          taskCenter: !args.session && !args.continue && !args.agent && !args.fork,
+        },
+      })
     } finally {
       unguard?.()
     }
   },
 })
-// scratch

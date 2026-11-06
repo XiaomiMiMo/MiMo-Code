@@ -3,17 +3,7 @@ import * as Clipboard from "@tui/util/clipboard"
 import * as Selection from "@tui/util/selection"
 import { createCliRenderer, MouseButton, type CliRendererConfig } from "@opentui/core"
 import { RouteProvider, useRoute } from "@tui/context/route"
-import {
-  Switch,
-  Match,
-  createEffect,
-  createMemo,
-  ErrorBoundary,
-  createSignal,
-  onMount,
-  batch,
-  Show,
-} from "solid-js"
+import { Switch, Match, createEffect, createMemo, ErrorBoundary, createSignal, onMount, batch, Show } from "solid-js"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { Flag } from "@/flag/flag"
 import { removeXiaomiFamilyCredentials } from "@/provider/xiaomi-family"
@@ -45,6 +35,7 @@ import { DialogConsoleOrg } from "@tui/component/dialog-console-org"
 import { KeybindProvider, useKeybind } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
+import { Superagent } from "@tui/routes/superagent"
 import { Session } from "@tui/routes/session"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
@@ -53,6 +44,7 @@ import { DialogAlert } from "./ui/dialog-alert"
 import { DialogConfirm } from "./ui/dialog-confirm"
 import { ToastProvider, useToast } from "./ui/toast"
 import { ExitProvider, useExit } from "./context/exit"
+import { ExitMessage } from "./component/exit-message"
 import { Session as SessionApi } from "@/session"
 import { TuiEvent } from "./event"
 import { KVProvider, useKV } from "./context/kv"
@@ -178,52 +170,54 @@ export function tui(input: {
             <ExitProvider onBeforeExit={onBeforeExit} onExit={onExit}>
               <KVProvider>
                 <LanguageProvider>
-                <ToastProvider>
-                  <RouteProvider
-                    initialRoute={
-                      input.args.continue
-                        ? {
-                            type: "session",
-                            sessionID: "dummy",
-                          }
-                        : undefined
-                    }
-                  >
-                    <TuiConfigProvider config={input.config}>
-                      <SDKProvider
-                        url={input.url}
-                        directory={input.directory}
-                        fetch={input.fetch}
-                        headers={input.headers}
-                        events={input.events}
-                      >
-                        <ProjectProvider>
-                          <SyncProvider>
-                            <ThemeProvider mode={mode} plain={plainTerminal}>
-                              <LocalProvider>
-                                <KeybindProvider>
-                                  <PromptStashProvider>
-                                    <DialogProvider>
-                                      <CommandProvider>
-                                        <FrecencyProvider>
-                                          <PromptHistoryProvider>
-                                            <PromptRefProvider>
-                                              <App onSnapshot={input.onSnapshot} />
-                                            </PromptRefProvider>
-                                          </PromptHistoryProvider>
-                                        </FrecencyProvider>
-                                      </CommandProvider>
-                                    </DialogProvider>
-                                  </PromptStashProvider>
-                                </KeybindProvider>
-                              </LocalProvider>
-                            </ThemeProvider>
-                          </SyncProvider>
-                        </ProjectProvider>
-                      </SDKProvider>
-                    </TuiConfigProvider>
-                  </RouteProvider>
-                </ToastProvider>
+                  <ToastProvider>
+                    <RouteProvider
+                      initialRoute={
+                        input.args.continue
+                          ? {
+                              type: "session",
+                              sessionID: "dummy",
+                            }
+                          : input.args.taskCenter
+                            ? { type: "superagent" }
+                            : undefined
+                      }
+                    >
+                      <TuiConfigProvider config={input.config}>
+                        <SDKProvider
+                          url={input.url}
+                          directory={input.directory}
+                          fetch={input.fetch}
+                          headers={input.headers}
+                          events={input.events}
+                        >
+                          <ProjectProvider>
+                            <SyncProvider>
+                              <ThemeProvider mode={mode} plain={plainTerminal}>
+                                <LocalProvider>
+                                  <KeybindProvider>
+                                    <PromptStashProvider>
+                                      <DialogProvider>
+                                        <CommandProvider>
+                                          <FrecencyProvider>
+                                            <PromptHistoryProvider>
+                                              <PromptRefProvider>
+                                                <App onSnapshot={input.onSnapshot} />
+                                              </PromptRefProvider>
+                                            </PromptHistoryProvider>
+                                          </FrecencyProvider>
+                                        </CommandProvider>
+                                      </DialogProvider>
+                                    </PromptStashProvider>
+                                  </KeybindProvider>
+                                </LocalProvider>
+                              </ThemeProvider>
+                            </SyncProvider>
+                          </ProjectProvider>
+                        </SDKProvider>
+                      </TuiConfigProvider>
+                    </RouteProvider>
+                  </ToastProvider>
                 </LanguageProvider>
               </KVProvider>
             </ExitProvider>
@@ -454,6 +448,16 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
   command.register(() => [
     {
+      title: "Super-agent",
+      value: "superagent.open",
+      category: "session",
+      slash: { name: "super-agent", aliases: ["superagent"] },
+      onSelect: () => {
+        route.navigate({ type: "superagent" })
+        dialog.clear()
+      },
+    },
+    {
       title: t("tui.command.session.list.title"),
       value: "session.list",
       keybind: "session_list",
@@ -596,9 +600,7 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
     },
     {
-      title: local.neverAsk.current()
-        ? t("tui.command.never_ask.title_on")
-        : t("tui.command.never_ask.title_off"),
+      title: local.neverAsk.current() ? t("tui.command.never_ask.title_on") : t("tui.command.never_ask.title_off"),
       value: "question.never_ask.toggle",
       category: "agent",
       slash: {
@@ -1201,12 +1203,7 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
       ? t("tui.toast.update_available.confirm", { version }) + "\n" + t("tui.toast.native_installer_tip")
       : t("tui.toast.update_available.confirm", { version })
 
-    const choice = await DialogConfirm.show(
-      dialog,
-      t("tui.toast.update_available.title"),
-      confirmMsg,
-      "skip",
-    )
+    const choice = await DialogConfirm.show(dialog, t("tui.toast.update_available.title"), confirmMsg, "skip")
 
     if (choice === false) {
       kv.set("skipped_version", version)
@@ -1243,7 +1240,8 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
   })
 
   event.on("installation.updated", (evt) => {
-    const isPkgManager = evt.properties.method === "npm" || evt.properties.method === "pnpm" || evt.properties.method === "bun"
+    const isPkgManager =
+      evt.properties.method === "npm" || evt.properties.method === "pnpm" || evt.properties.method === "bun"
     const msg = isPkgManager
       ? t("tui.toast.updated.message", { version: evt.properties.version }) + " " + t("tui.toast.native_installer_tip")
       : t("tui.toast.updated.message", { version: evt.properties.version })
@@ -1371,8 +1369,12 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
       <Show when={Flag.MIMOCODE_SHOW_TTFD}>
         <TimeToFirstDraw />
       </Show>
+      <ExitMessage session={(id) => sync.session.get(id)} />
       <Show when={ready()}>
         <Switch>
+          <Match when={route.data.type === "superagent"}>
+            <Superagent />
+          </Match>
           <Match when={route.data.type === "home"}>
             <Home />
           </Match>

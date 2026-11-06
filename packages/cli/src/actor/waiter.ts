@@ -68,6 +68,7 @@ export interface Interface {
     actor_id: string
     timeout_ms?: number
     afterRevision?: number
+    caller?: { sessionID: SessionID; agentID: string }
   }) => Effect.Effect<WaitResult>
 }
 
@@ -187,12 +188,13 @@ export const layer: Layer.Layer<
       actor_id: string
       timeout_ms?: number
       afterRevision?: number
+      caller?: { sessionID: SessionID; agentID: string }
     }) {
       const entry = yield* reg.get(input.sessionID, input.actor_id)
       if (!entry) return { status: "unknown" as const, actor_id: input.actor_id }
       const deadline = Date.now() + (input.timeout_ms ?? DEFAULT_TIMEOUT_MS)
       const tq = inboxControllerRef.current
-      const lane = { sessionID: input.sessionID, agentID: "main" as const }
+      const lane = input.caller ?? { sessionID: input.sessionID, agentID: "main" }
       const afterRev = input.afterRevision ?? (tq ? yield* tq.observeInput(lane, -1) : 0)
       const interrupted = yield* Deferred.make<void>()
       if (tq) {
