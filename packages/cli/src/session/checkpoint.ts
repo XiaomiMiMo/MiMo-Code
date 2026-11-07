@@ -27,6 +27,7 @@ import { makeRuntime } from "@/effect/run-service"
 import type { ActorPromptOps } from "@/tool/actor"
 import type { ProviderID, ModelID } from "../provider/schema"
 import PROMPT_CHECKPOINT_WRITER from "@/agent/prompt/checkpoint-writer.txt"
+import { checkpointWriterModelRef } from "./checkpoint-writer-model-ref"
 import { WriterCachePerf } from "@/actor/events"
 import {
   metaDir,
@@ -874,7 +875,28 @@ export const layer: Layer.Layer<
       // reuse. Users who need cold-start delta-only behavior can set
       // `checkpoint.fork: false` in their config.
       const cfg = yield* config.get()
-      const forkMode = cfg.checkpoint?.fork ?? true
+      // A writer pinned to a model of its own cannot reuse the parent's prefix:
+      // the fork branch captures the PARENT agent's system + tools for the
+      // parent's model, so sending that prefix to a different model would build
+      // the request for a model it was never captured for. A distinct pin
+      // therefore selects the cold-start branch, whose prefix is captured for
+      // the writer's own agent and model. A pin that names the session's own
+      // model is indistinguishable from inheriting it and keeps the fork.
+      //
+      // A pin that fails to resolve (unknown provider, no Agent service) falls
+      // back to inheritance rather than failing the checkpoint: a writer on the
+      // session model is the pre-existing behaviour, not an error.
+      const pinnedModel = yield* (checkpointWriterModelRef.current
+        ? checkpointWriterModelRef.current(input.model.providerID).pipe(
+            Effect.catchDefect(() => Effect.succeed(undefined)),
+          )
+        : Effect.succeed(undefined))
+      const distinctPin =
+        pinnedModel !== undefined &&
+        (pinnedModel.providerID !== input.model.providerID ||
+          pinnedModel.modelID !== input.model.modelID)
+      const writerModel = pinnedModel ?? input.model
+      const forkMode = (cfg.checkpoint?.fork ?? true) && !distinctPin
 
       const parentRow = yield* Effect.sync(() =>
         Database.use((d) =>
@@ -994,8 +1016,8 @@ export const layer: Layer.Layer<
             const writerPrefix = yield* buildPrefix({
               sessionID: input.sessionID,
               agentName: "checkpoint-writer",
-              providerID: input.model.providerID,
-              modelID: input.model.modelID,
+              providerID: writerModel.providerID,
+              modelID: writerModel.modelID,
               msgs: delta,
             })
 
@@ -1006,8 +1028,8 @@ export const layer: Layer.Layer<
               parentPermission: writerPrefix.parentPermission,
               watermarkMsgID: endMessageID as MessageID,
               model: {
-                providerID: input.model.providerID as ProviderID,
-                modelID: input.model.modelID as ModelID,
+                providerID: writerModel.providerID as ProviderID,
+                modelID: writerModel.modelID as ModelID,
               },
             } satisfies ForkContext
           })
@@ -1038,6 +1060,9 @@ export const layer: Layer.Layer<
         mode: forkMode ? "fork" : "no-fork",
         deltaApproxBytes,
         rangeDesc,
+        providerID: writerModel.providerID,
+        modelID: writerModel.modelID,
+        modelSource: distinctPin ? "agent" : "session",
       })
 
       const result = yield* actor.spawn({
@@ -1057,8 +1082,8 @@ export const layer: Layer.Layer<
         context: "full",
         tools: ["read", "write", "edit", "apply_patch", "glob", "grep", "task"],
         model: {
-          providerID: input.model.providerID as ProviderID,
-          modelID: input.model.modelID as ModelID,
+          providerID: writerModel.providerID as ProviderID,
+          modelID: writerModel.modelID as ModelID,
         },
         background: true,
         forkContext: forkCtx,

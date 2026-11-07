@@ -48,6 +48,8 @@ import { InstallationVersion } from "@/installation/version"
 import type { JSONObject, JSONSchema7 } from "@ai-sdk/provider"
 import { SessionPrune } from "./prune"
 import { SessionCheckpoint } from "./checkpoint"
+import { CheckpointWriterModel } from "./checkpoint-writer-model"
+import { checkpointWriterModelRef, type CheckpointWriterModelResolver } from "./checkpoint-writer-model-ref"
 import { isBoundaryUser, isRebuildBoundary } from "./tail-digest"
 import { SessionCompaction } from "./compaction"
 import { usable, isOverflow as overflowCheck } from "./overflow"
@@ -797,6 +799,18 @@ export const layer = Layer.effect(
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         if (prefixCaptureRef.current === capture) prefixCaptureRef.current = undefined
+      }),
+    )
+
+    // The writer is spawned with an explicit model, so the pin its agent carries
+    // (`agent.checkpoint-writer.model`) only reaches it if something resolves it
+    // first. That happens behind the same late-bind as the capture above, for the
+    // same cycle reason. See checkpoint-writer-model-ref.ts.
+    const resolveWriterModel: CheckpointWriterModelResolver = CheckpointWriterModel.resolve(agents, provider)
+    checkpointWriterModelRef.current = resolveWriterModel
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (checkpointWriterModelRef.current === resolveWriterModel) checkpointWriterModelRef.current = undefined
       }),
     )
 
