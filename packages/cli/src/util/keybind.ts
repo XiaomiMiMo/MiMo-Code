@@ -54,12 +54,15 @@ export function toString(info: Info | undefined): string {
 }
 
 export function parse(key: string): Info[] {
-  if (key === "none") return []
+  if (key.trim() === "none") return []
 
   return key.split(",").map((combo) => {
     // Handle <leader> syntax by replacing with leader+
     const normalized = combo.replace(/<leader>/g, "leader+")
-    const parts = normalized.toLowerCase().split("+")
+    const parts = normalized
+      .toLowerCase()
+      .split("+")
+      .map((part) => part.trim() || part)
     const info: Info = {
       ctrl: false,
       meta: false,

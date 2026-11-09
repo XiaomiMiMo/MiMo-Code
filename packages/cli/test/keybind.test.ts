@@ -287,6 +287,57 @@ describe("Keybind.parse", () => {
     ])
   })
 
+  test.each([
+    [" ctrl+x , ctrl+y ", "ctrl+x,ctrl+y"],
+    ["ctrl + alt + shift + x", "ctrl+alt+shift+x"],
+    ["\tsuper+z,\nshift+tab\t", "super+z,shift+tab"],
+    ["<leader> ctrl+x, <leader> q", "<leader>ctrl+x,<leader>q"],
+  ])("should ignore surrounding whitespace in %s", (input, expected) => {
+    expect(Keybind.parse(input)).toEqual(Keybind.parse(expected))
+  })
+
+  test("should not bind an unmodified key when a comma is followed by whitespace", () => {
+    const bindings = Keybind.parse("ctrl+x, ctrl+y")
+    const key: Keybind.Info = { ctrl: false, meta: false, shift: false, leader: false, name: "y" }
+    expect(bindings.some((binding) => Keybind.match(binding, key))).toBe(false)
+    expect(bindings.some((binding) => Keybind.match(binding, { ...key, ctrl: true }))).toBe(true)
+  })
+
+  test("should preserve named space key bindings", () => {
+    const key: Keybind.Info = { ctrl: false, meta: false, shift: false, leader: false, name: "space" }
+    expect(Keybind.match(Keybind.parse("space")[0], key)).toBe(true)
+    expect(Keybind.match(Keybind.parse("ctrl + space")[0], { ...key, ctrl: true })).toBe(true)
+  })
+
+  test.each([
+    [" ", "\x1b[32u"],
+    ["ctrl+ ", "\x1b[32;5u"],
+  ])("should preserve literal space binding %j in textarea input", async (binding, raw) => {
+    const { createTestRenderer } = await import("@opentui/core/testing")
+    const { KeyEvent, TextareaRenderable, parseKeypress } = await import("@opentui/core")
+    const { renderer } = await createTestRenderer({ width: 40, height: 4 })
+    try {
+      let submits = 0
+      const textarea = new TextareaRenderable(renderer, {
+        width: 40,
+        height: 3,
+        keyBindings: Keybind.parse(binding).map((info) => ({ ...info, action: "submit" })),
+        onSubmit: () => submits++,
+      })
+      try {
+        const parsed = parseKeypress(raw, { useKittyKeyboard: true })
+        if (!parsed) throw new Error("Expected a parsed space key")
+        expect(textarea.handleKeyPress(new KeyEvent(parsed))).toBe(true)
+        expect(submits).toBe(1)
+        expect(textarea.plainText).toBe("")
+      } finally {
+        textarea.destroy()
+      }
+    } finally {
+      renderer.destroy()
+    }
+  })
+
   test("should parse shift+return combination", () => {
     const result = Keybind.parse("shift+return")
     expect(result).toEqual([
@@ -316,6 +367,10 @@ describe("Keybind.parse", () => {
   test("should handle 'none' value", () => {
     const result = Keybind.parse("none")
     expect(result).toEqual([])
+  })
+
+  test("should handle 'none' with surrounding whitespace", () => {
+    expect(Keybind.parse(" none \t")).toEqual([])
   })
 
   test("should handle special keys", () => {
