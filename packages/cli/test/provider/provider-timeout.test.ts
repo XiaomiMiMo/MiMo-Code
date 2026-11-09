@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { normalizeTimeoutError, requestSignal, trackAbortSource, wrapRequestTimeout } from "../../src/provider/provider"
+import {
+  normalizeTimeoutError,
+  requestSignal,
+  resolveHeaderTimeout,
+  timeoutController,
+  trackAbortSource,
+  wrapRequestTimeout,
+} from "../../src/provider/provider"
 
 describe("provider timeout errors", () => {
   test("turns an internal timeout abort into a retryable connection error", () => {
@@ -117,5 +124,25 @@ describe("provider timeout errors", () => {
     expect((error as Error & { code?: string | number }).code).not.toBe("ETIMEDOUT")
     await Bun.sleep(0)
     expect(cancelled).toBe(true)
+  })
+
+  test("a request whose headers never arrive is aborted by the header timeout", async () => {
+    // A server that accepts the connection but never responds is the shape of
+    // a connect/TLS black-hole. Without the header timeout the fetch never
+    // settles at all — chunkTimeout only arms once a Response exists.
+    const server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) })
+    const ctl = timeoutController(resolveHeaderTimeout(50)!)
+    try {
+      const error = await fetch(`http://127.0.0.1:${server.port}/hang`, { signal: ctl.signal }).then(
+        () => new Error("fetch should not resolve"),
+        (cause: unknown) => normalizeTimeoutError(cause, "timeout", ctl.signal),
+      )
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error & { code?: string }).code).toBe("ETIMEDOUT")
+      expect((error as Error).message).toContain("Response header timed out")
+    } finally {
+      ctl.clear()
+      server.stop(true)
+    }
   })
 })
