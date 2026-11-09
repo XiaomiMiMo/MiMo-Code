@@ -1,4 +1,5 @@
 import { describe, expect, afterEach } from "bun:test"
+import { $ } from "bun"
 import { Effect } from "effect"
 import { Session } from "../../src/session"
 import { SessionRunState } from "../../src/session/run-state"
@@ -270,6 +271,76 @@ describe("WorkflowRuntime error visibility", () => {
 })
 
 describe("WorkflowRuntime cancel cascade", () => {
+  for (const isolation of [undefined, "worktree"] as const) {
+    it.live(
+      `cancelSession preserves another session's live workflow (${isolation ?? "shared"})`,
+      () =>
+        provideTmpdirServer(
+          Effect.fnUntraced(function* ({ llm }) {
+            if (isolation) {
+              const directory = Instance.directory
+              yield* Effect.promise(async () => {
+                await $`git add mimocode.json`.cwd(directory).quiet()
+                await $`git commit -m "test provider"`.cwd(directory).quiet()
+              })
+            }
+            const runtime = yield* WorkflowRuntime.Service
+            const session = yield* Session.Service
+            const state = yield* SessionRunState.Service
+            const a = yield* session.create({
+              title: "workflow A",
+              permission: [{ permission: "*", pattern: "*", action: "allow" }],
+            })
+            const b = yield* session.create({
+              title: "workflow B",
+              permission: [{ permission: "*", pattern: "*", action: "allow" }],
+            })
+            const gateA = Promise.withResolvers<void>()
+            const gateB = Promise.withResolvers<void>()
+            yield* llm.pushMatch(
+              ({ body }) => JSON.stringify(body).includes("isolation-a"),
+              reply().wait(gateA.promise).text("A finished").stop(),
+            )
+            yield* llm.pushMatch(
+              ({ body }) => JSON.stringify(body).includes("isolation-b"),
+              reply().wait(gateB.promise).text("B finished").stop(),
+            )
+            const script = (prompt: string) =>
+              `export const meta = { name: "isolation", description: "isolation test" }; return await agent(${JSON.stringify(prompt)}, ${JSON.stringify({ isolation })})`
+            const first = yield* runtime.start({
+              script: script("isolation-a"),
+              sessionID: a.id,
+              parentActorID: "main",
+              model: ref,
+            })
+            const second = yield* runtime.start({
+              script: script("isolation-b"),
+              sessionID: b.id,
+              parentActorID: "main",
+              model: ref,
+            })
+            try {
+              yield* llm.wait(2).pipe(Effect.timeout("30 seconds"))
+              yield* runtime.cancelSession(a.id)
+              expect((yield* runtime.status(first)).status).toBe("cancelled")
+              expect((yield* runtime.status(second)).status).toBe("running")
+              gateB.resolve()
+              expect(yield* runtime.wait(second)).toEqual({ status: "completed", result: "B finished" })
+            } finally {
+              gateA.resolve()
+              gateB.resolve()
+              yield* runtime.cancelSession(a.id)
+              yield* runtime.cancelSession(b.id)
+              yield* state.cancel(a.id)
+              yield* state.cancel(b.id)
+            }
+          }),
+          { git: true, config: providerCfg },
+        ),
+      120_000,
+    )
+  }
+
   it.live("cancel stops in-flight child agents and marks the run cancelled", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
