@@ -15,9 +15,28 @@ export const SYSTEM_SPAWNED_AGENT_TYPES: ReadonlySet<string> = new Set(["checkpo
  *  prior behavior.
  */
 export function hasActorTool(agent: Pick<Info, "name" | "mode" | "toolAllowlist"> | undefined) {
-  if (!agent) return true
-  if (agent.toolAllowlist && !agent.toolAllowlist.includes("actor")) return false
-  return agent.mode !== "subagent" || SYSTEM_SPAWNED_AGENT_TYPES.has(agent.name)
+  return actorToolVariant(agent) === "full"
+}
+
+/** Which `actor` surface an agent gets.
+ *
+ *  - `full`: everything. Primaries, peers, system-spawned agents (whose real
+ *    authority is the actor.tools whitelist), and any agent whose allowlist omits
+ *    `actor` never reaching this branch.
+ *  - `send`: subagents. They may not spawn further subagents, so the spawn/run/
+ *    cancel/status/wait/models actions stay unavailable, but a worker needs one
+ *    live channel back to report a blocker or a plan-changing finding instead of
+ *    waiting for its turn to end. The registry swaps in a send-only schema and the
+ *    tool re-checks the contract at runtime.
+ *  - `none`: an agent whose toolAllowlist omits `actor` (dream, distill).
+ */
+export function actorToolVariant(
+  agent: Pick<Info, "name" | "mode" | "toolAllowlist"> | undefined,
+): "full" | "send" | "none" {
+  if (!agent) return "full"
+  if (agent.toolAllowlist && !agent.toolAllowlist.includes("actor")) return "none"
+  if (agent.mode !== "subagent" || SYSTEM_SPAWNED_AGENT_TYPES.has(agent.name)) return "full"
+  return "send"
 }
 
 /** Background actor subagents still have an attached client to answer asks.

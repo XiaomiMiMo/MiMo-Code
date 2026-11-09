@@ -23,6 +23,48 @@ import { inboxServiceRef } from "@/inbox/inbox-ref"
 import { inboxControllerRef } from "@/inbox"
 import { Effect, Deferred } from "effect"
 
+// Subagents get `actor` for exactly one purpose: reporting back to the parent
+// agent mid-run. They must not spawn, run, cancel, inspect or enumerate, so the
+// registry swaps in a send-only schema for them (see actorToolVariant in
+// agent/config.ts and the variant branch in tool/registry.ts). The runtime guard
+// in `run` below rejects everything except `send` to "main" even if a model
+// reaches for an action the schema no longer offers.
+export const SUBAGENT_ACTOR_DESCRIPTION = [
+  'Send an intermediate message to the parent agent (to_actor_id="main").',
+  "This is your only live channel back: the message lands in the parent's inbox and",
+  "is read at its next step. Use it for a blocker, or for a finding that changes the",
+  "plan, not for routine progress. Your final result is still the report that closes",
+  "the task.",
+].join("\n")
+
+const sendSchema = z.strictObject({
+  action: z.literal("send"),
+  to_session_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "(optional) Target session ID. Defaults to the current session — useful for sending to subagents in this session.",
+    ),
+  to_actor_id: z
+    .string()
+    .min(1)
+    .describe(
+      "Target actor ID. Use 'main' to send to a session's main agent, or a subagent ID like 'explore-1'.",
+    ),
+  content: z.string().min(1).describe("Message content (plain text). Wrapped in <inbox> for the receiver."),
+  type: z
+    .string()
+    .optional()
+    .describe(
+      "(optional) Message type. Default 'text' is wrapped in <inbox>...</inbox>. 'actor_notification' is passed through verbatim (sender pre-renders).",
+    ),
+})
+
+export const subagentParameters = z.strictObject({
+  operation: z.discriminatedUnion("action", [sendSchema]).meta({ type: "object" }),
+})
+
 export interface ActorPromptOps {
   cancel(sessionID: SessionID): void
   resolvePromptParts(template: string): Effect.Effect<SessionPrompt.PromptInput["parts"]>
@@ -175,30 +217,6 @@ export const ActorTool = Tool.define(
         actor_id: actorIdRequiredField,
       })
 
-      const sendSchema = z.strictObject({
-        action: z.literal("send"),
-        to_session_id: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(
-            "(optional) Target session ID. Defaults to the current session — useful for sending to subagents in this session.",
-          ),
-        to_actor_id: z
-          .string()
-          .min(1)
-          .describe(
-            "Target actor ID. Use 'main' to send to a session's main agent, or a subagent ID like 'explore-1'.",
-          ),
-        content: z.string().min(1).describe("Message content (plain text). Wrapped in <inbox> for the receiver."),
-        type: z
-          .string()
-          .optional()
-          .describe(
-            "(optional) Message type. Default 'text' is wrapped in <inbox>...</inbox>. 'actor_notification' is passed through verbatim (sender pre-renders).",
-          ),
-      })
-
       const modelsSchema = z.strictObject({
         action: z.literal("models"),
         vision: z.boolean().optional().describe("(optional) If true, list only vision-capable models (models that accept image input)."),
@@ -233,16 +251,25 @@ export const ActorTool = Tool.define(
         const bridge = yield* EffectBridge.make()
         const cfg = yield* config.get()
 
-        // When called through exec, subagents may only use `send` to communicate
-        // with the parent. All other actions (spawn, run, cancel, status, wait,
-        // models) are restricted to primary agents. Peer actors have a primary
-        // agent type so they are unaffected by this guard.
-        if (ctx.extra?.fromExec) {
-          const caller = yield* agent.get(ctx.agent)
-          if (caller?.mode === "subagent" && op.action !== "send") {
+        // A subagent may only report to its parent. The registry already hands it a
+        // send-only schema (subagentParameters), but a model can still emit an
+        // action the schema no longer offers, or reach the tool through the exec
+        // gateway, so the contract is enforced here as well. Peer actors have a
+        // primary agent type and are unaffected; system-spawned agents keep the
+        // full surface because their authority is the actor.tools whitelist.
+        const caller = yield* agent.get(ctx.agent)
+        if (caller?.mode === "subagent" && !SYSTEM_SPAWNED_AGENT_TYPES.has(caller.name)) {
+          if (op.action !== "send") {
             return yield* Effect.fail(
               new RecoverableError(
                 `Subagents can only use actor send to communicate with the parent agent. You are running as "${caller.name}"; use actor send with to_actor_id="main" to report progress or findings.`,
+              ),
+            )
+          }
+          if (op.to_actor_id !== "main" || op.to_session_id !== undefined) {
+            return yield* Effect.fail(
+              new RecoverableError(
+                'A subagent may only send to its parent: use to_actor_id="main" and omit to_session_id.',
               ),
             )
           }

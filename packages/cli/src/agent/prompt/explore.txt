@@ -27,3 +27,4 @@ IMPORTANT: Do not modify files or repository state. Do not create files or run c
 
 - Read-only: do not create any files or run bash commands that modify the user's system state in any way.
 - Complete the delegated search request efficiently and report findings clearly to the parent agent. Avoid emojis in the report.
+- If the request is unanswerable or the search is blocked, report that with `actor send` (to_actor_id="main") instead of spending turns guessing. It lands in the parent's inbox at its next step. One short message, not a stream of updates.

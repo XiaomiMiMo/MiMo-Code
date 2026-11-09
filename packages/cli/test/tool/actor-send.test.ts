@@ -204,3 +204,103 @@ describe("actor tool — send action", () => {
     ),
   )
 })
+
+describe("actor tool — subagent contract", () => {
+  // A subagent's own session id is the parent session: subagent actors live under
+  // ctx.sessionID, so "main" resolves inside it.
+  const subagentCtx = (sessionID: SessionID) => ({ ...ctxFor(sessionID), agent: "general" })
+
+  it.live(
+    "a subagent may send to main",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        // the session registers its own `main` actor on creation
+        const chat = yield* sessions.create({ title: "chat" })
+
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+        const result = yield* def.execute(
+          { operation: { action: "send", to_actor_id: "main", content: "blocked on the missing schema" } },
+          subagentCtx(chat.id),
+        )
+
+        expect(result.title).toBe("Sent to main")
+        const rows = yield* Effect.sync(() =>
+          Database.use((db) =>
+            db
+              .select()
+              .from(InboxTable)
+              .where(and(eq(InboxTable.receiver_session_id, chat.id), eq(InboxTable.receiver_actor_id, "main")))
+              .all(),
+          ),
+        )
+        expect(rows).toHaveLength(1)
+        // new accepts store the body as a user message, not in the legacy column:
+        // the row plus its input message id is what the parent's loop will read.
+        expect(rows[0]?.state).toBe("accepted")
+        expect(rows[0]?.input_message_id).toBeTruthy()
+      }),
+    ),
+  )
+
+  it.live(
+    "a subagent may not spawn",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({ title: "chat" })
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        // cast: the send-only schema rejects this shape at parse time; the cast
+        // drives the runtime guard, which is the second barrier.
+        const exit = yield* def
+          .execute(
+            { operation: { action: "spawn", description: "x", prompt: "y", subagent_type: "explore" } } as any,
+            subagentCtx(chat.id),
+          )
+          .pipe(Effect.exit)
+
+        expect(exit._tag).toBe("Failure")
+      }),
+    ),
+  )
+
+  it.live(
+    "a subagent may not send to a sibling or another session",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const registry = yield* ActorRegistry.Service
+        const chat = yield* sessions.create({ title: "chat" })
+        const sibling = yield* registry.allocateActorID(chat.id, "explore")
+        yield* registry.register({
+          sessionID: chat.id,
+          actorID: sibling,
+          mode: "subagent",
+          agent: "explore",
+          description: "sibling",
+          contextMode: "none",
+          background: true,
+          lifecycle: "ephemeral",
+        })
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const toSibling = yield* def
+          .execute({ operation: { action: "send", to_actor_id: sibling, content: "hi" } }, subagentCtx(chat.id))
+          .pipe(Effect.exit)
+        expect(toSibling._tag).toBe("Failure")
+
+        const toOtherSession = yield* def
+          .execute(
+            { operation: { action: "send", to_actor_id: "main", to_session_id: "ses_other", content: "hi" } },
+            subagentCtx(chat.id),
+          )
+          .pipe(Effect.exit)
+        expect(toOtherSession._tag).toBe("Failure")
+      }),
+    ),
+  )
+})
