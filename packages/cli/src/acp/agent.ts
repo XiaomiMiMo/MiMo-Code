@@ -142,6 +142,10 @@ export class Agent implements ACPAgent {
   private eventStarted = false
   private bashSnapshots = new Map<string, string>()
   private toolStarts = new Set<string>()
+  // Assistant text already forwarded to the client, keyed by partID, plus the
+  // parts of the last settled message per session. See flushAssistantText().
+  private streamedText = new Map<string, string>()
+  private finalizedParts = new Map<string, Set<string>>()
   private permissionQueues = new Map<string, Promise<void>>()
   private permissionOptions: PermissionOption[] = [
     { optionId: "once", kind: "allow_once", name: "Allow once" },
@@ -452,6 +456,10 @@ export class Agent implements ACPAgent {
         if (!part) return
 
         if (part.type === "text" && props.field === "text" && part.ignored !== true) {
+          if (this.finalizedParts.get(sessionId)?.has(part.id)) return
+          // Record before sending so a concurrent flushAssistantText() sees
+          // exactly what this chunk covers.
+          this.streamedText.set(part.id, `${this.streamedText.get(part.id) ?? ""}${props.delta}`)
           await this.connection
             .sessionUpdate({
               sessionId,
@@ -1280,6 +1288,51 @@ export class Agent implements ACPAgent {
     }
   }
 
+  /**
+   * #2709: the prompt response is written as soon as the engine turn ends, but
+   * assistant text is forwarded from the event stream, which may still be
+   * draining chunks for that same turn. Forward whatever the stream has not
+   * covered yet, then pin the message parts so a late delta cannot repeat the
+   * suffix after the client has been told the turn ended.
+   */
+  private async flushAssistantText(sessionID: string, data: SessionMessageResponse | undefined) {
+    const message = data?.info
+    if (!message || message.role !== "assistant") return
+    const finalized = new Set<string>()
+    for (const part of data.parts) {
+      if (part.type !== "text" || part.ignored === true) continue
+      finalized.add(part.id)
+      const streamed = this.streamedText.get(part.id) ?? ""
+      if (part.text === streamed) continue
+      // A completion hook can rewrite the text after streaming; the prefix
+      // already reached the client cannot be retracted, so leave it alone.
+      if (!part.text.startsWith(streamed)) {
+        log.warn("assistant text changed after streaming; skipping remaining text", {
+          sessionID,
+          partID: part.id,
+        })
+        continue
+      }
+      await this.connection
+        .sessionUpdate({
+          sessionId: sessionID,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            messageId: message.id,
+            content: {
+              type: "text",
+              text: part.text.slice(streamed.length),
+            },
+          },
+        })
+        .catch((error) => {
+          log.error("failed to send remaining assistant text to ACP", { error })
+        })
+    }
+    for (const partID of finalized) this.streamedText.delete(partID)
+    this.finalizedParts.set(sessionID, finalized)
+  }
+
   async prompt(params: PromptRequest) {
     const sessionID = params.sessionId
     const session = this.sessionManager.get(sessionID)
@@ -1409,6 +1462,7 @@ export class Agent implements ACPAgent {
       })
       const msg = response.data?.info
 
+      if (response.data) await this.flushAssistantText(sessionID, response.data)
       await sendUsageUpdate(this.connection, this.sdk, sessionID, directory)
 
       return {
@@ -1432,6 +1486,7 @@ export class Agent implements ACPAgent {
       })
       const msg = response.data?.info
 
+      if (response.data) await this.flushAssistantText(sessionID, response.data)
       await sendUsageUpdate(this.connection, this.sdk, sessionID, directory)
 
       return {
