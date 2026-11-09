@@ -96,3 +96,4 @@ host repository.
 - [x] T5: Update `mcp-tool-use.md` / `mcp-tool-search.md` current-state wording for the always-direct exception — acceptance: both specs describe the config-driven exception without change-history language (covers: S2.2)
 
 ## Journey log
+None

@@ -77,6 +77,7 @@ source: {{branch-name}} | {{pr-url}} | {{mr-url}}
 # {{Feature Name}}
 
 ## Report
+[Not finalized yet]
 
 ## [S1] Problem
 Describe the user-visible problem.
@@ -92,12 +93,13 @@ State explicit boundaries.
 - [ ] T2: {{work item}} — acceptance: {{observable result}} (depends: T1)
 
 ## Journey log
-Optional. Dead ends, pivots, or transferable lessons worth future work. Do not pad an uncomplicated change by splitting it into several thin entries.
+None
 ```
 
 ### Design-time rules
 
-- Leave `Report` empty until finalized and set `status: designed`. Keep `Journey log` empty unless something is worth carrying forward.
+- Set `status: designed` and keep `Report` as `[Not finalized yet]` until finalized.
+- When a dead end, pivot, or transferable lesson worth future work appears, add it to `Journey log` at any phase, replacing its `None` line. Do not pad an uncomplicated change by splitting it into several thin entries.
 - Set `source` to the form that best names where the spec's source lives — `{{branch-name}}`, `{{pr-url}}`, or `{{mr-url}}` — and update it whenever that changes.
 - Record settled decisions and precise contracts, not exploration history or file-level code dumps. Include architecture, interfaces, data flow, error behavior, and testing boundaries when they affect the change.
 - Make each task the smallest independently verifiable work item; give it an observable acceptance criterion. Add `depends:` only for real prerequisites; dependencies must be acyclic.

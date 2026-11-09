@@ -8,6 +8,7 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2521
 # Host Error Registry
 
 ## Report
+[Not finalized yet]
 
 ## [S1] Problem
 
