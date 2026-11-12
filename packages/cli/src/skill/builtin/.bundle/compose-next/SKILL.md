@@ -64,6 +64,8 @@ Never begin implementation on `main` or `master` without explicit user consent. 
 
 Maintain one document per feature at `docs/compose/spec/{{feature-name}}.md` from the workspace root. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns the active workspace.
 
+Requests spanning unrelated concerns get separate top-level documents, one per feature. Only for a long-running, large task that must be decomposed into parts, you may keep `{{feature-name}}.md` as the entry document and put sub-documents in the same-named directory (`{{feature-name}}/{{sub-feature}}.md`) so no single document grows too large. Each entry task maps to one sub-document or an anchor range within one (for example `(spec: {{feature-name}}/{{sub-feature}}.md S2.1–S2.3)`). Each sub-document follows the same template and rules on its own, with its own `status`, `Report`, and `source`, so sub-documents may be delivered independently across separate PRs or MRs; check off an entry task once the sub-document work it maps to is delivered.
+
 ### Template
 
 ```markdown
@@ -108,7 +110,7 @@ None
 - `covers:` on a task is optional (for example `covers: S2.1`).
 - Scale detail to the change; do not pad small designs.
 
-Before implementation, fix ambiguous requirements, contradictions, unresolved references, and unverifiable acceptance criteria. If the user is available, request document approval with the Question tool; otherwise continue.
+Before implementation, fix ambiguous requirements, contradictions, unresolved references, and unverifiable acceptance criteria. If the user is available, request document approval with the Question tool; otherwise continue. When requesting approval, present the feature document if a Present tool is available; otherwise, such as in a CLI environment, give its path in text.
 
 ### Amendments
 
