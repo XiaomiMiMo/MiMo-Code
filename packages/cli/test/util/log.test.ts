@@ -147,13 +147,45 @@ test("queued writes are ordered and flush waits for persistence", async () => {
   expect(lines.at(-1)?.endsWith("entry-999")).toBe(true)
 })
 
+test("an oversized record is truncated to the single-entry cap", async () => {
+  await using tmp = await tmpdir()
+  Global.Path.log = tmp.path
+  await Log.init({ print: false, level: "INFO" })
+  const overflow = 1_000
+
+  Log.Default.info("huge", { payload: { body: "x".repeat(Log.MAX_ENTRY_LENGTH + overflow) } })
+  Log.Default.info("after huge")
+  await Log.flush()
+
+  const lines = (await fs.readFile(Log.file(), "utf8")).trim().split("\n")
+  expect(lines).toHaveLength(2)
+  expect(lines[0]!.length).toBeLessThan(Log.MAX_ENTRY_LENGTH + 100)
+  expect(lines[0]).toMatch(/ \.\.\.\[truncated \d+ chars\]$/)
+  expect(lines[0]).not.toContain("huge")
+  expect(lines[1]?.endsWith("after huge")).toBe(true)
+})
+
+test("a record within the cap is written unchanged", async () => {
+  await using tmp = await tmpdir()
+  Global.Path.log = tmp.path
+  await Log.init({ print: false, level: "INFO" })
+  const body = "y".repeat(Log.MAX_ENTRY_LENGTH - 200)
+
+  Log.Default.info(body)
+  await Log.flush()
+
+  const line = (await fs.readFile(Log.file(), "utf8")).trim()
+  expect(line.endsWith(body)).toBe(true)
+  expect(line).not.toContain("truncated")
+})
+
 test("rotation serializes writes before the active file exceeds 50 MiB", async () => {
   await using tmp = await tmpdir()
   Global.Path.log = tmp.path
   await Log.init({ print: false, rotate: true })
-  const chunk = "x".repeat(256 * 1024)
+  const chunk = "x".repeat(16 * 1024)
 
-  Array.from({ length: 201 }).forEach(() => Log.Default.info(chunk))
+  Array.from({ length: 3_300 }).forEach(() => Log.Default.info(chunk))
   await Log.flush()
 
   const files = await fs.readdir(tmp.path)
@@ -166,9 +198,9 @@ test("shutdown closes the final stream when queued writes rotate", async () => {
   await using tmp = await tmpdir()
   Global.Path.log = tmp.path
   await Log.init({ print: false, rotate: true })
-  const chunk = "x".repeat(256 * 1024)
+  const chunk = "x".repeat(16 * 1024)
 
-  Array.from({ length: 201 }).forEach(() => Log.Default.info(chunk))
+  Array.from({ length: 3_300 }).forEach(() => Log.Default.info(chunk))
   await Log.shutdown()
 
   const files = await fs.readdir(tmp.path)
@@ -181,9 +213,9 @@ test("rotation can still be disabled explicitly", async () => {
   await using tmp = await tmpdir()
   Global.Path.log = tmp.path
   await Log.init({ print: false, rotate: false })
-  const chunk = "x".repeat(256 * 1024)
+  const chunk = "x".repeat(16 * 1024)
 
-  Array.from({ length: 201 }).forEach(() => Log.Default.info(chunk))
+  Array.from({ length: 3_300 }).forEach(() => Log.Default.info(chunk))
   await Log.flush()
 
   expect(await fs.stat(Log.file()).then((stat) => stat.size)).toBeGreaterThan(50 * mb)

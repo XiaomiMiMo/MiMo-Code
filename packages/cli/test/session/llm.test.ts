@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { pathToFileURL } from "node:url"
+import fs from "fs/promises"
 import path from "path"
 import { APICallError, tool, type ModelMessage } from "ai"
-import { ToolCompat } from "../../src/util"
+import { Log, ToolCompat } from "../../src/util"
+import { Global } from "../../src/global"
 import { Cause, Effect, Exit, Stream } from "effect"
 import z from "zod"
 import { makeRuntime } from "../../src/effect/run-service"
@@ -530,6 +532,49 @@ export default async () => ({ "chat.params": async () => {
       } })
     } finally {
       HostErrorRegistry.loadHostErrorCatalog({ protocolVersion: 2, rules: [] })
+    }
+  })
+
+  test("stream error log omits the request body of a failed provider call", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+    const source = await loadFixture("openai", "gpt-5.2")
+    await using tmp = await tmpdir({ config: {
+      enabled_providers: ["openai"],
+      provider: { openai: { npm: "@ai-sdk/openai", options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` } } },
+    } })
+    const secret = "private-conversation-content"
+    const request = waitRequest("/responses", new Response(JSON.stringify({ error: { message: "bad request", type: "invalid_request_error" } }), {
+      status: 400, headers: { "Content-Type": "application/json" },
+    }))
+    await using logs = await tmpdir()
+    const logDir = Global.Path.log
+    Global.Path.log = logs.path
+    await Log.init({ print: false, dev: true, level: "DEBUG" })
+    try {
+      await Instance.provide({ directory: tmp.path, fn: async () => {
+        const model = await getModel(ProviderID.openai, ModelID.make(source.model.id))
+        const sessionID = SessionID.make("session-stream-error-log")
+        const agent = { name: "test", mode: "primary", options: {}, permission: [{ permission: "*", pattern: "*", action: "allow" }] } satisfies Agent.Info
+        const user = { id: MessageID.make("user-stream-error-log"), sessionID, role: "user", time: { created: Date.now() }, agent: agent.name,
+          model: { providerID: ProviderID.openai, modelID: model.id } } satisfies MessageV2.User
+        await llm.runPromise((svc) => svc.stream({
+          user, sessionID, model, agent, system: [secret], messages: [{ role: "user", content: secret }], tools: {}, retries: 0,
+        }).pipe(Stream.runCollect, Effect.exit))
+        await request
+      } })
+      await Log.flush()
+      const line = (await fs.readFile(Log.file(), "utf8"))
+        .split("\n")
+        .find((entry) => entry.startsWith("ERROR") && entry.includes("session.id=session-stream-error-log") && entry.endsWith("stream error"))
+      expect(line).toBeDefined()
+      expect(line).toContain(`"statusCode":400`)
+      expect(line).toContain("bad request")
+      expect(line).not.toContain(secret)
+      expect(line).not.toContain("requestBodyValues")
+    } finally {
+      Global.Path.log = logDir
+      await Log.init({ print: false, dev: true, level: "DEBUG" })
     }
   })
 

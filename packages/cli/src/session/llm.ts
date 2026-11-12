@@ -7,7 +7,16 @@ import { Log } from "@/util"
 import { errorMessage } from "@/util/error"
 import { Context, Duration, Effect, Layer, Record, Cause } from "effect"
 import * as Stream from "effect/Stream"
-import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema, NoSuchToolError } from "ai"
+import {
+  APICallError,
+  streamText,
+  wrapLanguageModel,
+  type ModelMessage,
+  type Tool,
+  tool,
+  jsonSchema,
+  NoSuchToolError,
+} from "ai"
 import { mergeDeep, pipe } from "remeda"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider"
@@ -707,9 +716,10 @@ const live: Layer.Layer<
             elapsedMs: Date.now() - streamStartTs,
           })
           // The provider error carries requestBodyValues (the whole prompt), so
-          // log only its cause summary.
+          // log only its cause summary plus the response side of an API error.
           l.error("stream error", {
             causes: ProviderError.summarizeCause(error),
+            ...(APICallError.isInstance(error) ? { url: error.url, responseBody: error.responseBody?.slice(0, 1024) } : {}),
           })
         },
         async experimental_repairToolCall(failed) {

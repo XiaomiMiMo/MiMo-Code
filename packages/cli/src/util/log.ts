@@ -20,6 +20,9 @@ const keep = 10
 // fill the disk. The active file is excluded from the total and kept separate.
 const MAX_FILE_SIZE = 50 * 1024 * 1024
 const MAX_TOTAL_SIZE = 200 * 1024 * 1024
+// Cap a single record so one oversized payload (a serialized request body, a
+// tool output) can't flood the file or leak bulk content into shared logs.
+export const MAX_ENTRY_LENGTH = 32 * 1024
 
 let level: Level = "INFO"
 
@@ -289,7 +292,9 @@ export function create(tags?: Record<string, any>) {
     const next = new Date()
     const diff = next.getTime() - last
     last = next.getTime()
-    return [next.toISOString().split(".")[0], "+" + diff + "ms", prefix, message].filter(Boolean).join(" ") + "\n"
+    const line = [next.toISOString().split(".")[0], "+" + diff + "ms", prefix, message].filter(Boolean).join(" ")
+    if (line.length <= MAX_ENTRY_LENGTH) return line + "\n"
+    return line.slice(0, MAX_ENTRY_LENGTH) + ` ...[truncated ${line.length - MAX_ENTRY_LENGTH} chars]\n`
   }
   const result: Logger = {
     debug(message?: any, extra?: Record<string, any>) {
