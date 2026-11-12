@@ -152,58 +152,17 @@ describe("ProviderTransform.maxOutputTokens", () => {
     release_date: "2026-01-01",
   }
 
-  test("uses 128K for mimo provider models", () => {
-    expect(
-      ProviderTransform.maxOutputTokens({
-        ...baseModel,
-        id: ModelID.make("mimo-v2.5"),
-        providerID: ProviderID.make("mimo"),
-      }),
-    ).toBe(128_000)
-  })
-
-  test("uses 128K for xiaomi provider models", () => {
-    expect(
-      ProviderTransform.maxOutputTokens({
-        ...baseModel,
-        id: ModelID.make("mimo-coder"),
-        providerID: ProviderID.make("xiaomi"),
-      }),
-    ).toBe(128_000)
-  })
-
-  test("uses 128K for token-plan provider models", () => {
-    expect(
-      ProviderTransform.maxOutputTokens({
-        ...baseModel,
-        id: ModelID.make("neutral-model"),
-        providerID: ProviderID.make("xiaomi-token-plan-cn"),
-      }),
-    ).toBe(128_000)
-  })
-
-  test("uses 128K for claude models", () => {
-    expect(
-      ProviderTransform.maxOutputTokens({
-        ...baseModel,
-        id: ModelID.make("claude-sonnet-4-6"),
-      }),
-    ).toBe(128_000)
-  })
-
-  test("uses 128K for gpt models", () => {
-    expect(
-      ProviderTransform.maxOutputTokens({
-        ...baseModel,
-        api: { ...baseModel.api, id: "gpt-5.6" },
-      }),
-    ).toBe(128_000)
-  })
-
-  test("keeps the default cap for non-mimo models", () => {
-    expect(ProviderTransform.maxOutputTokens({ ...baseModel, limit: { context: 1_000_000, output: 64_000 } })).toBe(
-      32_000,
+  test("uses the declared output limit for every model", () => {
+    for (const id of ["claude-sonnet-4-6", "gpt-5.6", "mimo-v2.5", "test-model"]) {
+      expect(ProviderTransform.maxOutputTokens({ ...baseModel, id: ModelID.make(id), api: { ...baseModel.api, id } })).toBe(8_192)
+    }
+    expect(ProviderTransform.maxOutputTokens({ ...baseModel, limit: { context: 1_000_000, output: 200_000 } })).toBe(
+      200_000,
     )
+  })
+
+  test("falls back to 128K when no output limit is declared", () => {
+    expect(ProviderTransform.maxOutputTokens({ ...baseModel, limit: { context: 1_000_000, output: 0 } })).toBe(128_000)
   })
 })
 
@@ -325,7 +284,7 @@ describe("ProviderTransform.options - google thinkingConfig gating", () => {
   })
 })
 
-describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
+describe("ProviderTransform.options - textVerbosity", () => {
   const sessionID = "test-session-123"
 
   const createGpt5Model = (apiId: string) =>
@@ -354,65 +313,11 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
       headers: {},
     }) as any
 
-  test("gpt-5.2 should have textVerbosity set to low", () => {
-    const model = createGpt5Model("gpt-5.2")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.textVerbosity).toBe("low")
-  })
-
-  test("gpt-5.1 should have textVerbosity set to low", () => {
-    const model = createGpt5Model("gpt-5.1")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.textVerbosity).toBe("low")
-  })
-
-  test("gpt-5.2-chat-latest should NOT have textVerbosity set (only supports medium)", () => {
-    const model = createGpt5Model("gpt-5.2-chat-latest")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.textVerbosity).toBeUndefined()
-  })
-
-  test("gpt-5.1-chat-latest should NOT have textVerbosity set (only supports medium)", () => {
-    const model = createGpt5Model("gpt-5.1-chat-latest")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.textVerbosity).toBeUndefined()
-  })
-
-  test("gpt-5.2-chat should NOT have textVerbosity set", () => {
-    const model = createGpt5Model("gpt-5.2-chat")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.textVerbosity).toBeUndefined()
-  })
-
-  test("gpt-5-chat should NOT have textVerbosity set", () => {
-    const model = createGpt5Model("gpt-5-chat")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.textVerbosity).toBeUndefined()
-  })
-
-  test("gpt-5.2-codex should NOT have textVerbosity set (codex models excluded)", () => {
-    const model = createGpt5Model("gpt-5.2-codex")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.textVerbosity).toBeUndefined()
-  })
-
-  test("gpt-5.5 should request encrypted reasoning via include (store:false round-trip)", () => {
-    const model = createGpt5Model("gpt-5.5")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.store).toBe(false)
-    expect(result.include).toEqual(["reasoning.encrypted_content"])
-  })
-
-  test("gpt-5 should request encrypted reasoning via include", () => {
-    const model = createGpt5Model("gpt-5")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.include).toEqual(["reasoning.encrypted_content"])
-  })
-
-  test("gpt-5-pro should NOT set include (pro path skips reasoning options)", () => {
-    const model = createGpt5Model("gpt-5-pro")
-    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
-    expect(result.include).toBeUndefined()
+  test("never sets a default textVerbosity", () => {
+    for (const id of ["gpt-5.2", "gpt-5.1", "gpt-5.2-chat-latest", "gpt-5-chat", "gpt-5.2-codex"]) {
+      const result = ProviderTransform.options({ model: createGpt5Model(id), sessionID, providerOptions: {} })
+      expect(result.textVerbosity).toBeUndefined()
+    }
   })
 })
 

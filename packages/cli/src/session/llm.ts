@@ -42,7 +42,6 @@ import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "llm" })
-export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
 type Result = Awaited<ReturnType<typeof streamText>>
 
@@ -489,9 +488,10 @@ const live: Layer.Layer<
             ]
 
       const defaults = {
-        temperature: input.model.capabilities.temperature ? (input.agent.temperature ?? ProviderTransform.temperature(input.model)) : undefined,
-        topP: input.agent.topP ?? ProviderTransform.topP(input.model),
-        topK: ProviderTransform.topK(input.model),
+        temperature: input.model.capabilities.temperature ? input.agent.temperature : undefined,
+        topP: input.agent.topP,
+        // Only plugins (chat.params) set topK; no harness default.
+        topK: undefined as number | undefined,
         maxOutputTokens: ProviderTransform.maxOutputTokens(input.model),
         options,
       }
@@ -505,11 +505,9 @@ const live: Layer.Layer<
           message: input.user,
         },
         {
-          temperature: input.model.capabilities.temperature
-            ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
-            : undefined,
-          topP: input.agent.topP ?? ProviderTransform.topP(input.model),
-          topK: ProviderTransform.topK(input.model),
+          temperature: input.model.capabilities.temperature ? input.agent.temperature : undefined,
+          topP: input.agent.topP,
+          topK: undefined,
           maxOutputTokens: ProviderTransform.maxOutputTokens(input.model),
           options,
         },

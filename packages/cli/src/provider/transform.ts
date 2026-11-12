@@ -28,16 +28,9 @@ function mimeToModality(mime: string): Modality | undefined {
   return undefined
 }
 
-export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
-export const LARGE_MODEL_OUTPUT_TOKEN_MAX = 128_000
-
-export function usesLargeModelDefaults(model: { id: string; providerID: string; api: { id: string } }) {
-  const providerID = model.providerID.toLowerCase()
-  if (providerID === "mimo" || isXiaomiFamilyProvider(providerID)) return true
-  return [model.id, model.api.id].some((id) =>
-    ["claude", "gpt", "mimo"].some((name) => id.toLowerCase().includes(name)),
-  )
-}
+// Output budget for a model whose config and models.dev entry declare no
+// `limit.output`. Declared limits are always used as-is.
+export const DEFAULT_OUTPUT_TOKEN_LIMIT = 128_000
 
 // Maps npm package to the key the AI SDK expects for providerOptions
 function sdkKey(npm: string): string | undefined {
@@ -1207,44 +1200,6 @@ export function structuredOutputOptions(model: Provider.Model) {
   return { strictJsonSchema: false }
 }
 
-export function temperature(model: Provider.Model) {
-  const id = model.id.toLowerCase()
-  if (id.includes("qwen")) return 0.55
-  if (id.includes("claude")) return undefined
-  if (id.includes("gemini")) return 1.0
-  if (id.includes("glm-4.6")) return 1.0
-  if (id.includes("glm-4.7")) return 1.0
-  if (id.includes("minimax-m2")) return 1.0
-  if (id.includes("mimo")) return 1.0
-  if (id.includes("kimi-k2")) {
-    // kimi-k2-thinking & kimi-k2.5 && kimi-k2p5 && kimi-k2-5
-    if (["thinking", "k2.", "k2p", "k2-5"].some((s) => id.includes(s))) {
-      return 1.0
-    }
-    return 0.6
-  }
-  return undefined
-}
-
-export function topP(model: Provider.Model) {
-  const id = model.id.toLowerCase()
-  if (id.includes("qwen")) return 1
-  if (["minimax-m2", "gemini", "kimi-k2.5", "kimi-k2p5", "kimi-k2-5"].some((s) => id.includes(s))) {
-    return 0.95
-  }
-  return undefined
-}
-
-export function topK(model: Provider.Model) {
-  const id = model.id.toLowerCase()
-  if (id.includes("minimax-m2")) {
-    if (["m2.", "m25", "m21"].some((s) => id.includes(s))) return 40
-    return 20
-  }
-  if (id.includes("gemini")) return 64
-  return undefined
-}
-
 const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
 const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
 
@@ -1856,17 +1811,6 @@ export function options(input: {
       }
     }
 
-    // Only set textVerbosity for non-chat gpt-5.x models
-    // Chat models (e.g. gpt-5.2-chat-latest) only support "medium" verbosity
-    if (
-      input.model.api.id.includes("gpt-5.") &&
-      !input.model.api.id.includes("codex") &&
-      !input.model.api.id.includes("-chat") &&
-      input.model.providerID !== "azure"
-    ) {
-      result["textVerbosity"] = "low"
-    }
-
     if (input.model.providerID.startsWith("opencode")) {
       result["promptCacheKey"] = input.sessionID
       result["include"] = ["reasoning.encrypted_content"]
@@ -1977,8 +1921,7 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
 }
 
 export function maxOutputTokens(model: Provider.Model): number {
-  if (usesLargeModelDefaults(model)) return LARGE_MODEL_OUTPUT_TOKEN_MAX
-  return Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
+  return model.limit.output || DEFAULT_OUTPUT_TOKEN_LIMIT
 }
 
 // Flatten a root-level `anyOf` / `oneOf` (typically from `z.discriminatedUnion`)

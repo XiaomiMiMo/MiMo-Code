@@ -1426,15 +1426,7 @@ const layer: Layer.Layer<
                 })(),
                 input: model.limit?.input ?? existingModel?.limit?.input,
                 output:
-                  model.limit?.output ??
-                  existingModel?.limit?.output ??
-                  (ProviderTransform.usesLargeModelDefaults({
-                    id: modelID,
-                    providerID,
-                    api: { id: apiID },
-                  })
-                    ? ProviderTransform.LARGE_MODEL_OUTPUT_TOKEN_MAX
-                    : 0),
+                  model.limit?.output ?? existingModel?.limit?.output ?? ProviderTransform.DEFAULT_OUTPUT_TOKEN_LIMIT,
               },
               headers: mergeDeep(existingModel?.headers ?? {}, model.headers ?? {}),
               family: model.family ?? existingModel?.family ?? "",
