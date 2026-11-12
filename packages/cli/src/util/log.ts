@@ -20,9 +20,13 @@ const keep = 10
 // fill the disk. The active file is excluded from the total and kept separate.
 const MAX_FILE_SIZE = 50 * 1024 * 1024
 const MAX_TOTAL_SIZE = 200 * 1024 * 1024
-// Cap a single record so one oversized payload (a serialized request body, a
-// tool output) can't flood the file or leak bulk content into shared logs.
-export const MAX_ENTRY_LENGTH = 32 * 1024
+// Cap a single record (in UTF-8 bytes) so one oversized payload (a serialized
+// request body, a tool output) can't flood the file or leak bulk content into
+// shared logs. Each field value is clipped on its own so one oversized field
+// can't push out the others, and the message is always kept.
+export const MAX_ENTRY_BYTES = 32 * 1024
+export const MAX_VALUE_BYTES = 8 * 1024
+export const MAX_MESSAGE_BYTES = 16 * 1024
 
 let level: Level = "INFO"
 
@@ -258,10 +262,19 @@ async function cleanup(dir: string, takeover?: { pid: number; role: string }) {
 }
 
 function formatError(error: Error, depth = 0): string {
-  const result = error.message
+  const result = String(error.message)
   return error.cause instanceof Error && depth < 10
     ? result + " Caused by: " + formatError(error.cause, depth + 1)
     : result
+}
+
+function clip(text: string, maxBytes: number) {
+  const bytes = Buffer.from(text)
+  if (bytes.length <= maxBytes) return text
+  let end = Math.max(maxBytes, 0)
+  // Step back to a UTF-8 lead byte so a multi-byte character is never split.
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--
+  return `${bytes.subarray(0, end).toString()}...[truncated ${bytes.length - end} bytes]`
 }
 
 let last = Date.now()
@@ -284,17 +297,18 @@ export function create(tags?: Record<string, any>) {
       .filter(([_, value]) => value !== undefined && value !== null)
       .map(([key, value]) => {
         const prefix = `${key}=`
-        if (value instanceof Error) return prefix + formatError(value)
-        if (typeof value === "object") return prefix + JSON.stringify(value)
-        return prefix + value
+        if (value instanceof Error) return prefix + clip(formatError(value), MAX_VALUE_BYTES)
+        if (typeof value === "object") return prefix + clip(String(JSON.stringify(value)), MAX_VALUE_BYTES)
+        return prefix + clip(String(value), MAX_VALUE_BYTES)
       })
       .join(" ")
+    const text = message ? clip(String(message), MAX_MESSAGE_BYTES) : undefined
     const next = new Date()
     const diff = next.getTime() - last
     last = next.getTime()
-    const line = [next.toISOString().split(".")[0], "+" + diff + "ms", prefix, message].filter(Boolean).join(" ")
-    if (line.length <= MAX_ENTRY_LENGTH) return line + "\n"
-    return line.slice(0, MAX_ENTRY_LENGTH) + ` ...[truncated ${line.length - MAX_ENTRY_LENGTH} chars]\n`
+    const head = next.toISOString().split(".")[0] + " +" + diff + "ms"
+    const fields = clip(prefix, MAX_ENTRY_BYTES - Buffer.byteLength(head) - Buffer.byteLength(text ?? "") - 2)
+    return [head, fields, text].filter(Boolean).join(" ") + "\n"
   }
   const result: Logger = {
     debug(message?: any, extra?: Record<string, any>) {

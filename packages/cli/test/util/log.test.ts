@@ -147,35 +147,79 @@ test("queued writes are ordered and flush waits for persistence", async () => {
   expect(lines.at(-1)?.endsWith("entry-999")).toBe(true)
 })
 
-test("an oversized record is truncated to the single-entry cap", async () => {
+async function records(write: () => void) {
   await using tmp = await tmpdir()
   Global.Path.log = tmp.path
   await Log.init({ print: false, level: "INFO" })
-  const overflow = 1_000
-
-  Log.Default.info("huge", { payload: { body: "x".repeat(Log.MAX_ENTRY_LENGTH + overflow) } })
-  Log.Default.info("after huge")
+  write()
   await Log.flush()
+  return (await fs.readFile(Log.file(), "utf8")).trim().split("\n")
+}
 
-  const lines = (await fs.readFile(Log.file(), "utf8")).trim().split("\n")
+const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+test("an oversized field is clipped on its own and the message survives", async () => {
+  const overflow = 1_000
+  const lines = await records(() => {
+    Log.Default.info("huge record", { payload: { body: "x".repeat(Log.MAX_VALUE_BYTES + overflow) }, status: 400 })
+    Log.Default.info("after huge")
+  })
+
   expect(lines).toHaveLength(2)
-  expect(lines[0]!.length).toBeLessThan(Log.MAX_ENTRY_LENGTH + 100)
-  expect(lines[0]).toMatch(/ \.\.\.\[truncated \d+ chars\]$/)
-  expect(lines[0]).not.toContain("huge")
+  expect(lines[0]?.endsWith("huge record")).toBe(true)
+  expect(lines[0]).toContain("status=400")
+  expect(lines[0]).toMatch(/\.\.\.\[truncated \d+ bytes\] status=400/)
+  expect(Buffer.byteLength(lines[0]!)).toBeLessThan(Log.MAX_VALUE_BYTES + 200)
   expect(lines[1]?.endsWith("after huge")).toBe(true)
 })
 
-test("a record within the cap is written unchanged", async () => {
-  await using tmp = await tmpdir()
-  Global.Path.log = tmp.path
-  await Log.init({ print: false, level: "INFO" })
-  const body = "y".repeat(Log.MAX_ENTRY_LENGTH - 200)
+test("many oversized fields stay within the entry cap and keep the message", async () => {
+  const fields = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`field${i}`, "z".repeat(Log.MAX_VALUE_BYTES * 2)]))
+  const [line] = await records(() => Log.Default.info("many fields", fields))
 
-  Log.Default.info(body)
-  await Log.flush()
+  expect(line?.endsWith("many fields")).toBe(true)
+  expect(Buffer.byteLength(line!)).toBeLessThanOrEqual(Log.MAX_ENTRY_BYTES + 100)
+})
 
-  const line = (await fs.readFile(Log.file(), "utf8")).trim()
-  expect(line.endsWith(body)).toBe(true)
+test("an oversized message keeps its head within the message cap", async () => {
+  const overflow = 500
+  const [line] = await records(() => Log.Default.info("m".repeat(Log.MAX_MESSAGE_BYTES + overflow)))
+
+  expect(line?.endsWith(`...[truncated ${overflow} bytes]`)).toBe(true)
+  expect(Buffer.byteLength(line!)).toBeLessThan(Log.MAX_MESSAGE_BYTES + 200)
+})
+
+test("clipping counts UTF-8 bytes and never splits a character", async () => {
+  const [line] = await records(() =>
+    Log.Default.info("multibyte", { cjk: "中".repeat(Log.MAX_VALUE_BYTES), emoji: "😀".repeat(Log.MAX_VALUE_BYTES) }),
+  )
+
+  expect(line?.endsWith("multibyte")).toBe(true)
+  expect(Buffer.byteLength(line!)).toBeLessThan(Log.MAX_VALUE_BYTES * 2 + 300)
+  expect(line).not.toContain("\uFFFD")
+  expect(loneSurrogate.test(line!)).toBe(false)
+})
+
+test("a field whose JSON form is undefined is still written", async () => {
+  const [line] = await records(() => Log.Default.warn("opaque", { cause: { toJSON: () => undefined } }))
+
+  expect(line?.endsWith("cause=undefined opaque")).toBe(true)
+})
+
+test("an error without a string message is still written", async () => {
+  const error = new Error("placeholder")
+  Object.defineProperty(error, "message", { value: undefined })
+  const [line] = await records(() => Log.Default.warn("no message", { error }))
+
+  expect(line?.endsWith("error=undefined no message")).toBe(true)
+})
+
+test("a record within the caps is written unchanged", async () => {
+  const body = "y".repeat(Log.MAX_MESSAGE_BYTES - 200)
+  const value = "v".repeat(Log.MAX_VALUE_BYTES - 200)
+  const [line] = await records(() => Log.Default.info(body, { value }))
+
+  expect(line?.endsWith(`value=${value} ${body}`)).toBe(true)
   expect(line).not.toContain("truncated")
 })
 
