@@ -2,7 +2,7 @@
 feature: unify-default-harness
 status: in-progress
 updated: 2026-11-12
-source: feat/unify-default-harness
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2795
 ---
 
 # Unify Default Harness
