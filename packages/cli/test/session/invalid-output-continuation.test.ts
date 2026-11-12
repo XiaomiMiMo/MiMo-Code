@@ -1,7 +1,7 @@
 /**
- * Integration tests for T01: a `finish=stop` step with no usable output
- * (think-only = reasoning only, or empty = nothing at all) must not silently
- * break into an empty assistant. process() drops the empty turn and raises
+ * Integration tests for T01: a `finish=stop` step with no output at all (no
+ * text, reasoning or tool call) must not silently break into an empty
+ * assistant. A reasoning-only stop is a final answer for every model. process() drops the empty turn and raises
  * InvalidOutputError so SessionRetry.policy (decide → persistent server budget)
  * owns the retry; it keeps retrying until usable output or cancellation.
  * No reminder message is injected.
@@ -72,9 +72,9 @@ function writeConfig(dir: string, origin: string) {
         build: { model: "alibaba/qwen-plus" },
         "checkpoint-writer": { model: "alibaba/qwen-plus" },
       },
-      // Empty/think-only output retries under the persistent server budget for the
-      // primary agent and ordinary actors; system-spawned agents use the bounded
-      // unknown budget.
+      // Empty output retries under the persistent server budget for the primary
+      // agent and ordinary actors; system-spawned agents use the bounded unknown
+      // budget.
       retry: {
         server: { initialDelayMs: 1, maxDelayMs: 1 },
         unknown: { maxRetries: 1, initialDelayMs: 1, maxDelayMs: 1, deadlineMs: 2000 },
@@ -245,7 +245,7 @@ describe("invalid-output continuation — integration", () => {
   test("dropping an empty turn keeps the assistant message identity", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
-      { lines: reasoningStopResponse("let me think about this...") },
+      { lines: emptyStopResponse() },
       { lines: textStopResponse("final answer") },
     ])
     try {
@@ -287,11 +287,11 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
-  test("think-only (reasoning only) stop step is deleted and retried, second call produces a final assistant", async () => {
+  test("reasoning-only stop step is terminal for a non-GPT model and is not retried", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
       { lines: reasoningStopResponse("let me think about this...") },
-      { lines: textStopResponse("final answer") },
+      { lines: textStopResponse("unexpected retry") },
     ])
     try {
       await writeConfig(tmp.path, stub.origin)
@@ -302,25 +302,22 @@ describe("invalid-output continuation — integration", () => {
             Effect.gen(function* () {
               const sessions = yield* Session.Service
               const prompt = yield* SessionPrompt.Service
-              const session = yield* sessions.create({ title: "invalid-think-only" })
+              const session = yield* sessions.create({ title: "reasoning-only-final" })
               const result = yield* prompt.prompt({
                 sessionID: session.id,
                 agent: "build",
                 parts: [{ type: "text", text: "Answer my question." }],
               })
-              expect(stub.captures.length).toBe(2)
+              expect(stub.captures.length).toBe(1)
               expect(result.info.role).toBe("assistant")
-              if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
-              expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(true)
+              if (result.info.role === "assistant") {
+                expect(result.info.error).toBeUndefined()
+                expect(result.info.finish).toBe("stop")
+              }
+              expect(result.parts.some((p) => p.type === "reasoning" && p.text.includes("let me think"))).toBe(true)
+              expect(result.parts.some((p) => p.type === "text")).toBe(false)
               const msgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
-              const assistants = assistantOnly(msgs)
-              expect(assistants.length).toBe(1)
-              expect(assistants.some((m) => m.parts.some((p) => p.type === "reasoning"))).toBe(false)
-              const retry = stub.captures[1].messages as { role: string; content: unknown }[]
-              const nonSystem = retry.filter((m) => m.role !== "system")
-              expect(nonSystem.length).toBe(1)
-              expect(nonSystem.some((m) => JSON.stringify(m.content).includes("no usable"))).toBe(false)
-              expect(nonSystem).toEqual(nonSystemMessages(stub.captures[0]))
+              expect(assistantOnly(msgs)).toHaveLength(1)
             }),
           ),
       })

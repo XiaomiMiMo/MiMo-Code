@@ -74,9 +74,9 @@ export function emptyStopResponse(): string[] {
 }
 
 /**
- * Build SSE lines for a "think-only" step: reasoning deltas (OpenAI-compatible
+ * Build SSE lines for a reasoning-only step: reasoning deltas (OpenAI-compatible
  * `reasoning_content`) followed by `finish_reason: "stop"`, with no text or tool
- * call. Exercises the T01 think-only continuation path.
+ * call. A reasoning-only stop is the model's final answer.
  */
 export function reasoningStopResponse(reasoning: string): string[] {
   return [
@@ -114,11 +114,36 @@ export function contentFilterResponse(text = ""): string[] {
 /**
  * Build SSE lines for a step that emits usable text but finishes with an
  * unrecognized `finish_reason`. The openai-compatible provider maps any unknown
- * reason to unified "other" (see mapOpenAICompatibleFinishReason default branch),
- * so this exercises the T03 `other` + non-empty text degraded-final path.
+ * reason to unified "other" and keeps the raw reason, so this exercises the
+ * `other` + raw reason final path. `finishReason: "pause_turn"` produces a raw
+ * `pause_turn` the same way.
  */
 export function otherFinishResponse(text: string, finishReason = "guardrail"): string[] {
   return [sseChunk({ role: "assistant" }), sseChunk({ content: text }), sseChunk({}, finishReason), "data: [DONE]\n\n"]
+}
+
+/**
+ * Build SSE lines for a stream that closes without any `finish_reason` chunk:
+ * the provider never sent its terminal frame. The AI SDK reports unified
+ * "other" with no raw reason. Optional tool calls are emitted in full first.
+ */
+export function unterminatedResponse(input: {
+  text?: string
+  reasoning?: string
+  toolCalls?: { id: string; name: string; args: string }[]
+}): string[] {
+  return [
+    sseChunk({ role: "assistant" }),
+    ...(input.reasoning ? [sseChunk({ reasoning_content: input.reasoning })] : []),
+    ...(input.text ? [sseChunk({ content: input.text })] : []),
+    ...(input.toolCalls ?? []).flatMap((call, index) => [
+      sseChunk({
+        tool_calls: [{ index, id: call.id, type: "function", function: { name: call.name, arguments: "" } }],
+      }),
+      sseChunk({ tool_calls: [{ index, function: { arguments: call.args } }] }),
+    ]),
+    "data: [DONE]\n\n",
+  ]
 }
 
 /** Build SSE lines for a plain text response that hits the output token limit */

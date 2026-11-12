@@ -29,6 +29,7 @@ export type Candidate = {
   textMetadata?: Record<string, any>
   toolCalls: SessionProcessor.ProposedToolCall[]
   finishReason: string
+  rawFinishReason?: string
   usage?: any
   providerMetadata?: Record<string, any>
 }
@@ -181,6 +182,7 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
           break
         case "finish-step":
           candidate.finishReason = event.finishReason ?? candidate.finishReason
+          candidate.rawFinishReason = event.rawFinishReason
           candidate.usage = event.usage
           candidate.providerMetadata = event.providerMetadata
           break
@@ -425,6 +427,7 @@ export const runMaxStep = (input: MaxStepInput): Effect.Effect<SessionProcessor.
       textMetadata: winner.textMetadata,
       toolCalls: winner.toolCalls,
       finishReason: winner.finishReason,
+      rawFinishReason: winner.rawFinishReason,
       usage: winner.usage,
       providerMetadata: winner.providerMetadata,
       tools: input.tools as any,

@@ -9,7 +9,7 @@ import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
 import { Snapshot } from "@/snapshot"
 import * as Session from "./session"
-import { classifyAssistantStep } from "./classify"
+import { classifyAssistantStep, isStreamIncomplete, isTerminalFinish } from "./classify"
 import { LLM } from "./llm"
 import { MessageV2 } from "./message-v2"
 import { isOverflow } from "./overflow"
@@ -95,19 +95,20 @@ export function shouldAutoResumeAfterTools(input: {
   aborted?: boolean
   /** Current assistant finish reason (provider). Terminal reasons must not be rewritten. */
   finish?: string | undefined
+  /** Provider raw finish reason. Raw-less `other` (stream incomplete) is not terminal. */
+  rawFinish?: string | undefined
   /** Non-empty user-visible final text already on this assistant message. */
   hasFinalText?: boolean
 }): boolean {
   if (input.aborted) return false
   if (input.retrySafe) return false
   if (!input.decision.retryable) return false
-  // Already-delivered answer: finish=stop/other (or content-filter/error) is terminal.
-  // Overwriting it to "tool-calls" reopens a finished turn and the runLoop never idles
-  // (classify keeps returning continue on the completed tools). Trailing transport
-  // noise after a good final must leave the answer intact.
-  if (input.finish === "stop" || input.finish === "other") {
-    if (input.hasFinalText) return false
-  }
+  // Already-delivered answer: a terminal finish (stop, or other with a raw reason;
+  // see isTerminalFinish) or content-filter/error. Overwriting it to "tool-calls"
+  // reopens a finished turn and the runLoop never idles (classify keeps returning
+  // continue on the completed tools). Trailing transport noise after a good final
+  // must leave the answer intact.
+  if (isTerminalFinish({ finish: input.finish, rawFinish: input.rawFinish }) && input.hasFinalText) return false
   if (input.finish === "content-filter" || input.finish === "error") return false
   const hasCompleted = input.toolParts.some((p) => p.state.status === "completed")
   const hasInFlight = input.toolParts.some((p) => p.state.status === "running" || p.state.status === "pending")
@@ -138,6 +139,7 @@ export type ReplayInput = {
   textMetadata?: Record<string, any>
   toolCalls: ProposedToolCall[]
   finishReason: string
+  rawFinishReason?: string
   usage?: any
   providerMetadata?: Record<string, any>
   /** Execute-bearing tools (from resolveTools) used to run the winner's calls. */
@@ -750,6 +752,7 @@ export const layer: Layer.Layer<
               metadata: value.providerMetadata,
             })
             ctx.assistantMessage.finish = value.finishReason
+            ctx.assistantMessage.rawFinish = value.rawFinishReason
             ctx.assistantMessage.cost += usage.cost
             ctx.assistantMessage.tokens = usage.tokens
             yield* session.updatePart({
@@ -1048,18 +1051,54 @@ export const layer: Layer.Layer<
               Effect.ensuring(closeTools()),
             )
 
-            // Empty / think-only output is a failed step. Raise InvalidOutputError
-            // so SessionRetry.policy (decide → persistent server budget) owns the
-            // retry instead of a parallel counter. Clear the empty turn's parts so
-            // it never sits in session history, keeping the assistant identity the
-            // retry writes into.
-            // Length finish is owned by autoContinueOutputLength; json_schema
-            // empty output is owned by structured-output retry.
-            // Only replay when the stream is retrySafe (no tool side effects) and
-            // the turn has no tool residue — otherwise the runLoop's
-            // dropEmptyAssistant starts a fresh step instead of replaying.
+            // Reset the step's content but keep the message identity: removing the
+            // message and rebuilding it under the same ID is indistinguishable, on
+            // the wire, from a late frame of an already-deleted entity, so consumers
+            // that order by events discard the retried content for good.
+            const resetStep = Effect.fnUntraced(function* (parts: MessageV2.Part[]) {
+              for (const part of parts) {
+                if (part.type === "retry") continue
+                yield* session.removePart({
+                  sessionID: ctx.sessionID,
+                  messageID: ctx.assistantMessage.id,
+                  partID: part.id,
+                })
+              }
+              ctx.assistantMessage.finish = undefined
+              ctx.assistantMessage.rawFinish = undefined
+              ctx.assistantMessage.error = undefined
+              ctx.assistantMessage.time.completed = undefined
+              ctx.stepPartIds = []
+              yield* session.updateMessage(ctx.assistantMessage)
+            })
+
             if (!ctx.needsOverflowHandling && !ctx.textNgramRepeat && !ctx.blocked && !ctx.assistantMessage.error) {
               const parts = MessageV2.parts(ctx.assistantMessage.id)
+              // The stream closed without the provider's finish frame: the step
+              // did not finish, whatever it produced. Raise StreamIncompleteError so
+              // SessionRetry.policy (decide → bounded stream budget) replays it.
+              // When tools already ran (not retrySafe) the step is left as is and
+              // the error takes the transport-failure path below: auto-resume
+              // after completed tools, otherwise a terminal error on the step.
+              if (isStreamIncomplete(ctx.assistantMessage)) {
+                slog.warn("stream ended without finish signal", { retrySafe: ctx.retrySafe })
+                if (ctx.retrySafe) yield* resetStep(parts)
+                return yield* Effect.fail(
+                  new MessageV2.StreamIncompleteError({
+                    message: "The model stream ended before the provider sent a finish signal",
+                  }),
+                )
+              }
+              // Empty output is a failed step. Raise InvalidOutputError so
+              // SessionRetry.policy (decide → persistent server budget) owns the
+              // retry instead of a parallel counter. Clear the empty turn's parts so
+              // it never sits in session history, keeping the assistant identity the
+              // retry writes into.
+              // Length finish is owned by autoContinueOutputLength; json_schema
+              // empty output is owned by structured-output retry.
+              // Only replay when the stream is retrySafe (no tool side effects) and
+              // the turn has no tool residue — otherwise the runLoop's
+              // dropEmptyAssistant starts a fresh step instead of replaying.
               const classification = classifyAssistantStep({
                 phase: "after-process",
                 lastUser: streamInput.user,
@@ -1069,32 +1108,18 @@ export const layer: Layer.Layer<
               })
               const hasToolParts = parts.some((part) => part.type === "tool")
               if (
-                (classification.type === "think-only" || classification.type === "invalid") &&
+                classification.type === "invalid" &&
                 ctx.assistantMessage.finish !== "length" &&
                 streamInput.user.format?.type !== "json_schema" &&
                 ctx.retrySafe &&
                 !hasToolParts
               ) {
-                const reason = classification.type === "invalid" ? classification.reason : "think-only"
-                slog.info("invalid output, dropping empty turn", { reason, finish: ctx.assistantMessage.finish })
-                // Reset the content but keep the message identity: removing the message and
-                // rebuilding it under the same ID is indistinguishable, on the wire, from a
-                // late frame of an already-deleted entity, so consumers that order by events
-                // discard the retried content for good.
-                for (const part of parts) {
-                  if (part.type === "retry") continue
-                  yield* session.removePart({
-                    sessionID: ctx.sessionID,
-                    messageID: ctx.assistantMessage.id,
-                    partID: part.id,
-                  })
-                }
-                ctx.assistantMessage.finish = undefined
-                ctx.assistantMessage.error = undefined
-                ctx.assistantMessage.time.completed = undefined
-                ctx.stepPartIds = []
-                yield* session.updateMessage(ctx.assistantMessage)
-                return yield* Effect.fail(new MessageV2.InvalidOutputError({ message: reason }))
+                slog.info("invalid output, dropping empty turn", {
+                  reason: classification.reason,
+                  finish: ctx.assistantMessage.finish,
+                })
+                yield* resetStep(parts)
+                return yield* Effect.fail(new MessageV2.InvalidOutputError({ message: classification.reason }))
               }
             }
           }).pipe(
@@ -1211,6 +1236,7 @@ export const layer: Layer.Layer<
                       toolParts,
                       aborted,
                       finish: ctx.assistantMessage.finish,
+                      rawFinish: ctx.assistantMessage.rawFinish,
                       hasFinalText,
                     })
                   ) {
@@ -1244,17 +1270,16 @@ export const layer: Layer.Layer<
                     // Keep tool parts; mark the step as tool-calls so classify
                     // continues. Do NOT write assistant.error (that is terminal).
                     ctx.assistantMessage.finish = "tool-calls"
+                    ctx.assistantMessage.rawFinish = undefined
                     ctx.assistantMessage.error = undefined
                     yield* session.updateMessage(ctx.assistantMessage)
                     return
                   }
-                  // Trailing transport failure after a completed answer (finish=stop/other
-                  // + final text): keep the answer, do not stamp an ErrorCard, do not
-                  // reopen. Fall through to a clean "stop" via the tail below.
-                  if (
-                    (ctx.assistantMessage.finish === "stop" || ctx.assistantMessage.finish === "other") &&
-                    hasFinalText
-                  ) {
+                  // Trailing transport failure after a completed answer (terminal
+                  // finish + final text): keep the answer, do not stamp an ErrorCard,
+                  // do not reopen. Fall through to a clean "stop" via the tail below.
+                  // Raw-less `other` (stream incomplete) is not terminal.
+                  if (isTerminalFinish(ctx.assistantMessage) && hasFinalText) {
                     slog.info("ignore trailing transport error after finished turn", {
                       kind: decision.kind,
                       message: decision.message,
@@ -1283,6 +1308,7 @@ export const layer: Layer.Layer<
             }
             ctx.stepPartIds = []
             ctx.assistantMessage.finish = undefined
+            ctx.assistantMessage.rawFinish = undefined
             ctx.assistantMessage.error = undefined
             ctx.assistantMessage.time.completed = Date.now()
             yield* session.updateMessage(ctx.assistantMessage)
@@ -1439,6 +1465,7 @@ export const layer: Layer.Layer<
               type: "finish-step",
               usage: input.usage ?? emptyUsage,
               finishReason: input.finishReason,
+              rawFinishReason: input.rawFinishReason,
               providerMetadata: input.providerMetadata,
             } as unknown as StreamEvent)
 

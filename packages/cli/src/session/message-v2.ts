@@ -127,6 +127,18 @@ export const InvalidOutputError = NamedError.create(
     ...HostErrorRegistry.hostFieldShape,
   }),
 )
+/**
+ * The model stream closed without the provider's terminal frame (unified finish
+ * `other` with no raw finish reason). The step did not finish, so it is retried
+ * rather than accepted as a final answer.
+ */
+export const StreamIncompleteError = NamedError.create(
+  "StreamIncompleteError",
+  z.object({
+    message: z.string(),
+    ...HostErrorRegistry.hostFieldShape,
+  }),
+)
 export const TextToolCallError = NamedError.create("TextToolCallError", z.object({ message: z.string(), ...HostErrorRegistry.hostFieldShape }))
 export const ContentFilterError = NamedError.create(
   "ContentFilterError",
@@ -613,6 +625,7 @@ export const Assistant = Base.extend({
       StructuredOutputError.Schema,
       ContextOverflowError.Schema,
       InvalidOutputError.Schema,
+      StreamIncompleteError.Schema,
       TextToolCallError.Schema,
       ContentFilterError.Schema,
       ModelError.Schema,
@@ -653,6 +666,8 @@ export const Assistant = Base.extend({
   }).optional(),
   variant: z.string().optional(),
   finish: z.string().optional(),
+  /** Provider's raw finish reason (AI SDK `rawFinishReason`), e.g. `end_turn`, `pause_turn`. */
+  rawFinish: z.string().optional(),
 }).meta({
   ref: "AssistantMessage",
 })

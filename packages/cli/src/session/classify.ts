@@ -4,18 +4,42 @@ import { MessageV2 } from "./message-v2"
  * Outcome of classifying a single assistant step. Pure data — `runLoop` decides
  * what side effect (nudge / retry / error / break) each category triggers.
  *
- * T00 establishes the categories; downstream tasks (T01–T05) attach distinct
- * behavior to `filtered` / `think-only` / `invalid` / `failed`. Until then
- * `runLoop` collapses every non-`continue` result to the existing break.
+ * `final` with `rawFinish` marks an abnormal-but-delivered completion (unified
+ * finish `other` carrying the provider's raw reason): it ends the turn and the
+ * caller logs the raw reason.
  */
 export type StepClassification =
-  | { type: "final"; degraded?: boolean }
+  | { type: "final"; rawFinish?: string }
   | { type: "continue" }
   | { type: "text-tool-call" }
   | { type: "filtered" }
-  | { type: "think-only" }
   | { type: "invalid"; reason: string }
   | { type: "failed"; reason: string }
+
+/**
+ * Anthropic's raw `pause_turn` (a long-running server-tool turn the API paused).
+ * The Anthropic SDK maps it to unified `stop`, but the turn is not over: the
+ * loop sends the conversation back so the model resumes it.
+ */
+export const PAUSE_TURN = "pause_turn"
+
+/**
+ * Unified finish `other` with no raw reason: the AI SDK default when the stream
+ * closed before the provider sent a finish frame. The step did not finish.
+ */
+export function isStreamIncomplete(assistant: Pick<MessageV2.Assistant, "finish" | "rawFinish">): boolean {
+  return assistant.finish === "other" && !assistant.rawFinish
+}
+
+/**
+ * Finish reasons that end the turn once the step carries final text: `stop`
+ * (except Anthropic `pause_turn`) and `other` with a provider raw reason.
+ * Raw-less `other` (stream incomplete) is never terminal.
+ */
+export function isTerminalFinish(assistant: Pick<MessageV2.Assistant, "finish" | "rawFinish">): boolean {
+  if (assistant.rawFinish === PAUSE_TURN) return false
+  return assistant.finish === "stop" || (assistant.finish === "other" && !!assistant.rawFinish)
+}
 
 /**
  * Single source of truth for "is this assistant step terminal, or should the
@@ -63,7 +87,7 @@ export function classifyAssistantStep(input: {
     const hasFinalText = input.parts.some(
       (part) => part.type === "text" && !part.synthetic && !part.ignored && part.text.trim().length > 0,
     )
-    const terminalFinish = assistant.finish === "stop" || assistant.finish === "other"
+    const terminalFinish = isTerminalFinish(assistant)
     if (inFlight) return { type: "continue" }
     if (clientTools.some((part) => part.state.status !== "error") && !(terminalFinish && hasFinalText))
       return { type: "continue" }
@@ -115,22 +139,27 @@ export function classifyAssistantStep(input: {
   if (assistant.finish === "content-filter") return { type: "filtered" }
   if (assistant.finish === "error") return { type: "failed", reason: "model error finish" }
 
-  // 8. stop / length / other → inspect produced content. An "other" finish that
-  // still produced usable text is a usable-but-abnormal completion: surface it as
-  // `degraded` so runLoop can record it instead of silently treating it as clean.
-  if (
-    input.parts.some(
-      (part) => part.type === "text" && !part.synthetic && !part.ignored && part.text.trim().length > 0,
-    )
+  // 8. Anthropic pause_turn: the provider paused a long server-tool turn. Issue
+  // another step so the model resumes it. Bounded by the agent step limit and
+  // runLoop's PAUSE_TURN_CONTINUATION_LIMIT.
+  if (assistant.rawFinish === PAUSE_TURN) return { type: "continue" }
+
+  // 9. Stream closed without a finish frame. processor.process raises
+  // StreamIncompleteError for a live step; a step reaching classify in this
+  // state (replay, persisted history) did not finish and must not end the turn.
+  if (isStreamIncomplete(assistant)) return { type: "invalid", reason: "stream incomplete" }
+
+  // 10. stop / length / other → inspect produced content. Text or reasoning
+  // alone ends the turn: a reasoning-only stop is the model's answer. `other`
+  // with a raw reason is an abnormal-but-delivered completion; surface the raw
+  // reason so runLoop logs it.
+  const hasText = input.parts.some(
+    (part) => part.type === "text" && !part.synthetic && !part.ignored && part.text.trim().length > 0,
   )
-    return assistant.finish === "other" ? { type: "final", degraded: true } : { type: "final" }
-  if (input.parts.some((part) => part.type === "reasoning" && part.text.trim().length > 0)) {
-    // GPT reasoning models may legitimately end a step with reasoning and no
-    // separate text part. Match upstream termination semantics for that family
-    // without weakening think-only recovery for other reasoning models.
-    if (/(^|\/)gpt-\d/i.test(assistant.modelID))
-      return assistant.finish === "other" ? { type: "final", degraded: true } : { type: "final" }
-    return { type: "think-only" }
-  }
+  const hasReasoning = input.parts.some((part) => part.type === "reasoning" && part.text.trim().length > 0)
+  if (hasText || hasReasoning)
+    return assistant.finish === "other" && assistant.rawFinish
+      ? { type: "final", rawFinish: assistant.rawFinish }
+      : { type: "final" }
   return { type: "invalid", reason: "empty output" }
 }

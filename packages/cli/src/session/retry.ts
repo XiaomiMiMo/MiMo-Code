@@ -346,6 +346,11 @@ export function decide(
   if (MessageV2.InvalidOutputError.isInstance(error)) {
     return { retryable: true, phase, scope, kind: "server", message: error.data.message || "Empty model output" }
   }
+  // StreamIncompleteError = the stream closed without the provider's finish frame.
+  // Same recovery class as an upstream stream read failure: bounded stream budget.
+  if (MessageV2.StreamIncompleteError.isInstance(error)) {
+    return { retryable: true, phase, scope, kind: "stream", message: error.data.message }
+  }
   if (
     !hostCode &&
     !(error instanceof Error) &&

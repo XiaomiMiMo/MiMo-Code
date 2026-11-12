@@ -18,7 +18,7 @@ import {
   oversizedMediaNotice,
 } from "@/util/media"
 import { shrinkAttachment } from "@/provider/image"
-import { classifyAssistantStep } from "./classify"
+import { classifyAssistantStep, PAUSE_TURN } from "./classify"
 import { Log, Token } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
@@ -584,6 +584,9 @@ export function predictContext(history: readonly MessageV2.WithParts[]) {
 const OUTPUT_LENGTH_CONTINUATION_LIMIT = Flag.MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT
 const TEXT_TOOL_CALL_RETRY_LIMIT = Flag.MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT
 const EMPTY_STEP_DROP_LIMIT = Flag.MIMOCODE_EMPTY_STEP_DROP_LIMIT
+// Anthropic `pause_turn` continuations per runLoop. Agent `steps` defaults to
+// unbounded, so this keeps a provider that pauses forever from looping forever.
+const PAUSE_TURN_CONTINUATION_LIMIT = 10
 
 const log = Log.create({ service: "session.prompt" })
 
@@ -4024,8 +4027,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const session = yield* sessions.get(sessionID)
         let outputLengthContinuations = 0
         // Structured-output-only retry: cap comes from lastUser.format.retryCount (default 2).
-        // Local to runLoop; resets on the next user turn. Empty/think-only output
-        // is retried inside processor.process via SessionRetry.policy instead.
+        // Local to runLoop; resets on the next user turn. Empty output is retried
+        // inside processor.process via SessionRetry.policy instead.
         let structuredRetries = 0
         // Bounded retries for text-form tool calls (model wrote a tool call as
         // prose text instead of a structured tool_use). Local to runLoop so each
@@ -4046,6 +4049,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           )
           if (progressed) emptyStepDrops = 0
         }
+        // Anthropic pause_turn continuations in this run (see PAUSE_TURN_CONTINUATION_LIMIT).
+        let pauseTurnContinuations = 0
         // Retry record of an empty step dropped by dropEmptyAssistant, re-attached
         // to the next step's assistant answering the same user message.
         let carriedRetry: { part: MessageV2.RetryPart; parentID: MessageID } | undefined
@@ -4576,9 +4581,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           return true
         })
 
-        // Stale empty / think-only assistant left in history (resume, crash), or an
-        // empty step that process() could not replay. Drop it and start a fresh
-        // step; once EMPTY_STEP_DROP_LIMIT drops ran in a row, stamp a terminal
+        // Stale empty assistant left in history (resume, crash), or an empty step
+        // that process() could not replay. Drop it and start a fresh step; once
+        // EMPTY_STEP_DROP_LIMIT drops ran in a row, stamp a terminal
         // InvalidOutputError instead and let the caller exit the loop.
         // Its retry record moves to the next step's assistant so the turn's retry
         // count stays visible.
@@ -4672,10 +4677,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         })
 
         // json_schema mode but the model never produced structured output (plain
-        // text stop, empty, think-only, or any other non-tool terminal). Retry up
+        // text stop, empty, reasoning-only, or any other non-tool terminal). Retry up
         // to lastUser.format.retryCount with a repair nudge; on exhaustion write a
         // StructuredOutputError carrying the *real* retry count. Structured retries
-        // are bounded by the per-request retryCount. Empty/think-only for text
+        // are bounded by the per-request retryCount. Empty output for text
         // format is retried inside processor.process via SessionRetry.policy.
         const autoRetryStructuredOutput = Effect.fn("SessionPrompt.autoRetryStructuredOutput")(function* (input: {
           lastUser: MessageV2.User
@@ -5262,14 +5267,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
-            if (classification.type === "think-only" || classification.type === "invalid") {
-              const reason = classification.type === "invalid" ? classification.reason : "think-only"
-              if (yield* dropEmptyAssistant({ assistant: lastAssistant, reason })) continue
+            if (classification.type === "invalid") {
+              if (yield* dropEmptyAssistant({ assistant: lastAssistant, reason: classification.reason })) continue
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
-            if (classification.type === "final" && classification.degraded)
-              yield* slog.warn("degraded final on abnormal finish", { finish: lastAssistant.finish })
+            if (classification.type === "final" && classification.rawFinish)
+              yield* slog.warn("final on abnormal finish", { finish: lastAssistant.finish, raw: classification.rawFinish })
+            // Anthropic paused a long server-tool turn: classify returns continue so
+            // the next step resumes it. Bounded per run; past the limit the paused
+            // step ends the turn as delivered.
+            if (classification.type === "continue" && lastAssistant.rawFinish === PAUSE_TURN) {
+              if (pauseTurnContinuations >= PAUSE_TURN_CONTINUATION_LIMIT) {
+                yield* slog.warn("pause_turn continuation limit reached", { limit: PAUSE_TURN_CONTINUATION_LIMIT })
+                break
+              }
+              pauseTurnContinuations++
+              yield* slog.info("continuing paused turn", { attempt: pauseTurnContinuations })
+            }
             if (classification.type !== "continue") {
               if (yield* waitForSubagents(inputRevision, lastUser)) {
                 subagentWaitUser = lastUser
@@ -5918,17 +5933,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   // Tool residue / unreplayable empty turn: process() left it in
                   // place. Drop it and start a fresh step (SessionRetry already
                   // covered the clean-replay case inside process).
-                  if (
-                    (forkClassification.type === "think-only" || forkClassification.type === "invalid") &&
-                    format.type !== "json_schema"
-                  ) {
-                    const reason = forkClassification.type === "invalid" ? forkClassification.reason : "think-only"
-                    if (yield* dropEmptyAssistant({ assistant: handle.message, reason })) return "continue" as const
+                  if (forkClassification.type === "invalid" && format.type !== "json_schema") {
+                    if (yield* dropEmptyAssistant({ assistant: handle.message, reason: forkClassification.reason }))
+                      return "continue" as const
                     return "break" as const
                   }
 
-                  if (forkClassification.type === "final" && forkClassification.degraded)
-                    yield* slog.warn("degraded final on abnormal finish", { finish: handle.message.finish })
+                  if (forkClassification.type === "final" && forkClassification.rawFinish)
+                    yield* slog.warn("final on abnormal finish", {
+                      finish: handle.message.finish,
+                      raw: forkClassification.rawFinish,
+                    })
                   // Fork agents are always subagents (lastUser.agentID is set); use
                   // per-actor compaction on overflow (same as non-fork subagent path).
                   if (!isBoundedComputation && result === "overflow") {
@@ -6226,17 +6241,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 // Tool residue / unreplayable empty turn: process() left it in
                 // place. Drop it and start a fresh step (SessionRetry already
                 // covered the clean-replay case inside process).
-                if (
-                  (classification.type === "think-only" || classification.type === "invalid") &&
-                  format.type !== "json_schema"
-                ) {
-                  const reason = classification.type === "invalid" ? classification.reason : "think-only"
-                  if (yield* dropEmptyAssistant({ assistant: handle.message, reason })) return "continue" as const
+                if (classification.type === "invalid" && format.type !== "json_schema") {
+                  if (yield* dropEmptyAssistant({ assistant: handle.message, reason: classification.reason }))
+                    return "continue" as const
                   return "break" as const
                 }
 
-                if (classification.type === "final" && classification.degraded)
-                  yield* slog.warn("degraded final on abnormal finish", { finish: handle.message.finish })
+                if (classification.type === "final" && classification.rawFinish)
+                  yield* slog.warn("final on abnormal finish", {
+                    finish: handle.message.finish,
+                    raw: classification.rawFinish,
+                  })
                 if (!isBoundedComputation && result === "overflow") {
                   // Subagent overflow → per-actor compaction. Insert a boundary
                   // tagged with the subagent's agent_id; the next runLoop iteration
