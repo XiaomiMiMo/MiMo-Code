@@ -201,6 +201,13 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
       return Effect.void
     })
 
+    // A candidate whose stream closed without a finish frame did not finish;
+    // it never competes. If every candidate is incomplete, runMaxStep falls back
+    // to the single-process path, which retries via StreamIncompleteError.
+    if (candidate.finishReason === "other" && !candidate.rawFinishReason) {
+      log.warn("candidate stream incomplete", { index })
+      return null
+    }
     return candidate
   }).pipe(
     // Mirror the proven build/plan path (processor.ts): convert any DEFECT into

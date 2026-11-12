@@ -118,16 +118,18 @@ describe("classifyAssistantStep", () => {
     ).toEqual({ type: "invalid", reason: "empty output" })
   })
 
-  // Raw-less `other` = the stream closed before the provider's finish frame.
-  test("other without raw reason + text => invalid (stream incomplete), never final", () => {
+  // Raw-less `other` reaching classify is persisted history (live incomplete
+  // streams raise StreamIncompleteError in the processor), so it is judged by
+  // its content.
+  test("persisted other without raw reason + text => final by content", () => {
     expect(
       classifyAssistantStep({
         phase: "after-process",
         lastUser,
         assistant: assistantInfo("m-2", { finish: "other" }),
-        parts: [textPart("m-2", "partial answer cut off")],
+        parts: [textPart("m-2", "legacy answer")],
       }),
-    ).toEqual({ type: "invalid", reason: "stream incomplete" })
+    ).toEqual({ type: "final" })
   })
 
   test("other without raw reason + completed client tool + text => continue (not terminal)", () => {
@@ -150,45 +152,6 @@ describe("classifyAssistantStep", () => {
         parts: [toolPart("m-2"), textPart("m-2", "answer")],
       }),
     ).toEqual({ type: "final", rawFinish: "guardrail" })
-  })
-
-  describe("anthropic pause_turn", () => {
-    test("stop + raw pause_turn + text => continue", () => {
-      expect(
-        classifyAssistantStep({
-          phase: "after-process",
-          lastUser,
-          assistant: assistantInfo("m-2", { finish: "stop", rawFinish: "pause_turn" }),
-          parts: [textPart("m-2", "searching...")],
-        }),
-      ).toEqual({ type: "continue" })
-    })
-
-    test("stop + raw pause_turn + completed client tool + text => continue", () => {
-      expect(
-        classifyAssistantStep({
-          phase: "after-process",
-          lastUser,
-          assistant: assistantInfo("m-2", { finish: "stop", rawFinish: "pause_turn" }),
-          parts: [toolPart("m-2"), textPart("m-2", "searching...")],
-        }),
-      ).toEqual({ type: "continue" })
-    })
-
-    test("pause_turn on an errored step => failed (error beats continuation)", () => {
-      expect(
-        classifyAssistantStep({
-          phase: "after-process",
-          lastUser,
-          assistant: assistantInfo("m-2", {
-            finish: "stop",
-            rawFinish: "pause_turn",
-            error: new MessageV2.OutputLengthError({}).toObject(),
-          }),
-          parts: [textPart("m-2", "searching...")],
-        }).type,
-      ).toBe("failed")
-    })
   })
 
   describe("core guarantee: in-flight client tool part => continue", () => {

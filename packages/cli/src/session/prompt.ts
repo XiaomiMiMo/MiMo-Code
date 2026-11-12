@@ -18,7 +18,7 @@ import {
   oversizedMediaNotice,
 } from "@/util/media"
 import { shrinkAttachment } from "@/provider/image"
-import { classifyAssistantStep, PAUSE_TURN } from "./classify"
+import { classifyAssistantStep } from "./classify"
 import { Log, Token } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
@@ -584,9 +584,6 @@ export function predictContext(history: readonly MessageV2.WithParts[]) {
 const OUTPUT_LENGTH_CONTINUATION_LIMIT = Flag.MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT
 const TEXT_TOOL_CALL_RETRY_LIMIT = Flag.MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT
 const EMPTY_STEP_DROP_LIMIT = Flag.MIMOCODE_EMPTY_STEP_DROP_LIMIT
-// Anthropic `pause_turn` continuations per runLoop. Agent `steps` defaults to
-// unbounded, so this keeps a provider that pauses forever from looping forever.
-const PAUSE_TURN_CONTINUATION_LIMIT = 10
 
 const log = Log.create({ service: "session.prompt" })
 
@@ -4049,8 +4046,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           )
           if (progressed) emptyStepDrops = 0
         }
-        // Anthropic pause_turn continuations in this run (see PAUSE_TURN_CONTINUATION_LIMIT).
-        let pauseTurnContinuations = 0
         // Retry record of an empty step dropped by dropEmptyAssistant, re-attached
         // to the next step's assistant answering the same user message.
         let carriedRetry: { part: MessageV2.RetryPart; parentID: MessageID } | undefined
@@ -5274,17 +5269,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             if (classification.type === "final" && classification.rawFinish)
               yield* slog.warn("final on abnormal finish", { finish: lastAssistant.finish, raw: classification.rawFinish })
-            // Anthropic paused a long server-tool turn: classify returns continue so
-            // the next step resumes it. Bounded per run; past the limit the paused
-            // step ends the turn as delivered.
-            if (classification.type === "continue" && lastAssistant.rawFinish === PAUSE_TURN) {
-              if (pauseTurnContinuations >= PAUSE_TURN_CONTINUATION_LIMIT) {
-                yield* slog.warn("pause_turn continuation limit reached", { limit: PAUSE_TURN_CONTINUATION_LIMIT })
-                break
-              }
-              pauseTurnContinuations++
-              yield* slog.info("continuing paused turn", { attempt: pauseTurnContinuations })
-            }
             if (classification.type !== "continue") {
               if (yield* waitForSubagents(inputRevision, lastUser)) {
                 subagentWaitUser = lastUser

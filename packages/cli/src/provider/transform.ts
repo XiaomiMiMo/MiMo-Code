@@ -5,7 +5,6 @@ import type { JSONSchema } from "zod/v4/core"
 import type * as Provider from "./provider"
 import type * as ModelsDev from "./models"
 import { Flag } from "@/flag/flag"
-import { isXiaomiFamilyProvider } from "./xiaomi-family"
 import {
   compressImage,
   canonicalImageMime,
@@ -1219,11 +1218,14 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
 const ANTHROPIC_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"])
 
 function thinkingBudget(model: Provider.Model) {
-  return Math.min(16_000, Math.floor(model.limit.output / 2 - 1))
+  return Math.min(16_000, Math.floor(maxOutputTokens(model) / 2 - 1))
 }
 
 // Anthropic Messages shape. Budget-controlled models take effort alongside budgeted thinking;
 // models declaring effort without a budget control use adaptive thinking.
+// `display: "summarized"` keeps adaptive thinking text visible on models whose default is
+// "omitted"; it is sent only through the Anthropic/Bedrock SDKs, whose schemas define it
+// (gateway and SAP pass their own Anthropic option schema, so they get the plain shape).
 function anthropicEffort(model: Provider.Model, effort: string, display: boolean): Record<string, any> | undefined {
   if (!ANTHROPIC_EFFORTS.has(effort)) return undefined
   if (model.capabilities.reasoningBudget) return { thinking: { type: "enabled", budgetTokens: thinkingBudget(model) }, effort }
@@ -1231,7 +1233,11 @@ function anthropicEffort(model: Provider.Model, effort: string, display: boolean
   return { thinking: { type: "adaptive", ...(display ? { display: "summarized" } : {}) }, effort }
 }
 
+// Google thinkingLevel accepts only these values.
+const GOOGLE_EFFORTS = new Set(["minimal", "low", "medium", "high"])
+
 function googleEffort(effort: string) {
+  if (!GOOGLE_EFFORTS.has(effort)) return undefined
   return { thinkingConfig: { includeThoughts: true, thinkingLevel: effort } }
 }
 
@@ -1391,7 +1397,10 @@ export function options(input: {
     }
   }
 
-  // Enable thinking by default for kimi-k2.5/k2p5 models using anthropic SDK
+  // Thinking switches below are transport, not tuning: these endpoints return no
+  // reasoning unless thinking is explicitly enabled. Kimi K2.5 over the Anthropic
+  // protocol only reasons with `thinking: enabled`, which the protocol requires to
+  // carry a budget.
   const modelId = input.model.api.id.toLowerCase()
   if (
     (input.model.api.npm === "@ai-sdk/anthropic" || input.model.api.npm === "@ai-sdk/google-vertex/anthropic") &&
@@ -1399,7 +1408,7 @@ export function options(input: {
   ) {
     result["thinking"] = {
       type: "enabled",
-      budgetTokens: Math.min(16_000, Math.floor(input.model.limit.output / 2 - 1)),
+      budgetTokens: thinkingBudget(input.model),
     }
   }
 
@@ -1483,7 +1492,8 @@ function responsesReasoningTransport(model: Provider.Model): Record<string, any>
     case "@ai-sdk/azure":
       return { reasoningSummary: "auto" }
     case "@ai-sdk/github-copilot":
-      // Copilot serves only non-Claude, non-Gemini models over the Responses API.
+      // Claude and Gemini on Copilot use Chat Completions, which has no Responses summary;
+      // the chat schema strips the key for other chat-routed models.
       if (apiID.includes("claude") || apiID.includes("gemini")) return {}
       return { reasoningSummary: "auto" }
   }

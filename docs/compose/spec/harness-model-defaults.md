@@ -51,6 +51,10 @@ User-config `variants` keep working through `configuredVariants`.
 Request defaults carry no name-keyed effort either: `options()` sends only the
 reasoning transport (`reasoningSummary`/encrypted reasoning for Responses-API
 SDKs, `includeThoughts` for Google) and never a default effort or thinking level.
+The one exception is a thinking on/off switch an endpoint needs before it returns
+any reasoning (e.g. Kimi K2.5 over the Anthropic protocol needs `thinking:
+enabled`, which the protocol requires to carry a budget); each such switch is
+commented as transport.
 `smallOptions()` (titles, summaries) uses the model's lowest declared non-off
 effort level mapped through the same SDK shape; with no declaration the vendor
 default applies (no forced minimal / zero-budget / disabled thinking).
@@ -62,12 +66,22 @@ default applies (no forced minimal / zero-budget / disabled thinking).
 - `stop` with no client tool calls ends the turn whether it produced text or only
   reasoning; the `think-only` path and the GPT-only exception are removed.
   A step with no text, reasoning or tool call stays `invalid` (retried).
-- `other` with no raw reason means the stream ended without a terminal frame:
-  it raises an explicit retryable error (stream did not finish normally) handled
-  by SessionRetry, and is never treated as terminal (classification, tool
-  auto-resume, trailing-error swallowing).
+- `other` with no raw reason on a live step means the stream ended without a
+  terminal frame: the processor raises an explicit retryable
+  `StreamIncompleteError` handled by SessionRetry (stream budget), and it never
+  counts as terminal for tool auto-resume or trailing-error swallowing. Max-mode
+  drops such candidates; if all are incomplete it falls back to the single
+  process path. A raw-less `other` that reaches classification is therefore
+  persisted history from before raw reasons were recorded and is judged by its
+  content.
 - `other` with a raw reason ends the turn and logs/records the raw reason.
-- Anthropic `pause_turn` (raw) continues the turn instead of ending it.
+- Anthropic `pause_turn` is not special-cased: the harness sends no Anthropic
+  server tools, so it cannot occur, and the continuation request shape is
+  unverified. Revisit if server tools are added.
+- Consequence: a reasoning-only stop also settles subagents and the
+  checkpoint-writer with no text (checkpoint-writer-safety S2.3's think-only
+  retry no longer applies); writers act through tools, and subagent results
+  carry whatever text exists.
 - `length`, `tool-calls`, `error`, `content-filter` behave as today.
 
 ### S2.6 Kept
@@ -89,4 +103,15 @@ Responses, per-SDK parameter shapes, OpenAI OAuth / Copilot omission of
 - [ ] T6: Update tests; typecheck and related suites pass (depends: T1, T2, T3, T4, T5)
 
 ## Journey log
-None
+- Review found max-mode replay looping forever on a stream-incomplete winner
+  (classify returned invalid, dropEmptyAssistant deleted it, repeat). Fixed by
+  dropping incomplete candidates in max-mode and judging persisted raw-less
+  `other` by content, which also keeps pre-upgrade answers from being deleted on
+  resume.
+- `pause_turn` continuation was implemented and then removed: no Anthropic server
+  tools are sent, and appending a "Continue." user turn after an unresolved
+  server tool use is an unverified request shape.
+- Probed MiMo's Anthropic-compatible endpoint (mimo-v2.6-pro, multi-turn with a
+  tool): thinking is always on, no signatures are returned, and
+  `thinking.display` is accepted but ignored, so `display: "summarized"` is kept
+  for adaptive thinking (needed on Claude 4.7+, a no-op elsewhere).

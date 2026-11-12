@@ -115,8 +115,7 @@ export function contentFilterResponse(text = ""): string[] {
  * Build SSE lines for a step that emits usable text but finishes with an
  * unrecognized `finish_reason`. The openai-compatible provider maps any unknown
  * reason to unified "other" and keeps the raw reason, so this exercises the
- * `other` + raw reason final path. `finishReason: "pause_turn"` produces a raw
- * `pause_turn` the same way.
+ * `other` + raw reason final path.
  */
 export function otherFinishResponse(text: string, finishReason = "guardrail"): string[] {
   return [sseChunk({ role: "assistant" }), sseChunk({ content: text }), sseChunk({}, finishReason), "data: [DONE]\n\n"]

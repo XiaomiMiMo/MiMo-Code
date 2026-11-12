@@ -107,19 +107,6 @@ test("[auto-resume after tools] finish=other without raw reason (stream incomple
   ).toBe(true)
 })
 
-test("[auto-resume after tools] anthropic pause_turn + final text → resume (turn not over)", () => {
-  expect(
-    shouldAutoResumeAfterTools({
-      retrySafe: false,
-      decision: { retryable: true },
-      toolParts: [completed],
-      finish: "stop",
-      rawFinish: "pause_turn",
-      hasFinalText: true,
-    }),
-  ).toBe(true)
-})
-
 test("[auto-resume after tools] finish=content-filter / error → no auto-resume", () => {
   expect(
     shouldAutoResumeAfterTools({

@@ -666,7 +666,7 @@ export const Assistant = Base.extend({
   }).optional(),
   variant: z.string().optional(),
   finish: z.string().optional(),
-  /** Provider's raw finish reason (AI SDK `rawFinishReason`), e.g. `end_turn`, `pause_turn`. */
+  /** Provider's raw finish reason (AI SDK `rawFinishReason`), e.g. `stop`, `end_turn`. */
   rawFinish: z.string().optional(),
 }).meta({
   ref: "AssistantMessage",

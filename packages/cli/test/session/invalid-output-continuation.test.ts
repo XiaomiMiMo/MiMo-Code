@@ -1,9 +1,9 @@
 /**
  * Integration tests for T01: a `finish=stop` step with no output at all (no
  * text, reasoning or tool call) must not silently break into an empty
- * assistant. A reasoning-only stop is a final answer for every model. process() drops the empty turn and raises
- * InvalidOutputError so SessionRetry.policy (decide → persistent server budget)
- * owns the retry; it keeps retrying until usable output or cancellation.
+ * assistant. A reasoning-only stop is a final answer for every model.
+ * process() drops the empty turn and raises InvalidOutputError so
+ * SessionRetry.policy (decide → persistent server budget) owns the retry; it keeps retrying until usable output or cancellation.
  * No reminder message is injected.
  *
  * Driven through a real Session.prompt(...) against the scripted HTTP LLM stub.
@@ -287,7 +287,7 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
-  test("reasoning-only stop step is terminal for a non-GPT model and is not retried", async () => {
+  test("reasoning-only stop step is terminal and is not retried", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
       { lines: reasoningStopResponse("let me think about this...") },
@@ -1043,49 +1043,7 @@ describe("invalid-output continuation — integration", () => {
   }, 30_000)
 
   // [TP-SR-R21-07]
-  test("GPT reasoning-only stop step is terminal and is not retried", async () => {
-    await using tmp = await tmpdir({ git: true })
-    const stub = startScriptedLLMServer([
-      { lines: reasoningStopResponse("let me think about this...") },
-      { lines: textStopResponse("unexpected retry") },
-    ])
-    try {
-      await writeGPTConfig(tmp.path, stub.origin)
-      await Instance.provide({
-        directory: tmp.path,
-        fn: () =>
-          run(
-            Effect.gen(function* () {
-              const sessions = yield* Session.Service
-              const prompt = yield* SessionPrompt.Service
-              const session = yield* sessions.create({ title: "gpt-reasoning-only" })
-              const result = yield* prompt.prompt({
-                sessionID: session.id,
-                agent: "build",
-                parts: [{ type: "text", text: "Answer my question." }],
-              })
-              expect(stub.captures.length).toBe(1)
-              expect(result.info.role).toBe("assistant")
-              if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
-              expect(result.parts.some((p) => p.type === "reasoning" && p.text.includes("let me think"))).toBe(true)
-              expect(result.parts.some((p) => p.type === "text")).toBe(false)
-              expect(yield* prompt.recovery({ sessionID: session.id, agentID: "main" })).toEqual([])
-              const resumed = yield* Effect.promise(() => Promise.resolve(Server.Default().app.request(
-                `/session/${session.id}/resume?directory=${encodeURIComponent(tmp.path)}`,
-                { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
-              )))
-              expect(resumed.status).toBe(404)
-              expect(stub.captures.length).toBe(1)
-              expect((yield* sessions.messages({ sessionID: session.id, agentID: "main" })).find((message) => message.info.id === result.info.id)).toEqual(result)
-            }),
-          ),
-      })
-    } finally {
-      await stub.stop()
-    }
-  })
-
-  test("GPT reasoning-only length step still auto-continues", async () => {
+  test("reasoning-only length step auto-continues", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
       { lines: reasoningLengthResponse("token budget exhausted while thinking...") },

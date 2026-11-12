@@ -17,13 +17,6 @@ export type StepClassification =
   | { type: "failed"; reason: string }
 
 /**
- * Anthropic's raw `pause_turn` (a long-running server-tool turn the API paused).
- * The Anthropic SDK maps it to unified `stop`, but the turn is not over: the
- * loop sends the conversation back so the model resumes it.
- */
-export const PAUSE_TURN = "pause_turn"
-
-/**
  * Unified finish `other` with no raw reason: the AI SDK default when the stream
  * closed before the provider sent a finish frame. The step did not finish.
  */
@@ -33,11 +26,10 @@ export function isStreamIncomplete(assistant: Pick<MessageV2.Assistant, "finish"
 
 /**
  * Finish reasons that end the turn once the step carries final text: `stop`
- * (except Anthropic `pause_turn`) and `other` with a provider raw reason.
+ * and `other` with a provider raw reason.
  * Raw-less `other` (stream incomplete) is never terminal.
  */
 export function isTerminalFinish(assistant: Pick<MessageV2.Assistant, "finish" | "rawFinish">): boolean {
-  if (assistant.rawFinish === PAUSE_TURN) return false
   return assistant.finish === "stop" || (assistant.finish === "other" && !!assistant.rawFinish)
 }
 
@@ -139,18 +131,12 @@ export function classifyAssistantStep(input: {
   if (assistant.finish === "content-filter") return { type: "filtered" }
   if (assistant.finish === "error") return { type: "failed", reason: "model error finish" }
 
-  // 8. Anthropic pause_turn: the provider paused a long server-tool turn. Issue
-  // another step so the model resumes it. Bounded by the agent step limit and
-  // runLoop's PAUSE_TURN_CONTINUATION_LIMIT.
-  if (assistant.rawFinish === PAUSE_TURN) return { type: "continue" }
-
-  // 9. Stream closed without a finish frame. processor.process raises
-  // StreamIncompleteError for a live step; a step reaching classify in this
-  // state (replay, persisted history) did not finish and must not end the turn.
-  if (isStreamIncomplete(assistant)) return { type: "invalid", reason: "stream incomplete" }
-
-  // 10. stop / length / other → inspect produced content. Text or reasoning
-  // alone ends the turn: a reasoning-only stop is the model's answer. `other`
+  // 8. stop / length / other → inspect produced content. Text or reasoning
+  // alone ends the turn: a reasoning-only stop is the model's answer. A live
+  // step whose stream closed without a finish frame never gets here
+  // (processor.process raises StreamIncompleteError and max-mode drops such
+  // candidates), so a raw-less `other` seen here is persisted history from
+  // before raw reasons were recorded and is judged by its content. `other`
   // with a raw reason is an abnormal-but-delivered completion; surface the raw
   // reason so runLoop logs it.
   const hasText = input.parts.some(
