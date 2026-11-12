@@ -236,6 +236,7 @@ description: Analyze quasar telemetry and operational metrics.
             const tool = (yield* registry.tools({
               providerID: "opencode" as any,
               modelID: "gpt-5" as any,
+              harness: "codex",
               agent: agent!,
             })).find((item) => item.id === ToolScriptTool.id)
             if (!tool) throw new Error(`Exec tool not found for agent ${agentName}`)

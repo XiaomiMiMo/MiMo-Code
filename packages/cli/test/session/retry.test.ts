@@ -393,12 +393,6 @@ describe("session.retry.retryable", () => {
     expect([1, 2, 3, 4, 5].map((attempt) => SessionRetry.retryDelay(attempt, decision, budget.jitterRatio, budget.initialDelayMs, budget.maxDelayMs))).toStrictEqual([5000, 10000, 20000, 40000, 60000])
   })
 
-  test("recognizes GPT models by configured or API model ID", () => {
-    expect(SessionRetry.isGptModel({ id: "gpt-5.2", api: { id: "gpt-5.2" } })).toBe(true)
-    expect(SessionRetry.isGptModel({ id: "coding-model", api: { id: "gpt-5.2" } })).toBe(true)
-    expect(SessionRetry.isGptModel({ id: "claude-sonnet-4", api: { id: "claude-sonnet-4" } })).toBe(false)
-  })
-
   test("identifies the GPT server overloaded stream error exactly", () => {
     const body = {
       type: "error",

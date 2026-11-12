@@ -199,7 +199,7 @@ import {
   type McpServerReminder,
   type McpToolSearchEntry,
 } from "@/tool/mcp-tool-search"
-import { mcpToolSearchMode, usesGPTToolset } from "@/tool/gpt"
+import { mcpToolSearchMode, usesCodexMode } from "@/tool/gpt"
 import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
 import { SessionReminder } from "./reminder"
@@ -742,7 +742,7 @@ export const layer = Layer.effect(
           : yield* Effect.gen(function* () {
               const [env, skills, instructions] = yield* Effect.all([
                 Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
-                  ? sys.environment(model, captureSession.time.created, capturePrompt.harness)
+                  ? sys.environment(model)
                   : Effect.succeed([]),
                 sys.skills({ ...ag, permission: runtimePermission }),
                 instruction.system().pipe(Effect.orDie),
@@ -1772,13 +1772,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // same process would overwrite (request state must never live in a
       // global; see toolWhitelist/mcpToolSearch precedent).
       const execMcp: { current: Record<string, AITool> } = { current: {} }
-      const searchMode = mcpToolSearchMode(
-        parseMcpToolSearchMode(Flag.MIMOCODE_MCP_TOOL_SEARCH),
-        input.harness,
-        input.model.id,
-        input.model.api.id,
-        input.model.family,
-      )
+      const searchMode = mcpToolSearchMode(parseMcpToolSearchMode(Flag.MIMOCODE_MCP_TOOL_SEARCH), input.harness)
       // Decided once every request-authorized MCP schema is known (auto mode
       // compares their size to the context window); read lazily by the MCP
       // execute wrappers below, which only run after this pass finishes.
@@ -1798,7 +1792,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return new Set(actor.tools)
       })
       const whitelist = yield* whitelistFor()
-      const useGPTTools = usesGPTToolset(input.model.id, input.harness, input.model.api.id, input.model.family)
+      const useGPTTools = usesCodexMode(input.harness)
       const execAllowedByWhitelist =
         useGPTTools &&
         !!whitelist &&
@@ -2340,7 +2334,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
         if (!deferMcpTools) mcpCatalog.current.entries.forEach((entry) => activeTools.add(entry.name))
       }
-      // Config-declared always-direct MCP tools join every toolset (including GPT)
+      // Config-declared always-direct MCP tools join every toolset (including Codex mode)
       // as top-level tools; they are not deferred and must not depend on mcp_tool_use.
       for (const name of alwaysDirectTools) activeTools.add(name)
 
@@ -5937,7 +5931,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 const currentAdditions = Effect.fnUntraced(function* () {
                   const [env, skills, instructions] = yield* Effect.all([
                     Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
-                      ? sys.environment(model, session.time.created, sessionPrompt.harness)
+                      ? sys.environment(model)
                       : Effect.succeed([]),
                     sys.skills({ ...agent, permission: runtimePermission }),
                     instruction.system().pipe(Effect.orDie),
@@ -7740,7 +7734,7 @@ export const PromptInput = z.object({
     .enum(["auto", "codex", "default"])
     .optional()
     .describe(
-      "Harness mode selected by the session's first user query. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.",
+      "Harness mode selected by the session's first user query. Later values are ignored. Codex opts into the Codex toolset and prompt, default forces the default harness, and auto follows MIMOCODE_CODEX_MODE (default harness when unset). MIMOCODE_CODEX_MODE=false forces the default harness regardless of this value. The model never selects the harness.",
     ),
   variant: z.string().optional(),
   parts: z.array(
@@ -7844,7 +7838,7 @@ export const CommandInput = z.object({
     .enum(["auto", "codex", "default"])
     .optional()
     .describe(
-      "Harness mode selected by the session's first user command. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.",
+      "Harness mode selected by the session's first user command. Later values are ignored. Codex opts into the Codex toolset and prompt, default forces the default harness, and auto follows MIMOCODE_CODEX_MODE (default harness when unset). MIMOCODE_CODEX_MODE=false forces the default harness regardless of this value. The model never selects the harness.",
     ),
   parts: z
     .array(

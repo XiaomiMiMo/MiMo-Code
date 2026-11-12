@@ -5510,7 +5510,7 @@ export type SessionPromptData = {
      */
     systemMode?: "append" | "replace-agent"
     /**
-     * Harness mode selected by the session's first user query. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.
+     * Harness mode selected by the session's first user query. Later values are ignored. Codex opts into the Codex toolset and prompt, default forces the default harness, and auto follows MIMOCODE_CODEX_MODE (default harness when unset). MIMOCODE_CODEX_MODE=false forces the default harness regardless of this value. The model never selects the harness.
      */
     harness?: "auto" | "codex" | "default"
     variant?: string
@@ -5885,7 +5885,7 @@ export type SessionPromptAsyncData = {
      */
     systemMode?: "append" | "replace-agent"
     /**
-     * Harness mode selected by the session's first user query. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.
+     * Harness mode selected by the session's first user query. Later values are ignored. Codex opts into the Codex toolset and prompt, default forces the default harness, and auto follows MIMOCODE_CODEX_MODE (default harness when unset). MIMOCODE_CODEX_MODE=false forces the default harness regardless of this value. The model never selects the harness.
      */
     harness?: "auto" | "codex" | "default"
     variant?: string
@@ -6003,7 +6003,7 @@ export type SessionCommandData = {
      */
     systemMode?: "append" | "replace-agent"
     /**
-     * Harness mode selected by the session's first user command. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.
+     * Harness mode selected by the session's first user command. Later values are ignored. Codex opts into the Codex toolset and prompt, default forces the default harness, and auto follows MIMOCODE_CODEX_MODE (default harness when unset). MIMOCODE_CODEX_MODE=false forces the default harness regardless of this value. The model never selects the harness.
      */
     harness?: "auto" | "codex" | "default"
     parts?: Array<

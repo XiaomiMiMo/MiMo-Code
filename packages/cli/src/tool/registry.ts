@@ -68,7 +68,7 @@ import * as BashInteractive from "./bash-interactive"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
 import { GPT_TOP_LEVEL_TOOLS, TOOL_SCRIPT_EXCLUDED, toolScriptRegistry } from "./tool-script-ref"
-import { type HarnessMode, usesGPTToolset } from "./gpt"
+import { type HarnessMode, usesCodexMode } from "./gpt"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -341,7 +341,7 @@ export const layer = Layer.effect(
       agent: Agent.Info
       harness?: HarnessMode
     }) {
-      const useGPTTools = usesGPTToolset(input.modelID, input.harness, input.apiModelID, input.family)
+      const useGPTTools = usesCodexMode(input.harness)
       let filtered = (yield* all()).filter((tool) => {
         if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) return Flag.MIMOCODE_ENABLE_EXA

@@ -31,7 +31,7 @@ export const GPT_TOP_LEVEL_TOOLS = new Set(["exec", "wait"])
 
 // Recursive orchestration and internal sentinel tools stay outside scripts.
 // Other control-flow tools are intentionally callable through `tools.<id>` so
-// the GPT/Codex toolset can expose a single outer `exec` surface.
+// the Codex toolset can expose a single outer `exec` surface.
 export const TOOL_SCRIPT_EXCLUDED = new Set([
   "exec",
   "mcp_tool_search",
