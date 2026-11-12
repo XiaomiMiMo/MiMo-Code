@@ -935,7 +935,8 @@ describe("Actor tool task_id degradation", () => {
 describe("Actor tool reasoning variant inheritance", () => {
   const xiaomi = {
     enabled_providers: ["test", "xiaomi"],
-    provider: { xiaomi: { options: { apiKey: "test-key" } } },
+    // The fixture catalog declares no effort levels for mimo-v2-pro; config offers "high".
+    provider: { xiaomi: { options: { apiKey: "test-key" }, models: { "mimo-v2-pro": { variants: { high: {} } } } } },
   }
 
   const spawnWith = (operation: Record<string, unknown>, parentVariant?: string) =>

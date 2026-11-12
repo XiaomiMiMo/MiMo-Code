@@ -127,6 +127,43 @@ describe("max-mode ECONNRESET handling (integration)", () => {
     expect(attempts()).toBe(1) // no retry for a 400
   })
 
+  test("candidate whose stream ended without a finish frame is dropped, not judged", async () => {
+    const stream = (events: LLM.Event[]) =>
+      ({ buildSystemArray: () => Effect.succeed([]), stream: () => Stream.fromIterable(events) }) as unknown as LLM.Interface
+    const incomplete = await Effect.runPromise(
+      runCandidate(
+        baseInput(
+          stream([
+            { type: "text-delta", text: "half an answ" } as LLM.Event,
+            { type: "finish-step", finishReason: "other", usage: { inputTokens: 1, outputTokens: 1 } } as LLM.Event,
+          ]),
+        ),
+        0,
+      ),
+    )
+    expect(incomplete).toBeNull()
+
+    const reported = expectCandidate(
+      await Effect.runPromise(
+        runCandidate(
+          baseInput(
+            stream([
+              { type: "text-delta", text: "answer" } as LLM.Event,
+              {
+                type: "finish-step",
+                finishReason: "other",
+                rawFinishReason: "guardrail",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              } as LLM.Event,
+            ]),
+          ),
+          0,
+        ),
+      ),
+    )
+    expect(reported.rawFinishReason).toBe("guardrail")
+  })
+
   test("judge retries a transient error part instead of collapsing to pick 0", async () => {
     // Two candidates; the judge should pick index 1. It fails once (transient)
     // then succeeds — a non-retrying judge would have returned pick 0.

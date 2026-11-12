@@ -599,6 +599,18 @@ export type InvalidOutputError = {
   }
 }
 
+export type StreamIncompleteError = {
+  name: "StreamIncompleteError"
+  data: {
+    message: string
+    hostCode?: string
+    hostRetryClass?: "terminal" | "persistent" | "bounded"
+    metadata?: {
+      [key: string]: string
+    }
+  }
+}
+
 export type TextToolCallError = {
   name: "TextToolCallError"
   data: {
@@ -665,6 +677,7 @@ export type EventSessionError = {
       | StructuredOutputError
       | ContextOverflowError
       | InvalidOutputError
+      | StreamIncompleteError
       | TextToolCallError
       | ContentFilterError
       | ModelError
@@ -1195,6 +1208,7 @@ export type AssistantMessage = {
     | StructuredOutputError
     | ContextOverflowError
     | InvalidOutputError
+    | StreamIncompleteError
     | TextToolCallError
     | ContentFilterError
     | ModelError
@@ -1230,6 +1244,7 @@ export type AssistantMessage = {
   }
   variant?: string
   finish?: string
+  rawFinish?: string
 }
 
 export type Message = UserMessage | AssistantMessage

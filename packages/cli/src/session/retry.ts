@@ -339,12 +339,17 @@ export function decide(
   if (MessageV2.AuthError.isInstance(error)) {
     return { retryable: false, phase, scope, kind: "terminal", message: error.data.message, ...(hostCode ? { hostCode, hostRetryClass: hostClass! } : {}) }
   }
-  // InvalidOutputError = model returned only reasoning or empty body. The request was
+  // InvalidOutputError = model returned an empty body (no text, reasoning or tool call). The request was
   // accepted and the provider failed to deliver, the same recovery class as an
   // overloaded upstream: one stalled attempt can outlast any wall-clock deadline,
   // so it waits under the persistent server budget until output or cancellation.
   if (MessageV2.InvalidOutputError.isInstance(error)) {
     return { retryable: true, phase, scope, kind: "server", message: error.data.message || "Empty model output" }
+  }
+  // StreamIncompleteError = the stream closed without the provider's finish frame.
+  // Same recovery class as an upstream stream read failure: bounded stream budget.
+  if (MessageV2.StreamIncompleteError.isInstance(error)) {
+    return { retryable: true, phase, scope, kind: "stream", message: error.data.message }
   }
   if (
     !hostCode &&

@@ -4,9 +4,7 @@ import type { JSONSchema7 } from "@ai-sdk/provider"
 import type { JSONSchema } from "zod/v4/core"
 import type * as Provider from "./provider"
 import type * as ModelsDev from "./models"
-import { iife } from "@/util/iife"
 import { Flag } from "@/flag/flag"
-import { isXiaomiFamilyProvider } from "./xiaomi-family"
 import {
   compressImage,
   canonicalImageMime,
@@ -28,16 +26,9 @@ function mimeToModality(mime: string): Modality | undefined {
   return undefined
 }
 
-export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
-export const LARGE_MODEL_OUTPUT_TOKEN_MAX = 128_000
-
-export function usesLargeModelDefaults(model: { id: string; providerID: string; api: { id: string } }) {
-  const providerID = model.providerID.toLowerCase()
-  if (providerID === "mimo" || isXiaomiFamilyProvider(providerID)) return true
-  return [model.id, model.api.id].some((id) =>
-    ["claude", "gpt", "mimo"].some((name) => id.toLowerCase().includes(name)),
-  )
-}
+// Output budget for a model whose config and models.dev entry declare no
+// `limit.output`. Declared limits are always used as-is.
+export const DEFAULT_OUTPUT_TOKEN_LIMIT = 128_000
 
 // Maps npm package to the key the AI SDK expects for providerOptions
 function sdkKey(npm: string): string | undefined {
@@ -1207,524 +1198,128 @@ export function structuredOutputOptions(model: Provider.Model) {
   return { strictJsonSchema: false }
 }
 
-export function temperature(model: Provider.Model) {
-  const id = model.id.toLowerCase()
-  if (id.includes("qwen")) return 0.55
-  if (id.includes("claude")) return undefined
-  if (id.includes("gemini")) return 1.0
-  if (id.includes("glm-4.6")) return 1.0
-  if (id.includes("glm-4.7")) return 1.0
-  if (id.includes("minimax-m2")) return 1.0
-  if (id.includes("mimo")) return 1.0
-  if (id.includes("kimi-k2")) {
-    // kimi-k2-thinking & kimi-k2.5 && kimi-k2p5 && kimi-k2-5
-    if (["thinking", "k2.", "k2p", "k2-5"].some((s) => id.includes(s))) {
-      return 1.0
-    }
-    return 0.6
-  }
-  return undefined
-}
-
-export function topP(model: Provider.Model) {
-  const id = model.id.toLowerCase()
-  if (id.includes("qwen")) return 1
-  if (["minimax-m2", "gemini", "kimi-k2.5", "kimi-k2p5", "kimi-k2-5"].some((s) => id.includes(s))) {
-    return 0.95
-  }
-  return undefined
-}
-
-export function topK(model: Provider.Model) {
-  const id = model.id.toLowerCase()
-  if (id.includes("minimax-m2")) {
-    if (["m2.", "m25", "m21"].some((s) => id.includes(s))) return 40
-    return 20
-  }
-  if (id.includes("gemini")) return 64
-  return undefined
-}
-
-const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
-const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
-
-function anthropicAdaptiveEfforts(apiId: string): string[] | null {
-  if (["opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"].some((v) => apiId.includes(v))) {
-    return ["low", "medium", "high", "xhigh", "max"]
-  }
-  if (["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"].some((v) => apiId.includes(v))) {
-    return ["low", "medium", "high", "max"]
-  }
-  return null
-}
-
+/**
+ * The model's selectable reasoning levels: exactly the effort levels models.dev declares
+ * (`capabilities.efforts`), each mapped to its SDK's request shape. A reasoning model with no
+ * declared levels — undeclared, always-on, toggle-only or budget-only — offers none; user config
+ * adds levels through `configuredVariants`.
+ */
 export function variants(model: Provider.Model): Record<string, Record<string, any>> {
   if (!model.capabilities.reasoning) return {}
-  const declared = model.capabilities.efforts
-  // Declared without effort levels: always-on and toggle-only mean no caller-selectable levels;
-  // a budget control keeps the built-in fixed-budget levels.
-  if (declared && (declared.length || !model.capabilities.reasoningBudget)) return declaredVariants(model, declared)
-
-  const id = model.id.toLowerCase()
-  if (
-    id.includes("minimax") ||
-    id.includes("glm") ||
-    id.includes("mistral") ||
-    id.includes("kimi") ||
-    id.includes("k2p5") ||
-    id.includes("qwen") ||
-    id.includes("big-pickle")
-  )
-    return {}
-
-  if (id.includes("deepseek")) {
-    if (model.providerID !== "deepseek" || model.api.npm !== "@ai-sdk/openai-compatible") return {}
-    return {
-      high: { reasoningEffort: "high" },
-      max: { reasoningEffort: "max" },
-    }
-  }
-
-  // see: https://docs.x.ai/docs/guides/reasoning#control-how-hard-the-model-thinks
-  if (id.includes("grok") && id.includes("grok-3-mini")) {
-    if (model.api.npm === "@openrouter/ai-sdk-provider") {
-      return {
-        low: { reasoning: { effort: "low" } },
-        high: { reasoning: { effort: "high" } },
-      }
-    }
-    return {
-      low: { reasoningEffort: "low" },
-      high: { reasoningEffort: "high" },
-    }
-  }
-  if (id.includes("grok")) return {}
-
-  return adapterVariants(model)
-}
-
-// Per-adapter effort table (no model-family exclusions). Supplies parameter shapes for
-// both the legacy name-based path and declared efforts.
-function adapterVariants(model: Provider.Model): Record<string, Record<string, any>> {
-  const id = model.id.toLowerCase()
-  const adaptiveEfforts = anthropicAdaptiveEfforts(model.api.id)
-  switch (model.api.npm) {
-    case "@openrouter/ai-sdk-provider":
-      if (!model.id.includes("gpt") && !model.id.includes("gemini-3") && !model.id.includes("claude")) return {}
-      return Object.fromEntries(OPENAI_EFFORTS.map((effort) => [effort, { reasoning: { effort } }]))
-
-    case "@ai-sdk/gateway":
-      if (model.id.includes("anthropic")) {
-        if (adaptiveEfforts) {
-          return Object.fromEntries(
-            adaptiveEfforts.map((effort) => [
-              effort,
-              {
-                thinking: {
-                  type: "adaptive",
-                },
-                effort,
-              },
-            ]),
-          )
-        }
-        return {
-          high: {
-            thinking: {
-              type: "enabled",
-              budgetTokens: 16000,
-            },
-          },
-          max: {
-            thinking: {
-              type: "enabled",
-              budgetTokens: 31999,
-            },
-          },
-        }
-      }
-      if (model.id.includes("google")) {
-        if (id.includes("2.5")) {
-          return {
-            high: {
-              thinkingConfig: {
-                includeThoughts: true,
-                thinkingBudget: 16000,
-              },
-            },
-            max: {
-              thinkingConfig: {
-                includeThoughts: true,
-                thinkingBudget: 24576,
-              },
-            },
-          }
-        }
-        return Object.fromEntries(
-          ["low", "high"].map((effort) => [
-            effort,
-            {
-              includeThoughts: true,
-              thinkingLevel: effort,
-            },
-          ]),
-        )
-      }
-      return Object.fromEntries(OPENAI_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
-
-    case "@ai-sdk/github-copilot":
-      if (model.id.includes("gemini")) {
-        // currently github copilot only returns thinking
-        return {}
-      }
-      if (model.id.includes("claude")) {
-        return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
-      }
-      const copilotEfforts = iife(() => {
-        if (id.includes("5.1-codex-max") || id.includes("5.2") || id.includes("5.3"))
-          return [...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
-        const arr = [...WIDELY_SUPPORTED_EFFORTS]
-        if (id.includes("gpt-5") && model.release_date >= "2025-12-04") arr.push("xhigh")
-        return arr
-      })
-      return Object.fromEntries(
-        copilotEfforts.map((effort) => [
-          effort,
-          {
-            reasoningEffort: effort,
-            reasoningSummary: "auto",
-            include: ["reasoning.encrypted_content"],
-          },
-        ]),
-      )
-
-    case "@ai-sdk/cerebras":
-    // https://v5.ai-sdk.dev/providers/ai-sdk-providers/cerebras
-    case "@ai-sdk/togetherai":
-    // https://v5.ai-sdk.dev/providers/ai-sdk-providers/togetherai
-    case "@ai-sdk/xai":
-    // https://v5.ai-sdk.dev/providers/ai-sdk-providers/xai
-    case "@ai-sdk/deepinfra":
-    // https://v5.ai-sdk.dev/providers/ai-sdk-providers/deepinfra
-    case "venice-ai-sdk-provider":
-    // https://docs.venice.ai/overview/guides/reasoning-models#reasoning-effort
-    case "@ai-sdk/openai-compatible":
-      return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
-
-    case "@ai-sdk/azure":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/azure
-      if (id === "o1-mini") return {}
-      const azureEfforts = ["low", "medium", "high"]
-      if (id.includes("gpt-5-") || id === "gpt-5") {
-        azureEfforts.unshift("minimal")
-      }
-      return Object.fromEntries(
-        azureEfforts.map((effort) => [
-          effort,
-          {
-            reasoningEffort: effort,
-            reasoningSummary: "auto",
-            include: ["reasoning.encrypted_content"],
-          },
-        ]),
-      )
-    case "@ai-sdk/openai":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/openai
-      if (id === "gpt-5-pro") return {}
-      const openaiEfforts = iife(() => {
-        if (id.includes("codex")) {
-          if (id.includes("5.2") || id.includes("5.3")) return [...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
-          return WIDELY_SUPPORTED_EFFORTS
-        }
-        const arr = [...WIDELY_SUPPORTED_EFFORTS]
-        if (id.includes("gpt-5-") || id === "gpt-5") {
-          arr.unshift("minimal")
-        }
-        if (model.release_date >= "2025-11-13") {
-          arr.unshift("none")
-        }
-        if (model.release_date >= "2025-12-04") {
-          arr.push("xhigh")
-        }
-        return arr
-      })
-      return Object.fromEntries(
-        openaiEfforts.map((effort) => [
-          effort,
-          {
-            reasoningEffort: effort,
-            reasoningSummary: "auto",
-            include: ["reasoning.encrypted_content"],
-          },
-        ]),
-      )
-
-    case "@ai-sdk/anthropic":
-    // https://v5.ai-sdk.dev/providers/ai-sdk-providers/anthropic
-    case "@ai-sdk/google-vertex/anthropic":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/google-vertex#anthropic-provider
-
-      if (model.providerID === "github-copilot") {
-        if (model.api.id.includes("opus-4.7")) {
-          return Object.fromEntries(["medium"].map((effort) => [effort, { reasoningEffort: effort }]))
-        }
-      }
-
-      if (adaptiveEfforts) {
-        return Object.fromEntries(
-          adaptiveEfforts.map((effort) => [
-            effort,
-            {
-              thinking: {
-                type: "adaptive",
-                ...(["opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"].some((v) => model.api.id.includes(v))
-                  ? { display: "summarized" }
-                  : {}),
-              },
-              effort,
-            },
-          ]),
-        )
-      }
-
-      return {
-        high: {
-          thinking: {
-            type: "enabled",
-            budgetTokens: Math.min(16_000, Math.floor(model.limit.output / 2 - 1)),
-          },
-        },
-        max: {
-          thinking: {
-            type: "enabled",
-            budgetTokens: Math.min(31_999, model.limit.output - 1),
-          },
-        },
-      }
-
-    case "@ai-sdk/amazon-bedrock":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/amazon-bedrock
-      if (adaptiveEfforts) {
-        return Object.fromEntries(
-          adaptiveEfforts.map((effort) => [
-            effort,
-            {
-              reasoningConfig: {
-                type: "adaptive",
-                maxReasoningEffort: effort,
-                ...(["opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"].some((v) => model.api.id.includes(v))
-                  ? { display: "summarized" }
-                  : {}),
-              },
-            },
-          ]),
-        )
-      }
-      // For Anthropic models on Bedrock, use reasoningConfig with budgetTokens
-      if (model.api.id.includes("anthropic")) {
-        return {
-          high: {
-            reasoningConfig: {
-              type: "enabled",
-              budgetTokens: 16000,
-            },
-          },
-          max: {
-            reasoningConfig: {
-              type: "enabled",
-              budgetTokens: 31999,
-            },
-          },
-        }
-      }
-
-      // For Amazon Nova models, use reasoningConfig with maxReasoningEffort
-      return Object.fromEntries(
-        WIDELY_SUPPORTED_EFFORTS.map((effort) => [
-          effort,
-          {
-            reasoningConfig: {
-              type: "enabled",
-              maxReasoningEffort: effort,
-            },
-          },
-        ]),
-      )
-
-    case "@ai-sdk/google-vertex":
-    // https://v5.ai-sdk.dev/providers/ai-sdk-providers/google-vertex
-    case "@ai-sdk/google":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/google-generative-ai
-      if (id.includes("2.5")) {
-        return {
-          high: {
-            thinkingConfig: {
-              includeThoughts: true,
-              thinkingBudget: 16000,
-            },
-          },
-          max: {
-            thinkingConfig: {
-              includeThoughts: true,
-              thinkingBudget: 24576,
-            },
-          },
-        }
-      }
-      let levels = ["low", "high"]
-      if (id.includes("3.1")) {
-        levels = ["low", "medium", "high"]
-      }
-
-      return Object.fromEntries(
-        levels.map((effort) => [
-          effort,
-          {
-            thinkingConfig: {
-              includeThoughts: true,
-              thinkingLevel: effort,
-            },
-          },
-        ]),
-      )
-
-    case "@ai-sdk/mistral":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/mistral
-      return {}
-
-    case "@ai-sdk/cohere":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/cohere
-      return {}
-
-    case "@ai-sdk/groq":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/groq
-      const groqEffort = ["none", ...WIDELY_SUPPORTED_EFFORTS]
-      return Object.fromEntries(
-        groqEffort.map((effort) => [
-          effort,
-          {
-            reasoningEffort: effort,
-          },
-        ]),
-      )
-
-    case "@ai-sdk/perplexity":
-      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/perplexity
-      return {}
-
-    case "@jerome-benoit/sap-ai-provider-v2":
-      if (model.api.id.includes("anthropic")) {
-        if (adaptiveEfforts) {
-          return Object.fromEntries(
-            adaptiveEfforts.map((effort) => [
-              effort,
-              {
-                thinking: {
-                  type: "adaptive",
-                },
-                effort,
-              },
-            ]),
-          )
-        }
-        return {
-          high: {
-            thinking: {
-              type: "enabled",
-              budgetTokens: 16000,
-            },
-          },
-          max: {
-            thinking: {
-              type: "enabled",
-              budgetTokens: 31999,
-            },
-          },
-        }
-      }
-      if (model.api.id.includes("gemini") && id.includes("2.5")) {
-        return {
-          high: {
-            thinkingConfig: {
-              includeThoughts: true,
-              thinkingBudget: 16000,
-            },
-          },
-          max: {
-            thinkingConfig: {
-              includeThoughts: true,
-              thinkingBudget: 24576,
-            },
-          },
-        }
-      }
-      if (model.api.id.includes("gpt") || /\bo[1-9]/.test(model.api.id)) {
-        return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
-      }
-      return {}
-  }
-  return {}
-}
-
-// Claude 3.x and 4.0–4.5: a closed set that predates adaptive thinking. They only get the
-// built-in fixed-budget levels, so a declared effort list never turns into adaptive requests
-// they reject. Newer names (4.6+, 5.x, other families) never match.
-function legacyClaude(apiId: string): boolean {
-  const m = apiId.toLowerCase().match(/claude-(?:(?:opus|sonnet|haiku)-?)?(\d+)(?:[-.](\d{1,2})(?!\d))?/)
-  if (!m) return false
-  const major = Number(m[1])
-  const minor = m[2] ? Number(m[2]) : 0
-  return major < 4 || (major === 4 && minor <= 5)
-}
-
-// Adapter-standard parameters for one effort level, used when a declared level is absent
-// from the adapter table. undefined = this adapter has no standard field for that level.
-function standardEffort(model: Provider.Model, effort: string): Record<string, any> | undefined {
-  switch (model.api.npm) {
-    case "@ai-sdk/openai-compatible":
-    case "@ai-sdk/gateway":
-    case "@ai-sdk/deepinfra":
-    case "venice-ai-sdk-provider":
-      return { reasoningEffort: effort }
-    case "@ai-sdk/openai":
-    case "@ai-sdk/azure":
-      return { reasoningEffort: effort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
-    case "@ai-sdk/anthropic":
-    case "@ai-sdk/google-vertex/anthropic":
-      // Anthropic effort has no off/minimal level; legacy Claude stays on the built-in table.
-      if (effort === "none" || effort === "minimal" || legacyClaude(model.api.id)) return undefined
-      // Budget-controlled models take effort only alongside budgeted thinking;
-      // adaptive thinking is for models that declare effort without a budget control.
-      return model.capabilities.reasoningBudget
-        ? { thinking: { type: "enabled", budgetTokens: Math.min(16_000, Math.floor(model.limit.output / 2 - 1)) }, effort }
-        : { thinking: { type: "adaptive" }, effort }
-    case "@openrouter/ai-sdk-provider":
-      return { reasoning: { effort } }
-  }
-  return undefined
-}
-
-// models.dev declared the levels: exactly those levels. The adapter table supplies the
-// parameters when it covers every declared level; otherwise the whole set uses the
-// adapter-standard shape so one model never mixes shapes (e.g. Anthropic budget `enabled`
-// for high/max but `adaptive` for the rest). Levels neither source can express are
-// dropped. [] (toggle/budget only) → none.
-function declaredVariants(model: Provider.Model, declared: readonly string[]): Record<string, Record<string, any>> {
-  if (!declared.length) return {}
-  const table = adapterVariants(model)
-  const useTable = declared.every((effort) => effort in table)
   const out: Record<string, Record<string, any>> = {}
-  for (const effort of declared) {
-    const params = useTable ? table[effort] : (standardEffort(model, effort) ?? table[effort])
+  for (const effort of model.capabilities.efforts ?? []) {
+    const params = effortOptions(model, effort)
     if (params) out[effort] = params
   }
   return out
 }
 
+// Effort values the Anthropic protocol accepts (`output_config.effort`); it has no off/minimal level.
+const ANTHROPIC_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"])
+
+function thinkingBudget(model: Provider.Model) {
+  return Math.min(16_000, Math.floor(maxOutputTokens(model) / 2 - 1))
+}
+
+// Anthropic Messages shape. Budget-controlled models take effort alongside budgeted thinking;
+// models declaring effort without a budget control use adaptive thinking.
+// `display: "summarized"` keeps adaptive thinking text visible on models whose default is
+// "omitted"; it is sent only through the Anthropic/Bedrock SDKs, whose schemas define it
+// (gateway and SAP pass their own Anthropic option schema, so they get the plain shape).
+function anthropicEffort(model: Provider.Model, effort: string, display: boolean): Record<string, any> | undefined {
+  if (!ANTHROPIC_EFFORTS.has(effort)) return undefined
+  if (model.capabilities.reasoningBudget) return { thinking: { type: "enabled", budgetTokens: thinkingBudget(model) }, effort }
+  // Adaptive thinking may omit the thinking text unless a display mode is requested.
+  return { thinking: { type: "adaptive", ...(display ? { display: "summarized" } : {}) }, effort }
+}
+
+// Google thinkingLevel accepts only these values.
+const GOOGLE_EFFORTS = new Set(["minimal", "low", "medium", "high"])
+
+function googleEffort(effort: string) {
+  if (!GOOGLE_EFFORTS.has(effort)) return undefined
+  return { thinkingConfig: { includeThoughts: true, thinkingLevel: effort } }
+}
+
+// OpenAI Responses shape: request a reasoning summary and the encrypted reasoning items that
+// stateless (store:false) tool loops must echo back.
+function responsesEffort(effort: string) {
+  return { reasoningEffort: effort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
+}
+
+/**
+ * Provider options for one effort level, chosen by SDK package. undefined = the SDK has no
+ * request field for that level. Model-family checks appear only where one SDK fronts families
+ * that take different request shapes.
+ */
+function effortOptions(model: Provider.Model, effort: string): Record<string, any> | undefined {
+  const apiID = model.api.id.toLowerCase()
+  switch (model.api.npm) {
+    case "@ai-sdk/openai":
+    case "@ai-sdk/azure":
+      return responsesEffort(effort)
+
+    case "@ai-sdk/openai-compatible":
+    case "@ai-sdk/deepinfra":
+    case "venice-ai-sdk-provider":
+    case "@ai-sdk/cerebras":
+    case "@ai-sdk/togetherai":
+    case "@ai-sdk/xai":
+    case "@ai-sdk/groq":
+      return { reasoningEffort: effort }
+
+    case "@openrouter/ai-sdk-provider":
+      return { reasoning: { effort } }
+
+    case "@ai-sdk/anthropic":
+    case "@ai-sdk/google-vertex/anthropic":
+      return anthropicEffort(model, effort, true)
+
+    case "@ai-sdk/google":
+    case "@ai-sdk/google-vertex":
+      return googleEffort(effort)
+
+    case "@ai-sdk/gateway": {
+      // Gateway routes options to the upstream named by the model-id prefix, so each upstream gets its own shape.
+      const upstream = apiID.split("/")[0]
+      if (upstream === "anthropic") return anthropicEffort(model, effort, false)
+      if (upstream === "google") return googleEffort(effort)
+      return { reasoningEffort: effort }
+    }
+
+    case "@ai-sdk/github-copilot":
+      // Copilot serves Gemini without an effort parameter (it only streams thinking).
+      if (apiID.includes("gemini")) return undefined
+      // Copilot serves Claude over Chat Completions, which takes reasoning_effort but no Responses summary/include.
+      if (apiID.includes("claude")) return { reasoningEffort: effort }
+      return responsesEffort(effort)
+
+    case "@ai-sdk/amazon-bedrock": {
+      // Bedrock's maxReasoningEffort accepts the same values for every family.
+      if (!ANTHROPIC_EFFORTS.has(effort)) return undefined
+      // Bedrock fronts Anthropic models (thinking via reasoningConfig.type adaptive/enabled+budget) and
+      // Nova-style models (reasoningConfig.type enabled + maxReasoningEffort); the SDK keys on "anthropic" too.
+      if (!apiID.includes("anthropic")) return { reasoningConfig: { type: "enabled", maxReasoningEffort: effort } }
+      if (model.capabilities.reasoningBudget)
+        return { reasoningConfig: { type: "enabled", budgetTokens: thinkingBudget(model), maxReasoningEffort: effort } }
+      return { reasoningConfig: { type: "adaptive", maxReasoningEffort: effort, display: "summarized" } }
+    }
+
+    case "@jerome-benoit/sap-ai-provider-v2":
+      // SAP AI Core fronts Anthropic (thinking + effort), Gemini (thinkingConfig) and OpenAI-style (reasoningEffort) models.
+      if (apiID.includes("anthropic")) return anthropicEffort(model, effort, false)
+      if (apiID.includes("gemini")) return googleEffort(effort)
+      return { reasoningEffort: effort }
+
+    // @ai-sdk/mistral, @ai-sdk/cohere, @ai-sdk/perplexity: no effort request field.
+  }
+  return undefined
+}
+
 /**
  * The model's levels after user config: config `variants` deep-merge over `variants(model)`,
  * `disabled` levels are removed, and an effort level left with no parameters (config only names
- * it, e.g. `{ high: {} }`) gets the adapter-standard shape. A level nothing can express — including
+ * it, e.g. `{ high: {} }`) gets its SDK shape (`effortOptions`). A level nothing can express — including
  * an empty custom name that is not an effort level — is dropped, so every listed level actually
  * changes the request.
  */
@@ -1738,7 +1333,7 @@ export function configuredVariants(
   for (const [key, value] of Object.entries(merged)) {
     if (value.disabled) continue
     const { disabled: _, ...params } = value
-    const filled = Object.keys(params).length ? params : EFFORT_LEVELS.has(key) ? standardEffort(model, key) : undefined
+    const filled = Object.keys(params).length ? params : EFFORT_LEVELS.has(key) ? effortOptions(model, key) : undefined
     if (filled) out[key] = filled
   }
   return out
@@ -1771,9 +1366,6 @@ export function options(input: {
     result["usage"] = {
       include: true,
     }
-    if (input.model.api.id.includes("gemini-3")) {
-      result["reasoning"] = { effort: "high" }
-    }
   }
 
   if (
@@ -1802,13 +1394,13 @@ export function options(input: {
       result["thinkingConfig"] = {
         includeThoughts: true,
       }
-      if (input.model.api.id.includes("gemini-3")) {
-        result["thinkingConfig"]["thinkingLevel"] = "high"
-      }
     }
   }
 
-  // Enable thinking by default for kimi-k2.5/k2p5 models using anthropic SDK
+  // Thinking switches below are transport, not tuning: these endpoints return no
+  // reasoning unless thinking is explicitly enabled. Kimi K2.5 over the Anthropic
+  // protocol only reasons with `thinking: enabled`, which the protocol requires to
+  // carry a budget.
   const modelId = input.model.api.id.toLowerCase()
   if (
     (input.model.api.npm === "@ai-sdk/anthropic" || input.model.api.npm === "@ai-sdk/google-vertex/anthropic") &&
@@ -1816,7 +1408,7 @@ export function options(input: {
   ) {
     result["thinking"] = {
       type: "enabled",
-      budgetTokens: Math.min(16_000, Math.floor(input.model.limit.output / 2 - 1)),
+      budgetTokens: thinkingBudget(input.model),
     }
   }
 
@@ -1834,39 +1426,11 @@ export function options(input: {
     result["enable_thinking"] = true
   }
 
-  if (input.model.api.id.includes("gpt-5") && !input.model.api.id.includes("gpt-5-chat")) {
-    if (!input.model.api.id.includes("gpt-5-pro")) {
-      result["reasoningEffort"] = "medium"
-      // Only inject reasoningSummary for providers that support it natively.
-      // @ai-sdk/openai-compatible proxies (e.g. LiteLLM) do not understand this
-      // parameter and return "Unknown parameter: 'reasoningSummary'".
-      if (
-        input.model.api.npm === "@ai-sdk/openai" ||
-        input.model.api.npm === "@ai-sdk/azure" ||
-        input.model.api.npm === "@ai-sdk/github-copilot"
-      ) {
-        result["reasoningSummary"] = "auto"
-      }
-      // Responses API with store:false is stateless, so encrypted reasoning
-      // items must be echoed back on the next turn. Without requesting them via
-      // `include`, gpt-5.x returns reasoning-only/empty steps on tool loops,
-      // which classify.ts flags as "empty output". Match upstream opencode.
-      if (input.model.api.npm === "@ai-sdk/openai") {
-        result["include"] = ["reasoning.encrypted_content"]
-      }
-    }
+  // Reasoning transport for Responses-API models; the effort itself is left to
+  // the vendor default unless a variant or config sets it.
+  Object.assign(result, responsesReasoningTransport(input.model))
 
-    // Only set textVerbosity for non-chat gpt-5.x models
-    // Chat models (e.g. gpt-5.2-chat-latest) only support "medium" verbosity
-    if (
-      input.model.api.id.includes("gpt-5.") &&
-      !input.model.api.id.includes("codex") &&
-      !input.model.api.id.includes("-chat") &&
-      input.model.providerID !== "azure"
-    ) {
-      result["textVerbosity"] = "low"
-    }
-
+  if (input.model.api.id.includes("gpt-5")) {
     if (input.model.providerID.startsWith("opencode")) {
       result["promptCacheKey"] = input.sessionID
       result["include"] = ["reasoning.encrypted_content"]
@@ -1890,42 +1454,49 @@ export function options(input: {
   return result
 }
 
+// Small-model calls (titles, summaries) use the model's lowest declared
+// non-off effort level; without a declaration the vendor default applies.
 export function smallOptions(model: Provider.Model) {
-  if (
+  const store =
     model.providerID === "openai" ||
     model.api.npm === "@ai-sdk/openai" ||
     model.api.npm === "@ai-sdk/github-copilot" ||
     model.api.npm === "@ai-sdk/xai"
-  ) {
-    // Match the main-model path: request encrypted reasoning so store:false
-    // stays round-trippable if a small-model call ever runs a tool loop.
-    const include = model.api.npm === "@ai-sdk/openai" ? { include: ["reasoning.encrypted_content"] } : {}
-    if (model.api.id.includes("gpt-5")) {
-      if (model.api.id.includes("5.") || model.api.id.includes("5-mini")) {
-        return { store: false, reasoningEffort: "low", ...include }
-      }
-      return { store: false, reasoningEffort: "minimal", ...include }
-    }
-    return { store: false }
+      ? { store: false }
+      : {}
+  const effort = lowestEffort(model)
+  return {
+    ...store,
+    ...responsesReasoningTransport(model),
+    ...(effort ? effortOptions(model, effort) : undefined),
   }
-  if (model.providerID === "google") {
-    // gemini-3 uses thinkingLevel, gemini-2.5 uses thinkingBudget
-    if (model.api.id.includes("gemini-3")) {
-      return { thinkingConfig: { thinkingLevel: "minimal" } }
-    }
-    return { thinkingConfig: { thinkingBudget: 0 } }
-  }
-  if (model.providerID === "openrouter" || model.providerID === "llmgateway") {
-    if (model.api.id.includes("google")) {
-      return { reasoning: { enabled: false } }
-    }
-    return { reasoningEffort: "minimal" }
-  }
+}
 
-  if (model.providerID === "venice") {
-    return { veniceParameters: { disableThinking: true } }
-  }
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"]
 
+function lowestEffort(model: Provider.Model): string | undefined {
+  if (!model.capabilities.reasoning) return undefined
+  const declared = new Set(model.capabilities.efforts ?? [])
+  return EFFORT_ORDER.find((effort) => declared.has(effort) && effortOptions(model, effort))
+}
+
+// Responses-API reasoning transport, independent of effort: `reasoningSummary`
+// returns reasoning text, and with store:false the encrypted reasoning items
+// must be requested so they can be echoed back on the next turn.
+function responsesReasoningTransport(model: Provider.Model): Record<string, any> {
+  if (!model.capabilities.reasoning) return {}
+  const apiID = model.api.id.toLowerCase()
+  switch (model.api.npm) {
+    case "@ai-sdk/openai":
+      return { reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
+    case "@ai-sdk/azure":
+      return { reasoningSummary: "auto" }
+    case "@ai-sdk/github-copilot":
+      // Claude and Gemini on Copilot use Chat Completions, which has no Responses summary;
+      // the chat schema strips the key for other chat-routed models.
+      if (apiID.includes("claude") || apiID.includes("gemini")) return {}
+      return { reasoningSummary: "auto" }
+  }
   return {}
 }
 
@@ -1977,8 +1548,7 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
 }
 
 export function maxOutputTokens(model: Provider.Model): number {
-  if (usesLargeModelDefaults(model)) return LARGE_MODEL_OUTPUT_TOKEN_MAX
-  return Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
+  return model.limit.output || DEFAULT_OUTPUT_TOKEN_LIMIT
 }
 
 // Flatten a root-level `anyOf` / `oneOf` (typically from `z.discriminatedUnion`)

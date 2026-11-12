@@ -205,15 +205,13 @@ export async function start(input: {
         "chat.params",
         { sessionID: requestID, agent: HOOK_AGENT, model, provider, message: undefined },
         {
-          // Seeded with the CALLER's value where given, falling back to the derived
-          // default — so a hook adjusts an explicit request rather than replacing it with
-          // a default it never saw. Note `capabilities.temperature` defaults to FALSE, so
-          // this stays undefined for a model that does not accept it.
-          temperature: model.capabilities.temperature
-            ? (input.req.temperature ?? ProviderTransform.temperature(model))
-            : undefined,
-          topP: input.req.top_p ?? ProviderTransform.topP(model),
-          topK: input.req.top_k ?? ProviderTransform.topK(model),
+          // Seeded with the CALLER's value only — vendors' server defaults apply
+          // otherwise, so a hook adjusts an explicit request. Note
+          // `capabilities.temperature` defaults to FALSE, so this stays undefined
+          // for a model that does not accept it.
+          temperature: model.capabilities.temperature ? input.req.temperature : undefined,
+          topP: input.req.top_p,
+          topK: input.req.top_k,
           maxOutputTokens:
             input.req.max_completion_tokens ?? input.req.max_tokens ?? ProviderTransform.maxOutputTokens(model),
           options: merged,

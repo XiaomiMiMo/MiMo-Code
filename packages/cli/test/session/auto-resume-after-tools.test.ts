@@ -89,9 +89,22 @@ test("[auto-resume after tools] finish=stop + final text → no auto-resume", ()
       decision: { retryable: true },
       toolParts: [completed],
       finish: "other",
+      rawFinish: "guardrail",
       hasFinalText: true,
     }),
   ).toBe(false)
+})
+
+test("[auto-resume after tools] finish=other without raw reason (stream incomplete) + final text → resume", () => {
+  expect(
+    shouldAutoResumeAfterTools({
+      retrySafe: false,
+      decision: { retryable: true },
+      toolParts: [completed],
+      finish: "other",
+      hasFinalText: true,
+    }),
+  ).toBe(true)
 })
 
 test("[auto-resume after tools] finish=content-filter / error → no auto-resume", () => {

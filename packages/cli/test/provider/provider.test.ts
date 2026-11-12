@@ -2644,7 +2644,7 @@ test("closest checks multiple query terms in order", async () => {
   })
 })
 
-test("model limits use family defaults when not specified (F41)", async () => {
+test("model limits use the same fallbacks for every model when not specified (F41)", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -2688,7 +2688,7 @@ test("model limits use family defaults when not specified (F41)", async () => {
       const providers = await list()
       const model = providers[ProviderID.make("no-limit")].models["model"]
       expect(model.limit.context).toBe(1_000_000)
-      expect(model.limit.output).toBe(0)
+      expect(model.limit.output).toBe(128_000)
       for (const id of ["claude-default", "gpt-default", "mimo-default"]) {
         expect(providers[ProviderID.make("no-limit")].models[id].limit).toEqual({
           context: 1_000_000,
@@ -2915,7 +2915,7 @@ test("models.dev normalization fills required response fields", () => {
   expect(model.release_date).toBe("")
 })
 
-test("model variants are generated for reasoning models", async () => {
+test("catalog reasoning models without declared effort levels get no variants", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -2933,11 +2933,11 @@ test("model variants are generated for reasoning models", async () => {
     },
     fn: async () => {
       const providers = await list()
-      // Claude sonnet 4 has reasoning capability
+      // The fixture catalog declares no reasoning_options for this reasoning model.
       const model = providers[ProviderID.anthropic].models["claude-sonnet-4-20250514"]
       expect(model.capabilities.reasoning).toBe(true)
-      expect(model.variants).toBeDefined()
-      expect(Object.keys(model.variants!).length).toBeGreaterThan(0)
+      expect(model.capabilities.efforts).toBeUndefined()
+      expect(model.variants).toEqual({})
     },
   })
 })
@@ -2955,6 +2955,7 @@ test("model variants can be disabled via config", async () => {
                 "claude-sonnet-4-20250514": {
                   variants: {
                     high: { disabled: true },
+                    max: {},
                   },
                 },
               },
@@ -2974,7 +2975,7 @@ test("model variants can be disabled via config", async () => {
       const model = providers[ProviderID.anthropic].models["claude-sonnet-4-20250514"]
       expect(model.variants).toBeDefined()
       expect(model.variants!["high"]).toBeUndefined()
-      // max variant should still exist
+      // max is named by config, so it gets the SDK shape
       expect(model.variants!["max"]).toBeDefined()
     },
   })
@@ -3098,7 +3099,7 @@ test("all variants can be disabled via config", async () => {
   })
 })
 
-test("variant config merges with generated variants", async () => {
+test("config variant parameters are kept as written when no level is declared", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -3131,9 +3132,8 @@ test("variant config merges with generated variants", async () => {
       const providers = await list()
       const model = providers[ProviderID.anthropic].models["claude-sonnet-4-20250514"]
       expect(model.variants!["high"]).toBeDefined()
-      // Should have both the generated thinking config and the custom option
-      expect(model.variants!["high"].thinking).toBeDefined()
-      expect(model.variants!["high"].extraOption).toBe("custom-value")
+      // Nothing generated to merge with: the config parameters are the level.
+      expect(model.variants!["high"]).toEqual({ extraOption: "custom-value" })
     },
   })
 })
@@ -3151,6 +3151,7 @@ test("variants filtered in second pass for database models", async () => {
                 "gpt-5": {
                   variants: {
                     high: { disabled: true },
+                    medium: {},
                   },
                 },
               },
@@ -3170,8 +3171,12 @@ test("variants filtered in second pass for database models", async () => {
       const model = providers[ProviderID.openai].models["gpt-5"]
       expect(model.variants).toBeDefined()
       expect(model.variants!["high"]).toBeUndefined()
-      // Other variants should still exist
-      expect(model.variants!["medium"]).toBeDefined()
+      // A level config names keeps the SDK shape
+      expect(model.variants!["medium"]).toEqual({
+        reasoningEffort: "medium",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
     },
   })
 })
@@ -3568,12 +3573,12 @@ test("models.dev reasoning_options become declared efforts", () => {
   expect(models["toggle"].variants).toEqual({})
   expect(models["budget"].capabilities.efforts).toEqual([])
   expect(models["budget"].capabilities.reasoningBudget).toBe(true)
-  expect(Object.keys(models["budget"].variants ?? {})).toEqual(["low", "medium", "high"]) // built-in table kept
+  expect(models["budget"].variants).toEqual({})
   expect(models["toggle"].capabilities.reasoningBudget).toBe(false)
   expect(models["graded"].capabilities.efforts).toEqual(["low", "high", "max"])
   expect(Object.keys(models["graded"].variants ?? {})).toEqual(["low", "high", "max"])
   expect(models["plain"].capabilities.efforts).toBeUndefined()
-  expect(Object.keys(models["plain"].variants ?? {})).toEqual(["low", "medium", "high"])
+  expect(models["plain"].variants).toEqual({})
 })
 
 test("config model extending a models.dev model keeps its declared efforts; config variants still merge", async () => {
@@ -3605,7 +3610,7 @@ test("config model extending a models.dev model keeps its declared efforts; conf
       expect(flash.variants).toEqual({})
       const pro = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2-pro"))
       expect(pro.capabilities.efforts).toBeUndefined()
-      expect(Object.keys(pro.variants ?? {})).toEqual(["medium", "high", "max"])
+      expect(Object.keys(pro.variants ?? {})).toEqual(["max"])
     },
   })
 })
@@ -3637,7 +3642,7 @@ test("non-string option values never reject the models.dev catalog", () => {
 })
 
 // docs/compose/spec/reasoning-variants.md S2.4 — config names a level; the engine supplies its parameters.
-test("config variants that only name a level get the adapter-standard parameters or are dropped", async () => {
+test("config variants that only name a level get the SDK shape or are dropped", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -3662,8 +3667,7 @@ test("config variants that only name a level get the adapter-standard parameters
               env: [],
               options: { apiKey: "k", baseURL: "https://example.test/v1" },
               models: {
-                "claude-opus-5-5": { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { high: {}, none: {} } },
-                "claude-opus-4-5": { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { low: {}, high: {} } },
+                "test-model": { tool_call: true, limit: { context: 8192, output: 2048 }, variants: { high: {}, none: {} } },
               },
             },
             "byok-responses": {
@@ -3694,11 +3698,10 @@ test("config variants that only name a level get the adapter-standard parameters
       expect(providers[ProviderID.make("byok-chat")].models["custom"].variants).toEqual({
         high: { reasoningEffort: "high", extra: 1 },
       })
-      expect(providers[ProviderID.make("byok-messages")].models["claude-opus-5-5"].variants).toEqual({
-        high: { thinking: { type: "adaptive" }, effort: "high" },
+      // Anthropic effort has no "none" level, so naming it adds nothing.
+      expect(providers[ProviderID.make("byok-messages")].models["test-model"].variants).toEqual({
+        high: { thinking: { type: "adaptive", display: "summarized" }, effort: "high" },
       })
-      // Legacy Claude: naming a level never produces adaptive thinking; nothing it accepts → no level.
-      expect(providers[ProviderID.make("byok-messages")].models["claude-opus-4-5"].variants).toEqual({})
       expect(providers[ProviderID.make("byok-responses")].models["g"].variants).toEqual({
         xhigh: { reasoningEffort: "xhigh", reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
       })

@@ -21,7 +21,7 @@ function userInfo(id: string): MessageV2.User {
 
 function assistantInfo(
   id: string,
-  extra?: Partial<Pick<MessageV2.Assistant, "finish" | "error" | "summary" | "structured">>,
+  extra?: Partial<Pick<MessageV2.Assistant, "finish" | "rawFinish" | "error" | "summary" | "structured">>,
 ): MessageV2.Assistant {
   return {
     id: MessageID.make(id),
@@ -74,7 +74,7 @@ function pendingToolPart(messageID: string) {
 const lastUser = userInfo("m-1")
 
 describe("classifyAssistantStep", () => {
-  test("stop + non-empty text => final (not degraded)", () => {
+  test("stop + non-empty text => final (no raw reason surfaced)", () => {
     expect(
       classifyAssistantStep({
         phase: "after-process",
@@ -85,37 +85,73 @@ describe("classifyAssistantStep", () => {
     ).toEqual({ type: "final" })
   })
 
-  test("other + non-empty text => degraded final", () => {
+  test("other with raw reason + non-empty text => final carrying the raw reason", () => {
     expect(
       classifyAssistantStep({
         phase: "after-process",
         lastUser,
-        assistant: assistantInfo("m-2", { finish: "other" }),
+        assistant: assistantInfo("m-2", { finish: "other", rawFinish: "guardrail" }),
         parts: [textPart("m-2", "usable answer despite an abnormal finish")],
       }),
-    ).toEqual({ type: "final", degraded: true })
+    ).toEqual({ type: "final", rawFinish: "guardrail" })
   })
 
-  test("other + empty => invalid (routes to T01 nudge path)", () => {
+  test("other with raw reason + reasoning only => final carrying the raw reason", () => {
     expect(
       classifyAssistantStep({
         phase: "after-process",
         lastUser,
-        assistant: assistantInfo("m-2", { finish: "other" }),
-        parts: [],
-      }).type,
-    ).toBe("invalid")
-  })
-
-  test("other + reasoning only => think-only (routes to T01 nudge path)", () => {
-    expect(
-      classifyAssistantStep({
-        phase: "after-process",
-        lastUser,
-        assistant: assistantInfo("m-2", { finish: "other" }),
+        assistant: assistantInfo("m-2", { finish: "other", rawFinish: "guardrail" }),
         parts: [reasoningPart("m-2", "let me think...")],
       }),
-    ).toEqual({ type: "think-only" })
+    ).toEqual({ type: "final", rawFinish: "guardrail" })
+  })
+
+  test("other with raw reason + empty => invalid", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: assistantInfo("m-2", { finish: "other", rawFinish: "guardrail" }),
+        parts: [],
+      }),
+    ).toEqual({ type: "invalid", reason: "empty output" })
+  })
+
+  // Raw-less `other` reaching classify is persisted history (live incomplete
+  // streams raise StreamIncompleteError in the processor), so it is judged by
+  // its content.
+  test("persisted other without raw reason + text => final by content", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: assistantInfo("m-2", { finish: "other" }),
+        parts: [textPart("m-2", "legacy answer")],
+      }),
+    ).toEqual({ type: "final" })
+  })
+
+  test("persisted other without raw reason + completed client tool + text => final by content", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: assistantInfo("m-2", { finish: "other" }),
+        parts: [toolPart("m-2"), textPart("m-2", "legacy answer")],
+      }),
+    ).toEqual({ type: "final" })
+  })
+
+  test("other with raw reason + completed client tool + text => final (terminal)", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: assistantInfo("m-2", { finish: "other", rawFinish: "guardrail" }),
+        parts: [toolPart("m-2"), textPart("m-2", "answer")],
+      }),
+    ).toEqual({ type: "final", rawFinish: "guardrail" })
   })
 
   describe("core guarantee: in-flight client tool part => continue", () => {
@@ -169,7 +205,7 @@ describe("classifyAssistantStep", () => {
     ).toEqual({ type: "final" })
   })
 
-  test("provider-executed tool part only + stop + no text => think-only/invalid (not continue)", () => {
+  test("provider-executed tool part only + stop + no text => invalid (not continue)", () => {
     const result = classifyAssistantStep({
       phase: "after-process",
       lastUser,
@@ -227,38 +263,19 @@ describe("classifyAssistantStep", () => {
     expect(result.type).toBe("failed")
   })
 
-  test("stop + reasoning only (no text) => think-only", () => {
-    expect(
-      classifyAssistantStep({
-        phase: "after-process",
-        lastUser,
-        assistant: assistantInfo("m-2", { finish: "stop" }),
-        parts: [reasoningPart("m-2", "let me think...")],
-      }),
-    ).toEqual({ type: "think-only" })
-  })
-
-  test("GPT stop + reasoning only (no text) => final", () => {
-    expect(
-      classifyAssistantStep({
-        phase: "after-process",
-        lastUser,
-        assistant: { ...assistantInfo("m-2", { finish: "stop" }), modelID: ModelID.make("gpt-5.5") },
-        parts: [reasoningPart("m-2", "let me think...")],
-      }),
-    ).toEqual({ type: "final" })
-  })
-
-  test("namespaced GPT other + reasoning only => degraded final", () => {
-    expect(
-      classifyAssistantStep({
-        phase: "after-process",
-        lastUser,
-        assistant: { ...assistantInfo("m-2", { finish: "other" }), modelID: ModelID.make("openai/gpt-5.5") },
-        parts: [reasoningPart("m-2", "let me think...")],
-      }),
-    ).toEqual({ type: "final", degraded: true })
-  })
+  // Reasoning-only stop ends the turn for every model, not just one family.
+  for (const modelID of ["test/model", "gpt-5.5"]) {
+    test(`stop + reasoning only (no text) => final for ${modelID}`, () => {
+      expect(
+        classifyAssistantStep({
+          phase: "after-process",
+          lastUser,
+          assistant: { ...assistantInfo("m-2", { finish: "stop" }), modelID: ModelID.make(modelID) },
+          parts: [reasoningPart("m-2", "let me think...")],
+        }),
+      ).toEqual({ type: "final" })
+    })
+  }
 
   test("stop + empty (no text/tool/reasoning) => invalid", () => {
     expect(

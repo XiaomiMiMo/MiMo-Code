@@ -707,6 +707,101 @@ export default async () => ({ "chat.params": async () => {
     })
   })
 
+  test("sends no sampling parameters unless the agent configures them", async () => {
+    const server = state.server
+    if (!server) {
+      throw new Error("Server not initialized")
+    }
+
+    const providerID = "vivgrid"
+    const modelID = "gemini-3.1-pro-preview"
+    const fixture = await loadFixture(providerID, modelID)
+    const model = fixture.model
+
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("Hello"), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: [providerID],
+            provider: {
+              [providerID]: {
+                options: {
+                  apiKey: "test-key",
+                  baseURL: `${server.url.origin}/v1`,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.make(providerID), ModelID.make(model.id))
+        const sessionID = SessionID.make("session-test-sampling")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+
+        const user = {
+          id: MessageID.make("user-1"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make(providerID), modelID: resolved.id, variant: "high" },
+        } satisfies MessageV2.User
+
+        await drain({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {},
+        })
+
+        const capture = await request
+        const body = capture.body
+        const headers = capture.headers
+        const url = capture.url
+
+        expect(url.pathname.startsWith("/v1/")).toBe(true)
+        expect(url.pathname.endsWith("/chat/completions")).toBe(true)
+        expect(headers.get("Authorization")).toBe("Bearer test-key")
+
+        expect(body.model).toBe(resolved.api.id)
+        expect(body.temperature).toBeUndefined()
+        expect(body.top_p).toBeUndefined()
+        expect(body.top_k).toBeUndefined()
+        expect(body.stream).toBe(true)
+
+        const maxTokens = (body.max_tokens as number | undefined) ?? (body.max_output_tokens as number | undefined)
+        const expectedMaxTokens = ProviderTransform.maxOutputTokens(resolved)
+        expect(maxTokens).toBe(expectedMaxTokens)
+
+        const reasoning = (body.reasoningEffort as string | undefined) ?? (body.reasoning_effort as string | undefined)
+        expect(reasoning).toBe("high")
+      },
+    })
+  })
+
   test("service stream cancellation cancels provider response body promptly", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")

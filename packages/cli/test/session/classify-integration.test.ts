@@ -36,7 +36,10 @@ import {
   textStopResponse,
   contentFilterResponse,
   otherFinishResponse,
+  unterminatedResponse,
 } from "../lib/scripted-llm-server"
+import { MessageV2 } from "../../src/session/message-v2"
+import { GlobalBus } from "../../src/bus/global"
 
 void Log.init({ print: false })
 
@@ -62,7 +65,7 @@ function runFork<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.S
   )
 }
 
-function writeConfig(dir: string, origin: string) {
+function writeConfig(dir: string, origin: string, stream?: { maxRetries: number }) {
   return Bun.write(
     path.join(dir, "mimocode.json"),
     JSON.stringify({
@@ -72,8 +75,14 @@ function writeConfig(dir: string, origin: string) {
         alibaba: { options: { apiKey: "test-key", baseURL: `${origin}/v1` } },
       },
       agent: { build: { model: "alibaba/qwen-plus" } },
+      // Stream-incomplete retries use the stream budget; keep its backoff instant.
+      retry: { stream: { initialDelayMs: 1, maxDelayMs: 1, ...stream } },
     }),
   )
+}
+
+function assistants(msgs: MessageV2.WithParts[]) {
+  return msgs.filter((m): m is MessageV2.WithParts & { info: MessageV2.Assistant } => m.info.role === "assistant")
 }
 
 const JSON_SCHEMA = {
@@ -253,11 +262,10 @@ describe("classifier routing — integration", () => {
     }
   })
 
-  test("other finish + non-empty text: degraded final, terminates cleanly without error", async () => {
+  test("other finish with a raw reason: ends the turn and records the raw reason", async () => {
     await using tmp = await tmpdir({ git: true })
-    // Unrecognized finish_reason maps to unified "other"; with usable text the
-    // classifier returns a degraded `final`. T03: this must terminate as a
-    // (logged) final, NOT be misclassified as an error or loop forever.
+    // Unrecognized finish_reason maps to unified "other" and keeps the raw
+    // reason: the provider did finish, so the turn ends without an error.
     const stub = startScriptedLLMServer([{ lines: otherFinishResponse("usable answer despite an odd finish") }])
     try {
       await writeConfig(tmp.path, stub.origin)
@@ -274,16 +282,181 @@ describe("classifier routing — integration", () => {
                 agent: "build",
                 parts: [{ type: "text", text: "Answer please." }],
               })
-              // Exactly one call: degraded final breaks the loop, no retry/nudge.
+              // Exactly one call: the final breaks the loop, no retry/nudge.
               expect(stub.captures.length).toBe(1)
               expect(result.info.role).toBe("assistant")
               if (result.info.role === "assistant") {
                 expect(result.info.error).toBeUndefined()
                 expect(result.info.finish).toBe("other")
+                expect(result.info.rawFinish).toBe("guardrail")
               }
               expect(
                 result.parts.some((p) => p.type === "text" && p.text === "usable answer despite an odd finish"),
               ).toBe(true)
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  })
+
+  test("stop finish records the provider raw reason", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const stub = startScriptedLLMServer([{ lines: textStopResponse("done.") }])
+    try {
+      await writeConfig(tmp.path, stub.origin)
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "classify-raw-stop" })
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Answer please." }],
+              })
+              expect(result.info.role).toBe("assistant")
+              if (result.info.role === "assistant") {
+                expect(result.info.finish).toBe("stop")
+                expect(result.info.rawFinish).toBe("stop")
+              }
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  })
+
+  test("stream without a finish frame: retried with StreamIncompleteError, partial output discarded", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const stub = startScriptedLLMServer([
+      { lines: unterminatedResponse({ reasoning: "thinking...", text: "partial answer cut" }) },
+      { lines: textStopResponse("complete answer") },
+    ])
+    try {
+      await writeConfig(tmp.path, stub.origin)
+      const observed = await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "classify-stream-incomplete" })
+              const retries: { kind: string; reason: string }[] = []
+              const onEvent = (event: { payload: { type: string; properties: Record<string, unknown> } }) => {
+                const { type, properties } = event.payload
+                if (type !== Session.Event.RetryAttempt.type || properties.sessionID !== session.id) return
+                retries.push({ kind: String(properties.kind), reason: String(properties.reason) })
+              }
+              GlobalBus.on("event", onEvent)
+              const unsubscribe = () => GlobalBus.off("event", onEvent)
+              const result = yield* prompt
+                .prompt({
+                  sessionID: session.id,
+                  agent: "build",
+                  parts: [{ type: "text", text: "Answer please." }],
+                })
+                .pipe(Effect.ensuring(Effect.sync(unsubscribe)))
+              const msgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+              return { result, msgs, retries }
+            }),
+          ),
+      })
+      // The unterminated step was replayed, not accepted as the answer.
+      expect(stub.captures.length).toBe(2)
+      expect(stub.captures[1]!.messages).toEqual(stub.captures[0]!.messages)
+      const list = assistants(observed.msgs)
+      expect(list).toHaveLength(1)
+      const assistant = list[0]!
+      expect(assistant.info.id).toBe(observed.result.info.id)
+      expect(assistant.info.error).toBeUndefined()
+      expect(assistant.info.finish).toBe("stop")
+      expect(assistant.parts.some((p) => p.type === "text" && p.text === "complete answer")).toBe(true)
+      expect(assistant.parts.some((p) => p.type === "text" && p.text === "partial answer cut")).toBe(false)
+      expect(assistant.parts.some((p) => p.type === "reasoning")).toBe(false)
+      expect(observed.retries).toEqual([
+        { kind: "stream", reason: "The model stream ended before the provider sent a finish signal" },
+      ])
+    } finally {
+      await stub.stop()
+    }
+  })
+
+  test("stream without a finish frame on every attempt: ends with StreamIncompleteError, never a final", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const stub = startScriptedLLMServer([{ lines: unterminatedResponse({ text: "partial answer cut" }) }])
+    try {
+      await writeConfig(tmp.path, stub.origin, { maxRetries: 1 })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "classify-stream-incomplete-exhausted" })
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Answer please." }],
+              })
+              // Initial attempt + one retry under the bounded stream budget.
+              expect(stub.captures.length).toBe(2)
+              expect(result.info.role).toBe("assistant")
+              if (result.info.role === "assistant") expect(result.info.error?.name).toBe("StreamIncompleteError")
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  })
+
+  test("stream without a finish frame after a tool ran: the loop resumes with the tool result", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const readmePath = path.join(tmp.path, "README.md")
+    const stub = startScriptedLLMServer([
+      {
+        lines: unterminatedResponse({
+          toolCalls: [{ id: "call_0", name: "read", args: JSON.stringify({ file_path: readmePath }) }],
+        }),
+      },
+      { lines: textStopResponse("read it.") },
+    ])
+    try {
+      await Bun.write(readmePath, "# Hello\n")
+      await writeConfig(tmp.path, stub.origin)
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "classify-stream-incomplete-tools" })
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Please read the README." }],
+              })
+              // The tool already ran, so the step is not replayed: the next step
+              // carries its result and the turn completes.
+              expect(stub.captures.length).toBe(2)
+              expect(JSON.stringify(stub.captures[1]!.messages)).toContain("# Hello")
+              expect(result.info.role).toBe("assistant")
+              if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
+              expect(result.parts.some((p) => p.type === "text" && p.text === "read it.")).toBe(true)
+              const list = assistants(yield* sessions.messages({ sessionID: session.id, agentID: "main" }))
+              expect(list).toHaveLength(2)
+              expect(list[0]!.info.error).toBeUndefined()
+              expect(list[0]!.info.finish).toBe("tool-calls")
+              expect(list[0]!.parts.some((p) => p.type === "tool" && p.state.status === "completed")).toBe(true)
             }),
           ),
       })
