@@ -34,7 +34,7 @@ import { createSimpleContext } from "./helper"
 import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, onMount } from "solid-js"
+import { batch, onCleanup, onMount } from "solid-js"
 import { Log } from "@/util"
 import { isDirectoryDeniedError } from "@/server/routes/instance/access"
 import { useToastOptional } from "../ui/toast"
@@ -257,6 +257,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       session_diff: {
         [sessionID: string]: Snapshot.FileDiff[]
       }
+      session_cost: Record<string, number | undefined>
       todo: {
         [sessionID: string]: Todo[]
       }
@@ -316,6 +317,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       session_recovery_active: {},
       session_goal: {},
       session_diff: {},
+      session_cost: {},
       todo: {},
       task: {},
       message: {},
@@ -365,6 +367,86 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const fullSyncedSessions = new Set<string>()
     const deletedSessions = new Set<string>()
+    let costSessions = new Set<string>()
+    const costReads = new Map<string, { dirty: boolean; done: Promise<void> }>()
+    let costSource = { directory: sdk.directory, workspace: project.workspace.current() }
+    // Returning from a rejected directory switch must restore the open session's tracking.
+    const costScopes = new Map([[JSON.stringify(costSource), costSessions]])
+    let disposed = false
+    function syncCostSource() {
+      if (sdk.directory === costSource.directory && project.workspace.current() === costSource.workspace) return
+      costSource = { directory: sdk.directory, workspace: project.workspace.current() }
+      const key = JSON.stringify(costSource)
+      costSessions = costScopes.get(key) ?? new Set<string>()
+      costScopes.set(key, costSessions)
+      costReads.clear()
+      setStore("session_cost", reconcile({}))
+    }
+    function refreshCost(sessionID: string, track = false): Promise<void> {
+      syncCostSource()
+      if (disposed || deletedSessions.has(sessionID)) return Promise.resolve()
+      if (track) costSessions.add(sessionID)
+      if (!costSessions.has(sessionID)) return Promise.resolve()
+      const pending = costReads.get(sessionID)
+      if (pending) {
+        pending.dirty = true
+        return pending.done
+      }
+      const source = costSource
+      const client = sdk.client
+      const job = { dirty: false, done: Promise.resolve() }
+      costReads.set(sessionID, job)
+      const current = () =>
+        !disposed &&
+        costSource === source &&
+        sdk.directory === source.directory &&
+        project.workspace.current() === source.workspace &&
+        costReads.get(sessionID) === job &&
+        !deletedSessions.has(sessionID)
+      job.done = (async () => {
+        do {
+          job.dirty = false
+          try {
+            const response = await client.session.cost(
+              { sessionID, workspace: source.workspace },
+              { throwOnError: true },
+            )
+            if (
+              current() &&
+              !job.dirty &&
+              typeof response.data?.cost === "number" &&
+              Number.isFinite(response.data.cost)
+            ) {
+              setStore("session_cost", sessionID, response.data.cost)
+            }
+          } catch (error) {
+            if (current() && !job.dirty) {
+              Log.Default.warn("tui cost refresh failed", {
+                sessionID,
+                error: error instanceof Error ? error.message : String(error),
+              })
+            }
+          }
+        } while (current() && job.dirty)
+      })().finally(() => {
+        if (costReads.get(sessionID) === job) costReads.delete(sessionID)
+      })
+      return job.done
+    }
+    function refreshCosts() {
+      syncCostSource()
+      for (const sessionID of costSessions) void refreshCost(sessionID)
+    }
+    const stopCostEvents = sdk.event.on("event", (event) => {
+      if (event.payload.type === "server.connected") refreshCosts()
+    })
+    onCleanup(() => {
+      disposed = true
+      stopCostEvents()
+      costReads.clear()
+      costSessions.clear()
+      costScopes.clear()
+    })
     const titleReads = new Set<string>()
     function mergedSession(incoming: Session) {
       const known = store.session.find(item => item.id === incoming.id)
@@ -523,6 +605,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         case "session.deleted": {
           const sid = event.properties.info.id
           deletedSessions.add(sid)
+          for (const sessions of costScopes.values()) sessions.delete(sid)
+          costReads.delete(sid)
           const result = Binary.search(store.session, sid, (s) => s.id)
           if (result.found) {
             setStore(
@@ -543,6 +627,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               delete s.session_recovery_active[sid]
               delete s.session_goal[sid]
               delete s.session_diff[sid]
+              delete s.session_cost[sid]
               delete s.todo[sid]
               delete s.task[sid]
               delete s.actor[sid]
@@ -609,6 +694,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "message.updated": {
+          void refreshCost(event.properties.info.sessionID)
           // Bucket every message by agentID. Pre-rewire the TUI dropped non-main
           // messages here; now subagent slices are first-class buckets and the
           // session view renders whichever bucket matches route.agentID.
@@ -660,6 +746,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
         case "message.removed": {
           const sid = event.properties.sessionID
+          void refreshCost(sid)
           const buckets = store.message[sid]
           if (!buckets) break
           for (const aid of Object.keys(buckets)) {
@@ -816,6 +903,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const args = useArgs()
 
     async function bootstrap(input: { fatal?: boolean } = {}) {
+      refreshCosts()
       const fatal = input.fatal ?? true
       const workspace = project.workspace.current()
       const directory = sdk.directory
@@ -1004,6 +1092,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           return last.time.completed ? "idle" : "working"
         },
         async sync(sessionID: string) {
+          void refreshCost(sessionID, true)
           if (fullSyncedSessions.has(sessionID)) return
           const [session, messages, recovery, todo, diff, actors, task, children] = await Promise.all([
             sdk.client.session.get({ sessionID }, { throwOnError: true }),
