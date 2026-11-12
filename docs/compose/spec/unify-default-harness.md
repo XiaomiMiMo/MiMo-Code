@@ -1,6 +1,6 @@
 ---
 feature: unify-default-harness
-status: in-progress
+status: delivered
 updated: 2026-11-12
 source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2795
 ---
@@ -8,7 +8,21 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2795
 # Unify Default Harness
 
 ## Report
-[Not finalized yet]
+
+**What was built** — Codex mode (Codex prompt + exec toolset) is selected only by
+`harness: "codex"` or `MIMOCODE_CODEX_MODE=true`, with `MIMOCODE_CODEX_MODE=false`
+still winning; model identity no longer participates. Outside Codex mode every
+model receives `default.txt` and the generic `<env>` block. The vendor prompt
+files, the Claude-only git environment block, the gpt/claude/gemini vision mask
+and `SessionRetry.isGptModel` are removed. Exec-based tests now select the codex
+harness explicitly, and a Codex-mode test covers the bash description swap and
+file-tool masking. Only the harness description strings change in the SDK.
+
+**Verification** — `bun run typecheck` (packages/cli): PASS. Related suites
+(gpt, system, agent, registry-toolset, prompt-effect, actor/spawn, retry, flag,
+tool-gate-*, prefix-snapshot, prompt-skill-command-multi, tool-script,
+mcp-tool-search, session/llm, skill, skill-search, whitelist): PASS. Reviewer
+additionally ran 14 Codex-related files: 325 pass. Full suite runs in PR CI.
 
 ## [S1] Problem
 The harness still carries mid-2026 per-vendor fitting: the system prompt is
@@ -64,11 +78,18 @@ unaffected.
 - Removing exec / apply_patch / view_image or their renderers.
 
 ## Tasks
-- [ ] T1: Make Codex mode opt-in in `tool/gpt.ts` and its callers (registry, prompt, system, agent generate) — acceptance: GPT model ids with flag unset and harness auto/default get the default toolset and prompt; `harness:"codex"` or flag `true` enable Codex mode; flag `false` wins (covers: S2.1)
-- [ ] T2: Collapse `SystemPrompt.provider` to default/gpt and delete vendor prompt files — acceptance: every non-Codex model returns `default.txt`; deleted files unreferenced (covers: S2.2)
-- [ ] T3: Remove Claude env block and vision id mask — acceptance: Claude gets the generic env block; vision notice keyed on capability only (covers: S2.3)
-- [ ] T4: Remove `SessionRetry.isGptModel` — acceptance: no references remain (covers: S2.4)
-- [ ] T5: Update tests and regenerate SDK description text — acceptance: typecheck and affected test suites pass (depends: T1, T2, T3, T4)
+- [x] T1: Make Codex mode opt-in in `tool/gpt.ts` and its callers (registry, prompt, system, agent generate) — acceptance: GPT model ids with flag unset and harness auto/default get the default toolset and prompt; `harness:"codex"` or flag `true` enable Codex mode; flag `false` wins (covers: S2.1)
+- [x] T2: Collapse `SystemPrompt.provider` to default/gpt and delete vendor prompt files — acceptance: every non-Codex model returns `default.txt`; deleted files unreferenced (covers: S2.2)
+- [x] T3: Remove Claude env block and vision id mask — acceptance: Claude gets the generic env block; vision notice keyed on capability only (covers: S2.3)
+- [x] T4: Remove `SessionRetry.isGptModel` — acceptance: no references remain (covers: S2.4)
+- [x] T5: Update tests and regenerate SDK description text — acceptance: typecheck and affected test suites pass (depends: T1, T2, T3, T4)
 
 ## Journey log
-None
+- The shared test fixtures default to a `gpt-5-test` model, so several exec-based
+  tests (prompt-effect, skill, skill-search, whitelist, spawn) silently relied on
+  GPT ⇒ Codex. They now pass `harness: "codex"` explicitly; review caught the
+  ones outside the initial run list.
+- Regenerating the SDK also pulled in `alwaysDirectTools` drift that main had not
+  regenerated; its mutable array type breaks `src/acp/agent.ts` typecheck. Left
+  out of this change as a follow-up; only the harness description strings were
+  updated in `types.gen.ts`.

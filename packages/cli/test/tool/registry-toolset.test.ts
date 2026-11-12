@@ -130,6 +130,28 @@ describe("ToolRegistry.tools: toolset selection", () => {
     ),
   )
 
+  it.live("uses the filesystem-capable bash description and masks file tools in Codex mode", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const reg = yield* ToolRegistry.Service
+        const agents = yield* Agent.Service
+        const general = yield* agents.get("general")
+        if (!general) throw new Error("no general agent")
+        const tools = yield* reg.registered({
+          providerID: ProviderID.opencode,
+          modelID: ModelID.make("opencode/claude-sonnet-4-6"),
+          agent: general,
+          harness: "codex",
+        })
+        const bash = tools.find((tool) => tool.id === "bash")
+        expect(bash?.description).toContain("the dedicated `read`, `write`, and `edit` tools are unavailable")
+        expect(bash?.description).not.toContain("DO NOT use it for file operations")
+        for (const id of ["read", "write", "edit", "multiedit", "grep", "glob", "notebook_edit"])
+          expect(tools.some((tool) => tool.id === id)).toBeFalse()
+      }),
+    ),
+  )
+
   it.live("task parameters expose the JSON operation schema (no script field)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

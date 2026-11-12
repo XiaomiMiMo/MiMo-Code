@@ -2334,7 +2334,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
         if (!deferMcpTools) mcpCatalog.current.entries.forEach((entry) => activeTools.add(entry.name))
       }
-      // Config-declared always-direct MCP tools join every toolset (including GPT)
+      // Config-declared always-direct MCP tools join every toolset (including Codex mode)
       // as top-level tools; they are not deferred and must not depend on mcp_tool_use.
       for (const name of alwaysDirectTools) activeTools.add(name)
 

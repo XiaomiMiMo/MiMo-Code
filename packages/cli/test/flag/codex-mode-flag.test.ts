@@ -18,7 +18,7 @@ function read(value?: string) {
 }
 
 describe("MIMOCODE_CODEX_MODE", () => {
-  test("uses automatic model inference by default and accepts explicit truthy values", () => {
+  test("is unset by default and accepts explicit truthy values", () => {
     expect(read()).toBe("undefined")
     expect(read("true")).toBe("true")
     expect(read("1")).toBe("true")

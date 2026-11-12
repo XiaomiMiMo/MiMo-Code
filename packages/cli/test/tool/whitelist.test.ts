@@ -387,7 +387,7 @@ describe("Tool whitelist (Task 14)", () => {
     ),
   )
 
-  it.live("permits the exec gateway while enforcing its nested GPT tool whitelist", () =>
+  it.live("permits the exec gateway while enforcing its nested Codex-mode tool whitelist", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const prompt = yield* SessionPrompt.Service

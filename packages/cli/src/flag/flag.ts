@@ -376,8 +376,8 @@ export const Flag = {
   MIMOCODE_EXPERIMENTAL_OXFMT: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_OXFMT"),
   MIMOCODE_EXPERIMENTAL_LSP_TY: truthy("MIMOCODE_EXPERIMENTAL_LSP_TY"),
   MIMOCODE_EXPERIMENTAL_LSP_TOOL: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_LSP_TOOL"),
-  // Defaults to OFF: exec (tool_script orchestration) is registered only for
-  // GPT-toolset models. Opt in here to expose it to every model.
+  // Defaults to OFF: exec (tool_script orchestration) is registered only in
+  // Codex mode. Opt in here to expose it in every session.
   MIMOCODE_ENABLE_EXEC_TOOL: truthy("MIMOCODE_ENABLE_EXEC_TOOL"),
   // MCP tool lazy-loading: `true` (default) always defers MCP tool schemas
   // behind mcp_tool_search, `auto` defers once they exceed 10% of the context
