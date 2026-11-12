@@ -49,7 +49,7 @@ export interface Def<Parameters extends z.ZodType = z.ZodType, M extends Metadat
   description: string
   parameters: Parameters
   execute(args: z.infer<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
-  formatValidationError?(error: z.ZodError): string
+  formatValidationError?(error: z.ZodError, args: unknown): string
 }
 export type DefWithoutID<Parameters extends z.ZodType = z.ZodType, M extends Metadata = Metadata> = Omit<
   Def<Parameters, M>,
@@ -114,7 +114,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
               // message and rewrites the call next turn. Mark it so the TUI
               // renders it muted instead of alarming the user with a red block.
               if (error instanceof z.ZodError && toolInfo.formatValidationError) {
-                return new RecoverableError(toolInfo.formatValidationError(error), { cause: error })
+                return new RecoverableError(toolInfo.formatValidationError(error, args), { cause: error })
               }
               return new RecoverableError(validationErrorMessage(id, error), { cause: error })
             },
