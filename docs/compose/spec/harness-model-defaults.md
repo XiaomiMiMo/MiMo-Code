@@ -100,8 +100,9 @@ default applies (no forced minimal / zero-budget / disabled thinking).
   server tools, so it cannot occur, and the continuation request shape is
   unverified. Revisit if server tools are added.
 - Consequence: a reasoning-only stop also settles subagents and the
-  checkpoint-writer with no text (checkpoint-writer-safety S2.3's think-only
-  retry no longer applies); writers act through tools, and subagent results
+  checkpoint-writer with no text (checkpoint-writer-safety S2.2's think-only
+  recovery no longer applies; the writer still ends on CHECKPOINT_COMPLETE per
+  its S2.3); writers act through tools, and subagent results
   carry whatever text exists.
 - `length`, `tool-calls`, `error`, `content-filter` behave as today.
 

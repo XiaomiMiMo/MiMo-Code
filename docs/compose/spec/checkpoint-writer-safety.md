@@ -47,7 +47,7 @@ Removing `apply_patch` from the checkpoint writer's tool whitelist is not a subs
 
 ### [S2.2] Invalid-Output Recovery
 
-An empty or think-only step never injects a reminder message; recovery resends the same history. Two paths exist, chosen by whether the step can be replayed:
+An empty step never injects a reminder message (a reasoning-only stop ends the turn, see harness-model-defaults S2.5); recovery resends the same history. Two paths exist, chosen by whether the step can be replayed:
 
 - A replayable step (`retrySafe`, no tool parts, finish other than `length`, not `json_schema`) raises `InvalidOutputError` inside `SessionProcessor.process`, and `SessionRetry.policy` replays it. The primary agent and ordinary actors use the persistent `server` budget; system-spawned agents use the bounded budget in [S2.7].
 - A step that cannot be replayed (tool side effects ran, or tool parts remain) is removed by `dropEmptyAssistant` in the run loop, which then starts a fresh step. The number of consecutive drops is bounded by [S2.6].
