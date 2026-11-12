@@ -339,6 +339,7 @@ export const layer: Layer.Layer<
       // if a subagent's stream sets session status here, nothing ever clears it
       // and the TUI spinner stays spinning after the main agent has finished.
       const isMain = !ctx.assistantMessage.agentID || ctx.assistantMessage.agentID === "main"
+      const systemAgent = SYSTEM_SPAWNED_AGENT_TYPES.has(ctx.assistantMessage.agent)
       const slog = log.clone().tag("session.id", input.sessionID).tag("messageID", input.assistantMessage.id)
 
       // Every actor records its retries on its own assistant message, so the
@@ -1127,7 +1128,13 @@ export const layer: Layer.Layer<
               SessionRetry.policy({
                 parse,
                 phase: "stream",
-                budget: (decision) => SessionRetry.budgetFor(retryConfig, decision),
+                // System-spawned agents run in the background where no user can
+                // cancel them, so their empty output gets a bounded budget instead
+                // of the persistent server budget.
+                budget: (decision, error) =>
+                  systemAgent && MessageV2.InvalidOutputError.isInstance(error)
+                    ? retryConfig.unknown
+                    : SessionRetry.budgetFor(retryConfig, decision),
                 jitterRatio: retryConfig.jitterRatio,
                 replaySafe: () => ctx.retrySafe,
                 silentRetry: (error) => isMain && SessionRetry.isGptServerOverloadedError(error),

@@ -1,8 +1,8 @@
 ---
 feature: checkpoint-writer-safety
-status: delivered
-updated: 2026-07-22
-source: https://github.com/XiaomiMiMo/MiMo-Code/pull/1859
+status: in-progress
+updated: 2026-10-23
+source: fix/checkpoint-writer-loop-bound
 ---
 
 # Checkpoint Writer Safety
@@ -31,6 +31,8 @@ The writer also receives general file-editing tools. Those tools call the unifie
 
 The observed incident used both gaps: a generic empty-output retry reactivated a completed checkpoint writer, and the missing hard path boundary allowed it to patch project source. Prompt instructions and tool allowlists alone are insufficient because either can drift or be widened later.
 
+A later incident showed that empty-output recovery itself had no bound for background writers. Writers in one process each ran more than a thousand steps: a step whose only tool call was rejected ended with `finish=stop` and no text, `dropEmptyAssistant` removed it and started an identical step, and nothing counted the drops. Every step re-sent a context of about 10 MB, the provider answered 429, and the `stream error` log serialized the whole request body on each failure, so CPU and log volume stayed high indefinitely. Separately, a writer that completed its edits and stopped with no text, as its prompt asked, was retried under the persistent empty-output budget with no end.
+
 ## [S2] Design
 
 ### [S2.1] Checkpoint Writer Write Boundary
@@ -46,35 +48,22 @@ The unified write gate must enforce a checkpoint-writer-specific sandbox before 
 
 Removing `apply_patch` from the checkpoint writer's tool whitelist is not a substitute for this boundary.
 
-### [S2.2] Role-Specific Invalid-Output Policies
+### [S2.2] Invalid-Output Recovery
 
-Invalid-output continuation must select a policy from the execution role rather than sharing one user-facing prompt across all agents:
+An empty or think-only step never injects a reminder message; recovery resends the same history. Two paths exist, chosen by whether the step can be replayed:
 
-- A primary turn (`agentID === "main"`) retains the existing user-facing retry that asks for a final answer or a valid tool call.
-- An ordinary actor/subagent receives an actor-facing retry that asks it to return a usable result to its parent or continue the necessary tool work. It must not claim that it is answering the user directly.
-- `checkpoint-writer` receives the checkpoint-specific policy in [S2.3].
-- Existing system agents must declare an explicit policy. The declared policy keys and `SYSTEM_SPAWNED_AGENT_TYPES` must remain synchronized by a regression test so a future system agent cannot silently inherit a default user-facing retry.
-- `dream` and `distill` require a non-empty summary and use a system/actor-facing retry rather than the primary-user wording.
+- A replayable step (`retrySafe`, no tool parts, finish other than `length`, not `json_schema`) raises `InvalidOutputError` inside `SessionProcessor.process`, and `SessionRetry.policy` replays it. The primary agent and ordinary actors use the persistent `server` budget; system-spawned agents use the bounded budget in [S2.7].
+- A step that cannot be replayed (tool side effects ran, or tool parts remain) is removed by `dropEmptyAssistant` in the run loop, which then starts a fresh step. The number of consecutive drops is bounded by [S2.6].
 
-Policy selection must be centralized near the invalid-output continuation. Do not scatter independent agent-name checks across the three run-loop classification sites.
+### [S2.3] Checkpoint Completion Signal
 
-### [S2.3] Checkpoint-Specific Retry
-
-An empty or think-only checkpoint-writer stop remains retryable, but it must never receive the generic primary-agent reminder. The synthetic checkpoint reminder must:
-
-- restate that the actor is the checkpoint writer;
-- forbid answering or continuing the parent session's task;
-- restrict further work to the authorized checkpoint and memory paths already supplied to the writer;
-- tell the writer to finish any incomplete authorized edits; and
-- tell the writer to return exactly `CHECKPOINT_COMPLETE` without further tool calls when the authorized edits are already complete.
-
-The fixed marker is ordinary non-empty assistant text, so existing classification terminates naturally without a checkpoint-specific classifier branch. Existing bounded invalid-output retry limits remain in force. This design intentionally does not add a checkpoint content hash, write ledger, or dedicated commit tool: a capable model gets one correctly scoped recovery instruction, while the hard write boundary makes drift non-destructive.
+The checkpoint writer's task prompt instructs it to reply with exactly `CHECKPOINT_COMPLETE`, with no further tool calls and no summary, once its authorized edits are written. The marker is ordinary non-empty assistant text, so existing classification ends the run as `final` without a checkpoint-specific classifier branch, and a completed writer never enters invalid-output recovery. A writer whose model omits the marker ends with an empty stop and falls under the bounded budget in [S2.7]. This design intentionally does not add a checkpoint content hash, write ledger, or dedicated commit tool; the hard write boundary in [S2.1] makes drift non-destructive.
 
 ### [S2.4] Actor Error Outcomes
 
 If `SessionPrompt.prompt` returns a terminal assistant carrying `assistant.error`, `Actor.runAgentLoop` must fail instead of converting the result into a successful actor outcome with no text. This applies to all actors/subagents and does not change direct primary-session behavior.
 
-For checkpoint writers, exhausting invalid-output recovery therefore produces a failed actor outcome. The checkpoint settlement watcher must leave `last_checkpoint_message_id` unchanged, preserving the existing invariant that an uncheckpointed delta is re-covered by a later writer.
+For checkpoint writers, exhausting invalid-output recovery ([S2.6] or [S2.7]) therefore produces a failed actor outcome. The checkpoint settlement watcher must leave `last_checkpoint_message_id` unchanged, preserving the existing invariant that an uncheckpointed delta is re-covered by a later writer.
 
 ### [S2.5] Regression Contract
 
@@ -84,11 +73,34 @@ Tests must cover the real boundaries rather than prompt text alone:
 - valid checkpoint and project-memory writes continue to pass;
 - unauthorized memory-tree paths continue to fail;
 - `apply_patch` cannot mutate source as checkpoint-writer;
-- primary, ordinary actor, and checkpoint-writer empty outputs receive their respective prompts;
-- the checkpoint reminder contains no instruction to answer the user and converges when the model returns `CHECKPOINT_COMPLETE`;
+- empty-output recovery injects no reminder message for any agent;
+- a checkpoint writer that returns `CHECKPOINT_COMPLETE` succeeds;
+- repeated unreplayable empty steps stop at the [S2.6] limit with a terminal `InvalidOutputError`, for the primary agent and for actors;
+- a system-spawned agent that keeps returning empty output stops after the `retry.unknown` budget, while the primary agent keeps the persistent budget;
 - actor terminal assistant errors produce failure outcomes;
-- primary invalid-output recovery and existing dream/distill sandbox behavior do not regress; and
-- every system-spawned agent has an explicit invalid-output policy.
+- the stream error log carries no request body; and
+- existing dream/distill sandbox behavior does not regress.
+
+### [S2.6] Bounded Dropped Empty Steps
+
+`dropEmptyAssistant` replays an unchanged context after tool side effects, so a model that deterministically repeats the same unproductive step would loop without end. The run loop counts consecutive drops:
+
+- The counter is local to one run loop and resets whenever an after-process classification is neither `think-only` nor `invalid`.
+- `Flag.MIMOCODE_EMPTY_STEP_DROP_LIMIT` (default 2) is the number of drops allowed in a row.
+- When the counter has reached the limit, the next empty step is not dropped. Its assistant receives a terminal `InvalidOutputError` carrying the classification reason, `Session.Event.Error` is published, and the loop exits.
+- The bound applies to every agent, the primary agent included, and to all three drop sites (stale assistant at loop start, fork path, and normal path).
+
+### [S2.7] Bounded Empty-Output Budget for System Agents
+
+System-spawned agents (`SYSTEM_SPAWNED_AGENT_TYPES`: `checkpoint-writer`, `dream`, `distill`) run in the background where no user can cancel them, so the persistent `server` budget would retry a deterministic empty output indefinitely with the full context.
+
+- `SessionRetry.policy`'s `budget` callback receives the parsed error alongside the decision.
+- `SessionProcessor.process` selects the resolved `retry.unknown` budget (default 8 retries within 15 minutes) when the error is `InvalidOutputError` and the assistant's agent is system-spawned. Every other error kind, and every other agent, keeps `SessionRetry.budgetFor`.
+- Exhaustion follows the existing terminal path: `halt` stamps the assistant error, and [S2.4] turns it into a failed actor outcome.
+
+### [S2.8] Stream Error Log Summary
+
+The `streamText` `onError` callback receives an event `{ error }`. The `stream error` log line records `ProviderError.summarizeCause(error)` (name, message, code and status code for each cause) and never serializes the error object itself, whose `requestBodyValues` holds the full system prompt and context. The debug line records the inner error's message.
 
 ## [S3] Out of Scope
 
@@ -100,11 +112,14 @@ Tests must cover the real boundaries rather than prompt text alone:
 - Sandboxing direct shell filesystem writes for agents that are allowed to use shell tools; checkpoint-writer does not currently receive a shell tool.
 - Detecting symlink or hardlink escapes deliberately placed inside the application-managed memory tree; this boundary protects normal resolved paths and `..` traversal, not adversarial filesystem topology controlled by the user.
 - Modifying or repairing historical database records.
+- Changing rate-limit (429) or other transport retry budgets.
+- Changing the persistent empty-output budget for the primary agent and ordinary actors.
+- Narrowing the writer's LLM-visible tool schema, which mirrors the parent for prompt-cache parity.
 
 ## Tasks
 
-- [x] T1: Enforce the checkpoint-writer memory-only sandbox in the unified write gate - acceptance: checkpoint-writer source and `.mimocode/` targets are rejected while valid memory targets, dream/distill behavior, and normal-agent source writes pass (covers: S2.1, S2.5)
-- [x] T2: Add centralized role-specific invalid-output policy selection and checkpoint completion-marker retry - acceptance: primary, ordinary actor, checkpoint-writer, dream, and distill receive their specified prompts, the checkpoint path converges on `CHECKPOINT_COMPLETE`, and system-agent policy coverage is exhaustive (covers: S2.2, S2.3, S2.5)
-- [x] T3: Propagate terminal assistant errors as actor failures - acceptance: an actor whose prompt terminates with `assistant.error` resolves failure, while successful text and structured actor results remain successful (covers: S2.4, S2.5)
-- [x] T4: Add apply-patch and checkpoint outcome regressions - acceptance: checkpoint-writer `apply_patch` cannot mutate source, valid checkpoint and project-memory mutations succeed, exhausted checkpoint recovery resolves actor failure, failed writer settlement leaves the watermark unchanged, and primary recovery remains unchanged (covers: S2.1, S2.3, S2.4, S2.5; depends: T1, T2, T3)
-- [x] T5: Run focused tests and package typecheck, then obtain independent review - acceptance: all focused suites and `bun typecheck` pass from `packages/cli`, and review confirms write-boundary, retry-policy, actor-outcome, and scope compliance (covers: S2.1, S2.2, S2.3, S2.4, S2.5; depends: T4)
+- [ ] T1: Bound consecutive dropped empty steps - acceptance: a scripted run whose model keeps calling a rejected tool with `finish=stop` and no text stops after `MIMOCODE_EMPTY_STEP_DROP_LIMIT` drops with a terminal `InvalidOutputError`, for the primary agent and for an actor; a productive step between empty steps resets the count (covers: S2.6, S2.5)
+- [ ] T2: Bounded empty-output budget for system-spawned agents - acceptance: a checkpoint writer receiving only empty stops stops after the configured `retry.unknown` budget with a failed actor outcome, while the primary agent under the same config keeps retrying past it (covers: S2.7, S2.4, S2.5)
+- [ ] T3: Checkpoint completion marker in the writer prompt - acceptance: the writer task prompt instructs replying exactly `CHECKPOINT_COMPLETE`, and a writer run ending on that text resolves success without retry (covers: S2.3, S2.5)
+- [ ] T4: Summarize the stream error log - acceptance: a provider error carrying `requestBodyValues` produces a `stream error` log line with the status code and no request body content (covers: S2.8, S2.5)
+- [ ] T5: Verify and review - acceptance: focused session/actor suites and `bun typecheck` pass from `packages/cli`, and an independent review approves (depends: T1, T2, T3, T4)

@@ -177,6 +177,7 @@ export const Flag = {
   MIMOCODE_DISABLE_MOUSE: truthy("MIMOCODE_DISABLE_MOUSE"),
   MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
   MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT: number("MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT") ?? 2,
+  MIMOCODE_EMPTY_STEP_DROP_LIMIT: number("MIMOCODE_EMPTY_STEP_DROP_LIMIT") ?? 2,
   // Defaults to false. When enabled, unsigned historical reasoning sent through
   // the Anthropic Messages format receives an empty placeholder signature so it
   // follows the same native thinking-block serialization path as signed content.

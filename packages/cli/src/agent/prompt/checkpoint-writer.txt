@@ -153,7 +153,7 @@ CRITICAL CONSTRAINTS:
 
 7. Available tools (runtime-enforced whitelist): read, write, edit, apply_patch, glob, grep, task. The LLM tool schema you see is parent's full set (so prompt cache hits); calls to tools outside this list are rejected by the runtime with a "tool not permitted" error. Tool names are exact — use `edit` / `write` / `apply_patch` as registered, not `Edit`/`Write` or other casing.
 
-8. After turn 2's Edits, your response is complete. Do not summarize what you wrote.
+8. After turn 2's Edits, reply with exactly CHECKPOINT_COMPLETE and nothing else: no further tool calls and no summary of what you wrote.
 
 EDGE CASES:
 

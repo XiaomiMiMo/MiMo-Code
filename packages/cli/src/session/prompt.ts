@@ -583,6 +583,7 @@ export function predictContext(history: readonly MessageV2.WithParts[]) {
 
 const OUTPUT_LENGTH_CONTINUATION_LIMIT = Flag.MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT
 const TEXT_TOOL_CALL_RETRY_LIMIT = Flag.MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT
+const EMPTY_STEP_DROP_LIMIT = Flag.MIMOCODE_EMPTY_STEP_DROP_LIMIT
 
 const log = Log.create({ service: "session.prompt" })
 
@@ -4036,6 +4037,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // prose text instead of a structured tool_use). Local to runLoop so each
         // fresh user turn starts clean.
         let textToolCallRetries = 0
+        // Consecutive empty steps removed by dropEmptyAssistant. Such a step is
+        // replayed with unchanged context, so a model that repeats it would loop
+        // without end; a productive step resets the count.
+        let emptyStepDrops = 0
         // Retry record of an empty step dropped by dropEmptyAssistant, re-attached
         // to the next step's assistant answering the same user message.
         let carriedRetry: { part: MessageV2.RetryPart; parentID: MessageID } | undefined
@@ -4566,16 +4571,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           return true
         })
 
-        // Stale empty / think-only assistant left in history (resume, crash). Drop
-        // it and start a fresh step — the new step's process() raises
-        // InvalidOutputError on empty output so SessionRetry.policy owns retries.
+        // Stale empty / think-only assistant left in history (resume, crash), or an
+        // empty step that process() could not replay. Drop it and start a fresh
+        // step; once EMPTY_STEP_DROP_LIMIT drops ran in a row, stamp a terminal
+        // InvalidOutputError instead and let the caller exit the loop.
         // Its retry record moves to the next step's assistant so the turn's retry
         // count stays visible.
         const dropEmptyAssistant = Effect.fn("SessionPrompt.dropEmptyAssistant")(function* (input: {
           assistant: MessageV2.Assistant
+          reason: string
         }) {
           if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return false
-          yield* slog.info("dropping empty assistant", { messageID: input.assistant.id })
+          if (emptyStepDrops >= EMPTY_STEP_DROP_LIMIT) {
+            input.assistant.error = new MessageV2.InvalidOutputError({ message: input.reason }).toObject()
+            yield* sessions.updateMessage(input.assistant)
+            yield* bus.publish(Session.Event.Error, {
+              sessionID: input.assistant.sessionID,
+              error: input.assistant.error,
+            })
+            return false
+          }
+          emptyStepDrops++
+          yield* slog.info("dropping empty assistant", { messageID: input.assistant.id, drops: emptyStepDrops })
           const record = MessageV2.parts(input.assistant.id).find((part): part is MessageV2.RetryPart => part.type === "retry")
           if (record) carriedRetry = { part: record, parentID: input.assistant.parentID }
           yield* sessions.removeMessage({
@@ -5241,7 +5258,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               break
             }
             if (classification.type === "think-only" || classification.type === "invalid") {
-              if (yield* dropEmptyAssistant({ assistant: lastAssistant })) continue
+              const reason = classification.type === "invalid" ? classification.reason : "think-only"
+              if (yield* dropEmptyAssistant({ assistant: lastAssistant, reason })) continue
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
@@ -5874,6 +5892,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     parts: MessageV2.parts(handle.message.id),
                     processResult: result,
                   })
+                  if (forkClassification.type !== "think-only" && forkClassification.type !== "invalid") emptyStepDrops = 0
                   if (forkClassification.type === "filtered") {
                     yield* writeContentFilterError({ assistant: handle.message })
                     return "break" as const
@@ -5898,7 +5917,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     (forkClassification.type === "think-only" || forkClassification.type === "invalid") &&
                     format.type !== "json_schema"
                   ) {
-                    if (yield* dropEmptyAssistant({ assistant: handle.message })) return "continue" as const
+                    const reason = forkClassification.type === "invalid" ? forkClassification.reason : "think-only"
+                    if (yield* dropEmptyAssistant({ assistant: handle.message, reason })) return "continue" as const
                     return "break" as const
                   }
 
@@ -6181,6 +6201,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   parts: MessageV2.parts(handle.message.id),
                   processResult: result,
                 })
+                if (classification.type !== "think-only" && classification.type !== "invalid") emptyStepDrops = 0
                 if (classification.type === "filtered") {
                   yield* writeContentFilterError({ assistant: handle.message })
                   return "break" as const
@@ -6204,7 +6225,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   (classification.type === "think-only" || classification.type === "invalid") &&
                   format.type !== "json_schema"
                 ) {
-                  if (yield* dropEmptyAssistant({ assistant: handle.message })) return "continue" as const
+                  const reason = classification.type === "invalid" ? classification.reason : "think-only"
+                  if (yield* dropEmptyAssistant({ assistant: handle.message, reason })) return "continue" as const
                   return "break" as const
                 }
 

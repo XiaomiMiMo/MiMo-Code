@@ -496,7 +496,7 @@ export function policy(opts: {
   maxElapsedMs?: number
   jitterRatio?: number
   initialDelayMs?: number
-  budget?: (decision: RetryDecision) => RetryBudget
+  budget?: (decision: RetryDecision, error: Err) => RetryBudget
   replaySafe?: (decision: RetryDecision) => boolean
   onTerminal?: (decision: RetryDecision) => Effect.Effect<void>
   silentRetry?: (error: Err) => boolean
@@ -514,7 +514,7 @@ export function policy(opts: {
           : Cause.done(meta.attempt)
       }
       const mandatoryNetwork = decision.kind === "network" && scope !== "max-candidate" && scope !== "max-judge"
-      const selected = opts.budget?.(decision) ?? (mandatoryNetwork ? {
+      const selected = opts.budget?.(decision, error) ?? (mandatoryNetwork ? {
         ...DEFAULT_RETRY_CONFIG.network,
         initialDelayMs: opts.initialDelayMs ?? NETWORK_INITIAL_DELAY_MS,
         jitterRatio: opts.jitterRatio ?? 0,
