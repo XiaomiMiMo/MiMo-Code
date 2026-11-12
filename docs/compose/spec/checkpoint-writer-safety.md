@@ -1,6 +1,6 @@
 ---
 feature: checkpoint-writer-safety
-status: in-progress
+status: delivered
 updated: 2026-10-23
 source: fix/checkpoint-writer-loop-bound
 ---
@@ -9,19 +9,16 @@ source: fix/checkpoint-writer-loop-bound
 
 ## Report
 
-**What was built** - The checkpoint writer is now confined to normal paths under the memory tree at the unified write gate; the existing precise memory allowlist remains authoritative inside that tree. Dream/distill retain their prior memory-or-`.mimocode/` behavior, while ordinary agents retain normal source writes. The gate now obtains its worktree from `InstanceState.context`, so InstanceRef-bound actor fibers cannot skip the sandbox.
+**What was built** - The checkpoint writer is confined to normal paths under the memory tree at the unified write gate, and terminal assistant errors fail actor outcomes so a failed writer leaves the watermark unchanged. Empty-output recovery injects no reminder. Consecutive empty steps that the run loop drops are bounded by `MIMOCODE_EMPTY_STEP_DROP_LIMIT` (default 2) for every agent; only a step with visible text or a tool call that did not error resets the count, and exhaustion stamps a terminal `InvalidOutputError`. System-spawned agents retry empty output under the bounded `retry.unknown` budget, while the primary agent and ordinary actors keep the persistent `server` budget. The writer task prompt asks for an exact `CHECKPOINT_COMPLETE` reply after the edits. The `stream error` log records `ProviderError.summarizeCause` of the provider error and no longer serializes `requestBodyValues`.
 
-Invalid-output recovery now selects an explicit role policy. Primary turns keep the user-facing reminder, ordinary actors receive a parent-facing reminder, and checkpoint writers receive a scoped recovery instruction that either finishes authorized memory edits or returns `CHECKPOINT_COMPLETE`. System-agent policy coverage is exhaustive. Terminal assistant errors now fail actor outcomes, so exhausted checkpoint recovery leaves the watermark unchanged through the existing transactional settlement path.
-
-**Verification** - From `packages/cli`, `bun test test/tool/memory-path-guard.test.ts test/tool/apply_patch.test.ts test/agent/ask-routing.test.ts test/session/invalid-output-continuation.test.ts test/actor/spawn.test.ts test/session/checkpoint-watermark-transactional.test.ts test/session/checkpoint-child-session.test.ts test/session/checkpoint-permission.test.ts` passed 151 tests with 286 assertions and 0 failures. `bun typecheck` passed. `git diff --check` passed. Targeted oxlint reported 0 errors; remaining warnings were existing large-file/test idioms. Independent final review approved spec compliance, correctness, and codebase consistency with no remaining findings.
+**Verification** - From `packages/cli`: `bun typecheck` passed. New tests failed on the base code and pass after the change: the drop-limit tests in `test/session/invalid-output-continuation.test.ts` (10 s timeout before; alternating errored `tool-calls`/`stop` steps made 12 requests instead of 6 before the progress rule), the unknown-budget actor test in `test/actor/spawn.test.ts`, and `test/session/llm-stream-error-log.test.ts` (the log line held the whole request body). `bun test test/session test/actor` passed 1718 tests with 0 failures after the final change; an earlier full run showed 6 load-sensitive failures that passed when each file ran alone, and `prompt-effect.test.ts` passed 2/2 on both branch and base when run sequentially. Independent review approved after one round of fixes.
 
 **Journey log**
 
-- The incident was one writer reactivated by the generic user-facing empty-output reminder, not duplicate checkpoint-writer spawns.
-- The unified memory guard was precise only after a path entered the memory tree; a separate checkpoint-writer memory-only sandbox was required for source paths.
-- `SessionPrompt.prompt` could return a terminal assistant error that Actor previously converted to success; propagating that error restores watermark transactionality.
-- A combined AppRuntime watermark E2E was process-state dependent, so stable boundary tests cover checkpoint exhaustion → actor failure and writer failure → unchanged watermark separately.
-- Symlink/hardlink topology inside the application-managed memory tree is explicitly user-owned and outside this lexical path-boundary threat model.
+- The incident signature ("dropping empty assistant" every step, step counts above 1000) came from `dropEmptyAssistant`, which lost its counter when the reminder-based continuation was replaced by `SessionRetry.policy`; 429s and CPU load were consequences of the unbounded loop.
+- AI SDK 6 `streamText` passes `onError` an event `{ error }`; logging the argument as the error serialized `requestBodyValues`.
+- A reset on any `continue` classification let a model alternate an errored tool call between `tool-calls` and `stop` finishes forever; progress is now judged from the step's parts.
+- A tool rejected by the actor whitelist returns a completed result with `metadata.rejected`, so such steps classify as `continue` and never reach `dropEmptyAssistant`; a writer that keeps calling non-whitelisted tools is not bounded by this change.
 
 ## [S1] Problem
 
@@ -118,8 +115,8 @@ The `streamText` `onError` callback receives an event `{ error }`. The `stream e
 
 ## Tasks
 
-- [ ] T1: Bound consecutive dropped empty steps - acceptance: a scripted run whose model keeps calling a rejected tool with `finish=stop` and no text stops after `MIMOCODE_EMPTY_STEP_DROP_LIMIT` drops with a terminal `InvalidOutputError`, for the primary agent and for an actor; a productive step between empty steps resets the count, while a step whose only tool call errored does not (covers: S2.6, S2.5)
-- [ ] T2: Bounded empty-output budget for system-spawned agents - acceptance: a checkpoint writer receiving only empty stops stops after the configured `retry.unknown` budget with a failed actor outcome, while the primary agent under the same config keeps retrying past it (covers: S2.7, S2.4, S2.5)
-- [ ] T3: Checkpoint completion marker in the writer prompt - acceptance: the writer task prompt instructs replying exactly `CHECKPOINT_COMPLETE`, and a writer run ending on that text resolves success without retry (covers: S2.3, S2.5)
-- [ ] T4: Summarize the stream error log - acceptance: a provider error carrying `requestBodyValues` produces a `stream error` log line with the status code and no request body content (covers: S2.8, S2.5)
-- [ ] T5: Verify and review - acceptance: focused session/actor suites and `bun typecheck` pass from `packages/cli`, and an independent review approves (depends: T1, T2, T3, T4)
+- [x] T1: Bound consecutive dropped empty steps - acceptance: a scripted run whose model keeps calling a rejected tool with `finish=stop` and no text stops after `MIMOCODE_EMPTY_STEP_DROP_LIMIT` drops with a terminal `InvalidOutputError`, for the primary agent and for an actor; a productive step between empty steps resets the count, while a step whose only tool call errored does not (covers: S2.6, S2.5)
+- [x] T2: Bounded empty-output budget for system-spawned agents - acceptance: a checkpoint writer receiving only empty stops stops after the configured `retry.unknown` budget with a failed actor outcome, while the primary agent under the same config keeps retrying past it (covers: S2.7, S2.4, S2.5)
+- [x] T3: Checkpoint completion marker in the writer prompt - acceptance: the writer task prompt instructs replying exactly `CHECKPOINT_COMPLETE`, and a writer run ending on that text resolves success without retry (covers: S2.3, S2.5)
+- [x] T4: Summarize the stream error log - acceptance: a provider error carrying `requestBodyValues` produces a `stream error` log line with the status code and no request body content (covers: S2.8, S2.5)
+- [x] T5: Verify and review - acceptance: focused session/actor suites and `bun typecheck` pass from `packages/cli`, and an independent review approves (depends: T1, T2, T3, T4)
