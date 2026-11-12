@@ -1360,9 +1360,6 @@ export function options(input: {
     result["usage"] = {
       include: true,
     }
-    if (input.model.api.id.includes("gemini-3")) {
-      result["reasoning"] = { effort: "high" }
-    }
   }
 
   if (
@@ -1390,9 +1387,6 @@ export function options(input: {
     if (input.model.capabilities.reasoning) {
       result["thinkingConfig"] = {
         includeThoughts: true,
-      }
-      if (input.model.api.id.includes("gemini-3")) {
-        result["thinkingConfig"]["thinkingLevel"] = "high"
       }
     }
   }
@@ -1423,28 +1417,11 @@ export function options(input: {
     result["enable_thinking"] = true
   }
 
-  if (input.model.api.id.includes("gpt-5") && !input.model.api.id.includes("gpt-5-chat")) {
-    if (!input.model.api.id.includes("gpt-5-pro")) {
-      result["reasoningEffort"] = "medium"
-      // Only inject reasoningSummary for providers that support it natively.
-      // @ai-sdk/openai-compatible proxies (e.g. LiteLLM) do not understand this
-      // parameter and return "Unknown parameter: 'reasoningSummary'".
-      if (
-        input.model.api.npm === "@ai-sdk/openai" ||
-        input.model.api.npm === "@ai-sdk/azure" ||
-        input.model.api.npm === "@ai-sdk/github-copilot"
-      ) {
-        result["reasoningSummary"] = "auto"
-      }
-      // Responses API with store:false is stateless, so encrypted reasoning
-      // items must be echoed back on the next turn. Without requesting them via
-      // `include`, gpt-5.x returns reasoning-only/empty steps on tool loops,
-      // which classify.ts flags as "empty output". Match upstream opencode.
-      if (input.model.api.npm === "@ai-sdk/openai") {
-        result["include"] = ["reasoning.encrypted_content"]
-      }
-    }
+  // Reasoning transport for Responses-API models; the effort itself is left to
+  // the vendor default unless a variant or config sets it.
+  Object.assign(result, responsesReasoningTransport(input.model))
 
+  if (input.model.api.id.includes("gpt-5")) {
     if (input.model.providerID.startsWith("opencode")) {
       result["promptCacheKey"] = input.sessionID
       result["include"] = ["reasoning.encrypted_content"]
@@ -1468,42 +1445,48 @@ export function options(input: {
   return result
 }
 
+// Small-model calls (titles, summaries) use the model's lowest declared
+// non-off effort level; without a declaration the vendor default applies.
 export function smallOptions(model: Provider.Model) {
-  if (
+  const store =
     model.providerID === "openai" ||
     model.api.npm === "@ai-sdk/openai" ||
     model.api.npm === "@ai-sdk/github-copilot" ||
     model.api.npm === "@ai-sdk/xai"
-  ) {
-    // Match the main-model path: request encrypted reasoning so store:false
-    // stays round-trippable if a small-model call ever runs a tool loop.
-    const include = model.api.npm === "@ai-sdk/openai" ? { include: ["reasoning.encrypted_content"] } : {}
-    if (model.api.id.includes("gpt-5")) {
-      if (model.api.id.includes("5.") || model.api.id.includes("5-mini")) {
-        return { store: false, reasoningEffort: "low", ...include }
-      }
-      return { store: false, reasoningEffort: "minimal", ...include }
-    }
-    return { store: false }
+      ? { store: false }
+      : {}
+  const effort = lowestEffort(model)
+  return {
+    ...store,
+    ...responsesReasoningTransport(model),
+    ...(effort ? effortOptions(model, effort) : undefined),
   }
-  if (model.providerID === "google") {
-    // gemini-3 uses thinkingLevel, gemini-2.5 uses thinkingBudget
-    if (model.api.id.includes("gemini-3")) {
-      return { thinkingConfig: { thinkingLevel: "minimal" } }
-    }
-    return { thinkingConfig: { thinkingBudget: 0 } }
-  }
-  if (model.providerID === "openrouter" || model.providerID === "llmgateway") {
-    if (model.api.id.includes("google")) {
-      return { reasoning: { enabled: false } }
-    }
-    return { reasoningEffort: "minimal" }
-  }
+}
 
-  if (model.providerID === "venice") {
-    return { veniceParameters: { disableThinking: true } }
-  }
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"]
 
+function lowestEffort(model: Provider.Model): string | undefined {
+  if (!model.capabilities.reasoning) return undefined
+  const declared = new Set(model.capabilities.efforts ?? [])
+  return EFFORT_ORDER.find((effort) => declared.has(effort) && effortOptions(model, effort))
+}
+
+// Responses-API reasoning transport, independent of effort: `reasoningSummary`
+// returns reasoning text, and with store:false the encrypted reasoning items
+// must be requested so they can be echoed back on the next turn.
+function responsesReasoningTransport(model: Provider.Model): Record<string, any> {
+  if (!model.capabilities.reasoning) return {}
+  const apiID = model.api.id.toLowerCase()
+  switch (model.api.npm) {
+    case "@ai-sdk/openai":
+      return { reasoningSummary: "auto", include: ["reasoning.encrypted_content"] }
+    case "@ai-sdk/azure":
+      return { reasoningSummary: "auto" }
+    case "@ai-sdk/github-copilot":
+      // Copilot serves only non-Claude, non-Gemini models over the Responses API.
+      if (apiID.includes("claude") || apiID.includes("gemini")) return {}
+      return { reasoningSummary: "auto" }
+  }
   return {}
 }
 

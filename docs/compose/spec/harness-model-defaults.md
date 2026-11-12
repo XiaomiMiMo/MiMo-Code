@@ -48,6 +48,13 @@ only where an aggregator SDK fronts families that need different request shapes
 display flags); each such branch carries a comment stating the protocol reason.
 User-config `variants` keep working through `configuredVariants`.
 
+Request defaults carry no name-keyed effort either: `options()` sends only the
+reasoning transport (`reasoningSummary`/encrypted reasoning for Responses-API
+SDKs, `includeThoughts` for Google) and never a default effort or thinking level.
+`smallOptions()` (titles, summaries) uses the model's lowest declared non-off
+effort level mapped through the same SDK shape; with no declaration the vendor
+default applies (no forced minimal / zero-budget / disabled thinking).
+
 ### S2.5 Assistant step classification is driven by the finish reason
 - The provider's raw finish reason (`rawFinishReason` from the AI SDK
   `finish-step`) is persisted on the assistant message (optional field in the
@@ -77,8 +84,8 @@ Responses, per-SDK parameter shapes, OpenAI OAuth / Copilot omission of
 - [x] T1: Output limit from model, 128_000 fallback, remove name heuristic and 32K cap — acceptance: maxOutputTokens equals limit.output for any model; undeclared output resolves to 128_000 (covers: S2.1)
 - [x] T2: Remove per-model sampling defaults — acceptance: no temperature/topP/topK sent unless configured (covers: S2.2)
 - [x] T3: Remove default textVerbosity — acceptance: gpt-5.x options carry no textVerbosity (covers: S2.3)
-- [ ] T4: Effort levels from models.dev only; shapes by SDK package — acceptance: undeclared reasoning models get no variants; declared levels map to the SDK shape; no name/date level lists remain (covers: S2.4)
-- [ ] T5: Finish-reason-driven step classification with persisted raw reason — acceptance: stop+reasoning-only ends the turn for every model; other without raw retries with an explicit error; other with raw ends with the reason recorded; pause_turn continues (covers: S2.5)
+- [x] T4: Effort levels from models.dev only; shapes by SDK package — acceptance: undeclared reasoning models get no variants; declared levels map to the SDK shape; no name/date level lists remain; options() sends no default effort; smallOptions() uses the lowest declared non-off level (covers: S2.4)
+- [x] T5: Finish-reason-driven step classification with persisted raw reason — acceptance: stop+reasoning-only ends the turn for every model; other without raw retries with an explicit error; other with raw ends with the reason recorded; pause_turn continues (covers: S2.5)
 - [ ] T6: Update tests; typecheck and related suites pass (depends: T1, T2, T3, T4, T5)
 
 ## Journey log

@@ -321,35 +321,88 @@ describe("ProviderTransform.options - textVerbosity", () => {
   })
 })
 
-describe("ProviderTransform.smallOptions - gpt-5 encrypted reasoning", () => {
-  const createModel = (apiId: string, npm: string, providerID = "openai") =>
+describe("ProviderTransform.smallOptions", () => {
+  const createModel = (apiId: string, npm: string, providerID: string, efforts?: string[]) =>
     ({
       id: `${providerID}/${apiId}`,
       providerID,
-      api: { id: apiId, url: "https://api.openai.com", npm },
+      api: { id: apiId, url: "https://example.com", npm },
       name: apiId,
+      capabilities: { reasoning: true, ...(efforts ? { efforts } : {}) },
+      limit: { context: 200_000, output: 64_000 },
     }) as any
 
-  test("gpt-5.5 small model requests encrypted reasoning (store:false round-trip)", () => {
-    const result = ProviderTransform.smallOptions(createModel("gpt-5.5", "@ai-sdk/openai")) as any
+  test("uses the lowest declared non-off effort with the Responses reasoning transport", () => {
+    const result = ProviderTransform.smallOptions(
+      createModel("test-model", "@ai-sdk/openai", "openai", ["none", "medium", "low", "high"]),
+    ) as any
     expect(result.store).toBe(false)
     expect(result.reasoningEffort).toBe("low")
     expect(result.include).toEqual(["reasoning.encrypted_content"])
   })
 
-  test("gpt-5 small model requests encrypted reasoning", () => {
-    const result = ProviderTransform.smallOptions(createModel("gpt-5", "@ai-sdk/openai")) as any
-    expect(result.store).toBe(false)
-    expect(result.reasoningEffort).toBe("minimal")
-    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  test("prefers minimal when declared and maps it to the SDK shape", () => {
+    const result = ProviderTransform.smallOptions(
+      createModel("test-model", "@ai-sdk/openai-compatible", "test", ["minimal", "low"]),
+    ) as any
+    expect(result).toEqual({ reasoningEffort: "minimal" })
   })
 
-  test("github-copilot small model does NOT set include (uses its own path)", () => {
+  test("leaves effort at the vendor default when no levels are declared", () => {
+    for (const [id, npm, provider] of [
+      ["gpt-5", "@ai-sdk/openai", "openai"],
+      ["gemini-3-pro", "@ai-sdk/google", "google"],
+      ["google/gemini-3-pro", "@openrouter/ai-sdk-provider", "openrouter"],
+      ["test-model", "venice-ai-sdk-provider", "venice"],
+    ]) {
+      const result = ProviderTransform.smallOptions(createModel(id, npm, provider)) as any
+      expect(result.reasoningEffort).toBeUndefined()
+      expect(result.thinkingConfig).toBeUndefined()
+      expect(result.reasoning).toBeUndefined()
+      expect(result.veniceParameters).toBeUndefined()
+    }
+  })
+
+  test("github-copilot keeps store:false and does not request encrypted reasoning", () => {
     const result = ProviderTransform.smallOptions(
       createModel("gpt-5", "@ai-sdk/github-copilot", "github-copilot"),
     ) as any
     expect(result.store).toBe(false)
     expect(result.include).toBeUndefined()
+  })
+})
+
+describe("ProviderTransform.options - reasoning defaults", () => {
+  const createModel = (apiId: string, npm: string, providerID: string) =>
+    ({
+      id: `${providerID}/${apiId}`,
+      providerID,
+      api: { id: apiId, url: "https://example.com", npm },
+      name: apiId,
+      capabilities: { reasoning: true },
+      limit: { context: 200_000, output: 64_000 },
+    }) as any
+
+  test("sends reasoning transport but leaves the effort to the vendor default", () => {
+    const openai = ProviderTransform.options({
+      model: createModel("gpt-5.5", "@ai-sdk/openai", "openai"),
+      sessionID: "test-session",
+    })
+    expect(openai.reasoningEffort).toBeUndefined()
+    expect(openai.reasoningSummary).toBe("auto")
+    expect(openai.include).toEqual(["reasoning.encrypted_content"])
+
+    const google = ProviderTransform.options({
+      model: createModel("gemini-3-pro", "@ai-sdk/google", "google"),
+      sessionID: "test-session",
+    })
+    expect(google.thinkingConfig).toEqual({ includeThoughts: true })
+
+    const openrouter = ProviderTransform.options({
+      model: createModel("google/gemini-3-pro", "@openrouter/ai-sdk-provider", "openrouter"),
+      sessionID: "test-session",
+    })
+    expect(openrouter.reasoning).toBeUndefined()
   })
 })
 
