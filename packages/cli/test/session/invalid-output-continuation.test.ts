@@ -72,8 +72,9 @@ function writeConfig(dir: string, origin: string) {
         build: { model: "alibaba/qwen-plus" },
         "checkpoint-writer": { model: "alibaba/qwen-plus" },
       },
-      // Empty/think-only output retries under the persistent server budget; the
-      // bounded unknown budget stays configured to prove it no longer applies.
+      // Empty/think-only output retries under the persistent server budget for the
+      // primary agent and ordinary actors; system-spawned agents use the bounded
+      // unknown budget.
       retry: {
         server: { initialDelayMs: 1, maxDelayMs: 1 },
         unknown: { maxRetries: 1, initialDelayMs: 1, maxDelayMs: 1, deadlineMs: 2000 },
@@ -1194,6 +1195,42 @@ describe("dropped empty steps are bounded", () => {
                 .pipe(Effect.timeout("10 seconds"))
               // One drop, one productive step, then a full run of drops up to the limit.
               expect(stub.captures.length).toBe(1 + 1 + Flag.MIMOCODE_EMPTY_STEP_DROP_LIMIT + 1)
+              if (result.info.role === "assistant") expect(result.info.error?.name).toBe("InvalidOutputError")
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  }, 30_000)
+
+  test("a rejected tool call that finishes with tool-calls does not reset the drop count", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const rejectedToolCalls = {
+      lines: toolCallResponse({
+        id: "call_missing",
+        name: "read",
+        args: JSON.stringify({ file_path: path.join(tmp.path, "missing.txt") }),
+      }),
+    }
+    const stub = startScriptedLLMServer(
+      Array.from({ length: 10 }, (_, index) => (index % 2 === 0 ? rejectedToolCalls : rejectedToolStop(tmp.path))),
+    )
+    try {
+      await writeConfig(tmp.path, stub.origin)
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "drop-limit-alternating" })
+              const result = yield* prompt
+                .prompt({ sessionID: session.id, agent: "build", parts: [{ type: "text", text: "Read the file." }] })
+                .pipe(Effect.timeout("10 seconds"))
+              // Each empty stop follows one errored tool-calls step; the limit counts only the stops.
+              expect(stub.captures.length).toBe(2 * (Flag.MIMOCODE_EMPTY_STEP_DROP_LIMIT + 1))
               if (result.info.role === "assistant") expect(result.info.error?.name).toBe("InvalidOutputError")
             }),
           ),

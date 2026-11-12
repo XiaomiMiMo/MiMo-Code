@@ -49,6 +49,7 @@ test("the stream error log summarizes the provider error without the request bod
     await Log.flush()
   } finally {
     stderr.mockRestore()
+    await Log.init({ print: false })
     await stub.stop()
   }
   expect(stub.captures.length).toBe(1)

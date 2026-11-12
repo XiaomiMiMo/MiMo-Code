@@ -85,7 +85,7 @@ Tests must cover the real boundaries rather than prompt text alone:
 
 `dropEmptyAssistant` replays an unchanged context after tool side effects, so a model that deterministically repeats the same unproductive step would loop without end. The run loop counts consecutive drops:
 
-- The counter is local to one run loop and resets whenever an after-process classification is neither `think-only` nor `invalid`.
+- The counter is local to one run loop. It resets after a step that made progress: the step produced non-empty assistant text, or at least one of its tool calls did not end in error. A step whose only tool calls errored does not reset it, even when it finished with `tool-calls`, so a model alternating a rejected tool call between `tool-calls` and `stop` finishes is still bounded.
 - `Flag.MIMOCODE_EMPTY_STEP_DROP_LIMIT` (default 2) is the number of drops allowed in a row.
 - When the counter has reached the limit, the next empty step is not dropped. Its assistant receives a terminal `InvalidOutputError` carrying the classification reason, `Session.Event.Error` is published, and the loop exits.
 - The bound applies to every agent, the primary agent included, and to all three drop sites (stale assistant at loop start, fork path, and normal path).
@@ -118,7 +118,7 @@ The `streamText` `onError` callback receives an event `{ error }`. The `stream e
 
 ## Tasks
 
-- [ ] T1: Bound consecutive dropped empty steps - acceptance: a scripted run whose model keeps calling a rejected tool with `finish=stop` and no text stops after `MIMOCODE_EMPTY_STEP_DROP_LIMIT` drops with a terminal `InvalidOutputError`, for the primary agent and for an actor; a productive step between empty steps resets the count (covers: S2.6, S2.5)
+- [ ] T1: Bound consecutive dropped empty steps - acceptance: a scripted run whose model keeps calling a rejected tool with `finish=stop` and no text stops after `MIMOCODE_EMPTY_STEP_DROP_LIMIT` drops with a terminal `InvalidOutputError`, for the primary agent and for an actor; a productive step between empty steps resets the count, while a step whose only tool call errored does not (covers: S2.6, S2.5)
 - [ ] T2: Bounded empty-output budget for system-spawned agents - acceptance: a checkpoint writer receiving only empty stops stops after the configured `retry.unknown` budget with a failed actor outcome, while the primary agent under the same config keeps retrying past it (covers: S2.7, S2.4, S2.5)
 - [ ] T3: Checkpoint completion marker in the writer prompt - acceptance: the writer task prompt instructs replying exactly `CHECKPOINT_COMPLETE`, and a writer run ending on that text resolves success without retry (covers: S2.3, S2.5)
 - [ ] T4: Summarize the stream error log - acceptance: a provider error carrying `requestBodyValues` produces a `stream error` log line with the status code and no request body content (covers: S2.8, S2.5)

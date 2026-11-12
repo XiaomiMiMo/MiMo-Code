@@ -4039,8 +4039,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         let textToolCallRetries = 0
         // Consecutive empty steps removed by dropEmptyAssistant. Such a step is
         // replayed with unchanged context, so a model that repeats it would loop
-        // without end; a productive step resets the count.
+        // without end; only a step that made progress resets the count.
         let emptyStepDrops = 0
+        // Progress means usable text or a tool call that did not fail. A step whose
+        // only tool calls errored (e.g. a rejected tool) is not progress even when
+        // it finished with tool-calls.
+        const resetDropsOnProgress = (parts: MessageV2.Part[]) => {
+          const progressed = parts.some(
+            (part) =>
+              (part.type === "text" && !part.synthetic && !part.ignored && part.text.trim().length > 0) ||
+              (part.type === "tool" && part.state.status !== "error"),
+          )
+          if (progressed) emptyStepDrops = 0
+        }
         // Retry record of an empty step dropped by dropEmptyAssistant, re-attached
         // to the next step's assistant answering the same user message.
         let carriedRetry: { part: MessageV2.RetryPart; parentID: MessageID } | undefined
@@ -5892,7 +5903,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     parts: MessageV2.parts(handle.message.id),
                     processResult: result,
                   })
-                  if (forkClassification.type !== "think-only" && forkClassification.type !== "invalid") emptyStepDrops = 0
+                  resetDropsOnProgress(MessageV2.parts(handle.message.id))
                   if (forkClassification.type === "filtered") {
                     yield* writeContentFilterError({ assistant: handle.message })
                     return "break" as const
@@ -6201,7 +6212,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   parts: MessageV2.parts(handle.message.id),
                   processResult: result,
                 })
-                if (classification.type !== "think-only" && classification.type !== "invalid") emptyStepDrops = 0
+                resetDropsOnProgress(MessageV2.parts(handle.message.id))
                 if (classification.type === "filtered") {
                   yield* writeContentFilterError({ assistant: handle.message })
                   return "break" as const
