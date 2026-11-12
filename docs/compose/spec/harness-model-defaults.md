@@ -2,7 +2,7 @@
 feature: harness-model-defaults
 status: in-progress
 updated: 2026-11-12
-source: feat/harness-model-defaults
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2799
 ---
 
 # Harness Model Defaults
