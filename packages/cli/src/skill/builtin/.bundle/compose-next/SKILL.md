@@ -64,7 +64,7 @@ Never begin implementation on `main` or `master` without explicit user consent. 
 
 Maintain one document per feature at `docs/compose/spec/{{feature-name}}.md` from the workspace root. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns the active workspace.
 
-Requests spanning unrelated concerns get separate top-level documents, one per feature. Only for a long-running, large task that must be decomposed into parts, keep `{{feature-name}}.md` as the entry document and put sub-documents in the same-named directory (`{{feature-name}}/{{sub-feature}}.md`) so no single document grows too large. Each entry task maps to one sub-document or an anchor range within one (for example `(spec: {{feature-name}}/{{sub-feature}}.md S2.1–S2.3)`). Sub-documents follow the same template and rules; the entry document carries the overall `status` and `Report`.
+Requests spanning unrelated concerns get separate top-level documents, one per feature. Only for a long-running, large task that must be decomposed into parts, you may keep `{{feature-name}}.md` as the entry document and put sub-documents in the same-named directory (`{{feature-name}}/{{sub-feature}}.md`) so no single document grows too large. Each entry task maps to one sub-document or an anchor range within one (for example `(spec: {{feature-name}}/{{sub-feature}}.md S2.1–S2.3)`). Sub-documents follow the same template and rules, except that only the entry document carries a `Report`; each document tracks its own `status`, and an entry task is checked off once the sub-document tasks it maps to are done.
 
 ### Template
 
