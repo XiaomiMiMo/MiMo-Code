@@ -1,6 +1,6 @@
 ---
 feature: harness-model-defaults
-status: in-progress
+status: delivered
 updated: 2026-11-12
 source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2799
 ---
@@ -8,7 +8,28 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2799
 # Harness Model Defaults
 
 ## Report
-[Not finalized yet]
+
+**What was built** — The request layer takes model behavior from the model's own
+declarations and vendor defaults. `maxOutputTokens` is `limit.output` (fallback
+128_000; context fallback 1_000_000) with the name heuristic, 32K cap and output
+flag removed. temperature/topP/topK are sent only when configured; no default
+textVerbosity. Effort levels come only from models.dev `reasoning_options` or
+user config, mapped to per-SDK shapes in `effortOptions()` with family detection
+only behind aggregator SDKs; `options()` sends only reasoning transport and
+`smallOptions()` uses the lowest declared non-off level. Assistant steps record
+`rawFinish`; `stop` ends the turn even when only reasoning was produced; a live
+stream that ends without a finish frame raises a retryable
+`StreamIncompleteError` (stream budget), max-mode drops such candidates, and a
+raw-less `other` in history is judged by content; `other` with a raw reason ends
+the turn and is recorded.
+
+**Verification** — `bun run typecheck` (packages/cli): PASS. Related suites
+(provider, session llm/prompt/classify/classify-integration/auto-resume-after-
+tools/invalid-output-continuation/retry/prompt-effect/max-mode*/structured-output/
+message-v2, server/session-recovery, tool/actor, llm-server): 1341 pass, then
+345 pass on the final classify adjustments. Two independent reviews; criticals
+fixed. MiMo Anthropic endpoint probed live (mimo-v2.6-pro, multi-turn tools).
+Full suite: PR CI.
 
 ## [S1] Problem
 After unify-default-harness, the request layer still carries mid-2026 per-model
@@ -72,8 +93,8 @@ default applies (no forced minimal / zero-budget / disabled thinking).
   counts as terminal for tool auto-resume or trailing-error swallowing. Max-mode
   drops such candidates; if all are incomplete it falls back to the single
   process path. A raw-less `other` that reaches classification is therefore
-  persisted history from before raw reasons were recorded and is judged by its
-  content.
+  persisted history (pre-upgrade, or a step interrupted before the check) and is
+  judged by its content, like `stop`, including with completed tools.
 - `other` with a raw reason ends the turn and logs/records the raw reason.
 - Anthropic `pause_turn` is not special-cased: the harness sends no Anthropic
   server tools, so it cannot occur, and the continuation request shape is
@@ -100,7 +121,7 @@ Responses, per-SDK parameter shapes, OpenAI OAuth / Copilot omission of
 - [x] T3: Remove default textVerbosity — acceptance: gpt-5.x options carry no textVerbosity (covers: S2.3)
 - [x] T4: Effort levels from models.dev only; shapes by SDK package — acceptance: undeclared reasoning models get no variants; declared levels map to the SDK shape; no name/date level lists remain; options() sends no default effort; smallOptions() uses the lowest declared non-off level (covers: S2.4)
 - [x] T5: Finish-reason-driven step classification with persisted raw reason — acceptance: stop+reasoning-only ends the turn for every model; other without raw retries with an explicit error; other with raw ends with the reason recorded; pause_turn continues (covers: S2.5)
-- [ ] T6: Update tests; typecheck and related suites pass (depends: T1, T2, T3, T4, T5)
+- [x] T6: Update tests; typecheck and related suites pass (depends: T1, T2, T3, T4, T5)
 
 ## Journey log
 - Review found max-mode replay looping forever on a stream-incomplete winner

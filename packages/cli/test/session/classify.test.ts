@@ -132,15 +132,15 @@ describe("classifyAssistantStep", () => {
     ).toEqual({ type: "final" })
   })
 
-  test("other without raw reason + completed client tool + text => continue (not terminal)", () => {
+  test("persisted other without raw reason + completed client tool + text => final by content", () => {
     expect(
       classifyAssistantStep({
         phase: "after-process",
         lastUser,
         assistant: assistantInfo("m-2", { finish: "other" }),
-        parts: [toolPart("m-2"), textPart("m-2", "partial answer cut off")],
+        parts: [toolPart("m-2"), textPart("m-2", "legacy answer")],
       }),
-    ).toEqual({ type: "continue" })
+    ).toEqual({ type: "final" })
   })
 
   test("other with raw reason + completed client tool + text => final (terminal)", () => {

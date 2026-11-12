@@ -79,7 +79,9 @@ export function classifyAssistantStep(input: {
     const hasFinalText = input.parts.some(
       (part) => part.type === "text" && !part.synthetic && !part.ignored && part.text.trim().length > 0,
     )
-    const terminalFinish = isTerminalFinish(assistant)
+    // Live raw-less `other` never reaches classify (see #8), so a stored `other`
+    // counts as terminal here like `stop`, judged by its content.
+    const terminalFinish = assistant.finish === "stop" || assistant.finish === "other"
     if (inFlight) return { type: "continue" }
     if (clientTools.some((part) => part.state.status !== "error") && !(terminalFinish && hasFinalText))
       return { type: "continue" }
@@ -135,8 +137,9 @@ export function classifyAssistantStep(input: {
   // alone ends the turn: a reasoning-only stop is the model's answer. A live
   // step whose stream closed without a finish frame never gets here
   // (processor.process raises StreamIncompleteError and max-mode drops such
-  // candidates), so a raw-less `other` seen here is persisted history from
-  // before raw reasons were recorded and is judged by its content. `other`
+  // candidates), so a raw-less `other` seen here is persisted history
+  // (pre-upgrade, or a step interrupted before the check) and is judged by its
+  // content. `other`
   // with a raw reason is an abnormal-but-delivered completion; surface the raw
   // reason so runLoop logs it.
   const hasText = input.parts.some(

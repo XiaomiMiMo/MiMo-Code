@@ -3,7 +3,8 @@
  * text, reasoning or tool call) must not silently break into an empty
  * assistant. A reasoning-only stop is a final answer for every model.
  * process() drops the empty turn and raises InvalidOutputError so
- * SessionRetry.policy (decide → persistent server budget) owns the retry; it keeps retrying until usable output or cancellation.
+ * SessionRetry.policy (decide → persistent server budget) owns the retry; it
+ * keeps retrying until usable output or cancellation.
  * No reminder message is injected.
  *
  * Driven through a real Session.prompt(...) against the scripted HTTP LLM stub.
@@ -1042,7 +1043,6 @@ describe("invalid-output continuation — integration", () => {
     }
   }, 30_000)
 
-  // [TP-SR-R21-07]
   test("reasoning-only length step auto-continues", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
