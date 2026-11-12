@@ -4,6 +4,7 @@ import path from "path"
 import { Provider, ProviderError } from "@/provider"
 import { openCodeGoSessionHeaders } from "@/provider/opencode-go"
 import { Log } from "@/util"
+import { errorMessage } from "@/util/error"
 import { Context, Duration, Effect, Layer, Record, Cause } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema, NoSuchToolError } from "ai"
@@ -699,14 +700,16 @@ const live: Layer.Layer<
         && execution?.sessionID === input.sessionID && execution.userMessageID === input.user.id
         ? { executionAttempt: execution.attempt, directory: execution.directory } : {}
       const result = streamText({
-        onError(error) {
+        onError({ error }) {
           l.debug("streamText error", {
             messageID: input.user.id,
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMessage(error),
             elapsedMs: Date.now() - streamStartTs,
           })
+          // The provider error carries requestBodyValues (the whole prompt), so
+          // log only its cause summary.
           l.error("stream error", {
-            error,
+            causes: ProviderError.summarizeCause(error),
           })
         },
         async experimental_repairToolCall(failed) {

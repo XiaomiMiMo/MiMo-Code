@@ -37,7 +37,10 @@ const ref = {
 // Closure-shared state so tests can inspect spawn behavior. Mirrors
 // hangingActor in checkpoint-drain.test.ts but adds counter access plus
 // "settle the next outcome" knobs (success for T3, failure for T9/T10).
-const spawnLog: { count: number; lastInput?: { sessionID: string; parentSessionID?: string; mode: string } } = { count: 0 }
+const spawnLog: {
+  count: number
+  lastInput?: { sessionID: string; parentSessionID?: string; mode: string; task: string }
+} = { count: 0 }
 const settleNextSuccess: { value: boolean } = { value: false }
 // T10 uses explicit (test-driven) settlement to avoid the documented race
 // in prune.ts:321-329 (settle watcher in checkpoint.ts deletes writers Map
@@ -65,6 +68,7 @@ const recordingActor = Layer.effect(
             sessionID: input.sessionID,
             parentSessionID: input.parentSessionID,
             mode: input.mode,
+            task: input.task,
           }
           const outcome = yield* Deferred.make<AgentOutcome>()
           if (settleNextSuccess.value) {
@@ -189,6 +193,31 @@ describe("checkpoint writer child-session isolation", () => {
         // false topic-missing → MAX_PRE_REACT loop.
         expect(spawnLog.lastInput?.sessionID).toBe(children[0].id)
         expect(spawnLog.lastInput?.parentSessionID).toBe(info.id)
+      }),
+    ),
+  )
+
+  it.live(
+    "writer task asks for a CHECKPOINT_COMPLETE reply once the edits are written",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* resetSpawnLog
+        const svc = yield* SessionCheckpoint.Service
+        const { info } = yield* seedParentSession()
+
+        const outcome = yield* svc.tryStartCheckpointWriter({
+          sessionID: info.id,
+          model: { providerID: "test", modelID: "test-model" },
+          promptOps: {} as never,
+        })
+        expect(outcome).toBe("started")
+
+        // An empty final stop would enter invalid-output recovery, so the writer
+        // must end on the marker text.
+        const task = spawnLog.lastInput?.task ?? ""
+        expect(task.trimEnd().endsWith("reply with exactly CHECKPOINT_COMPLETE.")).toBe(true)
+        expect(task).toContain("reply with exactly CHECKPOINT_COMPLETE and nothing else")
+        expect(task).not.toContain("stop immediately")
       }),
     ),
   )

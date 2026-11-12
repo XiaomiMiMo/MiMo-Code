@@ -1439,7 +1439,7 @@ describe("Actor.spawn structured output (P3)", () => {
     ),
   )
 
-  it.live("checkpoint-writer invalid output exhausting a bounded server budget produces a failed actor outcome", () =>
+  it.live("checkpoint-writer invalid output exhausting the unknown budget produces a failed actor outcome", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
@@ -1449,8 +1449,9 @@ describe("Actor.spawn structured output (P3)", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
 
-        // Empty output retries under the server budget, configured bounded here:
-        // 1 retry after the initial attempt.
+        // A system-spawned agent retries empty output under the unknown budget,
+        // configured here as 1 retry after the initial attempt; the server budget
+        // stays persistent, so a run that used it would never settle.
         yield* llm.push(...Array.from({ length: 2 }, () => reply().stop()))
 
         const result = yield* actor.spawn({
@@ -1464,7 +1465,7 @@ describe("Actor.spawn structured output (P3)", () => {
           model: ref,
         })
 
-        const outcome = yield* Deferred.await(result.outcome)
+        const outcome = yield* Deferred.await(result.outcome).pipe(Effect.timeout("10 seconds"))
         expect(outcome.status).toBe("failure")
       }),
       {
@@ -1472,7 +1473,7 @@ describe("Actor.spawn structured output (P3)", () => {
         config: (url: string) => ({
           ...providerCfg(url),
           retry: {
-            server: { mode: "bounded", maxRetries: 1, initialDelayMs: 1, maxDelayMs: 1, deadlineMs: 1000 },
+            unknown: { maxRetries: 1, initialDelayMs: 1, maxDelayMs: 1, deadlineMs: 1000 },
           },
         }),
       },

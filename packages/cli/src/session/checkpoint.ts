@@ -473,7 +473,7 @@ function composeWriterPrompt(input: {
     "",
     input.rangeDesc,
     "",
-    "Use the `task` tool for ALL task state ops (create / start / progress / done / abandon / approve / rename / block / unblock / batch_create). Use the `write` tool for the checkpoint, memory, and task narrative files at the CHECKPOINT_PATH / MEMORY_PATH / TASK_MEM_DIR locations declared above. After all writes and tool calls, stop immediately.",
+    "Use the `task` tool for ALL task state ops (create / start / progress / done / abandon / approve / rename / block / unblock / batch_create). Use the `write` tool for the checkpoint, memory, and task narrative files at the CHECKPOINT_PATH / MEMORY_PATH / TASK_MEM_DIR locations declared above. After all writes and tool calls, reply with exactly CHECKPOINT_COMPLETE.",
   ].join("\n")
 }
 
