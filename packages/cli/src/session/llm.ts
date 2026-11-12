@@ -51,6 +51,13 @@ import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "llm" })
+
+const RESPONSE_BODY_EDGE = 512
+
+function clipResponseBody(text: string | undefined) {
+  if (!text || text.length <= RESPONSE_BODY_EDGE * 2) return text
+  return `${text.slice(0, RESPONSE_BODY_EDGE)}......${text.slice(-RESPONSE_BODY_EDGE)}`
+}
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
 type Result = Awaited<ReturnType<typeof streamText>>
@@ -719,7 +726,7 @@ const live: Layer.Layer<
           // log only its cause summary plus the response side of an API error.
           l.error("stream error", {
             causes: ProviderError.summarizeCause(error),
-            ...(APICallError.isInstance(error) ? { url: error.url, responseBody: error.responseBody?.slice(0, 1024) } : {}),
+            ...(APICallError.isInstance(error) ? { url: error.url, responseBody: clipResponseBody(error.responseBody) } : {}),
           })
         },
         async experimental_repairToolCall(failed) {

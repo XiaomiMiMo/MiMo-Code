@@ -544,7 +544,8 @@ export default async () => ({ "chat.params": async () => {
       provider: { openai: { npm: "@ai-sdk/openai", options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` } } },
     } })
     const secret = "private-conversation-content"
-    const request = waitRequest("/responses", new Response(JSON.stringify({ error: { message: "bad request", type: "invalid_request_error" } }), {
+    const detail = "response-head " + "response-middle ".repeat(200) + "response-tail"
+    const request = waitRequest("/responses", new Response(JSON.stringify({ error: { message: "bad request", type: "invalid_request_error", detail } }), {
       status: 400, headers: { "Content-Type": "application/json" },
     }))
     await using logs = await tmpdir()
@@ -572,6 +573,12 @@ export default async () => ({ "chat.params": async () => {
       expect(line).toContain("bad request")
       expect(line).not.toContain(secret)
       expect(line).not.toContain("requestBodyValues")
+      const responseBody = line?.match(/ responseBody=(.*) stream error$/)?.[1]
+      expect(responseBody).toBeDefined()
+      expect(responseBody).toContain("response-head")
+      expect(responseBody).toContain("......")
+      expect(responseBody?.endsWith('response-tail"}}')).toBe(true)
+      expect(responseBody!.length).toBe(512 * 2 + "......".length)
     } finally {
       Global.Path.log = logDir
       await Log.init({ print: false, dev: true, level: "DEBUG" })
