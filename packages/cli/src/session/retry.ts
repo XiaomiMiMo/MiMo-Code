@@ -474,10 +474,6 @@ export function isGptServerOverloadedError(error: Err): boolean {
   )
 }
 
-export function isGptModel(model: { id: string; api: { id: string } }): boolean {
-  return [model.id, model.api.id].some((id) => id.toLowerCase().startsWith("gpt-"))
-}
-
 export function policy(opts: {
   parse: (error: unknown) => Err
   set: (input: {

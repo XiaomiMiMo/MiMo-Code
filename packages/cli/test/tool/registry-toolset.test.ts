@@ -1,6 +1,4 @@
 import { describe, expect } from "bun:test"
-import fs from "fs/promises"
-import path from "path"
 import { Effect, Layer } from "effect"
 import { ToolRegistry } from "../../src/tool"
 import { Agent } from "../../src/agent/agent"
@@ -24,11 +22,13 @@ describe("ToolRegistry.tools: toolset selection", () => {
           providerID: ProviderID.opencode,
           modelID: ModelID.make("openai/gpt-5.4"),
           agent: build,
+          harness: "codex",
         })
         const registered = yield* reg.registered({
           providerID: ProviderID.opencode,
           modelID: ModelID.make("openai/gpt-5.4"),
           agent: build,
+          harness: "codex",
         })
         const ids = tools.map((tool) => tool.id)
         const nested = [
@@ -61,7 +61,7 @@ describe("ToolRegistry.tools: toolset selection", () => {
     ),
   )
 
-  it.live("uses the harness rather than MiMo API transport to select the toolset", () =>
+  it.live("uses the harness rather than the model to select the toolset", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const reg = yield* ToolRegistry.Service
@@ -95,97 +95,19 @@ describe("ToolRegistry.tools: toolset selection", () => {
         expect(responsesDefault.map((tool) => tool.id)).toContain("bash")
         expect(responsesDefault.map((tool) => tool.id)).not.toContain("exec")
         expect(normalCodex.map((tool) => tool.id)).toEqual(["exec"])
+        const gptDefault = yield* reg.tools({
+          providerID: ProviderID.openai,
+          modelID: ModelID.make("gpt-5.4"),
+          agent: build,
+        })
+        expect(gptDefault.map((tool) => tool.id)).toContain("bash")
+        expect(gptDefault.map((tool) => tool.id)).not.toContain("exec")
         expect(responsesCodex.map((tool) => tool.id)).toEqual(["exec"])
       }),
     ),
   )
 
-  it.live.skip("exposes exec by default only to GPT models", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        const reg = yield* ToolRegistry.Service
-        const agents = yield* Agent.Service
-        const general = yield* agents.get("general")
-        if (!general) throw new Error("no general agent")
-        const ids = (modelID: string) =>
-          reg
-            .tools({
-              providerID: ProviderID.opencode,
-              modelID: ModelID.make(modelID),
-              agent: general,
-            })
-            .pipe(Effect.map((tools) => tools.map((tool) => tool.id)))
-
-        const gpt = yield* reg.tools({
-          providerID: ProviderID.opencode,
-          modelID: ModelID.make("openai/gpt-5.4"),
-          agent: general,
-        })
-        const exec = gpt.find((tool) => tool.id === "exec")
-        expect(exec).toBeDefined()
-        expect(exec?.description).toContain("Run independent calls with `Promise.all` or `Promise.allSettled`")
-        expect(exec?.description).toContain("keep dependent operations sequential")
-        expect(exec?.description).toContain("do not use `exec` merely to force concurrency")
-        expect(exec?.description).toContain("apply_patch(input:")
-        expect(exec?.description).toContain("exec_command(input:")
-        expect(exec?.description).not.toContain("\n  bash(input:")
-        expect(exec?.description).not.toContain("read(input:")
-        expect(exec?.description).not.toContain("write(input:")
-        expect(exec?.description).not.toContain("edit(input:")
-        expect(yield* ids("anthropic/claude-sonnet-4-6")).not.toContain("exec")
-        expect(yield* ids("mimo-v2")).not.toContain("exec")
-      }),
-    ),
-    30000,
-  )
-
-  it.live.skip("keeps skill_search registered but hidden for GPT models", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        const reg = yield* ToolRegistry.Service
-        const agents = yield* Agent.Service
-        const general = yield* agents.get("general")
-        if (!general) throw new Error("no general agent")
-        const ids = (modelID: string) =>
-          reg
-            .tools({
-              providerID: ProviderID.opencode,
-              modelID: ModelID.make(modelID),
-              agent: general,
-            })
-            .pipe(Effect.map((tools) => tools.map((tool) => tool.id)))
-
-        expect(yield* ids("openai/gpt-5.4")).not.toContain("skill_search")
-        expect(yield* ids("anthropic/claude-sonnet-4-6")).toContain("skill_search")
-        expect(yield* ids("mimo-v2")).toContain("skill_search")
-      }),
-    ),
-  )
-
-  it.live.skip("uses the filesystem-capable bash description for GPT models", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        const reg = yield* ToolRegistry.Service
-        const agents = yield* Agent.Service
-        const general = yield* agents.get("general")
-        if (!general) throw new Error("no general agent")
-        const tools = yield* reg.tools({
-          providerID: ProviderID.make("openai"),
-          modelID: ModelID.make("gpt-5"),
-          agent: general,
-        })
-        const bash = tools.find((tool) => tool.id === "bash")
-        expect(bash?.description).toContain("the dedicated `read`, `write`, and `edit` tools are unavailable")
-        expect(bash?.description).toContain("Use `apply_patch`")
-        expect(bash?.description).not.toContain("DO NOT use it for file operations")
-        expect(tools.some((tool) => tool.id === "notebook_edit")).toBeFalse()
-        expect(tools.some((tool) => tool.id === "grep")).toBeFalse()
-        expect(tools.some((tool) => tool.id === "glob")).toBeFalse()
-      }),
-    ),
-  )
-
-  it.live("keeps the specialized-tool bash description for non-GPT models", () =>
+  it.live("keeps the specialized-tool bash description outside Codex mode", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const reg = yield* ToolRegistry.Service
@@ -206,42 +128,6 @@ describe("ToolRegistry.tools: toolset selection", () => {
         expect(tools.some((tool) => tool.id === "glob")).toBeTrue()
       }),
     ),
-  )
-
-  it.live.skip("masks multiedit for GPT models", () =>
-    provideTmpdirInstance((dir) =>
-      Effect.gen(function* () {
-        yield* Effect.promise(() => fs.mkdir(path.join(dir, ".mimocode/tool"), { recursive: true }))
-        yield* Effect.promise(() =>
-          Bun.write(
-            path.join(dir, ".mimocode/tool/multiedit.ts"),
-            [
-              "export default {",
-              "  description: 'multi-edit files',",
-              "  args: {},",
-              "  execute: async () => 'done',",
-              "}",
-            ].join("\n"),
-          ),
-        )
-        const reg = yield* ToolRegistry.Service
-        const agents = yield* Agent.Service
-        const general = yield* agents.get("general")
-        if (!general) throw new Error("no general agent")
-        const ids = (modelID: string) =>
-          reg
-            .tools({
-              providerID: ProviderID.opencode,
-              modelID: ModelID.make(modelID),
-              agent: general,
-            })
-            .pipe(Effect.map((tools) => tools.map((tool) => tool.id)))
-
-        expect(yield* ids("openai/gpt-5.4")).not.toContain("multiedit")
-        expect(yield* ids("anthropic/claude-sonnet-4-6")).toContain("multiedit")
-      }),
-    ),
-    30000,
   )
 
   it.live("task parameters expose the JSON operation schema (no script field)", () =>

@@ -166,9 +166,10 @@ export const Flag = {
     return ratio("MIMOCODE_COMPACTION_TRIGGER_RATIO") ?? 0.9
   },
   MIMOCODE_DISABLE_MODELS_FETCH: truthy("MIMOCODE_DISABLE_MODELS_FETCH"),
-  // Defaults to automatic model inference. Explicit true forces every model to
-  // use the GPT system prompt and Codex toolset; explicit false forces even GPT
-  // models to use the default prompt and toolset.
+  // Unset means the default harness unless a session explicitly selects
+  // harness "codex". Explicit true enables the Codex prompt and toolset for
+  // sessions on harness "auto"; explicit false forces the default harness for
+  // every session.
   get MIMOCODE_CODEX_MODE() {
     if (truthy("MIMOCODE_CODEX_MODE")) return true
     if (falsy("MIMOCODE_CODEX_MODE")) return false
@@ -380,7 +381,7 @@ export const Flag = {
   MIMOCODE_ENABLE_EXEC_TOOL: truthy("MIMOCODE_ENABLE_EXEC_TOOL"),
   // MCP tool lazy-loading: `true` (default) always defers MCP tool schemas
   // behind mcp_tool_search, `auto` defers once they exceed 10% of the context
-  // window, `auto:N` uses N%, `false` never defers. Codex-mode models always defer.
+  // window, `auto:N` uses N%, `false` never defers. Codex-mode sessions always defer.
   get MIMOCODE_MCP_TOOL_SEARCH() {
     return process.env["MIMOCODE_MCP_TOOL_SEARCH"]
   },

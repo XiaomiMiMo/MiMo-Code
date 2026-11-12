@@ -3036,7 +3036,7 @@ for (const mode of ["throw", "reject", "short"] as const) {
             title: "Exception boundary",
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
           })
-          yield* prompt.prompt({ sessionID: session.id, agent: "build", model: nested ? mcpRef : ref, noReply: true,
+          yield* prompt.prompt({ sessionID: session.id, agent: "build", model: nested ? mcpRef : ref, ...(nested ? { harness: "codex" as const } : {}), noReply: true,
             parts: [{ type: "text", text: "run diagnostic" }] })
           yield* llm.tool(nested ? "exec" : "diagnostic", nested ? { code: "await tools.diagnostic({})" } : {})
           yield* llm.text("exception handled")
@@ -3259,6 +3259,7 @@ mcpIt.live("exec can call a catalogued MCP tool without loading its outer schema
         sessionID: session.id,
         agent: "build",
         model: mcpRef,
+        harness: "codex",
         noReply: true,
         parts: [{ type: "text", text: "inspect the window through exec" }],
       })
@@ -3300,6 +3301,7 @@ mcpIt.live("rejects a direct call to a deferred MCP tool", () =>
         sessionID: session.id,
         agent: "build",
         model: mcpRef,
+        harness: "codex",
         noReply: true,
         parts: [{ type: "text", text: "call the MCP tool directly" }],
       })
@@ -3386,6 +3388,7 @@ mcpIt.live("keeps exec reachable when permissions allow only an MCP tool", () =>
         sessionID: session.id,
         agent: "build",
         model: mcpRef,
+        harness: "codex",
         noReply: true,
         parts: [{ type: "text", text: "use the permitted MCP capability" }],
       })
@@ -3419,6 +3422,7 @@ mcpIt.live("exec exposes only MCP tools allowed by the configured agent", () =>
         sessionID: session.id,
         agent: "restricted",
         model: mcpRef,
+        harness: "codex",
         noReply: true,
         parts: [{ type: "text", text: "use the allowed MCP tool" }],
       })
@@ -3442,7 +3446,7 @@ mcpIt.live("exec exposes only MCP tools allowed by the configured agent", () =>
 )
 
 mcpIt.live(
-  "exposes only exec to GPT models without leaking MCP schemas",
+  "exposes only exec in Codex mode without leaking MCP schemas",
   () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -3454,6 +3458,7 @@ mcpIt.live(
           sessionID: session.id,
           agent: "build",
           model: { providerID: ProviderID.openai, modelID: ModelID.make("gpt-5.2") },
+          harness: "codex",
           noReply: true,
           parts: [{ type: "text", text: "inspect the window" }],
         })
@@ -3471,7 +3476,7 @@ mcpIt.live(
 )
 
 mcpIt.live(
-  "keeps the Codex prompt and tool schema for GPT models with the default harness",
+  "gives GPT models the default prompt and tool schema unless Codex mode is selected",
   () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -3491,9 +3496,12 @@ mcpIt.live(
         yield* prompt.loop({ sessionID: session.id })
 
         const request = (yield* llm.inputs)[0]
-        expect((request.tools as Array<Record<string, unknown>>).map(wireToolName)).toEqual(["exec"])
-        expect(JSON.stringify(request)).toContain("You are Codex")
-        expect(JSON.stringify(request)).toContain("tools.apply_patch")
+        const names = (request.tools as Array<Record<string, unknown>>).map(wireToolName)
+        expect(names).toContain("edit")
+        expect(names).toContain("read")
+        expect(names).not.toContain("exec")
+        expect(JSON.stringify(request)).not.toContain("You are Codex")
+        expect(JSON.stringify(request)).not.toContain("tools.apply_patch")
       }),
       { git: true, config: gptProviderCfg },
     ),
@@ -3736,7 +3744,7 @@ alwaysDirectMcpIt.live(
 )
 
 alwaysDirectMcpIt.live(
-  "exposes config-declared tools top-level on GPT while ordinary MCP stays deferred",
+  "exposes config-declared tools top-level in Codex mode while ordinary MCP stays deferred",
   () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -3751,6 +3759,7 @@ alwaysDirectMcpIt.live(
           sessionID: session.id,
           agent: "build",
           model: mcpRef,
+          harness: "codex",
           noReply: true,
           parts: [{ type: "text", text: "run a sandbox script" }],
         })
@@ -3794,6 +3803,7 @@ alwaysDirectMcpIt.live(
           sessionID: session.id,
           agent: "build",
           model: mcpRef,
+          harness: "codex",
           noReply: true,
           parts: [{ type: "text", text: "run the cell from a script" }],
         })
