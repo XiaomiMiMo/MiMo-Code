@@ -68,6 +68,7 @@ Use this skill.
           const tool = (yield* registry.tools({
             providerID: "opencode" as any,
             modelID: "gpt-5" as any,
+            harness: "codex",
             agent,
           })).find((tool) => tool.id === ToolScriptTool.id)
           if (!tool) throw new Error("Exec tool not found")
@@ -116,6 +117,7 @@ return {
           const tool = (yield* registry.tools({
             providerID: "opencode" as any,
             modelID: "gpt-5" as any,
+            harness: "codex",
             agent,
           })).find((tool) => tool.id === ToolScriptTool.id)
           if (!tool) throw new Error("Exec tool not found")
@@ -178,6 +180,7 @@ description: Anyone may start this one.
           const tool = (yield* registry.tools({
             providerID: "opencode" as any,
             modelID: "gpt-5" as any,
+            harness: "codex",
             agent,
           })).find((tool) => tool.id === ToolScriptTool.id)
           if (!tool) throw new Error("Exec tool not found")

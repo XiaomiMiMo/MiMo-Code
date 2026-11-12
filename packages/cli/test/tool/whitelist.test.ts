@@ -420,6 +420,7 @@ describe("Tool whitelist (Task 14)", () => {
           agent: "build",
           agentID: actorID,
           model: gptRef,
+          harness: "codex",
           parts: [{ type: "text", text: "run the nested command" }],
         })
 
