@@ -2,7 +2,7 @@
 feature: checkpoint-writer-safety
 status: delivered
 updated: 2026-10-23
-source: fix/checkpoint-writer-loop-bound
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2798
 ---
 
 # Checkpoint Writer Safety
