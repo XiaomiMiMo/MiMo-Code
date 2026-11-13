@@ -1,3 +1,4 @@
+import { AppRequest, handleAppRequest } from "@/mcp/app-host"
 import { Hono } from "hono"
 import { describeRoute, validator, resolver } from "hono-openapi"
 import z from "zod"
@@ -10,6 +11,7 @@ import { jsonRequest, runRequest } from "./trace"
 
 export const McpRoutes = lazy(() =>
   new Hono()
+    .post("/apps", validator("json", AppRequest), c => runRequest("McpRoutes.apps", c, handleAppRequest(c.req.valid("json"), c.req.raw.signal)).then(result => c.json(result)))
     .get(
       "/",
       describeRoute({
