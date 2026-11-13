@@ -9,6 +9,7 @@ import { Log } from "@/util"
 import { errorMessage } from "@/util/error"
 import { withTimeout } from "@/util/timeout"
 import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "@/cli/network"
+import { modelOption } from "@/cli/model-option"
 import { Filesystem } from "@/util"
 import type { GlobalEvent } from "@mimo-ai/sdk/v2"
 import type { EventSource } from "./context/sdk"
@@ -163,11 +164,7 @@ export const TuiThreadCommand = cmd({
         type: "string",
         describe: "path to start mimocode in",
       })
-      .option("model", {
-        type: "string",
-        alias: ["m"],
-        describe: "model to use in the format of provider/model",
-      })
+      .option("model", modelOption)
       .option("continue", {
         alias: ["c"],
         describe: "continue the last session",
