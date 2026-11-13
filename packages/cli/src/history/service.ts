@@ -1,16 +1,20 @@
 import { Context, Effect, Layer } from "effect"
-import { and, asc, desc, eq, sql } from "drizzle-orm"
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm"
 import { Database } from "../storage"
-import { MessageTable, PartTable } from "../session/session.sql"
+import { MessageTable, PartTable, SessionTable } from "../session/session.sql"
 import { detail, page, summary } from "./media"
 import { projection } from "./projection"
 import type { PartID } from "../session/schema"
 import type { MessageID } from "../session/schema"
+import type { MessageV2 } from "../session/message-v2"
 import { Bus } from "../bus"
 import { Instance } from "../project/instance"
 import { buildFtsQuery } from "./fts-query"
 import { basePartId } from "./chunk"
 import { layer as writerLayer, Service as WriterService } from "./writer"
+import { createHash } from "node:crypto"
+import * as Semantic from "../semantic/candidates"
+import { extract } from "./extract"
 
 export type SearchHit = {
   part_id: string
@@ -22,6 +26,8 @@ export type SearchHit = {
   score: number
   time_created: number
 }
+
+export type HybridSearchHit = SearchHit | (Omit<SearchHit, "score"> & { bm25_score?: number; rank: number; retrieval: "fts" | "semantic" | "hybrid" })
 
 export type MessagePart = {
   part_id: string
@@ -39,6 +45,8 @@ export type MessageContext = {
 }
 
 export interface Interface {
+  /** Optional rank-fused retrieval; unavailable results leave exact FTS search authoritative. */
+  readonly hybridSearch: (input: Parameters<Interface["search"]>[0] & { signal?: AbortSignal }) => Effect.Effect<HybridSearchHit[]>
   readonly get: (input: {
     part_id: string
     offset?: number
@@ -49,6 +57,10 @@ export interface Interface {
     query: string
     scope?: "project" | "global"
     session_id?: string
+    /** Internal retrieval guard; omitted by the public History tool. */
+    exclude_session_id?: string
+    /** Internal actor isolation; omitted by the public History tool. */
+    agent_id?: string
     tool_name?: string
     time_after?: number
     time_before?: number
@@ -65,6 +77,19 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/History") {}
 
 const HARD_CAP = 50
+const SEMANTIC_ALLOWED_CAP = 200_000
+const SEMANTIC_KINDS = ["user_text", "assistant_text", "summary_text", "compaction"] as const
+
+function semanticBypass(query: string): boolean {
+  const value = query.trim()
+  if (!value) return true
+  if (/^(?:ses|msg|prt|part)_[A-Za-z0-9_-]+$/i.test(value)) return true
+  if (/^[a-f0-9]{7,64}$/i.test(value)) return true
+  if (/(?:^|\s)--?[A-Za-z][\w-]*(?:=\S+)?(?:\s|$)/.test(value)) return true
+  if (/(?:^|[A-Za-z]:)[/\\]/.test(value) || /\.(?:[cm]?[jt]sx?|py|rs|go|java|kt|swift|md|json|ya?ml|toml)(?::\d+(?::\d+)?)?$/i.test(value)) return true
+  if (/^\s*(?:at\s+.+\(.+\)|Traceback \(most recent call last\):|(?:\w+Error|Exception):)/m.test(value)) return true
+  return !/\s/.test(value) && /[.$:#<>()[\]{}]/.test(value)
+}
 
 type Row = {
   part_id: string
@@ -101,6 +126,15 @@ export const layer = Layer.effect(
       if (input.session_id) {
         conditions.push("history_fts.session_id = ?")
         params.push(input.session_id)
+      }
+      if (input.exclude_session_id) {
+        conditions.push("history_fts.session_id <> ?")
+        params.push(input.exclude_session_id)
+      }
+      const agentID = input.agent_id === undefined ? undefined : input.agent_id || "main"
+      if (agentID) {
+        conditions.push("EXISTS (SELECT 1 FROM message history_message WHERE history_message.id = history_fts.message_id AND COALESCE(NULLIF(history_message.agent_id, ''), 'main') = ?)")
+        params.push(agentID)
       }
       if (input.tool_name) {
         conditions.push("history_fts.tool_name = ?")
@@ -213,6 +247,165 @@ export const layer = Layer.effect(
         if (hits.length >= limit) break
       }
       return hits
+    })
+
+    const hybridSearch = Effect.fn("History.hybridSearch")(function* (input: Parameters<Interface["search"]>[0] & { signal?: AbortSignal }) {
+      const lexical = yield* search(input)
+      const lexicalFallback = (): HybridSearchHit[] => lexical
+      // Keep exact identifiers, paths, flags, code symbols, hashes, and traces on the
+      // established lexical path so punctuation and separators retain their meaning.
+      if (semanticBypass(input.query)) return lexicalFallback()
+
+      const scopeFilters: string[] = []
+      const scopeParams: (string | number)[] = []
+      if ((input.scope ?? "project") === "project") { scopeFilters.push("s.project_id = ?"); scopeParams.push(Instance.project.id) }
+      if (input.session_id) { scopeFilters.push("p.session_id = ?"); scopeParams.push(input.session_id) }
+      if (input.exclude_session_id) { scopeFilters.push("p.session_id <> ?"); scopeParams.push(input.exclude_session_id) }
+      const agentID = input.agent_id === undefined ? undefined : input.agent_id || "main"
+      if (agentID) { scopeFilters.push("COALESCE(NULLIF(m.agent_id, ''), 'main') = ?"); scopeParams.push(agentID) }
+      if (input.tool_name) { scopeFilters.push("json_extract(p.data, '$.tool') = ?"); scopeParams.push(input.tool_name) }
+      const scopeWhere = scopeFilters.map((item) => `AND ${item}`).join(" ")
+      // Read only eligible live part IDs and scalar metadata. Exceeding the provider's
+      // hard bound falls back to exact FTS instead of searching an arbitrary prefix.
+      const partRows = Database.Client().$client.prepare(`
+        SELECT p.id AS part_id, p.session_id, p.message_id, s.project_id,
+               COALESCE(NULLIF(m.agent_id, ''), 'main') AS agent_id,
+               json_extract(p.data, '$.tool') AS tool_name, p.time_created
+        FROM part p JOIN session s ON s.id = p.session_id JOIN message m ON m.id = p.message_id
+        WHERE 1=1 ${scopeWhere}
+        LIMIT ?
+      `).all(...scopeParams, SEMANTIC_ALLOWED_CAP + 1) as Array<{
+        part_id: string; session_id: string; message_id: string; project_id: string; agent_id: string;
+        tool_name: string | null; time_created: number
+      }>
+      if (partRows.length > SEMANTIC_ALLOWED_CAP) return lexicalFallback()
+      const currentByPart = new Map(partRows.map((row) => [row.part_id, row]))
+      const ftsFilters: string[] = ["kind IN (?, ?, ?, ?)"]
+      const ftsParams: (string | number)[] = [...SEMANTIC_KINDS]
+      if ((input.scope ?? "project") === "project") { ftsFilters.push("project_id = ?"); ftsParams.push(Instance.project.id) }
+      if (input.session_id) { ftsFilters.push("session_id = ?"); ftsParams.push(input.session_id) }
+      if (input.exclude_session_id) { ftsFilters.push("session_id <> ?"); ftsParams.push(input.exclude_session_id) }
+      if (agentID) {
+        ftsFilters.push("EXISTS (SELECT 1 FROM message history_message WHERE history_message.id = history_fts.message_id AND COALESCE(NULLIF(history_message.agent_id, ''), 'main') = ?)")
+        ftsParams.push(agentID)
+      }
+      if (input.tool_name) { ftsFilters.push("tool_name = ?"); ftsParams.push(input.tool_name) }
+      if (input.time_after !== undefined) { ftsFilters.push("time_created >= ?"); ftsParams.push(input.time_after) }
+      if (input.time_before !== undefined) { ftsFilters.push("time_created <= ?"); ftsParams.push(input.time_before) }
+      const ftsWhere = ftsFilters.map((item) => `AND ${item}`).join(" ")
+      // This is one bounded, indexed scope scan. Chunk IDs remain exact source IDs;
+      // no per-part OR/GLOB join can degrade into a corpus-wide nested loop.
+      const ftsRows = Database.Client().$client.prepare(`
+        SELECT part_id, session_id, message_id, project_id, tool_name, time_created, kind
+        FROM history_fts
+        WHERE 1=1 ${ftsWhere}
+        LIMIT ?
+      `).all(...ftsParams, SEMANTIC_ALLOWED_CAP + 1) as Array<{
+        part_id: string; session_id: string; message_id: string; project_id: string;
+        tool_name: string | null; time_created: number; kind: string
+      }>
+      if (!ftsRows.length || ftsRows.length > SEMANTIC_ALLOWED_CAP) return lexicalFallback()
+      const allowedRows = ftsRows.filter((row) => {
+        const current = currentByPart.get(basePartId(row.part_id) as PartID)
+        if (!current) return false
+        if (current.session_id !== row.session_id || current.message_id !== row.message_id || current.project_id !== row.project_id || current.tool_name !== row.tool_name) return false
+        if ((input.scope ?? "project") === "project" && current.project_id !== Instance.project.id) return false
+        if (input.session_id && current.session_id !== input.session_id) return false
+        if (input.exclude_session_id && current.session_id === input.exclude_session_id) return false
+        if (agentID && current.agent_id !== agentID) return false
+        if (input.tool_name && current.tool_name !== input.tool_name) return false
+        return true
+      })
+      const allowed = [...new Set(allowedRows.map((row) => row.part_id))].sort()
+      if (!allowed.length) return lexicalFallback()
+      const semantic = yield* Effect.tryPromise({
+        try: () => Semantic.search({ corpus: "traj", query: input.query, allowed, limit: Math.min(input.limit ?? 10, HARD_CAP), signal: input.signal }),
+        catch: () => new Error("Semantic history search failed"),
+      }).pipe(Effect.catch(() => Effect.succeed({ status: "unavailable" as const })))
+      if (semantic.status !== "ok") return lexicalFallback()
+      // Re-read authoritative original part and message data after the provider call.
+      // FTS is an asynchronous preview and cannot establish freshness by itself.
+      const candidateSources = [...new Set(semantic.hits.slice(0, HARD_CAP).map((candidate) => candidate.source).filter((source) => allowed.includes(source)))]
+      if (!candidateSources.length) return lexicalFallback()
+      const liveFtsRows = Database.Client().$client.prepare(`
+        SELECT part_id, session_id, message_id, project_id, tool_name, time_created, kind
+        FROM history_fts
+        WHERE part_id IN (${candidateSources.map(() => "?").join(",")})
+      `).all(...candidateSources) as Array<{
+        part_id: string; session_id: string; message_id: string; project_id: string;
+        tool_name: string | null; time_created: number; kind: string
+      }>
+      const ftsBySource = new Map(liveFtsRows.map((row) => [row.part_id, row]))
+      const candidateBases = [...new Set(candidateSources.map((source) => basePartId(source)))].map((id) => id as PartID)
+      if (!candidateBases.length) return lexicalFallback()
+      const liveRows = Database.use((db) => db
+        .select({
+          part_id: PartTable.id,
+          session_id: PartTable.session_id,
+          message_id: PartTable.message_id,
+          project_id: SessionTable.project_id,
+          part: PartTable.data,
+          role: sql<"user" | "assistant">`json_extract(${MessageTable.data}, '$.role')`,
+          summary: sql<boolean>`json_extract(${MessageTable.data}, '$.summary')`,
+          agent_id: sql<string>`COALESCE(NULLIF(${MessageTable.agent_id}, ''), 'main')`,
+          time_created: PartTable.time_created,
+        })
+        .from(PartTable)
+        .innerJoin(SessionTable, eq(SessionTable.id, PartTable.session_id))
+        .innerJoin(MessageTable, eq(MessageTable.id, PartTable.message_id))
+        .where(inArray(PartTable.id, candidateBases))
+        .all())
+      const liveByPart = new Map(liveRows.map((row) => [row.part_id, row]))
+      const semHits: SearchHit[] = []
+      const seenSemantic = new Set<string>()
+      for (const candidate of semantic.hits) {
+        const source = basePartId(candidate.source)
+        const ftsRow = ftsBySource.get(candidate.source)
+        const row = liveByPart.get(source as PartID)
+        if (!row || !ftsRow || seenSemantic.has(source)) continue
+        if (candidate.partID && basePartId(candidate.partID) !== source) continue
+        if (!allowed.includes(candidate.source)) continue
+        if (candidate.sessionID !== row.session_id || candidate.messageID !== row.message_id || candidate.time !== ftsRow.time_created) continue
+        if (ftsRow.session_id !== row.session_id || ftsRow.message_id !== row.message_id || ftsRow.project_id !== row.project_id) continue
+        if (candidate.kind !== ftsRow.kind) continue
+        if ((input.scope ?? "project") === "project" && row.project_id !== Instance.project.id) continue
+        if (input.session_id && row.session_id !== input.session_id) continue
+        if (input.exclude_session_id && row.session_id === input.exclude_session_id) continue
+        if (agentID && row.agent_id !== agentID) continue
+        if (input.time_after !== undefined && ftsRow.time_created < input.time_after) continue
+        if (input.time_before !== undefined && ftsRow.time_created > input.time_before) continue
+        const current = extract({ ...row.part, id: row.part_id, sessionID: row.session_id, messageID: row.message_id } as unknown as MessageV2.Part, row.role, { summary: row.summary })
+        if (!current || !SEMANTIC_KINDS.includes(current.kind as (typeof SEMANTIC_KINDS)[number])) continue
+        if (ftsRow.tool_name !== current.tool_name) continue
+        if (input.tool_name && current.tool_name !== input.tool_name) continue
+        if (candidate.kind !== current.kind || !current.body.includes(candidate.text)) continue
+        const signature = createHash("sha1").update(candidate.text, "utf8").digest("hex").slice(0, 12)
+        if (!candidate.text || signature !== candidate.signature) continue
+        seenSemantic.add(source)
+        semHits.push({ part_id: source, session_id: row.session_id, message_id: row.message_id, project_id: row.project_id, tool_name: current.tool_name, snippet: summary(candidate.text), score: 0, time_created: ftsRow.time_created })
+      }
+      if (!semHits.length) return lexicalFallback()
+      const limit = Math.min(input.limit ?? 10, HARD_CAP)
+      const fused = new Map<string, { hit: SearchHit; score: number; bm25_score?: number; lexicalRank: number; semanticRank: number }>()
+      const add = (hit: SearchHit, rank: number, source: "lexical" | "semantic") => {
+        const value = fused.get(hit.part_id) ?? { hit, score: 0, lexicalRank: Number.MAX_SAFE_INTEGER, semanticRank: Number.MAX_SAFE_INTEGER }
+        value.score += 1 / (60 + rank)
+        if (source === "lexical") { value.lexicalRank = rank; value.bm25_score = hit.score }
+        else { value.semanticRank = rank; if (value.lexicalRank === Number.MAX_SAFE_INTEGER) value.hit = hit }
+        fused.set(hit.part_id, value)
+      }
+      lexical.forEach((hit, index) => add(hit, index + 1, "lexical"))
+      semHits.forEach((hit, index) => add(hit, index + 1, "semantic"))
+      return [...fused.values()].sort((a, b) => b.score - a.score || Math.min(a.lexicalRank, a.semanticRank) - Math.min(b.lexicalRank, b.semanticRank) || a.hit.part_id.localeCompare(b.hit.part_id)).slice(0, limit).map((item, index) => {
+        const { score, ...hit } = item.hit
+        const bm25_score = item.bm25_score ?? (item.lexicalRank < Number.MAX_SAFE_INTEGER ? score : undefined)
+        return {
+        ...hit,
+        ...(bm25_score === undefined ? {} : { bm25_score }),
+        rank: index + 1,
+        retrieval: item.lexicalRank < Number.MAX_SAFE_INTEGER ? item.semanticRank < Number.MAX_SAFE_INTEGER ? "hybrid" as const : "fts" as const : "semantic" as const,
+      }
+      })
     })
 
     const around = Effect.fn("History.around")(function* (input: Parameters<Interface["around"]>[0]) {
@@ -343,6 +536,6 @@ export const layer = Layer.effect(
       return { ...result, ...slice }
     })
 
-    return Service.of({ search, around, get })
+    return Service.of({ search, hybridSearch, around, get })
   }),
 )

@@ -203,6 +203,11 @@ import { mcpToolSearchMode, usesCodexMode } from "@/tool/gpt"
 import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
 import { SessionReminder } from "./reminder"
+import * as Memory from "../memory/service"
+import * as History from "../history/service"
+import * as SemanticCandidates from "../semantic/candidates"
+import { retrieveContext, meaningfulUserText, dedupContextText, authorizedSemanticActor } from "./semantic-context"
+import { findRepeatedFailure, retrieveFailure } from "./semantic-failure"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -685,6 +690,8 @@ export const layer = Layer.effect(
     const instruction = yield* Instruction.Service
     const state = yield* SessionRunState.Service
     const goal = yield* Goal.Service
+    const memoryService = yield* Effect.serviceOption(Memory.Service)
+    const historyService = yield* Effect.serviceOption(History.Service)
 
     const revert = yield* SessionRevert.Service
     const summary = yield* SessionSummary.Service
@@ -4068,6 +4075,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         let cancelled = false
         let cancelReason: string | undefined
         let lastSystemPrompt: string[] | undefined = undefined
+        const injectedFailureSignatures = new Set<string>()
+        const injectedUserMessages = new Set<string>()
 
         // Fires session.post exactly once via Effect.onExit on the body below.
         // Without this wrapper any yielded failure inside the while loop (provider
@@ -5213,6 +5222,72 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   sessionDir: sessionMemoryDir,
                 }),
               })
+            }
+          }
+
+          // Retrieve once for each newly admitted real user message. Later model/tool steps
+          // retain this tagged persisted part and never repeat the lookup.
+          // Authorized peer actors may retrieve from their own scoped input; other
+          // subagents, hooks and system runs never enter this branch.
+          const semanticInjectEnabled = SemanticCandidates.enabled("inject")
+          const semanticFailureEnabled = SemanticCandidates.enabled("failure")
+          let eligibleSemanticActor = false
+          if (semanticInjectEnabled || semanticFailureEnabled) {
+            const servesMemory = yield* actorRegistry.servesCheckpoint(sessionID, lastUser.agentID)
+            const mainActor = resolvedAgentID === "main" && (!lastUser.agentID || lastUser.agentID === "main")
+            const peer = !mainActor && lastUser.agentID && lastUser.agentID !== "main"
+              ? yield* actorRegistry.get(sessionID, lastUser.agentID)
+              : undefined
+            eligibleSemanticActor = authorizedSemanticActor({
+              resolvedAgentID,
+              userActorID: lastUser.agentID,
+              registeredMode: peer?.mode,
+              servesMemory,
+            })
+          }
+          if (eligibleSemanticActor && turnSource === "user" && semanticInjectEnabled && !injectedUserMessages.has(String(lastUser.id))) {
+            injectedUserMessages.add(String(lastUser.id))
+            const target = msgs.findLast((msg) => msg.info.role === "user" && msg.info.id === lastUser!.id)
+            const query = target ? meaningfulUserText(target) : ""
+            if (target && query) {
+              const reminder = { key: "semantic-context", rev: String(lastUser.id) }
+              if (!SessionReminder.has(target.parts, reminder)) {
+                const ctx = yield* InstanceState.context
+                const existingContext = dedupContextText(msgs)
+                const evidence = memoryService._tag === "Some"
+                  ? yield* retrieveContext({ memory: memoryService.value, query, projectID: ctx.project.id, sessionID, existingContext })
+                  : undefined
+                if (evidence) yield* ensurePersistedUserSynthetic({
+                  message: target,
+                  reminder,
+                  text: evidence,
+                  metadata: { retrievalOrigin: "memory.hybridSearch", untrusted: true },
+                })
+              }
+            }
+          }
+
+          // Failure recall runs only at later model-step boundaries, after tool
+          // results have entered this actor's slice. It never executes tools.
+          if (step > 0 && eligibleSemanticActor && semanticFailureEnabled) {
+            const repeated = findRepeatedFailure(msgs)
+            if (repeated && !injectedFailureSignatures.has(repeated.signature)) {
+              injectedFailureSignatures.add(repeated.signature)
+              const failure = historyService._tag === "Some"
+                ? yield* retrieveFailure({ history: historyService.value, messages: msgs, sessionID })
+                : undefined
+              if (failure) {
+                const target = msgs.findLast((msg) => msg.info.role === "user" && msg.info.id === lastUser!.id)
+                if (target) yield* ensurePersistedUserSynthetic({
+                  message: target,
+                  reminder: { key: "semantic-failure", rev: failure.signature },
+                  text: failure.text,
+                  metadata: {
+                    retrievalOrigin: failure.semanticEvidence ? "history.hybridSearch" : "history.lexicalFailure",
+                    untrusted: true,
+                  },
+                })
+              }
             }
           }
 
