@@ -99,6 +99,14 @@ describe("provider error message", () => {
     expect(parsed.message).toBe("Moderation Block")
   })
 
+  test("points a gateway HTML 401 at the mimo login command", () => {
+    const parsed = parseAPICallError({
+      providerID: openai,
+      error: apiError({ message: "Unauthorized", statusCode: 401, responseBody: "<!doctype html><html></html>" }),
+    })
+    expect(parsed.message).toContain("`mimo auth login <your provider URL>`")
+  })
+
   test("handles Anthropic-style body without code/param without crashing", () => {
     const parsed = parseAPICallError({
       providerID: ProviderID.make("anthropic"),

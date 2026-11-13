@@ -496,8 +496,8 @@ export class Agent implements ACPAgent {
     log.info("initialize", { protocolVersion: params.protocolVersion })
 
     const authMethod: AuthMethod = {
-      description: "Run `opencode auth login` in the terminal",
-      name: "Login with opencode",
+      description: "Run `mimo auth login` in the terminal",
+      name: "Login with MiMoCode",
       id: "opencode-login",
     }
 
@@ -505,9 +505,9 @@ export class Agent implements ACPAgent {
     if (params.clientCapabilities?._meta?.["terminal-auth"] === true) {
       authMethod._meta = {
         "terminal-auth": {
-          command: "opencode",
+          command: "mimo",
           args: ["auth", "login"],
-          label: "OpenCode Login",
+          label: "MiMoCode Login",
         },
       }
     }
