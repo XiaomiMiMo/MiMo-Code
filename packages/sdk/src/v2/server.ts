@@ -32,7 +32,7 @@ export async function createOpencodeServer(options?: ServerOptions) {
   const args = [`serve`, `--hostname=${options.hostname}`, `--port=${options.port}`]
   if (options.config?.logLevel) args.push(`--log-level=${options.config.logLevel}`)
 
-  const proc = launch(`opencode`, args, {
+  const proc = launch(`mimo`, args, {
     env: {
       ...process.env,
       MIMOCODE_CONFIG_CONTENT: JSON.stringify(options.config ?? {}),
@@ -53,7 +53,7 @@ export async function createOpencodeServer(options?: ServerOptions) {
       output += chunk.toString()
       const lines = output.split("\n")
       for (const line of lines) {
-        if (line.startsWith("opencode server listening")) {
+        if (line.startsWith("mimocode server listening")) {
           const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
           if (!match) {
             clear()
@@ -115,7 +115,7 @@ export function createOpencodeTui(options?: TuiOptions) {
     args.push(`--agent=${options.agent}`)
   }
 
-  const proc = launch(`opencode`, args, {
+  const proc = launch(`mimo`, args, {
     stdio: "inherit",
     env: {
       ...process.env,
