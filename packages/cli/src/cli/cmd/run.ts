@@ -2,6 +2,7 @@ import type { Argv } from "yargs"
 import path from "path"
 import { pathToFileURL } from "url"
 import { UI } from "../ui"
+import { modelOption } from "../model-option"
 import { cmd } from "./cmd"
 import { isSystemSession } from "../../session/auto-dream"
 import { bootstrap } from "../bootstrap"
@@ -246,11 +247,7 @@ export const RunCommand = cmd({
         describe: "fork the session before continuing (requires --continue or --session)",
         type: "boolean",
       })
-      .option("model", {
-        type: "string",
-        alias: ["m"],
-        describe: "model to use in the format of provider/model",
-      })
+      .option("model", modelOption)
       .option("agent", {
         type: "string",
         describe: "agent to use",

@@ -2,6 +2,7 @@ import { cmd } from "./cmd"
 import * as prompts from "@clack/prompts"
 import { AppRuntime } from "@/effect/app-runtime"
 import { UI } from "../ui"
+import { modelOption } from "../model-option"
 import { Global } from "../../global"
 import { Agent } from "../../agent/agent"
 import { Provider } from "../../provider"
@@ -39,11 +40,7 @@ const AgentCreateCommand = cmd({
         type: "string",
         describe: `comma-separated list of tools to enable (default: all). Available: "${AVAILABLE_TOOLS.join(", ")}"`,
       })
-      .option("model", {
-        type: "string",
-        alias: ["m"],
-        describe: "model to use in the format of provider/model",
-      }),
+      .option("model", modelOption),
   async handler(args) {
     await Instance.provide({
       directory: process.cwd(),
