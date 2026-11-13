@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { ACP } from "../../src/acp/agent"
-import type { Agent as ACPAgent } from "@agentclientprotocol/sdk"
+import type { ACPConfig } from "../../src/acp/types"
+import type { Agent as ACPAgent, AgentSideConnection } from "@agentclientprotocol/sdk"
 
 /**
  * Type-level test: This line will fail to compile if ACP.Agent
@@ -47,5 +48,37 @@ describe("acp.agent interface compliance", () => {
         "function",
       )
     }
+  })
+})
+
+describe("acp.agent initialize", () => {
+  // initialize only reads its params; the SDK is touched solely by the event
+  // subscription the constructor starts, so hand it a stream that never yields.
+  const sdk = {
+    global: {
+      event: async () => ({
+        stream: (async function* () {
+          await new Promise(() => {})
+        })(),
+      }),
+    },
+  } as unknown as ACPConfig["sdk"]
+  const agent = new ACP.Agent({} as AgentSideConnection, { sdk })
+
+  test("advertises a login method that names the mimo binary", async () => {
+    const result = await agent.initialize({ protocolVersion: 1 })
+    expect(result.authMethods?.[0]?.description).toBe("Run `mimo auth login` in the terminal")
+    expect(result.agentInfo?.name).toBe("MiMoCode")
+  })
+
+  test("advertises a mimo terminal-auth command to clients that support it", async () => {
+    const result = await agent.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { _meta: { "terminal-auth": true } },
+    })
+    expect(result.authMethods?.[0]?._meta?.["terminal-auth"]).toMatchObject({
+      command: "mimo",
+      args: ["auth", "login"],
+    })
   })
 })
