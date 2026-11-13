@@ -105,7 +105,9 @@ The model's display name is enough to register it. Do not guess `limit.context`,
 
 Add optional metadata only when the user supplied it or a current authoritative source verifies it. If limits are important but unknown, omit them and state that they remain unspecified; MiMoCode will apply its runtime fallback (1M context, 128K output) and log a warning for an unknown context window. The request's output cap is the model's `limit.output`.
 
-MiMoCode sends no per-model sampling defaults: `temperature` and `top_p` reach the API only when an agent config sets them, otherwise the vendor's server defaults apply.
+MiMoCode sends no per-model sampling defaults: `temperature` and `top_p` reach the API only when an agent config sets them, otherwise the vendor's server defaults apply. `temperature` is additionally sent only for models whose metadata has `"temperature": true`; a config-only model defaults to `false`, so an agent temperature is ignored on it until that capability is declared.
+
+For input modalities specifically, the user can set them in the TUI with `/modalities` (multi-select image/audio/video/pdf; persists to `provider.<id>.models.<id>.modalities` in global config) — prefer pointing them there over hand-editing.
 
 ## Reasoning levels (variants)
 
@@ -134,9 +136,7 @@ To add or hide levels, set `variants` on the model. Naming a level with an empty
 
 A level the adapter cannot express (and an empty name outside the standard effort vocabulary such as `fast: {}`) is dropped rather than sent. Add levels only when the user or the endpoint documentation confirms the model accepts them.
 
-Subagents inherit the parent session's selected level when they run on the same model, or on another model that offers the same level; an agent that pins its own `variant` keeps it.
-
-For input modalities specifically, the user can set them in the TUI with `/modalities` (multi-select image/audio/video/pdf; persists to `provider.<id>.models.<id>.modalities` in global config) — prefer pointing them there over hand-editing.
+Subagents inherit the parent session's selected level when they run on the same model, or on another model that offers the same level; an agent that pins both its own model and `variant` keeps its variant, unless the call overrides the model.
 
 ## Credential handling
 
