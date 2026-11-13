@@ -44,6 +44,14 @@ export const Path = iife(() => {
   return getChannelPath()
 })
 
+/**
+ * The SQLite lock wait in milliseconds: how long a connection blocks on a
+ * competing writer before it fails with SQLITE_BUSY.
+ */
+export function getBusyTimeoutMs() {
+  return Flag.MIMOCODE_SQLITE_BUSY_TIMEOUT_MS
+}
+
 export type Transaction = SQLiteTransaction<"sync", void>
 
 type Client = SQLiteBunDatabase
@@ -90,7 +98,9 @@ export const Client = lazy(() => {
 
   // The WAL pragma itself takes a lock. Install the busy handler first so
   // simultaneous engine connections do not fail before reaching title CAS.
-  db.run("PRAGMA busy_timeout = 5000")
+  // The wait is flag-tuned: a multi-GB database with a competing writer holds
+  // the write lock past the 5 s this used to be hardcoded to.
+  db.run(`PRAGMA busy_timeout = ${getBusyTimeoutMs()}`)
   db.run("PRAGMA journal_mode = WAL")
   db.run("PRAGMA synchronous = NORMAL")
   db.run("PRAGMA cache_size = -64000")
