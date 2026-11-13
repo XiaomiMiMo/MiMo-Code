@@ -92,19 +92,36 @@ export function actorToolOutcomeFailed(input: { partStatus: string; title?: stri
  * `Waiting for — …` / `Waited for — …` → send is
  * `Sending message to — …` / `Sent message to — …`.
  */
+/**
+ * The agent label for the task part header.
+ *
+ * `subagent_type` is model-emitted tool input, persisted verbatim in
+ * `ToolState.input`, so a malformed non-string — for example the array
+ * `["general","general"]` against a `z.enum` of `"explore" | "general"` —
+ * reaches the renderer on every replay of the session. `??` only falls through
+ * on nullish, so such a value has to be rejected by type before
+ * `Locale.titlecase` calls `.replace` on it, which is a crash rather than a
+ * mislabel.
+ */
+export function actorToolLabel(subagentType: unknown, actorAgent: unknown): string {
+  if (typeof subagentType === "string") return subagentType
+  if (typeof actorAgent === "string") return actorAgent
+  return "General"
+}
+
 export function actorToolBody(input: {
   action?: string
   partStatus: string
   title?: string
   description?: string
   actorDescription?: string
-  subagentType?: string
-  agent?: string
+  subagentType?: unknown
+  agent?: unknown
   toActorId?: string
   actorId?: string
 }): string {
   const desc = input.description ?? input.actorDescription
-  const agent = input.subagentType ?? input.agent ?? "General"
+  const agent = actorToolLabel(input.subagentType, input.agent)
   const failed = actorToolOutcomeFailed(input)
   const target = desc ?? input.toActorId ?? input.actorId ?? ""
   const line = (label: string) => (target ? `${label} — ${target}` : label)
