@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Release stages run by .github/workflows/release.yml for a pushed vX.Y.Z tag.
 // Usage: MIMOCODE_VERSION=vX.Y.Z bun script/release.ts <verify|build|preflight|github|fds|npm libs|npm cli>
+//        bun script/release.ts build check   (build from any ref at the packages/cli version; no tag gate)
 //        bun script/release.ts trust   (one-time npm trusted publisher setup)
 //
 // build writes dist/release/{archives,npm}; the publishing stages only read it.
@@ -167,8 +168,10 @@ async function packCli(version: string, dest: string) {
   await rm(path.join(out, "stage"), { recursive: true, force: true })
 }
 
-async function build(version: string) {
-  await verify(version)
+// `check` builds the same artifacts from any ref without the tag/version gate, so a
+// release.yml build_only run can prove the build on a branch before tagging.
+async function build(version: string, mode: "release" | "check" = "release") {
+  if (mode === "release") await verify(version)
   await rm(out, { recursive: true, force: true })
   await mkdir(path.join(out, "archives"), { recursive: true })
   await mkdir(path.join(out, "npm"), { recursive: true })
@@ -294,6 +297,8 @@ if (import.meta.main) {
   const stages: Record<string, () => Promise<void>> = {
     verify: () => verify(version()),
     build: () => build(version()),
+    "build check": async () =>
+      build(stableVersion((await Bun.file(path.join(root, "packages/cli/package.json")).json()).version), "check"),
     preflight: () => preflight(version()),
     github: () => github(version()),
     fds: () => fds(version()),
@@ -302,6 +307,6 @@ if (import.meta.main) {
     trust,
   }
   const stage = stages[process.argv.slice(2).join(" ")]
-  if (!stage) throw new Error("Usage: bun script/release.ts <verify|build|preflight|github|fds|npm libs|npm cli|trust>")
+  if (!stage) throw new Error("Usage: bun script/release.ts <verify|build|build check|preflight|github|fds|npm libs|npm cli|trust>")
   await stage()
 }

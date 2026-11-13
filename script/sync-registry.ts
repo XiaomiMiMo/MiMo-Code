@@ -1,27 +1,9 @@
 #!/usr/bin/env bun
 import { Script } from "./meta.ts"
 
-const PACKAGES = [
-  // Published every release — keep mirrors current for new installs.
-  "@mimo-ai/sdk",
-  "@mimo-ai/plugin",
-  "@mimo-ai/cli",
-  // Legacy platform packages (no longer published; keep syncing existing versions
-  // so mirrors stay complete for old installs). New releases only update the list
-  // above.
-  "@mimo-ai/mimocode-darwin-arm64",
-  "@mimo-ai/mimocode-darwin-x64",
-  "@mimo-ai/mimocode-darwin-x64-baseline",
-  "@mimo-ai/mimocode-linux-arm64",
-  "@mimo-ai/mimocode-linux-arm64-musl",
-  "@mimo-ai/mimocode-linux-x64",
-  "@mimo-ai/mimocode-linux-x64-baseline",
-  "@mimo-ai/mimocode-linux-x64-musl",
-  "@mimo-ai/mimocode-linux-x64-baseline-musl",
-  "@mimo-ai/mimocode-windows-arm64",
-  "@mimo-ai/mimocode-windows-x64",
-  "@mimo-ai/mimocode-windows-x64-baseline",
-]
+// Packages published by every release. Platform binaries ship on FDS/GitHub only,
+// so the legacy @mimo-ai/mimocode-* platform packages receive no new versions.
+const PACKAGES = ["@mimo-ai/sdk", "@mimo-ai/plugin", "@mimo-ai/cli"]
 
 const REGISTRIES = {
   npmmirror: {
