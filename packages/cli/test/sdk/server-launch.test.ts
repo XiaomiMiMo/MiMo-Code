@@ -9,7 +9,9 @@ import { tmpdir } from "../fixture/fixture"
 // records its argv and prints the CLI's real readiness line, so these tests
 // observe which binary the SDK spawns and whether it recognises the CLI as up.
 const fakeMimo = `#!/bin/sh
-printf '%s\\n' "$@" > "$(dirname "$0")/argv"
+dir="$(dirname "$0")"
+printf '%s\\n' "$@" > "$dir/argv.tmp"
+mv "$dir/argv.tmp" "$dir/argv"
 case "$1" in
   serve)
     echo "mimocode server listening on http://127.0.0.1:4096"
@@ -31,7 +33,8 @@ describe.skipIf(process.platform === "win32")("sdk launches the mimo binary", ()
   })
 
   afterEach(async () => {
-    process.env.PATH = originalPath
+    if (originalPath === undefined) delete process.env.PATH
+    else process.env.PATH = originalPath
     await bin[Symbol.asyncDispose]()
   })
 
@@ -55,7 +58,8 @@ describe.skipIf(process.platform === "win32")("sdk launches the mimo binary", ()
   test("tui launches mimo with the requested options", async () => {
     const tui = createOpencodeTui({ model: "test/model", agent: "build" })
     try {
-      // The TUI launcher returns immediately, so wait for the fake to record its argv.
+      // The TUI launcher returns immediately, so wait for the fake to record its argv
+      // (it renames the file into place, so existence means the content is complete).
       const deadline = Date.now() + 5000
       while (!(await Bun.file(path.join(bin.path, "argv")).exists()) && Date.now() < deadline) await Bun.sleep(20)
       expect(await argv()).toEqual(["--model=test/model", "--agent=build"])
