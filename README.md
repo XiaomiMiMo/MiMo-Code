@@ -254,7 +254,7 @@ MiMoCode ships with three built-in workflows:
 
 Skills are reusable instruction sets that teach agents how to handle specific tasks (e.g. generating PDFs, writing academic papers, searching arXiv). For a new task, MiMoCode searches available skills by exact name, localized alias, and BM25 relevance. High-confidence matches are loaded automatically; uncertain matches are ranked for the agent to assess. In the TUI, type `/` to browse the autocomplete list or invoke a skill directly with `/<skill-name>` — mentioning two or more skills in a single message auto-loads them and injects a multi-skill orchestration plan.
 
-MiMoCode bundles the following builtin skills, enabled by default:
+MiMoCode bundles the following builtin skills, enabled by default (set `MIMOCODE_DISABLE_BUILTIN_SKILLS=true` to turn them all off):
 
 **Development & delivery**
 

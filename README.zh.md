@@ -243,7 +243,7 @@ MiMoCode 内置三个 Workflow：
 
 技能（Skill）是可复用的指令集，教会 Agent 如何处理特定任务（如生成 PDF、写学术论文、搜索 arXiv）。面对新任务时，MiMoCode 会按准确名称、本地化别名和 BM25 相关性搜索可用技能；高置信度结果会自动加载，不确定的候选则交由 Agent 判断。在 TUI 中输入 `/` 可以浏览自动补全列表，也可以通过 `/<skill-name>` 直接调用 Skill——一条消息里提到两个及以上技能时会自动加载它们并注入多技能编排计划。
 
-MiMoCode 打包了以下内置技能，默认开启：
+MiMoCode 打包了以下内置技能，默认开启（设置 `MIMOCODE_DISABLE_BUILTIN_SKILLS=true` 可全部关闭）：
 
 **开发与交付**
 
