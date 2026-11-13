@@ -94,7 +94,7 @@ Frontmatter fields (all optional except that the body should be non-empty):
 - `description` — when to use it (shown in the `@` autocomplete for subagents).
 - `permission`, `tool_allowlist`, `tools`, `steps`, `color`, `hidden` — see @config.md.
 
-**How it reaches the model:** for a primary agent the body is used as the base system prompt in place of the model's default prompt; the usual environment/skills/instructions blocks are still appended. Selecting the mode is session-scoped — the TUI `Tab` picker or, over the SDK, the `agent` field on `session.prompt`. So a desktop/SDK client switches modes by sending `agent: "general"` vs `agent: "build"` per session; the prompt itself lives in the file, server-side.
+**How it reaches the model:** for a primary agent the body is used as the base system prompt in place of the default system prompt; the usual environment/skills/instructions blocks are still appended. Selecting the mode is session-scoped — the TUI `Tab` picker or, over the SDK, the `agent` field on `session.prompt`. So a desktop/SDK client switches modes by sending `agent: "general"` vs `agent: "build"` per session; the prompt itself lives in the file, server-side.
 
 Verify a file loaded with `mimo agent list` — your agent shows up with its `(primary)` / `(subagent)` mode.
 

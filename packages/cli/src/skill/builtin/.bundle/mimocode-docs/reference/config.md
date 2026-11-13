@@ -38,6 +38,8 @@ Memory files live under `~/.local/share/mimocode/memory/`:
 - `MIMOCODE_MIMO_ONLY` — pure-MiMo mode: don't inherit Claude Code settings (CLAUDE.md, `~/.claude/CLAUDE.md`), don't read provider API keys from env, fall back to the mimo-auto model.
 - **External skill roots** — default load surface is `.mimocode` + open-standard `.agents`. Brand roots are opt-in: `MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS`, `MIMOCODE_ENABLE_CODEX_SKILLS`, `MIMOCODE_ENABLE_OPENCODE_SKILLS`. Turn agents off with `MIMOCODE_DISABLE_AGENTS_SKILLS`. External scans skip dotted path segments under `skills/`.
 - `MIMOCODE_ENABLE_CLAUDE_IMPORT` — automatically import Claude Code sessions on startup; off by default. Set to `true` or `1` to enable. Manual session imports remain available; Codex sessions are imported only on explicit request.
+- `MIMOCODE_CODEX_MODE` — Codex mode (the Codex system prompt, the `exec` / `apply_patch` / `view_image` toolset, and always-deferred MCP tools); **off by default for every model, GPT included** — all models get the same default system prompt and toolset. `true` turns it on for sessions that don't choose a harness; `false` forces it off even for SDK sessions that request harness `codex`.
+- `MIMOCODE_ENABLE_EXEC_TOOL` — expose the `exec` tool-script orchestration tool outside Codex mode; off by default.
 - `MIMOCODE_DISABLE_BUILTIN_SKILLS`, `_PROJECT_CONFIG` — feature toggles.
 
 ## Top-level config keys
@@ -100,7 +102,7 @@ Prefer a markdown file (`.mimocode/agent/<name>.md`, body = system prompt) for d
 | Key | Purpose |
 |-----|---------|
 | `skills` | `paths[]` extra skill folders + `urls[]` remote skill indexes |
-| `mcp` | MCP servers: `local` (command/env) or `remote` (url/headers/oauth); `{ "enabled": false }` disables one; `sampling` sets the client-sampling policy (`deny`/`ask`/`allow`, default `ask`) |
+| `mcp` | MCP servers: `local` (command/env) or `remote` (url/headers/oauth); `{ "enabled": false }` disables one; `sampling` sets the client-sampling policy (`deny`/`ask`/`allow`, default `ask`); `alwaysDirectTools` lists server-local tool names (e.g. `["run"]` on server `sandbox` → `sandbox_run`) that are exposed as top-level tools instead of behind `mcp_tool_search` / `mcp_tool_use` |
 | `tools` | Record of tool-id → boolean enable/disable |
 | `command` | Custom slash commands |
 | `plugin` | Plugin specs |

@@ -4,7 +4,7 @@ Read this reference whenever a request involves a provider, model, API key, base
 
 ## Sign-in options (TUI login dialog / `/connect`)
 
-- **Xiaomi MiMo Platform** — OAuth device flow (recommended).
+- **Xiaomi MiMo Platform** — OAuth device flow (recommended). Pay-as-you-go API keys are stored under provider `xiaomi`; Token Plan keys are stored under their cluster's provider (`xiaomi-token-plan-cn`, `xiaomi-token-plan-ams`, `xiaomi-token-plan-sgp`), so both kinds of credential can be signed in at once. `mimo providers whoami` lists each signed-in entry, and the TUI `/logout` clears all of them.
 - **Codex (ChatGPT Pro/Plus)** — OpenAI OAuth login.
 - **Import from Claude Code** — reads API keys from `~/.claude/settings*.json`.
 - **xAI (Grok)** — OAuth login, provider id `xai`.
@@ -103,7 +103,38 @@ Provider options, including credentials and base URL, are shared by every model 
 
 The model's display name is enough to register it. Do not guess `limit.context`, `limit.output`, `reasoning`, `tool_call`, `modalities`, cost, or other capabilities from the model name. Internal routers often expose aliases whose behavior differs from similarly named public models.
 
-Add optional metadata only when the user supplied it or a current authoritative source verifies it. If limits are important but unknown, omit them and state that they remain unspecified; MiMoCode will apply its runtime fallback and log a warning for an unknown context window.
+Add optional metadata only when the user supplied it or a current authoritative source verifies it. If limits are important but unknown, omit them and state that they remain unspecified; MiMoCode will apply its runtime fallback (1M context, 128K output) and log a warning for an unknown context window. The request's output cap is the model's `limit.output`.
+
+MiMoCode sends no per-model sampling defaults: `temperature` and `top_p` reach the API only when an agent config sets them, otherwise the vendor's server defaults apply.
+
+## Reasoning levels (variants)
+
+The levels shown by `/variants` (and accepted by `mimo run --variant`) come from the model's declared reasoning effort levels in the models.dev catalog. A reasoning model with no declared effort levels gets none; MiMoCode does not infer levels from the model name.
+
+To add or hide levels, set `variants` on the model. Naming a level with an empty object is enough — MiMoCode fills in the adapter's standard request shape (for example `reasoningEffort` for `@ai-sdk/openai-compatible`). `disabled: true` removes a level. Hand-written parameters are sent as written:
+
+```jsonc
+{
+  "provider": {
+    "custom": {
+      "models": {
+        "MODEL_ID": {
+          "name": "MODEL_ID",
+          "variants": {
+            "low": {},
+            "high": {},
+            "max": { "disabled": true }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+A level the adapter cannot express (and an empty name outside the standard effort vocabulary such as `fast: {}`) is dropped rather than sent. Add levels only when the user or the endpoint documentation confirms the model accepts them.
+
+Subagents inherit the parent session's selected level when they run on the same model, or on another model that offers the same level; an agent that pins its own `variant` keeps it.
 
 For input modalities specifically, the user can set them in the TUI with `/modalities` (multi-select image/audio/video/pdf; persists to `provider.<id>.models.<id>.modalities` in global config) — prefer pointing them there over hand-editing.
 
