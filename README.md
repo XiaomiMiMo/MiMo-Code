@@ -401,7 +401,7 @@ MiMoCode uses JSON/JSONC config files with published JSON Schemas for autocomple
 | TUI config | `.mimocode/tui.json` | `~/.config/mimocode/tui.json` |
 | Auth credentials | — | `~/.local/share/mimocode/auth.json` |
 
-> On Windows, XDG paths fall under `%LOCALAPPDATA%\mimocode\`. You can override all paths with `MIMOCODE_HOME`.
+> The defaults shown are relative to your home directory on all platforms. Set `MIMOCODE_HOME` to an absolute path to put all four directories under one root.
 
 ### JSON Schemas
 
@@ -432,13 +432,13 @@ Add to your `settings.json` so the editor can download schemas for autocompletio
 
 Beyond config files, MiMoCode stores runtime data under XDG paths (or `$MIMOCODE_HOME`):
 
-| Directory | Default (Linux) | Contents |
+| Directory | Default | Contents |
 |-----------|----------------|----------|
 | data | `~/.local/share/mimocode/` | SQLite database, auth credentials (`auth.json`), memory, logs |
 | state | `~/.local/state/mimocode/` | TUI preferences (`kv.json`), recent models (`model.json`) |
 | cache | `~/.cache/mimocode/` | Language servers, cached model catalog, skills |
 
-To remove stored credentials, delete `auth.json` from the data directory. On macOS, XDG data defaults to `~/Library/Application Support/mimocode/`.
+To remove stored credentials, delete `auth.json` from the resolved data directory.
 
 </details>
 
