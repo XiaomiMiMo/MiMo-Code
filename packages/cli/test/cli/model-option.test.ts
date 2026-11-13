@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import yargs from "yargs"
+import yargs from "yargs/yargs"
 import { modelOption } from "../../src/cli/model-option"
+import { RunCommand } from "../../src/cli/cmd/run"
+import { TuiThreadCommand } from "../../src/cli/cmd/tui/thread"
 
 function parse(argv: string[]) {
   return yargs([]).option("model", modelOption).parseSync(argv).model
@@ -18,16 +20,15 @@ describe("--model option", () => {
   test("an absent --model stays undefined", () => {
     expect(parse([])).toBeUndefined()
   })
-})
 
-describe("commands accepting --model", () => {
   test.each([
-    ["tui", async () => (await import("../../src/cli/cmd/tui/thread")).TuiThreadCommand],
-    ["run", async () => (await import("../../src/cli/cmd/run")).RunCommand],
-  ])("%s keeps the last of a repeated --model", async (_, load) => {
-    const command = await load()
-    const builder = command.builder as (argv: ReturnType<typeof yargs>) => ReturnType<typeof yargs>
-    const args = builder(yargs([])).parseSync(["-m", "test/first", "-m", "test/model"])
+    ["tui", TuiThreadCommand],
+    ["run", RunCommand],
+  ])("%s keeps the last of a repeated --model", async (_name, command) => {
+    if (typeof command.builder !== "function") throw new Error("command builder is not a function")
+
+    const args = await (await command.builder(yargs([]))).parseAsync(["-m", "test/first", "-m", "test/model"])
+
     expect(args.model).toBe("test/model")
   })
 })
