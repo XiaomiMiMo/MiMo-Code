@@ -6,6 +6,7 @@ import { Permission } from "../../src/permission"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import type { PermissionID } from "../../src/permission/schema"
 import { Log } from "../../src/util"
 
 void Log.init({ print: false })
@@ -110,6 +111,31 @@ describe("Permission.ask abortSignal (Spec ③ P3)", () => {
         yield* Effect.sleep("10 millis") // give cleanup a tick to run
 
         expect(netListeners).toBe(0) // cleanup removed the listener
+      }),
+    ),
+  )
+
+  it.live(
+    "aborted ask publishes permission.replied so a client can drop the prompt",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        const bus = yield* Bus.Service
+        const ctl = new AbortController()
+        const asked: PermissionID[] = []
+        const replied: PermissionID[] = []
+        yield* bus.subscribeCallback(Permission.Event.Asked, (event) => asked.push(event.properties.id))
+        yield* bus.subscribeCallback(Permission.Event.Replied, (event) => replied.push(event.properties.requestID))
+        const fiber = yield* perm.ask(buildRequest(), ctl.signal).pipe(Effect.forkScoped)
+        yield* Effect.sleep("20 millis")
+        expect(asked.length).toBe(1)
+        ctl.abort()
+        const result = yield* Fiber.join(fiber).pipe(Effect.exit)
+        expect(result._tag).toBe("Failure")
+        yield* Effect.sleep("50 millis") // bus delivery is async
+        // Without this event the TUI keeps the dead prompt forever: every
+        // later reply no-ops server-side and the dialog never closes.
+        expect(replied).toEqual(asked)
       }),
     ),
   )
