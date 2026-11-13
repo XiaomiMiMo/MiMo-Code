@@ -1,9 +1,17 @@
 Launch a new actor (subagent) to handle complex, multi-step tasks autonomously.
 
-**Subagent restriction:** When you are running as a subagent, you can ONLY use
-`actor send` to communicate with the parent agent. Other actions (spawn, run,
-cancel, etc.) are restricted to primary agents. Use `actor send` with
-to_actor_id="main" to report progress, findings, or blockers to the parent.
+**Subagent restriction:** When you are running as a subagent, your `actor` tool
+carries one action, `send`. Spawn, run, status, wait, cancel and models are
+restricted to primary agents, and no subagent may spawn a further subagent. Use
+`send` with to_actor_id="main" to report a blocker or a finding that changes the
+plan; it lands in the parent's inbox and is read at its next step, so the parent
+does not have to wait for your turn to end. Your final result is still the report
+that closes the task, and routine progress does not need a message.
+
+**Parent side:** a subagent may send to you mid-run. Those messages arrive as an
+`<inbox from="...">` block between steps, never inside a running tool call, and
+they cost your context, so a well-briefed worker sends few of them. A message is
+not a deliverable: the task closes on the worker's final result.
 
 JSON calls wrap the action payload inside an `operation` object; `action` is the discriminator field.
 
