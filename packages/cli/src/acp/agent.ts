@@ -532,7 +532,7 @@ export class Agent implements ACPAgent {
       },
       authMethods: [authMethod],
       agentInfo: {
-        name: "OpenCode",
+        name: "MiMoCode",
         version: InstallationVersion,
       },
     }
