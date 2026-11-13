@@ -91,6 +91,7 @@ describe("Actor tool fromExec guard", () => {
             sessionID: chat.id,
             messageID: assistant.id,
             agent: "general",
+            actorID: "general-1",
             abort: new AbortController().signal,
             extra: { fromExec: true },
             messages: [],
@@ -109,7 +110,7 @@ describe("Actor tool fromExec guard", () => {
         expect(message.info).toMatchObject({
           role: "user",
           agentID: "main",
-          provenance: { source: "agent", senderSessionID: chat.id, senderActorID: "general" },
+          provenance: { source: "agent", senderSessionID: chat.id, senderActorID: "general-1" },
         })
         expect(message.parts).toEqual([
           expect.objectContaining({ type: "text", synthetic: true, text: expect.stringContaining("hello") }),

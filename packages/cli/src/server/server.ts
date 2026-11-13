@@ -12,6 +12,7 @@ import { initProjectors } from "./projectors"
 import { InstanceRoutes } from "./routes/instance"
 import { ControlPlaneRoutes } from "./routes/control"
 import { UIRoutes } from "./routes/ui"
+import * as SuperagentRuntime from "@/superagent/runtime"
 import { GlobalRoutes } from "./routes/global"
 import { WorkspaceRouterMiddleware } from "./workspace"
 import { InstanceMiddleware } from "./routes/instance/middleware"
@@ -123,6 +124,10 @@ export async function listen(opts: {
 
   const built = create(opts)
   const server = await built.runtime.listen(opts)
+  if (SuperagentRuntime.enabled() || process.env.MIMOCODE_SUPERAGENT_CHANNELS) {
+    try { await SuperagentRuntime.start() }
+    catch (error) { await server.stop(true); throw error }
+  }
 
   const next = new URL("http://localhost")
   next.hostname = opts.hostname
@@ -175,6 +180,7 @@ export async function listen(opts: {
         // skips this; the pid liveness check in `addresses` is the backstop.
         if (advertise) await LLMServerTokens.unpublish(directory, process.pid, server.port).catch(() => {})
         if (mdns) MDNS.unpublish()
+        await SuperagentRuntime.stop()
         await server.stop(close)
       })()
       return closing

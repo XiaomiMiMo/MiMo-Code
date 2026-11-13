@@ -12,6 +12,7 @@ import { ProviderTransform } from "../provider"
 
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_GENERATE_GPT from "./prompt/generate-gpt.txt"
+import * as SuperagentPrompts from "@/superagent/prompts"
 import PROMPT_GENERAL from "./prompt/general.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_DREAM from "./prompt/dream.txt"
@@ -54,6 +55,7 @@ export const Info = z
     modelRef: z.string().optional(),
     variant: z.string().optional(),
     prompt: z.string().optional(),
+    inheritProviderPrompt: z.boolean().optional(),
     completionGate: z.boolean().optional(),
     options: z.record(z.string(), z.any()),
     steps: z.number().int().positive().optional(),
@@ -425,6 +427,29 @@ export const layer = Layer.effect(
               "exec",
             ],
           },
+        }
+
+        agents["superagent-router"] = {
+          ...agents.plan,
+          name: "superagent-router",
+          mode: "primary",
+          hidden: true,
+          native: true,
+          prompt: SuperagentPrompts.router,
+          options: {},
+          permission: Permission.merge(defaults, user),
+          hardPermission: Permission.fromConfig({ edit: "deny" }),
+          toolAllowlist: ["superagent_read", "superagent_route", "superagent_reply"],
+        }
+        agents["superagent-worker"] = {
+          ...agents.build,
+          name: "superagent-worker",
+          mode: "primary",
+          hidden: true,
+          native: true,
+          prompt: SuperagentPrompts.worker,
+          inheritProviderPrompt: true,
+          permission: Permission.merge(defaults, user),
         }
 
         for (const [key, value] of Object.entries(cfg.agent ?? {})) {

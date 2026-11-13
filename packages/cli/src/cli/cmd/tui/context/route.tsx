@@ -9,6 +9,7 @@ export type HomeRoute = {
 }
 
 export type SessionRoute = {
+  task?: import("../routes/superagent").TaskContext
   type: "session"
   sessionID: string
   agentID?: string
@@ -28,7 +29,7 @@ export type PluginRoute = {
   data?: Record<string, unknown>
 }
 
-export type Route = HomeRoute | SessionRoute | PluginRoute
+export type Route = HomeRoute | SessionRoute | PluginRoute | { type: "superagent" }
 
 export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
   name: "Route",
@@ -62,7 +63,5 @@ export function useRouteData<T extends Route["type"]>(type: T) {
 
 export function useCurrentAgentID(): Accessor<string> {
   const route = useRoute()
-  return createMemo(() =>
-    route.data.type === "session" ? (route.data.agentID ?? "main") : "main",
-  )
+  return createMemo(() => (route.data.type === "session" ? (route.data.agentID ?? "main") : "main"))
 }

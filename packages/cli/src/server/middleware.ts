@@ -5,6 +5,7 @@ import { NotFoundError } from "../storage"
 import { Session } from "../session"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { ErrorHandler, MiddlewareHandler } from "hono"
+import { SuperagentError } from "@/superagent/schema"
 import { HTTPException } from "hono/http-exception"
 import { Log } from "../util"
 import { Flag } from "@/flag/flag"
@@ -35,6 +36,7 @@ export const ErrorMiddleware: ErrorHandler = (err, c) => {
   if (err instanceof Session.BusyError) {
     return c.json(new NamedError.Unknown({ message: err.message }).toObject(), { status: 409 })
   }
+  if (err instanceof SuperagentError) return c.json({ name: err.name, error: err.message }, err.status)
   if (err instanceof HTTPException) return err.getResponse()
   const message = err instanceof Error ? err.message : "Internal Server Error"
   return c.json(new NamedError.Unknown({ message }).toObject(), {

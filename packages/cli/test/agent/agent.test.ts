@@ -1012,14 +1012,14 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
   })
 })
 
-test("bounded computation agents are exactly title, summary, compaction, checkpoint-writer, dream, distill", async () => {
+test("hidden native subagents are exactly the bounded computation agents", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
       const agents = await load(tmp.path, (svc) => svc.list())
       const boundedComputations = agents
-        .filter((a) => a.native === true && a.hidden === true)
+        .filter((a) => a.native === true && a.hidden === true && a.mode === "subagent")
         .map((a) => a.name)
         .sort()
       expect(boundedComputations).toEqual(["checkpoint-writer", "compaction", "distill", "dream", "summary", "title"])

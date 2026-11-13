@@ -877,6 +877,13 @@ export type EventBashInteractiveReplied = {
   }
 }
 
+export type EventSuperagentUpdated = {
+  type: "superagent.updated"
+  properties: {
+    ticketId: string
+  }
+}
+
 export type EventVcsBranchUpdated = {
   type: "vcs.branch.updated"
   properties: {
@@ -1934,6 +1941,7 @@ export type GlobalEvent = {
     | EventSessionCwd
     | EventBashInteractiveAsked
     | EventBashInteractiveReplied
+    | EventSuperagentUpdated
     | EventVcsBranchUpdated
     | EventMcpToolsChanged
     | EventMcpBrowserOpenFailed
@@ -3536,6 +3544,7 @@ export type Event =
   | EventSessionCwd
   | EventBashInteractiveAsked
   | EventBashInteractiveReplied
+  | EventSuperagentUpdated
   | EventVcsBranchUpdated
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
@@ -3648,6 +3657,7 @@ export type Agent = {
   modelRef?: string
   variant?: string
   prompt?: string
+  inheritProviderPrompt?: boolean
   completionGate?: boolean
   options: {
     [key: string]: unknown
@@ -6623,6 +6633,316 @@ export type WorkflowStructureResponses = {
 }
 
 export type WorkflowStructureResponse = WorkflowStructureResponses[keyof WorkflowStructureResponses]
+
+export type SuperagentOverviewData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/superagent"
+}
+
+export type SuperagentOverviewResponses = {
+  /**
+   * Read workspace tasks, native Agents, Todo, usage and delivery problems
+   */
+  200: unknown
+}
+
+export type SuperagentMasterInputData = {
+  body?: {
+    text: string
+    attachments?: Array<{
+      url: string
+      mime: string
+      filename?: string
+    }>
+    model?: {
+      providerID: string
+      modelID: string
+      variant?: string
+    }
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/superagent/master/inputs"
+}
+
+export type SuperagentMasterInputResponses = {
+  /**
+   * Send a natural-language request to the workspace Router
+   */
+  200: {
+    accepted: boolean
+  }
+}
+
+export type SuperagentMasterInputResponse = SuperagentMasterInputResponses[keyof SuperagentMasterInputResponses]
+
+export type SuperagentListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/superagent/tickets"
+}
+
+export type SuperagentListResponses = {
+  /**
+   * List workspace tasks
+   */
+  200: Array<{
+    goal: string
+    criteria?: Array<string>
+    id: string
+    version: number
+    directory: string
+    phase: "queued" | "working" | "waiting" | "awaiting_review" | "blocked" | "completed" | "cancelled"
+    revision: number
+    workerSessionId?: string
+    workerActorId?: string
+    worktree?: string
+    baseCommit?: string
+    summary: string
+    attention?: string
+    artifacts: Array<string>
+    source: {
+      channel: string
+      eventId: string
+      threadId: string
+      senderId: string
+      attachments?: Array<{
+        url: string
+        mime: string
+        filename?: string
+      }>
+      model?: {
+        providerID: string
+        modelID: string
+        variant?: string
+      }
+      threadKind?: "discussion" | "deliverable"
+      url?: string
+    }
+    subscriptions: Array<{
+      channel: string
+      threadId: string
+      kind: "origin" | "context" | "deliverable"
+      url?: string
+      closed?: "merged" | "closed"
+    }>
+    handbacks?: Array<string>
+    createdAt: number
+    updatedAt: number
+  }>
+}
+
+export type SuperagentListResponse = SuperagentListResponses[keyof SuperagentListResponses]
+
+export type SuperagentGetData = {
+  body?: never
+  path: {
+    ticketId: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/superagent/tickets/{ticketId}"
+}
+
+export type SuperagentGetResponses = {
+  /**
+   * Read a task and its activity
+   */
+  200: unknown
+}
+
+export type SuperagentInputData = {
+  body?: {
+    text: string
+    attachments?: Array<{
+      url: string
+      mime: string
+      filename?: string
+    }>
+    model?: {
+      providerID: string
+      modelID: string
+      variant?: string
+    }
+  }
+  path: {
+    ticketId: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/superagent/tickets/{ticketId}/inputs"
+}
+
+export type SuperagentInputResponses = {
+  /**
+   * Send feedback to the original task Worker
+   */
+  200: {
+    goal: string
+    criteria?: Array<string>
+    id: string
+    version: number
+    directory: string
+    phase: "queued" | "working" | "waiting" | "awaiting_review" | "blocked" | "completed" | "cancelled"
+    revision: number
+    workerSessionId?: string
+    workerActorId?: string
+    worktree?: string
+    baseCommit?: string
+    summary: string
+    attention?: string
+    artifacts: Array<string>
+    source: {
+      channel: string
+      eventId: string
+      threadId: string
+      senderId: string
+      attachments?: Array<{
+        url: string
+        mime: string
+        filename?: string
+      }>
+      model?: {
+        providerID: string
+        modelID: string
+        variant?: string
+      }
+      threadKind?: "discussion" | "deliverable"
+      url?: string
+    }
+    subscriptions: Array<{
+      channel: string
+      threadId: string
+      kind: "origin" | "context" | "deliverable"
+      url?: string
+      closed?: "merged" | "closed"
+    }>
+    handbacks?: Array<string>
+    createdAt: number
+    updatedAt: number
+  }
+}
+
+export type SuperagentInputResponse = SuperagentInputResponses[keyof SuperagentInputResponses]
+
+export type SuperagentActData = {
+  body?: {
+    action: "cancel" | "resume"
+    text?: string
+  }
+  path: {
+    ticketId: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/superagent/tickets/{ticketId}/actions"
+}
+
+export type SuperagentActResponses = {
+  /**
+   * Stop or resume a task
+   */
+  200: {
+    goal: string
+    criteria?: Array<string>
+    id: string
+    version: number
+    directory: string
+    phase: "queued" | "working" | "waiting" | "awaiting_review" | "blocked" | "completed" | "cancelled"
+    revision: number
+    workerSessionId?: string
+    workerActorId?: string
+    worktree?: string
+    baseCommit?: string
+    summary: string
+    attention?: string
+    artifacts: Array<string>
+    source: {
+      channel: string
+      eventId: string
+      threadId: string
+      senderId: string
+      attachments?: Array<{
+        url: string
+        mime: string
+        filename?: string
+      }>
+      model?: {
+        providerID: string
+        modelID: string
+        variant?: string
+      }
+      threadKind?: "discussion" | "deliverable"
+      url?: string
+    }
+    subscriptions: Array<{
+      channel: string
+      threadId: string
+      kind: "origin" | "context" | "deliverable"
+      url?: string
+      closed?: "merged" | "closed"
+    }>
+    handbacks?: Array<string>
+    createdAt: number
+    updatedAt: number
+  }
+}
+
+export type SuperagentActResponse = SuperagentActResponses[keyof SuperagentActResponses]
+
+export type SuperagentRetryDeliveryData = {
+  body?: never
+  path: {
+    actionId: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/superagent/deliveries/{actionId}/retry"
+}
+
+export type SuperagentRetryDeliveryResponses = {
+  /**
+   * Retry a failed delivery after inspecting the original thread
+   */
+  200: unknown
+}
+
+export type SuperagentChannelsData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/superagent/channels"
+}
+
+export type SuperagentChannelsResponses = {
+  /**
+   * Read configured Channel health
+   */
+  200: unknown
+}
 
 export type QuestionListData = {
   body?: never
