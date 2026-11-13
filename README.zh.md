@@ -243,33 +243,56 @@ MiMoCode 内置三个 Workflow：
 
 技能（Skill）是可复用的指令集，教会 Agent 如何处理特定任务（如生成 PDF、写学术论文、搜索 arXiv）。面对新任务时，MiMoCode 会按准确名称、本地化别名和 BM25 相关性搜索可用技能；高置信度结果会自动加载，不确定的候选则交由 Agent 判断。在 TUI 中输入 `/` 可以浏览自动补全列表，也可以通过 `/<skill-name>` 直接调用 Skill——一条消息里提到两个及以上技能时会自动加载它们并注入多技能编排计划。
 
-MiMoCode 打包了以下内置技能：
+MiMoCode 打包了以下内置技能，默认开启（设置 `MIMOCODE_DISABLE_BUILTIN_SKILLS=true` 可全部关闭）：
+
+**开发与交付**
 
 | 技能 | 说明 |
 |------|------|
-| `arxiv` | 搜索、阅读、引用和分析 arXiv 论文 |
-| `claude-code` | 以 CLI 驱动 Claude Code，完成编码、测试、审查和 Git 任务（需 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`） |
-| `codex` | 以 CLI 驱动 Codex，用于无头自动化、CI、容器和远程环境（需 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`） |
 | `compose-next` | spec→ship 功能交付编排——澄清需求、规格、实现、验证、评审、收尾 |
-| `data-analytics` | 通过数据质量、KPI、仪表盘、报告、Notebook 和市场规模测算等工作流分析产品与业务数据 |
-| `deep-research` | 使用并行子智能体和内置 Web 工具生成带引用的多源深度调研报告 |
-| `docx-official` | 生成、读取和转换 Word (.docx) 文件 |
-| `grok-build` | 操作 Grok Build CLI，支持交互式与无头 agent 工作流（需 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`） |
-| `html-to-video-pipeline` | 通过无头浏览器 + ffmpeg 将 HTML 渲染为 MP4 |
-| `learn-everything` | 将文档、URL 或主题转化为包含练习、反馈和进度追踪的自适应课程 |
-| `loop` | 按固定周期调度循环提示 |
-| `mimocode-docs` | MiMoCode 功能、命令、Provider 和配置的自文档参考 |
 | `modern-python-toolchain` | 使用 uv、Ruff 和 Pyright 配置现代 Python 项目 |
+| `playwright` | 从终端驱动真实浏览器：页面导航、填表、快照、截图、数据提取和 UI 流程调试 |
+
+**研究与学习**
+
+| 技能 | 说明 |
+|------|------|
+| `deep-research` | 使用并行子智能体和内置 Web 工具生成带引用的多源深度调研报告 |
+| `super-research` | 执行长周期、可审计的研究、实验、评测、诊断、论文复现和引用校验 |
+| `arxiv` | 搜索、阅读、引用和分析 arXiv 论文 |
+| `research-paper-writing` | 撰写和打磨学术论文（ML/CV/NLP 风格）|
+| `learn-everything` | 将文档、URL 或主题转化为包含练习、反馈和进度追踪的自适应课程 |
+
+**文档与媒体**（可用 `MIMOCODE_DISABLE_OFFICIAL_SKILLS` 统一关闭）
+
+| 技能 | 说明 |
+|------|------|
+| `docx-official` | 生成、读取和转换 Word (.docx) 文件 |
 | `pdf-official` | 生成、读取、填充和转换 PDF 文件 |
 | `pptx-official` | 制作和操作 PowerPoint (.pptx) 幻灯片 |
-| `product-design` | 通过专项工作流探索、审查、实现和验证产品及 UX 设计 |
-| `research-paper-writing` | 撰写和打磨学术论文（ML/CV/NLP 风格）|
-| `sales` | 支持销售调研、会议准备、客户优先级、交易策略、预测和 CRM 工作流 |
-| `skill-creator` | 创建和改进 Agent 技能的交互式指南 |
-| `super-research` | 执行长周期、可审计的研究、实验、评测、诊断、论文复现和引用校验 |
 | `xlsx-official` | 构建、清洗和转换电子表格 (.xlsx/.csv) |
+| `html-to-video-pipeline` | 通过无头浏览器 + ffmpeg 将 HTML 渲染为 MP4 |
 
-`claude-code`、`codex` 与 `grok-build` 用于从终端以 CLI 方式驱动其他 agent。它们默认不开启，需设置 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` 才会加载。其他技能也可能需要其说明中列出的任务专用工具。
+**业务与设计**
+
+| 技能 | 说明 |
+|------|------|
+| `data-analytics` | 通过数据质量、KPI、仪表盘、报告、Notebook 和市场规模测算等工作流分析产品与业务数据 |
+| `product-design` | 通过专项工作流探索、审查、实现和验证产品及 UX 设计 |
+| `sales` | 支持销售调研、会议准备、客户优先级、交易策略、预测和 CRM 工作流 |
+
+**MiMoCode 自身**
+
+| 技能 | 说明 |
+|------|------|
+| `mimocode-docs` | MiMoCode 功能、命令、Provider 和配置的自文档参考 |
+| `skill-creator` | 创建和改进 Agent 技能的交互式指南 |
+| `loop` | 按固定周期调度循环提示 |
+| `memory-search` | 内置 memory 和 history 工具不够用时，直接用 SQL 查询会话轨迹数据库 |
+
+部分技能还需要其说明中列出的任务专用工具。
+
+**Agent CLI 技能（默认关闭）：** `claude-code`、`codex` 与 `grok-build` 用于从终端以 CLI 方式驱动 Claude Code、Codex 和 Grok Build。它们随包分发，但只有设置 `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` 后才会加载。
 
 **覆盖内置技能：** 在项目的 `.mimocode/skills/<name>/SKILL.md`，或个人技能目录（例如 `~/.config/mimocode/skills/<name>/SKILL.md`）里放同名技能即可。项目 `.agents/skills/` 与 `~/.agents/skills/` 这两处开放标准目录同样会扫到。扫描顺序靠后的用户技能会覆盖同名内置技能。
 

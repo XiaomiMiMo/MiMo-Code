@@ -254,33 +254,56 @@ MiMoCode ships with three built-in workflows:
 
 Skills are reusable instruction sets that teach agents how to handle specific tasks (e.g. generating PDFs, writing academic papers, searching arXiv). For a new task, MiMoCode searches available skills by exact name, localized alias, and BM25 relevance. High-confidence matches are loaded automatically; uncertain matches are ranked for the agent to assess. In the TUI, type `/` to browse the autocomplete list or invoke a skill directly with `/<skill-name>` — mentioning two or more skills in a single message auto-loads them and injects a multi-skill orchestration plan.
 
-MiMoCode bundles the following builtin skills:
+MiMoCode bundles the following builtin skills, enabled by default (set `MIMOCODE_DISABLE_BUILTIN_SKILLS=true` to turn them all off):
+
+**Development & delivery**
 
 | Skill | Description |
 |-------|-------------|
-| `arxiv` | Search, read, cite, and analyze arXiv papers |
-| `claude-code` | Drive the Claude Code CLI for coding, testing, review, and Git tasks (opt-in: `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`) |
-| `codex` | Drive the Codex CLI in headless automation, CI, containers, and remote environments (opt-in: `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`) |
 | `compose-next` | Spec→ship feature delivery orchestration — clarify, spec, implement, verify, review, finish |
-| `data-analytics` | Analyze product and business data through reusable workflows for data quality, KPIs, dashboards, reports, notebooks, and market sizing |
-| `deep-research` | Produce cited, multi-source research reports with parallel subagents and built-in web tools |
-| `docx-official` | Produce, read, and transform Word (.docx) files |
-| `grok-build` | Operate the Grok Build CLI for interactive and headless agent workflows (opt-in: `MIMOCODE_ENABLE_AGENT_CLI_SKILLS`) |
-| `html-to-video-pipeline` | HTML-to-MP4 rendering via headless browser + ffmpeg |
-| `learn-everything` | Turn documents, URLs, or topics into adaptive courses with exercises, feedback, and progress tracking |
-| `loop` | Schedule recurring prompts on a fixed cadence |
-| `mimocode-docs` | Self-documenting reference for MiMoCode features, commands, providers, and configuration |
 | `modern-python-toolchain` | Set up modern Python projects with uv, Ruff, and Pyright |
+| `playwright` | Automate a real browser from the terminal — navigation, form filling, snapshots, screenshots, data extraction, and UI-flow debugging |
+
+**Research & learning**
+
+| Skill | Description |
+|-------|-------------|
+| `deep-research` | Produce cited, multi-source research reports with parallel subagents and built-in web tools |
+| `super-research` | Run long-horizon, auditable research, experiments, benchmarks, diagnostics, reproductions, and citation checks |
+| `arxiv` | Search, read, cite, and analyze arXiv papers |
+| `research-paper-writing` | Write and polish academic papers (ML/CV/NLP style) |
+| `learn-everything` | Turn documents, URLs, or topics into adaptive courses with exercises, feedback, and progress tracking |
+
+**Documents & media** (can be turned off together with `MIMOCODE_DISABLE_OFFICIAL_SKILLS`)
+
+| Skill | Description |
+|-------|-------------|
+| `docx-official` | Produce, read, and transform Word (.docx) files |
 | `pdf-official` | Produce, read, fill, and transform PDF files |
 | `pptx-official` | Author and manipulate PowerPoint (.pptx) decks |
-| `product-design` | Explore, audit, implement, and QA product and UX designs through focused workflows |
-| `research-paper-writing` | Write and polish academic papers (ML/CV/NLP style) |
-| `sales` | Support sales research, meeting preparation, account prioritization, deal strategy, forecasting, and CRM workflows |
-| `skill-creator` | Interactive guide for creating and improving agent skills |
-| `super-research` | Run long-horizon, auditable research, experiments, benchmarks, diagnostics, reproductions, and citation checks |
 | `xlsx-official` | Build, clean, and transform spreadsheets (.xlsx/.csv) |
+| `html-to-video-pipeline` | HTML-to-MP4 rendering via headless browser + ffmpeg |
 
-The skills `claude-code`, `codex`, and `grok-build` drive other agent CLIs from the terminal. They ship off by default; set `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true` to enable them. Other skills may still require task-specific tools described in their instructions.
+**Business & design**
+
+| Skill | Description |
+|-------|-------------|
+| `data-analytics` | Analyze product and business data through reusable workflows for data quality, KPIs, dashboards, reports, notebooks, and market sizing |
+| `product-design` | Explore, audit, implement, and QA product and UX designs through focused workflows |
+| `sales` | Support sales research, meeting preparation, account prioritization, deal strategy, forecasting, and CRM workflows |
+
+**MiMoCode itself**
+
+| Skill | Description |
+|-------|-------------|
+| `mimocode-docs` | Self-documenting reference for MiMoCode features, commands, providers, and configuration |
+| `skill-creator` | Interactive guide for creating and improving agent skills |
+| `loop` | Schedule recurring prompts on a fixed cadence |
+| `memory-search` | Query the session trajectory database with SQL when the built-in memory and history tools are not enough |
+
+Some skills require task-specific tools described in their instructions.
+
+**Agent-CLI skills (off by default):** `claude-code`, `codex`, and `grok-build` drive the Claude Code, Codex, and Grok Build CLIs from the terminal. They are bundled but not loaded unless you set `MIMOCODE_ENABLE_AGENT_CLI_SKILLS=true`.
 
 **Overriding a builtin skill:** Create a skill with the same `name` under the project (`.mimocode/skills/<name>/SKILL.md`) or personal (for example `~/.config/mimocode/skills/<name>/SKILL.md`) MiMoCode skills directory. Open-standard `.agents/skills/` in the project and `~/.agents/skills/` are compatible discovery roots. User skills discovered later in the scan order override builtins with the same name.
 
