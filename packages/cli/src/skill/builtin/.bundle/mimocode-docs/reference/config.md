@@ -102,13 +102,15 @@ Prefer a markdown file (`.mimocode/agent/<name>.md`, body = system prompt) for d
 | Key | Purpose |
 |-----|---------|
 | `skills` | `paths[]` extra skill folders + `urls[]` remote skill indexes |
-| `mcp` | MCP servers: `local` (command/env) or `remote` (url/headers/oauth); `{ "enabled": false }` disables one; `sampling` sets the client-sampling policy (`deny`/`ask`/`allow`, default `ask`); `alwaysDirectTools` lists server-local tool names (e.g. `["run"]` on server `sandbox` → `sandbox_run`) that are exposed as top-level tools instead of behind `mcp_tool_search` / `mcp_tool_use` |
+| `mcp` | MCP servers: `local` (command/env) or `remote` (url/headers/oauth); `{ "enabled": false }` disables one; `sampling` sets the client-sampling policy (`deny`/`ask`/`allow`, default `ask`); `alwaysDirectTools` (see below) |
 | `tools` | Record of tool-id → boolean enable/disable |
 | `command` | Custom slash commands |
 | `plugin` | Plugin specs |
 | `formatter`, `lsp` | Formatter & language-server config |
 | `instructions` | Extra instruction files/globs to include |
 | `permission` | Permission rules incl. `external_directory` allowlist |
+
+MCP tools are normally deferred behind `mcp_tool_search` / `mcp_tool_use`. List tool names in a server's `alwaysDirectTools` to expose them as top-level tools instead — e.g. `"alwaysDirectTools": ["run"]` on server `sandbox` exposes `sandbox_run`.
 
 ### Context management
 
