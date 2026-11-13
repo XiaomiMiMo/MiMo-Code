@@ -38,10 +38,10 @@ The implementation follows a clean separation of concerns:
 
 ```bash
 # Start the ACP server in the current directory
-opencode acp
+mimo acp
 
 # Start in a specific directory
-opencode acp --cwd /path/to/project
+mimo acp --cwd /tmp/example
 ```
 
 ### Question Tool Opt-In
@@ -49,7 +49,7 @@ opencode acp --cwd /path/to/project
 ACP excludes `QuestionTool` by default.
 
 ```bash
-MIMOCODE_ENABLE_QUESTION_TOOL=1 opencode acp
+MIMOCODE_ENABLE_QUESTION_TOOL=1 mimo acp
 ```
 
 Enable this only for ACP clients that support interactive question prompts.
@@ -69,8 +69,8 @@ Add to your Zed configuration (`~/.config/zed/settings.json`):
 ```json
 {
   "agent_servers": {
-    "OpenCode": {
-      "command": "opencode",
+    "MiMoCode": {
+      "command": "mimo",
       "args": ["acp"]
     }
   }
@@ -133,7 +133,7 @@ This implementation follows the ACP specification v1:
 bun test test/acp.test.ts
 
 # Test manually with stdio
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}' | opencode acp
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}' | mimo acp
 ```
 
 ## Design Decisions

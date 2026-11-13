@@ -70,7 +70,7 @@ describe("acp.agent initialize", () => {
     expect(result.authMethods?.[0]?.description).toBe("Run `mimo auth login` in the terminal")
   })
 
-  test("launches mimo, not opencode, for terminal-auth clients", async () => {
+  test("advertises a mimo terminal-auth command to clients that support it", async () => {
     const result = await agent.initialize({
       protocolVersion: 1,
       clientCapabilities: { _meta: { "terminal-auth": true } },
