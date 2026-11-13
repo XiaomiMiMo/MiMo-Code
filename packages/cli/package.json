@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "name": "@mimo-ai/cli",
   "type": "module",
   "license": "MIT",
