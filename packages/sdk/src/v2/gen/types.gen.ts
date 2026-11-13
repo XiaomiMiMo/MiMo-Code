@@ -2434,6 +2434,10 @@ export type McpLocalConfig = {
    */
   timeout?: number
   sampling?: McpSamplingPolicy
+  /**
+   * Tool names from this server that skip deferred mcp_tool_search/mcp_tool_use and join activeTools as top-level tools.
+   */
+  alwaysDirectTools?: Array<string>
 }
 
 export type McpOAuthConfig = {
@@ -2483,6 +2487,10 @@ export type McpRemoteConfig = {
    */
   timeout?: number
   sampling?: McpSamplingPolicy
+  /**
+   * Tool names from this server that skip deferred mcp_tool_search/mcp_tool_use and join activeTools as top-level tools.
+   */
+  alwaysDirectTools?: Array<string>
 }
 
 /**
