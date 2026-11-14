@@ -93,8 +93,10 @@ describe("Permission skip-all runtime toggle", () => {
         const result = yield* perm
           .ask(buildRequest({ permission: "bash_delete" as never, interactive: false }))
           .pipe(Effect.exit)
+        const eventResult = yield* perm.ask(buildRequest({ permission: "mcp_events", interactive: false })).pipe(Effect.exit)
         unsub()
         expect(result._tag).toBe("Failure")
+        expect(eventResult._tag).toBe("Failure")
       }),
     ),
   )
