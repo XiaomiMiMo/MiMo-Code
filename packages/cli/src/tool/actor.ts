@@ -1,5 +1,6 @@
 import * as Tool from "./tool"
 import { RecoverableError } from "./recoverable"
+import { coerceActorArguments } from "./actor-args"
 import DESCRIPTION from "./actor.txt"
 import DESCRIPTION_CHECKPOINT from "./actor.checkpoint.txt"
 import { withCheckpointDescription } from "./checkpoint-description"
@@ -652,6 +653,9 @@ export const ActorTool = Tool.define(
       return {
         description: withCheckpointDescription(DESCRIPTION, DESCRIPTION_CHECKPOINT),
         parameters,
+        // Tolerance lives here, not in `parameters`: the emitted JSON Schema must
+        // stay exactly as advertised (one root key, `operation` typed "object").
+        coerceArgs: coerceActorArguments,
         execute: (input: z.infer<typeof parameters>, ctx: Tool.Context) => run(input, ctx).pipe(Effect.orDie),
       }
     })
