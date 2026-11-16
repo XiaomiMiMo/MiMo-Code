@@ -60,7 +60,8 @@ jobs:
             ! -path 'test/mcp/oauth-auto-connect.test.ts' \
             ! -path 'test/mcp/oauth-browser.test.ts' \
             ! -path 'test/provider/refresh.test.ts' \
-            ! -path 'test/provider/refresh-boundaries.test.ts' | sort | bun script/test-shard.ts "$idx" "$n" --reserve 21,13,16,0)
+            ! -path 'test/provider/refresh-boundaries.test.ts' \
+            ! -path 'test/actor/subagent-resume-negatives.test.ts' | sort | bun script/test-shard.ts "$idx" "$n" --reserve 21,13,16,14)
           # Empty shard: `bun test` with no file args discovers everything,
           # including the excluded isolation files. Skip instead of running
           # the whole suite in this leg.
@@ -80,7 +81,7 @@ jobs:
           name: junit-shard-${{ strategy.job-index }}
           path: packages/cli/.artifacts/unit/junit.xml
 
-      # Isolated steps below are pinned to shards 1–3; keep `--reserve` above in
+      # Isolated steps below are pinned to shards; keep `--reserve` above in
       # step with their per-shard step time when moving or adding one.
       - name: Run provider refresh tests (isolated)
         if: matrix.shard == '2/4'
@@ -117,6 +118,15 @@ jobs:
         timeout-minutes: 2
         working-directory: packages/cli
         run: bun test test/mcp/stdio-exit-observe.test.ts --timeout 120000
+
+      # subagent-resume-negatives leaves work running that, combined with other
+      # files in the same process, stalls the shared log queue on Linux and hangs
+      # unrelated suites (task/registry, mcp/admission-completion-boundaries).
+      - name: Run subagent resume negatives (isolated)
+        if: matrix.shard == '4/4'
+        timeout-minutes: 3
+        working-directory: packages/cli
+        run: bun test test/actor/subagent-resume-negatives.test.ts --timeout 120000
 
       - name: Run release script tests
         if: matrix.shard == '3/4'

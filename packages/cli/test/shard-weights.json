@@ -25,7 +25,6 @@
   "test/actor/spawn.test.ts": 17.7,
   "test/actor/status-event-payload.test.ts": 0.5,
   "test/actor/subagent-resume-cascade.test.ts": 0.5,
-  "test/actor/subagent-resume-negatives.test.ts": 10.7,
   "test/actor/subagent-resume-route.integration.test.ts": 0.7,
   "test/actor/terminology.test.ts": 0,
   "test/actor/turn-heartbeat.test.ts": 0.6,
