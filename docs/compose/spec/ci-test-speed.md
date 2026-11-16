@@ -84,6 +84,16 @@ covering the same code paths.
 The workflow keeps its `find` exclusions and empty-shard guard, replacing only
 the cksum loop with the script.
 
+### S2.4 Bounded log flush in the Effect test harness
+
+`test/lib/effect.ts` flushed the process-wide log queue after every
+`testEffect` test, waiting without limit. On Linux CI, work left behind by
+earlier files in the same process (reproduced with subagent-resume-negatives +
+cron/end-to-end + installation + json-migration) stalls that queue for 10s to
+over 120s, so trivial suites such as `test/task/registry.test.ts` (sub-10ms of
+real work per test) timed out. The harness now waits at most 1s for the flush;
+tests that assert on log contents already call `Log.flush()` themselves.
+
 ### S2.3 Spread the isolated suites
 
 Each isolated step stays a separate process run but moves off shard 4/4:
@@ -101,6 +111,7 @@ passes `--reserve 21,13,16,0` so the per-shard job totals stay balanced.
 - [x] T1: skip the three timing-bound tests — acceptance: each file runs locally with the test reported as skipped and the rest passing (covers: S2.1)
 - [x] T2: add `test-shard.ts` + weights + unit test — acceptance: tests show deterministic, complete, balanced assignment and unknown-file default (covers: S2.2)
 - [x] T3: wire the workflow to the script — acceptance: simulated 4-shard split of the current file list covers every file once with max shard ≤ 300 weighted seconds (depends: T2)
+- [x] T5: bound the harness log flush — acceptance: on Linux CI the 4-file polluter set + registry.test.ts passes (was 8/9 timeouts) (covers: S2.4)
 - [x] T4: spread isolated steps with `--reserve` — acceptance: no shard holds all isolated steps; simulated totals including reserve differ by ≤ 5s (covers: S2.3, depends: T3)
 
 ## Journey log
