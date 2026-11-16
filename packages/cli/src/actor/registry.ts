@@ -95,6 +95,8 @@ export interface Interface {
     background: boolean
     lifecycle: Lifecycle
     tools?: ToolWhitelist
+    /** Raw explicit `model` of actor spawn/run; see actor.sql.ts `model_ref`. */
+    modelRef?: string
   }) => Effect.Effect<Actor>
 
   readonly updateStatus: (
@@ -116,6 +118,8 @@ export interface Interface {
   readonly updateTurn: (sessionID: SessionID, actorID: string) => Effect.Effect<void>
   readonly updateAgent: (sessionID: SessionID, actorID: string, agent: string) => Effect.Effect<void>
   readonly get: (sessionID: SessionID, actorID: string) => Effect.Effect<Actor | undefined>
+  /** Explicit `model` recorded at spawn, or undefined when none was given. */
+  readonly modelRef: (sessionID: SessionID, actorID: string) => Effect.Effect<string | undefined>
   // Derived pull-side liveness for a single actor row (progressing/stalled/
   // terminal), computed from honest registry fields. Returns undefined when the
   // row is absent. Pass stallMs to override the default staleness window.
@@ -166,6 +170,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       background: boolean
       lifecycle: Lifecycle
       tools?: ToolWhitelist
+      modelRef?: string
     }) {
       const now = Date.now()
       const row = {
@@ -183,6 +188,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         context_watermark: input.contextWatermark ?? null,
         background: input.background,
         tools: input.tools ?? null,
+        model_ref: input.modelRef ?? null,
         last_turn_time: now,
         turn_count: 0,
         // No part has landed for this actor yet. NULL, not `now`: deriveLiveness
@@ -352,6 +358,19 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         ),
       )
       return row ? fromRow(row) : undefined
+    })
+
+    const modelRef = Effect.fn("ActorRegistry.modelRef")(function* (sessionID: SessionID, actorID: string) {
+      const row = yield* Effect.sync(() =>
+        Database.use((db) =>
+          db
+            .select({ modelRef: ActorRegistryTable.model_ref })
+            .from(ActorRegistryTable)
+            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
+            .get(),
+        ),
+      )
+      return row?.modelRef ?? undefined
     })
 
     const liveness = Effect.fn("ActorRegistry.liveness")(function* (
@@ -545,6 +564,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       updateTurn,
       updateAgent,
       get,
+      modelRef,
       liveness,
       listBySession,
       listActive,

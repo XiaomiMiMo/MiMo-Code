@@ -20,6 +20,8 @@ import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { TaskID } from "@/task/schema"
 import { EffectBridge } from "@/effect"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
+import { resolveDrainSeed } from "@/inbox/inbox"
+import type { ProviderID, ModelID } from "@/provider/schema"
 import { inboxControllerRef } from "@/inbox"
 import { Effect, Deferred } from "effect"
 
@@ -44,6 +46,38 @@ export const ActorTool = Tool.define(
     const actorRegistry = yield* ActorRegistry.Service
     const waiter = yield* ActorWaiter.Service
     const tasks = yield* TaskRegistry.Service
+
+    // Child model + variant (docs/compose/spec/subagent-model-follow.md S2.2), shared by
+    // spawn and by send waking a finished subagent: explicit ref > agent config > parent.
+    // Variant (reasoning-variants.md S2.3): an agent with its own variant on its own configured
+    // model keeps it; otherwise the parent's — as-is on the same model, and on a different model
+    // only when that model offers the same level. An explicit model always counts as an override,
+    // even when it names the agent's own model.
+    const childModel = Effect.fn("ActorTool.childModel")(function* (
+      next: Agent.Info,
+      explicit: string | undefined,
+      parent: { providerID: ProviderID; modelID: ModelID; variant?: string },
+    ) {
+      const modelRef = explicit ?? next.modelRef
+      const model = modelRef
+        ? yield* provider
+            .resolveModelRef(modelRef, parent.providerID)
+            .pipe(Effect.map((m) => ({ modelID: m.id, providerID: m.providerID })))
+        : (next.model ?? { modelID: parent.modelID, providerID: parent.providerID })
+      const agentOwnsVariant = !!next.variant && !explicit && !!(next.model || next.modelRef)
+      const wanted = agentOwnsVariant ? next.variant : parent.variant
+      let variant: string | undefined
+      if (wanted) {
+        if (!agentOwnsVariant && model.providerID === parent.providerID && model.modelID === parent.modelID) variant = wanted
+        else {
+          const target = yield* provider
+            .getModel(model.providerID, model.modelID)
+            .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
+          if (target?.variants?.[wanted]) variant = wanted
+        }
+      }
+      return { model, variant }
+    })
 
     // Resolve the Actor service through the late-bound spawnRef rather than as
     // a Layer dependency: pulling Actor.Service in here would create a layer
@@ -280,6 +314,22 @@ export const ActorTool = Tool.define(
             )
           }
           const targetSid = op.to_session_id !== undefined ? SessionID.make(op.to_session_id) : ctx.sessionID
+          // A finished subagent woken by send re-resolves its model against the target session's
+          // current main model (subagent-model-follow.md S2.4). A running one keeps its start model:
+          // no override, so Inbox seeds the wake from its own last message.
+          const receiver = yield* actorRegistry.get(targetSid, op.to_actor_id)
+          let wakeModel: { providerID: ProviderID; modelID: ModelID; variant?: string } | undefined
+          if (receiver?.mode === "subagent" && receiver.status === "idle") {
+            const main = yield* resolveDrainSeed(sessions, actorRegistry, targetSid, "main")
+            const recv = yield* agent.get(receiver.agent)
+            if (main && recv) {
+              // An explicit model that no longer resolves must not make the subagent unreachable:
+              // fall back to its last model rather than failing the send.
+              const resolved = yield* childModel(recv, yield* actorRegistry.modelRef(targetSid, op.to_actor_id), main.model)
+                .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+              if (resolved) wakeModel = { ...resolved.model, ...(resolved.variant ? { variant: resolved.variant } : {}) }
+            }
+          }
           const sendResult = yield* inboxSvc
             .accept({
               receiverSessionID: targetSid,
@@ -288,6 +338,7 @@ export const ActorTool = Tool.define(
               senderActorID: ctx.agent ?? "main",
               content: op.content,
               ...(op.type !== undefined ? { type: op.type } : {}),
+              ...(wakeModel ? { model: wakeModel } : {}),
             })
             .pipe(
               Effect.catchTag("InboxReceiverNotFound", () =>
@@ -471,34 +522,11 @@ export const ActorTool = Tool.define(
         const msg = yield* Effect.sync(() => MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }))
         if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
 
-        const modelRef = op.model ?? next.modelRef
-        const model = modelRef
-          ? yield* provider
-              .resolveModelRef(modelRef, msg.info.providerID)
-              .pipe(Effect.map((m) => ({ modelID: m.id, providerID: m.providerID })))
-          : (next.model ?? {
-              modelID: msg.info.modelID,
-              providerID: msg.info.providerID,
-            })
-
-        // Reasoning variant (docs/compose/spec/reasoning-variants.md S2.3): an agent with its
-        // own variant on its own configured model keeps it (SessionPrompt applies it when no
-        // variant is passed). Otherwise inherit the parent turn's variant — as-is on the same
-        // model, and on a different model only when that model offers the same level.
-        // An explicit --model always counts as an override, even when it names the agent's own model.
-        const agentOwnsVariant = !!next.variant && !op.model && !!(next.model || next.modelRef)
-        const parentVariant = agentOwnsVariant ? undefined : msg.info.variant
-        let variant: string | undefined
-        if (parentVariant) {
-          const sameModel = model.providerID === msg.info.providerID && model.modelID === msg.info.modelID
-          if (sameModel) variant = parentVariant
-          else {
-            const target = yield* provider
-              .getModel(model.providerID, model.modelID)
-              .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
-            if (target?.variants?.[parentVariant]) variant = parentVariant
-          }
-        }
+        const { model, variant } = yield* childModel(next, op.model, {
+          providerID: msg.info.providerID,
+          modelID: msg.info.modelID,
+          variant: msg.info.variant,
+        })
 
         // Validate task_id by reference at execute time (NOT in the schema, so a
         // bad value degrades instead of hard-failing the call). A malformed shape
@@ -551,6 +579,7 @@ export const ActorTool = Tool.define(
           context: "none",
           tools: next.toolAllowlist ? [...next.toolAllowlist] : "INHERIT",
           model,
+          ...(op.model ? { modelRef: op.model } : {}),
           ...(variant ? { variant } : {}),
           // run owns an interruptible wait; the child must outlive it and still notify.
           background: true,

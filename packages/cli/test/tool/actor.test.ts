@@ -932,6 +932,7 @@ describe("Actor tool task_id degradation", () => {
 })
 
 // docs/compose/spec/reasoning-variants.md S2.3 — subagents inherit the parent turn's variant.
+// [TP-RUN-R13-03] (MiMo Desktop turn-execution) new spawns take the spawning turn's model/variant.
 describe("Actor tool reasoning variant inheritance", () => {
   const xiaomi = {
     enabled_providers: ["test", "xiaomi"],
@@ -990,6 +991,19 @@ describe("Actor tool reasoning variant inheritance", () => {
           expect((yield* spawnWith({ model: "xiaomi/mimo-v2-pro" }, "max"))?.variant).toBeUndefined()
           // toggle-only model: no levels at all
           expect((yield* spawnWith({ model: "xiaomi/mimo-v2-flash" }, "high"))?.variant).toBeUndefined()
+        }),
+      { config: xiaomi },
+    ),
+  )
+
+  // docs/compose/spec/subagent-model-follow.md T1 — the raw explicit model is recorded for wake.
+  // [TP-RUN-R13-04] (MiMo Desktop turn-execution)
+  it.live("spawn records the explicit model ref only when one is given", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          expect((yield* spawnWith({ model: "xiaomi/mimo-v2-pro" }))?.modelRef).toBe("xiaomi/mimo-v2-pro")
+          expect((yield* spawnWith({}))?.modelRef).toBeUndefined()
         }),
       { config: xiaomi },
     ),

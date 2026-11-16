@@ -204,3 +204,129 @@ describe("actor tool — send action", () => {
     ),
   )
 })
+
+// docs/compose/spec/subagent-model-follow.md T3 — a finished subagent woken by send re-resolves
+// its model (explicit spawn model > agent config > target session's current main model); a running
+// one keeps the model it started with.
+describe("actor tool — send wake model", () => {
+  const xiaomi = {
+    enabled_providers: ["test", "xiaomi"],
+    // The fixture catalog declares no effort levels for mimo-v2-pro; config offers "high".
+    provider: { xiaomi: { options: { apiKey: "test-key" }, models: { "mimo-v2-pro": { variants: { high: {} } } } } },
+  }
+  const startModel = { providerID: "test", modelID: "test-model" }
+
+  type Model = { providerID: string; modelID: string; variant?: string }
+  const userMessage = (sessionID: SessionID, model: Model, agentID?: string) =>
+    Effect.gen(function* () {
+      yield* (yield* Session.Service).updateMessage({
+        id: MessageID.ascending(),
+        sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: agentID ? "general" : "build",
+        ...(agentID ? { agentID } : {}),
+        model: model as MessageV2.User["model"],
+      } as MessageV2.User)
+    })
+
+  /** Subagent that ran on `startModel`, then the main session switched to `mainModel`; send wakes it. */
+  const wake = (input: { status: "idle" | "running"; mainModel: Model; agent?: string; modelRef?: string }) =>
+    Effect.gen(function* () {
+      const chat = yield* (yield* Session.Service).create({ title: "chat" })
+      const registry = yield* ActorRegistry.Service
+      const agent = input.agent ?? "general"
+      const actorID = yield* registry.allocateActorID(chat.id, agent)
+      yield* registry.register({
+        sessionID: chat.id,
+        actorID,
+        mode: "subagent",
+        agent,
+        description: "child",
+        contextMode: "none",
+        background: true,
+        lifecycle: "ephemeral",
+        ...(input.modelRef ? { modelRef: input.modelRef } : {}),
+      })
+      yield* registry.updateStatus(chat.id, actorID, { status: input.status })
+      yield* userMessage(chat.id, startModel)
+      yield* userMessage(chat.id, startModel, actorID)
+      yield* userMessage(chat.id, input.mainModel)
+
+      const def = yield* (yield* ActorTool).init()
+      const result = yield* def.execute(
+        { operation: { action: "send", to_actor_id: actorID, content: "follow up" } },
+        ctxFor(chat.id),
+      )
+      const parsed = JSON.parse(result.output) as { inputMessageID: string }
+      const info = MessageV2.get({ sessionID: chat.id, messageID: MessageID.make(parsed.inputMessageID) }).info
+      return info.role === "user" ? (info.model as Model) : undefined
+    })
+
+  // [TP-RUN-R13-01] (MiMo Desktop turn-execution)
+  it.live(
+    "finished subagent without its own model follows the current main model and variant",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const model = yield* wake({ status: "idle", mainModel: { providerID: "test", modelID: "other", variant: "high" } })
+        expect(model).toEqual({ providerID: "test", modelID: "other", variant: "high" })
+      }),
+    ),
+  )
+
+  // [TP-RUN-R13-02] (MiMo Desktop turn-execution)
+  it.live(
+    "running subagent keeps the model it started with",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const model = yield* wake({ status: "running", mainModel: { providerID: "test", modelID: "other", variant: "high" } })
+        expect(model).toEqual(startModel)
+      }),
+    ),
+  )
+
+  // [TP-RUN-R13-04] (MiMo Desktop turn-execution)
+  it.live(
+    "explicit spawn model is kept and inherits the main variant only when offered",
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const modelRef = "xiaomi/mimo-v2-pro"
+          expect(yield* wake({ status: "idle", modelRef, mainModel: { ...startModel, variant: "high" } })).toEqual({
+            providerID: "xiaomi",
+            modelID: "mimo-v2-pro",
+            variant: "high",
+          })
+          expect(yield* wake({ status: "idle", modelRef, mainModel: { ...startModel, variant: "max" } })).toEqual({
+            providerID: "xiaomi",
+            modelID: "mimo-v2-pro",
+          })
+        }),
+      { config: xiaomi },
+    ),
+  )
+
+  // [TP-RUN-R13-04] (MiMo Desktop turn-execution)
+  it.live(
+    "agent with its own configured model keeps it",
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const model = yield* wake({ status: "idle", agent: "tuned", mainModel: { providerID: "test", modelID: "other" } })
+          expect(model).toEqual({ providerID: "xiaomi", modelID: "mimo-v2-pro" })
+        }),
+      { config: { ...xiaomi, agent: { tuned: { description: "Tuned", mode: "subagent", model: "xiaomi/mimo-v2-pro" } } } },
+    ),
+  )
+
+  // [TP-RUN-R13-05] (MiMo Desktop turn-execution)
+  it.live(
+    "explicit model that no longer resolves falls back to the subagent's last model",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const model = yield* wake({ status: "idle", modelRef: "gone/missing", mainModel: { providerID: "test", modelID: "other" } })
+        expect(model).toEqual(startModel)
+      }),
+    ),
+  )
+})

@@ -212,6 +212,8 @@ export interface SpawnInput {
   context: ContextMode
   tools: ToolWhitelist
   model?: { providerID: ProviderID; modelID: ModelID }
+  /** Raw explicit `model` argument, recorded so a later wake re-resolves it (subagent only). */
+  modelRef?: string
   /**
    * Reasoning variant for the child's turns (recorded on its user messages and merged
    * by the LLM layer). The actor tool fills it from the parent turn; omitted = none.
@@ -789,6 +791,7 @@ export const layer = Layer.effect(
               background: input.background,
               lifecycle: input.lifecycle ?? "ephemeral",
               tools: input.tools,
+              modelRef: input.modelRef,
             })
 
             // The actor now EXISTS in the registry. Hand the caller its id before the

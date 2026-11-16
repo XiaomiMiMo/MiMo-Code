@@ -79,6 +79,8 @@ export interface AgentInput {
   content: string
   type?: string
   legacyInboxID?: string
+  /** Model for the wake turn; overrides the receiver's own last model (actor send to a finished subagent). */
+  model?: DrainSeed["model"]
 }
 
 export interface Interface {
@@ -129,7 +131,7 @@ export const layer = Layer.effect(
             source: "agent" as const,
             senderSessionID: input.senderSessionID, senderActorID: input.senderActorID,
           } } : {}),
-          model: seed?.model ?? { providerID: "system" as ProviderID, modelID: "system" as ModelID },
+          model: input.model ?? seed?.model ?? { providerID: "system" as ProviderID, modelID: "system" as ModelID },
         },
         parts: [{
           id: PartID.ascending(),
