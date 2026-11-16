@@ -125,3 +125,10 @@ tests that assert on log contents already call `Log.flush()` themselves.
   stalls is still unknown: the log file stayed empty, so it is not write
   volume. Follow-up: find it, since `Log.shutdown()` in production waits on the
   same queue.
+- Another order-dependent flake showed up: `models-nonblocking > refresh(true)
+  is a no-op when MIMOCODE_MODELS_PATH is pinned` replaced the process-wide
+  `globalThis.fetch` and failed on any fetch made in the process during the
+  test, including fetches from work earlier files left running. No test
+  changes the pin, so the catalog itself cannot fetch here. The spy now counts
+  only `/api.json` requests and passes other fetches through. A mutation that
+  removed the pin guard still makes the test fail.
