@@ -1,6 +1,6 @@
 ---
 feature: fenced-run-livelock
-status: delivered
+status: in-progress
 updated: 2026-11-16
 source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2819
 ---
@@ -65,8 +65,9 @@ unserved until the run ends.
 
 At each step, when a run already holding receipts claims nothing new, it checks
 whether any of its receipts is still `claimed` by its `runId`. Receipts stay
-claimed until the run settles them at its end, so finding none means a stop or
-boot reconciliation fenced the run. The run logs
+claimed until the run settles them at its end, so finding none means the run
+was fenced: a stop cancelled its inputs, or boot reconciliation in a restarted
+process did (S2.3). The run logs
 `run lost its claimed input; stopping` and ends as an interrupted run, the same
 way a stopped run ends. Settlement finds nothing left to acknowledge. If an input
 is still waiting, the lane kick that is already waiting on this run starts a
@@ -77,7 +78,22 @@ A fenced run stops even when no input is waiting. Its inputs are already
 lane the runner treats an interrupt as a normal end, so the waiting or remaining
 kick starts the fresh run. On a subagent lane an interrupt also cancels the
 actor, so a still-accepted input waits for the next accept or kick, and the
-parent receives a cancelled notification (see S3).
+parent receives a cancelled notification. With S2.3 only a stop fences a live
+run, and a stop cancels the waiting inputs too, so nothing is left stranded.
+
+### S2.3 Boot reconciliation keeps claims of runs alive in this process
+
+`reconcileOnBoot` treats every `claimed` row as left over from a crashed process
+and cancels it. A run can outlive the Instance and controller that admitted it,
+for example across `Instance.disposeAll()` after a config change. A later
+controller then cancelled that live run's claims, which is how the CI run got
+fenced. With S2.1 alone it would also cancel legitimate work (see Journey log).
+
+A process-wide set `liveClaimRuns` (`inbox/controller-ref.ts`) records the
+lane and run id each time `claim` claims rows, and `ack` removes the entry when
+the run settles. `reconcileOnBoot` cancels only claimed rows whose run is not in
+the set. A restarted process starts with an empty set, so restart recovery is
+unchanged.
 
 ### S2.2 Testing
 
@@ -88,28 +104,41 @@ parent receives a cancelled notification (see S3).
    interrupting the run.
 3. A second prompt is accepted into the same lane.
 
-Expected: the first run ends and the provider sees exactly two requests (one per
-run), with no further request in the next 500ms. The test waits for this with a
+Expected: the first run ends, and exactly one request carries the second
+question: the fresh run's first step, after which it waits out the one-minute
+retry. Across the whole test there are at most 4 requests (background requests
+such as title generation may add some), not a burst. The test waits for this with a
 10s bound instead of a fixed sleep. Without the fix, the first run never ends.
+
+`test/inbox/queue-controller.test.ts`:
+
+- "reconcileOnBoot keeps claims of a run still alive in this process until it
+  settles them": the claim stays `claimed` through reconciliation, then `ack`
+  settles it.
+- The existing restart test now clears `liveClaimRuns` to stand in for a fresh
+  process, and still expects `cancelled/never_ran`.
+
+`test/actor/execution-integration.test.ts` ("new main messages preserve four
+background actors…") covers the end-to-end case: four background subagents keep
+running across `Instance.disposeAll()` and still succeed.
 
 ## [S3] Out of Scope
 
 - Making `awaitNewInput` consider only inputs the current run can claim, and
   limiting how often one input can supersede retries. With S2.1 the run stops
   within one step, so these are optional defenses.
-- Why `reconcileOnBoot` in a new controller can cancel the claims of a run that
-  is still alive in the same process, and why `Instance.disposeAll()` does not
-  stop runs started through `AppRuntime` in tests.
-- Re-kicking a waiting input on a subagent lane after its fenced run is
-  interrupted; this happens mainly when `reconcileOnBoot` cancels a live
-  subagent's claims.
+- Claims held by a live run in another process that shares the database; boot
+  reconciliation still treats them as crashed, as before.
+- Re-kicking a waiting input on a subagent lane after a stop-fenced run is
+  interrupted.
 - Moving `subagent-resume-negatives` back into the shared CI process.
 
 ## Tasks
 
 - [x] T1: regression test reproducing the spin — acceptance: fails on main (first run still running after 1.5s) (covers: S2.2)
 - [x] T2: stop a run that no longer holds any claim — acceptance: T1 passes with exactly two provider requests (covers: S2.1, depends: T1)
-- [x] T3: no regressions in inbox, claim, receipt and supersede suites — acceptance: those suites pass (depends: T2)
+- [ ] T4: boot reconciliation keeps live-run claims — acceptance: the new queue-controller test fails without the change and passes with it; the execution-integration background-actors test passes (covers: S2.3)
+- [ ] T3: no regressions in inbox, claim, receipt and supersede suites — acceptance: those suites pass (depends: T2, T4)
 
 ## Journey log
 
@@ -119,3 +148,11 @@ run), with no further request in the next 500ms. The test waits for this with a
   2 receipts in memory whose database rows were `cancelled/never_ran`, an
   accepted `hook` input it could not claim, and `extendClaim` returning nothing
   at every step.
+- The first PR CI run failed `execution-integration > new main messages
+preserve four background actors awaiting model responses`: children ended as
+  `cancelled` instead of `success`. That test calls `Instance.disposeAll()`
+  while four subagents are still running, and the next prompt's
+  `reconcileOnBoot` cancelled their claims as crashed. Before, they ran on and
+  acked nothing; with S2.1 the fence check stopped them. So the boot
+  reconciliation was the actual source of the fence, both here and on CI, and
+  S2.3 fixes it at that point. The S2.1 check stays for runs fenced by a stop.

@@ -4,7 +4,7 @@ import { Bus } from "../../src/bus"
 import { Session as SessionNs } from "../../src/session"
 import { MessageID, PartID } from "../../src/session/schema"
 import { MessageV2 } from "../../src/session/message-v2"
-import { InboxController, inboxControllerRef, schedulerRef, type Receipt } from "../../src/inbox"
+import { InboxController, inboxControllerRef, liveClaimRuns, schedulerRef, type Receipt } from "../../src/inbox"
 import { InboxTable, InboxLaneStateTable, InboxSessionEpochTable } from "../../src/inbox/inbox.sql"
 import { Database, eq, and } from "../../src/storage"
 import { Instance } from "../../src/project/instance"
@@ -388,10 +388,32 @@ describe("Inbox controller", () => {
           type: "prompt",
         })
         yield* tq.claimNext(lane, 1)
+        // A restarted process has no live runs.
+        liveClaimRuns.clear()
         yield* tq.reconcileOnBoot(session.id)
         const r = yield* tq.getReceipt(receipt.id)
         expect(r.state).toBe("cancelled")
         expect(r.outcome).toBe("never_ran")
+      }),
+    ),
+  )
+
+  it.live(
+    "reconcileOnBoot keeps claims of a run still alive in this process until it settles them",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionNs.Service
+        const tq = yield* InboxController.Service
+        const session = yield* sessions.create({ title: "reconcile-live" })
+        const lane = { sessionID: session.id, agentID: "main" }
+        const { message, parts } = userMessage(session.id)
+        const receipt = yield* tq.accept({ lane, message, parts, type: "prompt" })
+        const claim = yield* tq.claimNext(lane, 1)
+        // A later controller reconciles while the run that claimed the input keeps going.
+        yield* tq.reconcileOnBoot(session.id)
+        expect((yield* tq.getReceipt(receipt.id)).state).toBe("claimed")
+        yield* tq.ack(lane, claim!.claimFrontier, [{ receiptId: receipt.id, outcome: "success" }], 1)
+        expect((yield* tq.getReceipt(receipt.id)).state).toBe("settled")
       }),
     ),
   )

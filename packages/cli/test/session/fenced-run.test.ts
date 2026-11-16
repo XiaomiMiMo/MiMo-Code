@@ -88,22 +88,27 @@ test("a run whose claimed input was cancelled stops instead of spinning on super
               .pipe(Effect.exit, Effect.forkChild)
             // The fenced run ends and the second input's fresh run sends its request; a
             // spinning run never ends. Then confirm no further requests follow.
-            yield* waitFor(() => first.pollUnsafe() !== undefined && stub.captures.length >= 2).pipe(Effect.ignore)
+            const served = () =>
+              stub.captures.filter((capture) => JSON.stringify(capture.messages).includes("Second question.")).length
+            yield* waitFor(() => first.pollUnsafe() !== undefined && served() >= 1).pipe(Effect.ignore)
             const firstDone = first.pollUnsafe() !== undefined
             yield* Effect.sleep("500 millis")
             const requests = stub.captures.length
+            const secondRequests = served()
             yield* prompt.cancel(session.id)
             yield* Fiber.join(first).pipe(Effect.timeout("10 seconds"))
             yield* Fiber.join(second).pipe(Effect.timeout("10 seconds"))
-            return { fenced: fenced.map((row) => row.state), requests, firstDone }
+            return { fenced: fenced.map((row) => row.state), requests, secondRequests, firstDone }
           }),
         ),
     })
     expect(result.fenced).toEqual(["cancelled"])
-    // The fenced run ended, and the second input started a fresh run that waits out its
-    // own retry: one request for the first run, one for the second.
+    // The fenced run ended, and the second input started a fresh run that sent one
+    // request and now waits out its own retry. Background requests such as title
+    // generation may add one or two, but not a burst.
     expect(result.firstDone).toBe(true)
-    expect(result.requests).toBe(2)
+    expect(result.secondRequests).toBe(1)
+    expect(result.requests).toBeLessThanOrEqual(4)
   } finally {
     await stub.stop()
   }
