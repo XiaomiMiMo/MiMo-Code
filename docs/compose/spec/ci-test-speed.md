@@ -2,7 +2,7 @@
 feature: ci-test-speed
 status: delivered
 updated: 2026-11-16
-source: ci/test-speed
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2817
 ---
 
 # CI test speed and flake removal
