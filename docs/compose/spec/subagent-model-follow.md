@@ -2,6 +2,7 @@
 feature: subagent-model-follow
 status: delivered
 updated: 2026-11-16
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2814
 ---
 
 # Subagent model follows the main model
