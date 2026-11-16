@@ -1,6 +1,6 @@
 ---
 feature: fenced-run-livelock
-status: in-progress
+status: delivered
 updated: 2026-11-16
 source: fix/stale-claim-livelock
 ---
@@ -9,7 +9,33 @@ source: fix/stale-claim-livelock
 
 ## Report
 
-[Not finalized yet]
+**What was built** — When a run that holds inbox receipts claims nothing new, it
+checks whether any receipt is still `claimed` by its `runId`. If none is, a stop
+or boot reconciliation fenced it: the run logs
+`run lost its claimed input; stopping` and ends as an interrupted run. A waiting
+input on the main lane is then served by a fresh run with normal retry backoff,
+instead of superseding every retry of the fenced run in a zero-backoff loop.
+
+**Verification**
+
+- `test/session/fenced-run.test.ts`: fails without the fix (the first run never
+  ends within 10s); passes with it (exactly 2 provider requests), 3 runs in a row.
+- 42 test files matching claimNext / extendClaim / withStop / receipt /
+  InboxTable / superseded / prompt.cancel: 752 pass, 7 skip, 0 fail.
+- `bun run typecheck`: PASS.
+- Linux CI run with the original trigger set (subagent-resume-negatives +
+  cron/end-to-end + installation + json-migration + task/registry + a
+  `Log.flush()` probe):
+
+  |                         | baseline (main `prompt.ts`) | with fix          |
+  | ----------------------- | --------------------------- | ----------------- |
+  | `Log.flush()`           | 6.4s, then over 20s each    | 0ms               |
+  | CPU in the probe window | 89.9s user over about 74s   | 36ms user over 8s |
+  | registry test           | about 1.5s each             | about 0.14s each  |
+
+- Independent review: no critical findings. Addressed: test timing (bounded
+  wait instead of a fixed sleep), and the subagent-lane and no-input behaviour
+  are now documented.
 
 ## [S1] Problem
 
@@ -46,6 +72,13 @@ way a stopped run ends. Settlement finds nothing left to acknowledge. If an inpu
 is still waiting, the lane kick that is already waiting on this run starts a
 fresh run, which claims the input and retries with normal backoff.
 
+A fenced run stops even when no input is waiting. Its inputs are already
+`cancelled/never_ran`, so there is nothing left for it to answer. On the main
+lane the runner treats an interrupt as a normal end, so the waiting or remaining
+kick starts the fresh run. On a subagent lane an interrupt also cancels the
+actor, so a still-accepted input waits for the next accept or kick, and the
+parent receives a cancelled notification (see S3).
+
 ### S2.2 Testing
 
 `test/session/fenced-run.test.ts` sets up this state through public APIs only:
@@ -55,8 +88,9 @@ fresh run, which claims the input and retries with normal backoff.
    interrupting the run.
 3. A second prompt is accepted into the same lane.
 
-Expected: within 1.5s the first run has ended, and the provider saw exactly two
-requests (one per run). Without the fix, the first run is still spinning.
+Expected: the first run ends and the provider sees exactly two requests (one per
+run), with no further request in the next 500ms. The test waits for this with a
+10s bound instead of a fixed sleep. Without the fix, the first run never ends.
 
 ## [S3] Out of Scope
 
@@ -66,13 +100,16 @@ requests (one per run). Without the fix, the first run is still spinning.
 - Why `reconcileOnBoot` in a new controller can cancel the claims of a run that
   is still alive in the same process, and why `Instance.disposeAll()` does not
   stop runs started through `AppRuntime` in tests.
+- Re-kicking a waiting input on a subagent lane after its fenced run is
+  interrupted; this happens mainly when `reconcileOnBoot` cancels a live
+  subagent's claims.
 - Moving `subagent-resume-negatives` back into the shared CI process.
 
 ## Tasks
 
 - [x] T1: regression test reproducing the spin — acceptance: fails on main (first run still running after 1.5s) (covers: S2.2)
 - [x] T2: stop a run that no longer holds any claim — acceptance: T1 passes with exactly two provider requests (covers: S2.1, depends: T1)
-- [ ] T3: no regressions in inbox, claim, receipt and supersede suites — acceptance: those suites pass (depends: T2)
+- [x] T3: no regressions in inbox, claim, receipt and supersede suites — acceptance: those suites pass (depends: T2)
 
 ## Journey log
 

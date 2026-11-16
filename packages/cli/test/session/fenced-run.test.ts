@@ -86,9 +86,12 @@ test("a run whose claimed input was cancelled stops instead of spinning on super
             const second = yield* prompt
               .prompt({ sessionID: session.id, agent: "build", parts: [{ type: "text", text: "Second question." }] })
               .pipe(Effect.exit, Effect.forkChild)
-            yield* Effect.sleep("1500 millis")
-            const requests = stub.captures.length
+            // The fenced run ends and the second input's fresh run sends its request; a
+            // spinning run never ends. Then confirm no further requests follow.
+            yield* waitFor(() => first.pollUnsafe() !== undefined && stub.captures.length >= 2).pipe(Effect.ignore)
             const firstDone = first.pollUnsafe() !== undefined
+            yield* Effect.sleep("500 millis")
+            const requests = stub.captures.length
             yield* prompt.cancel(session.id)
             yield* Fiber.join(first).pipe(Effect.timeout("10 seconds"))
             yield* Fiber.join(second).pipe(Effect.timeout("10 seconds"))
