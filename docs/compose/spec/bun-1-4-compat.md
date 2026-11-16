@@ -203,9 +203,11 @@ the rest.** None involve sqlite, fetch/streams, spawn/pty, fs or timer semantics
 | TUI | draws 5/5 | hangs 5/5 (F1) |
 | size | 101,357,666 B | 128,227,298 B |
 
-`script/meta.ts` accepts any `^<pin>`. With the upstream pin `1.3.14`, Bun 1.4.4 already
-satisfies `^1.3.14`, so Homebrew's pin rewrite is not what lets the build proceed. The resulting
-binary is broken because the embedded 1.4.4 runtime triggers F1.
+The build runs two version checks. `script/meta.ts`, which `build.ts` imports statically so it
+evaluates first, accepts any `^<pin>`. `packages/cli/script/build.ts` then requires
+`Bun.version === <pin>` exactly. With the upstream pin `1.3.14`, Bun 1.4.4 passes the first check
+and fails the second. Homebrew's rewrite of the pin is therefore what lets its build proceed. The
+resulting binary is broken because the embedded 1.4.4 runtime triggers F1.
 
 ## [S4] Out of Scope
 
