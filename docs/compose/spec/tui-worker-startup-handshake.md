@@ -2,7 +2,7 @@
 feature: tui-worker-startup-handshake
 status: delivered
 updated: 2026-11-16
-source: fix/tui-worker-startup-handshake
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2820
 ---
 
 # TUI worker startup handshake
