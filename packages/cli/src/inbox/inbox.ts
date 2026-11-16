@@ -79,8 +79,8 @@ export interface AgentInput {
   content: string
   type?: string
   legacyInboxID?: string
-  /** Model for the wake turn; overrides the receiver's own last model (actor send to a finished subagent). */
-  model?: DrainSeed["model"]
+  /** Wake model for a finished subagent; applied only if it is still idle at admission (see AcceptInput.idleModel). */
+  idleModel?: DrainSeed["model"]
 }
 
 export interface Interface {
@@ -131,7 +131,7 @@ export const layer = Layer.effect(
             source: "agent" as const,
             senderSessionID: input.senderSessionID, senderActorID: input.senderActorID,
           } } : {}),
-          model: input.model ?? seed?.model ?? { providerID: "system" as ProviderID, modelID: "system" as ModelID },
+          model: seed?.model ?? { providerID: "system" as ProviderID, modelID: "system" as ModelID },
         },
         parts: [{
           id: PartID.ascending(),
@@ -145,6 +145,7 @@ export const layer = Layer.effect(
         legacyInboxID: input.legacyInboxID,
         senderSessionID: input.senderSessionID,
         senderActorID: input.senderActorID,
+        ...(input.idleModel ? { idleModel: input.idleModel } : {}),
       }, guard)
       return { inboxID: receipt.id, inputMessageID: receipt.inputMessageID }
     })

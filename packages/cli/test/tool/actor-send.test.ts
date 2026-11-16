@@ -230,33 +230,62 @@ describe("actor tool — send wake model", () => {
       } as MessageV2.User)
     })
 
-  /** Subagent that ran on `startModel`, then the main session switched to `mainModel`; send wakes it. */
-  const wake = (input: { status: "idle" | "running"; mainModel: Model; agent?: string; modelRef?: string }) =>
+  /**
+   * Subagent that ran on `startModel`, then the main lane moved to `mainModel`; send wakes it.
+   * `parentModel` registers a parent actor whose lane ran on that model and makes it the child's
+   * `parentActorID`; `crossSession` sends from another session via `to_session_id`.
+   */
+  const wake = (input: {
+    status: "idle" | "running"
+    mainModel: Model
+    agent?: string
+    modelRef?: string
+    parentModel?: Model
+    crossSession?: boolean
+  }) =>
     Effect.gen(function* () {
-      const chat = yield* (yield* Session.Service).create({ title: "chat" })
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "chat" })
       const registry = yield* ActorRegistry.Service
-      const agent = input.agent ?? "general"
-      const actorID = yield* registry.allocateActorID(chat.id, agent)
-      yield* registry.register({
-        sessionID: chat.id,
-        actorID,
-        mode: "subagent",
-        agent,
-        description: "child",
-        contextMode: "none",
-        background: true,
-        lifecycle: "ephemeral",
+      const subagent = (agent: string, extra: { parentActorID?: string; modelRef?: string }) =>
+        Effect.gen(function* () {
+          const actorID = yield* registry.allocateActorID(chat.id, agent)
+          yield* registry.register({
+            sessionID: chat.id,
+            actorID,
+            mode: "subagent",
+            agent,
+            description: agent,
+            contextMode: "none",
+            background: true,
+            lifecycle: "ephemeral",
+            ...extra,
+          })
+          return actorID
+        })
+      const parentActorID = input.parentModel ? yield* subagent("general", {}) : undefined
+      const actorID = yield* subagent(input.agent ?? "general", {
+        ...(parentActorID ? { parentActorID } : {}),
         ...(input.modelRef ? { modelRef: input.modelRef } : {}),
       })
       yield* registry.updateStatus(chat.id, actorID, { status: input.status })
       yield* userMessage(chat.id, startModel)
+      if (parentActorID) yield* userMessage(chat.id, input.parentModel!, parentActorID)
       yield* userMessage(chat.id, startModel, actorID)
       yield* userMessage(chat.id, input.mainModel)
 
+      const sender = input.crossSession ? (yield* sessions.create({ title: "sender" })).id : chat.id
       const def = yield* (yield* ActorTool).init()
       const result = yield* def.execute(
-        { operation: { action: "send", to_actor_id: actorID, content: "follow up" } },
-        ctxFor(chat.id),
+        {
+          operation: {
+            action: "send",
+            to_actor_id: actorID,
+            content: "follow up",
+            ...(input.crossSession ? { to_session_id: chat.id } : {}),
+          },
+        },
+        ctxFor(sender),
       )
       const parsed = JSON.parse(result.output) as { inputMessageID: string }
       const info = MessageV2.get({ sessionID: chat.id, messageID: MessageID.make(parsed.inputMessageID) }).info
@@ -326,6 +355,82 @@ describe("actor tool — send wake model", () => {
       Effect.gen(function* () {
         const model = yield* wake({ status: "idle", modelRef: "gone/missing", mainModel: { providerID: "test", modelID: "other" } })
         expect(model).toEqual(startModel)
+      }),
+    ),
+  )
+
+  // [TP-RUN-R13-01] (MiMo Desktop turn-execution)
+  it.live(
+    "a subagent with a parent actor follows the parent lane, not the main lane",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const model = yield* wake({
+          status: "idle",
+          parentModel: { providerID: "test", modelID: "parent-model", variant: "low" },
+          mainModel: { providerID: "test", modelID: "other", variant: "high" },
+        })
+        expect(model).toEqual({ providerID: "test", modelID: "parent-model", variant: "low" })
+      }),
+    ),
+  )
+
+  // [TP-RUN-R13-01] (MiMo Desktop turn-execution)
+  it.live(
+    "a cross-session wake follows the target session's main lane",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const model = yield* wake({ status: "idle", crossSession: true, mainModel: { providerID: "test", modelID: "other" } })
+        expect(model).toEqual({ providerID: "test", modelID: "other" })
+      }),
+    ),
+  )
+
+  // [TP-RUN-R13-04] (MiMo Desktop turn-execution)
+  it.live(
+    "an agent's own variant on its configured model survives the wake",
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const model = yield* wake({ status: "idle", agent: "tuned", mainModel: { providerID: "test", modelID: "other", variant: "max" } })
+          expect(model).toEqual({ providerID: "xiaomi", modelID: "mimo-v2-pro", variant: "high" })
+        }),
+      { config: { ...xiaomi, agent: { tuned: { description: "Tuned", mode: "subagent", model: "xiaomi/mimo-v2-pro", variant: "high" } } } },
+    ),
+  )
+
+  // [TP-RUN-R13-02] (MiMo Desktop turn-execution) the idle check and the write are one admission
+  // step: a candidate wake model reaching a lane that is already running is not applied.
+  it.live(
+    "Inbox applies the wake model only while the receiver is still idle at admission",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const chat = yield* (yield* Session.Service).create({ title: "chat" })
+        const registry = yield* ActorRegistry.Service
+        const inbox = yield* Inbox.Service
+        const actorID = yield* registry.allocateActorID(chat.id, "general")
+        yield* registry.register({
+          sessionID: chat.id,
+          actorID,
+          mode: "subagent",
+          agent: "general",
+          description: "child",
+          contextMode: "none",
+          background: true,
+          lifecycle: "ephemeral",
+        })
+        yield* userMessage(chat.id, startModel, actorID)
+        const idleModel = { providerID: "test", modelID: "other" } as MessageV2.User["model"]
+        const acceptWith = () =>
+          Effect.gen(function* () {
+            const { inputMessageID } = yield* inbox.accept({ receiverSessionID: chat.id, receiverActorID: actorID, content: "x", idleModel })
+            const info = MessageV2.get({ sessionID: chat.id, messageID: inputMessageID }).info
+            return info.role === "user" ? (info.model as Model) : undefined
+          })
+
+        yield* registry.updateStatus(chat.id, actorID, { status: "running" })
+        expect(yield* acceptWith()).toEqual(startModel)
+        yield* registry.updateStatus(chat.id, actorID, { status: "idle" })
+        expect(yield* acceptWith()).toEqual({ providerID: "test", modelID: "other" })
       }),
     ),
   )

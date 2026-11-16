@@ -95,7 +95,7 @@ export interface Interface {
     background: boolean
     lifecycle: Lifecycle
     tools?: ToolWhitelist
-    /** Raw explicit `model` of actor spawn/run; see actor.sql.ts `model_ref`. */
+    /** Explicit model of actor spawn/run as resolved `provider/model`; see actor.sql.ts `model_ref`. */
     modelRef?: string
   }) => Effect.Effect<Actor>
 

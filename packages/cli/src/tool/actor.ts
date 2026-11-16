@@ -314,19 +314,23 @@ export const ActorTool = Tool.define(
             )
           }
           const targetSid = op.to_session_id !== undefined ? SessionID.make(op.to_session_id) : ctx.sessionID
-          // A finished subagent woken by send re-resolves its model against the target session's
-          // current main model (subagent-model-follow.md S2.4). A running one keeps its start model:
-          // no override, so Inbox seeds the wake from its own last message.
+          // A finished subagent woken by send re-resolves its model against its parent lane — the
+          // actor that receives its completion notification (`parentActorID`, default main) — the
+          // way spawn resolves against the spawning turn (subagent-model-follow.md S2.4). This only
+          // computes a candidate; Inbox applies it in the admission transaction iff the receiver is
+          // still idle there, so a subagent that started running meanwhile keeps its model.
           const receiver = yield* actorRegistry.get(targetSid, op.to_actor_id)
           let wakeModel: { providerID: ProviderID; modelID: ModelID; variant?: string } | undefined
           if (receiver?.mode === "subagent" && receiver.status === "idle") {
-            const main = yield* resolveDrainSeed(sessions, actorRegistry, targetSid, "main")
+            const parent = yield* resolveDrainSeed(sessions, actorRegistry, targetSid, receiver.parentActorID ?? "main")
             const recv = yield* agent.get(receiver.agent)
-            if (main && recv) {
+            if (parent && recv) {
               // An explicit model that no longer resolves must not make the subagent unreachable:
-              // fall back to its last model rather than failing the send.
-              const resolved = yield* childModel(recv, yield* actorRegistry.modelRef(targetSid, op.to_actor_id), main.model)
-                .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+              // fall back to its last model rather than failing the send. Interrupts still propagate.
+              const resolved = yield* childModel(recv, yield* actorRegistry.modelRef(targetSid, op.to_actor_id), parent.model).pipe(
+                Effect.catch(() => Effect.succeed(undefined)),
+                Effect.catchDefect(() => Effect.succeed(undefined)),
+              )
               if (resolved) wakeModel = { ...resolved.model, ...(resolved.variant ? { variant: resolved.variant } : {}) }
             }
           }
@@ -338,7 +342,7 @@ export const ActorTool = Tool.define(
               senderActorID: ctx.agent ?? "main",
               content: op.content,
               ...(op.type !== undefined ? { type: op.type } : {}),
-              ...(wakeModel ? { model: wakeModel } : {}),
+              ...(wakeModel ? { idleModel: wakeModel } : {}),
             })
             .pipe(
               Effect.catchTag("InboxReceiverNotFound", () =>
@@ -579,7 +583,9 @@ export const ActorTool = Tool.define(
           context: "none",
           tools: next.toolAllowlist ? [...next.toolAllowlist] : "INHERIT",
           model,
-          ...(op.model ? { modelRef: op.model } : {}),
+          // Resolved, not raw: a bare model name or group resolves against the spawning turn's
+          // provider, which a later wake would not reproduce (subagent-model-follow.md S2.3).
+          ...(op.model ? { modelRef: `${model.providerID}/${model.modelID}` } : {}),
           ...(variant ? { variant } : {}),
           // run owns an interruptible wait; the child must outlive it and still notify.
           background: true,

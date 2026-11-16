@@ -1004,6 +1004,9 @@ describe("Actor tool reasoning variant inheritance", () => {
         Effect.gen(function* () {
           expect((yield* spawnWith({ model: "xiaomi/mimo-v2-pro" }))?.modelRef).toBe("xiaomi/mimo-v2-pro")
           expect((yield* spawnWith({}))?.modelRef).toBeUndefined()
+          // a group / bare name is stored as the model it resolved to at spawn
+          const grouped = yield* spawnWith({ model: "lite" })
+          expect(grouped?.modelRef).toBe(`${grouped?.model?.providerID}/${grouped?.model?.modelID}`)
         }),
       { config: xiaomi },
     ),

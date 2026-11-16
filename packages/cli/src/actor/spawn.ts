@@ -212,7 +212,7 @@ export interface SpawnInput {
   context: ContextMode
   tools: ToolWhitelist
   model?: { providerID: ProviderID; modelID: ModelID }
-  /** Raw explicit `model` argument, recorded so a later wake re-resolves it (subagent only). */
+  /** Explicit model as resolved `provider/model`, recorded so a later wake keeps it (subagent only). */
   modelRef?: string
   /**
    * Reasoning variant for the child's turns (recorded on its user messages and merged

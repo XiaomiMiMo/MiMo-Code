@@ -3,6 +3,7 @@ import { ulid } from "ulid"
 import { and, Database, eq, inArray, ne, or, sql } from "@/storage"
 import { NotFoundError } from "@/storage"
 import { SessionTable } from "@/session/session.sql"
+import { ActorRegistryTable } from "@/actor/actor.sql"
 import { MessageV2 } from "@/session/message-v2"
 import { Bus } from "@/bus"
 import { SyncEvent } from "@/sync"
@@ -211,7 +212,13 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           throw new Error("Inbox.accept parts must belong to the saved message")
         if (!db.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, input.message.sessionID)).get())
           throw new NotFoundError({ message: `Session not found: ${input.message.sessionID}` })
-        SyncEvent.run(MessageV2.Event.Updated, { sessionID: input.message.sessionID, info: input.message })
+        // Wake model (docs/compose/spec/subagent-model-follow.md S2.4): read the receiver's status in
+        // this transaction so the decision and the write are one step.
+        const idle = input.idleModel && db.select({ status: ActorRegistryTable.status }).from(ActorRegistryTable)
+          .where(and(eq(ActorRegistryTable.session_id, input.lane.sessionID), eq(ActorRegistryTable.actor_id, input.lane.agentID)))
+          .get()?.status === "idle"
+        const message = idle ? { ...input.message, model: input.idleModel! } : input.message
+        SyncEvent.run(MessageV2.Event.Updated, { sessionID: message.sessionID, info: message })
         for (const part of input.parts) {
           SyncEvent.run(MessageV2.Event.PartUpdated, {
             sessionID: part.sessionID,

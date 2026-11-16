@@ -35,6 +35,12 @@ export type AcceptInput = {
   senderActorID?: string
   idempotencyKey?: string
   legacyInboxID?: string
+  /**
+   * Model for this message when the receiver's actor row is still `idle` at admission (a finished
+   * subagent being woken); otherwise `message.model` stands. Decided inside the admission
+   * transaction, so a lane that started running in between keeps the model it runs on.
+   */
+  idleModel?: MessageV2.User["model"]
 }
 
 export const ReceiptStateSchema = z.enum(["accepted", "claimed", "settled", "cancelled", "rejected"])

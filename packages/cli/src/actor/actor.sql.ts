@@ -23,9 +23,9 @@ export const ActorRegistryTable = sqliteTable(
     context_watermark: text().$type<MessageID>(),
     background: integer({ mode: "boolean" }).notNull(),
     tools: text({ mode: "json" }).$type<readonly string[] | "INHERIT">(),
-    // Raw `model` argument of actor spawn/run (group name or provider/model).
-    // Resolved again when a finished subagent is woken by actor send; NULL =
-    // no explicit model. Not part of the public Actor schema.
+    // Explicit `model` of actor spawn/run, stored resolved as provider/model so
+    // a finished subagent woken by actor send runs on the same model; NULL = no
+    // explicit model. Not part of the public Actor schema.
     model_ref: text(),
     last_turn_time: integer().notNull(),
     turn_count: integer().notNull().default(0),
