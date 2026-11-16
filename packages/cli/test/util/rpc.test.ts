@@ -29,6 +29,8 @@ describe("util.rpc", () => {
     expect(await booted).toBe("early")
   })
 
+  // A plain port rather than a Worker: on Bun 1.3 an early message is queued, so only
+  // the posted messages themselves show whether the client waited for rpc.ready.
   test("requests are held until the worker announces it is ready", () => {
     const posted: string[] = []
     const port: Parameters<typeof Rpc.client>[0] = {
@@ -65,5 +67,26 @@ describe("util.rpc", () => {
     void client.call("exit", undefined).catch(() => {})
     await expect(pending).rejects.toThrow("worker stopped")
     await expect(client.call("echo", "late")).rejects.toThrow("worker stopped")
+  })
+
+  test("a worker that dies from an uncaught error rejects pending calls", async () => {
+    const client = Rpc.client<typeof rpc>(spawn())
+    await expect(client.call("crash", "uncaught")).rejects.toThrow("worker stopped")
+    await expect(client.call("echo", "late")).rejects.toThrow("worker stopped")
+  })
+
+  test("dispose drops in-flight calls without rejecting them and refuses new ones", async () => {
+    const worker = spawn()
+    const client = Rpc.client<typeof rpc>(worker)
+    expect(await client.call("echo", "ready")).toBe("ready")
+    let settled = false
+    void client.call("hang", undefined).finally(() => (settled = true))
+    client.dispose()
+    const closed = new Promise((resolve) => worker.addEventListener("close", resolve))
+    worker.terminate()
+    await closed
+    await Bun.sleep(10)
+    expect(settled).toBe(false)
+    await expect(client.call("echo", "late")).rejects.toThrow("disposed")
   })
 })

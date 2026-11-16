@@ -2,7 +2,7 @@
 // installing its RPC listener; Bun 1.4 drops messages that arrive in that window.
 import { Rpc } from "../../src/util"
 
-await Bun.sleep(Number(process.env.RPC_WORKER_DELAY_MS ?? 50))
+await Bun.sleep(50)
 
 export const rpc = {
   echo(input: string) {
@@ -13,6 +13,12 @@ export const rpc = {
   },
   exit() {
     process.exit(0)
+  },
+  crash(input: string) {
+    setTimeout(() => {
+      throw new Error(input)
+    }, 10)
+    return new Promise<never>(() => {})
   },
   hang() {
     return new Promise<never>(() => {})

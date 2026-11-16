@@ -1,3 +1,5 @@
+import { errorMessage } from "./error"
+
 type Definition = {
   [method: string]: (input: any) => any
 }
@@ -12,15 +14,11 @@ type Definition = {
 // that. Messages in the other direction are always safe because the client assigns
 // `target.onmessage` synchronously, in the same tick the Worker is constructed.
 
-function describe(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
-
 export function listen(rpc: Definition) {
   onmessage = async (evt) => {
     const parsed = JSON.parse(evt.data)
     if (parsed.type !== "rpc.request") return
-    const method = rpc[parsed.method]
+    const method = Object.hasOwn(rpc, parsed.method) ? rpc[parsed.method] : undefined
     if (typeof method !== "function") {
       postMessage(JSON.stringify({ type: "rpc.result", id: parsed.id, error: `unknown rpc method: ${parsed.method}` }))
       return
@@ -29,7 +27,7 @@ export function listen(rpc: Definition) {
       const result = await method(parsed.input)
       postMessage(JSON.stringify({ type: "rpc.result", result, id: parsed.id }))
     } catch (error) {
-      postMessage(JSON.stringify({ type: "rpc.result", id: parsed.id, error: describe(error) }))
+      postMessage(JSON.stringify({ type: "rpc.result", id: parsed.id, error: errorMessage(error) }))
     }
   }
   postMessage(JSON.stringify({ type: "rpc.ready" }))
@@ -46,7 +44,7 @@ export function client<T extends Definition>(target: {
 }) {
   const pending = new Map<number, { resolve: (result: any) => void; reject: (error: Error) => void }>()
   const listeners = new Map<string, Set<(data: any) => void>>()
-  const queue: string[] = []
+  const queue: [number, string][] = []
   let ready = false
   let stopped: Error | undefined
   let id = 0
@@ -55,7 +53,7 @@ export function client<T extends Definition>(target: {
     if (parsed.type === "rpc.ready") {
       if (ready) return
       ready = true
-      for (const message of queue.splice(0)) target.postMessage(message)
+      for (const [requestId, message] of queue.splice(0)) send(requestId, message)
       return
     }
     if (parsed.type === "rpc.result") {
@@ -78,11 +76,22 @@ export function client<T extends Definition>(target: {
   // Bun fires `close` when a worker exits for any reason, including an uncaught error
   // (which fires `error` first). Without this, every in-flight call would wait forever.
   target.addEventListener?.("close", () => {
+    if (stopped) return
     stopped = new Error("rpc worker stopped")
     queue.length = 0
     for (const call of pending.values()) call.reject(stopped)
     pending.clear()
   })
+  // Posting to a terminated worker throws on some runtimes (Bun 1.3); settle that
+  // call instead of leaving it pending.
+  function send(requestId: number, message: string) {
+    try {
+      target.postMessage(message)
+    } catch (error) {
+      pending.get(requestId)?.reject(error instanceof Error ? error : new Error(errorMessage(error)))
+      pending.delete(requestId)
+    }
+  }
   return {
     call<Method extends keyof T>(method: Method, input: Parameters<T[Method]>[0]): Promise<ReturnType<T[Method]>> {
       if (stopped) return Promise.reject(stopped)
@@ -90,9 +99,17 @@ export function client<T extends Definition>(target: {
       return new Promise((resolve, reject) => {
         pending.set(requestId, { resolve, reject })
         const message = JSON.stringify({ type: "rpc.request", method, input, id: requestId })
-        if (ready) target.postMessage(message)
-        else queue.push(message)
+        if (ready) send(requestId, message)
+        else queue.push([requestId, message])
       })
+    },
+    // Intentional shutdown: stop accepting calls and drop in-flight ones without
+    // rejecting them, so terminating the worker afterwards cannot surface as
+    // unhandled rejections while the host process is exiting.
+    dispose() {
+      stopped ??= new Error("rpc client disposed")
+      queue.length = 0
+      pending.clear()
     },
     on<Data>(event: string, handler: (data: Data) => void) {
       let handlers = listeners.get(event)
