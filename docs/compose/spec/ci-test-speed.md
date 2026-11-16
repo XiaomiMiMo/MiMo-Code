@@ -9,23 +9,17 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2817
 
 ## Report
 
-**What was built** — Three timing-bound tests are skipped: main-wait's
-30-second refresh test (31s of real sleep), the invalid-output subagent hang
-test, and the cron-bridge `stop … after restart` variant. The unit job now
-splits files across shards by recorded duration (`script/test-shard.ts` plus
-`test/shard-weights.json`) instead of by `cksum` path hash. The isolated suites
-are spread over shards 1–3, and `--reserve 21,13,16,0` accounts for their time.
-On the current file list the simulated weighted load is about 293s on every
-shard. Before, it ranged from about 205s to 390s. The slowest shard was about
-400s against an 8-minute limit; it is now about 293s.
+**What was built**
+- Three timing-bound tests are skipped: main-wait's 30-second refresh test, the invalid-output subagent hang test, and the cron-bridge `stop … after restart` variant.
+- Unit files are now assigned to shards by recorded duration (`script/test-shard.ts` + `test/shard-weights.json`), replacing the `cksum` hash. Each weight is at least 0.05s.
+- The isolated suites are spread over shards 1–3, and `--reserve` accounts for their time.
+- The Effect test harness now waits at most 1s for the process-wide log flush, so a stalled log queue can no longer hang unrelated tests.
 
 **Verification**
-- `bun test test/actor/main-wait.test.ts test/session/invalid-output-continuation.test.ts test/session/cron-bridge.integration.test.ts test/script/test-shard.test.ts --timeout 120000`: 86 pass, 3 skip (the intended ones), 0 fail.
-- `bun test test/script/test-shard.test.ts` after the review fixes: 6 pass, 0 fail.
-- `bun run typecheck` (packages/cli): PASS. `bun lint`: 0 errors.
-- Simulated the workflow pipeline for shards 1–4 under `bash -e`: 570 files, each assigned exactly once (143/143/143/141); weighted totals including the reserve were 293.5/293.5/293.6/293.5.
-- Independent review: no critical findings. Malformed `--reserve` lists are now rejected and weights have a 0.05s floor.
-- Known risk: files now share a process with different neighbours, so cross-file interference could surface; this PR's CI run is the check.
+- PR CI run 43824220225: all 4 shards green. Unit-step times were 234/287/248/246s, down from 226–398s on main. JUnit totals per shard were 227/280/244/242s. The whole run took 5m39s, against about 7.5–8 min on main. `task/registry.test.ts` took 0.14s per test; in the earlier run it timed out at 120s.
+- Linux CI repro (four trigger files + registry.test.ts): 52 pass, 0 fail with the harness bound. Without it, 8 of 9 registry tests timed out.
+- Local runs: the three edited suites plus the shard-script tests gave 86 pass, 3 intended skips; the shard-script tests gave 6 pass; the harness- and log-related suites gave 15 pass. `typecheck` PASS, `bun lint` 0 errors.
+- Independent review: no critical findings across three rounds.
 
 ## [S1] Problem
 
@@ -84,6 +78,13 @@ covering the same code paths.
 The workflow keeps its `find` exclusions and empty-shard guard, replacing only
 the cksum loop with the script.
 
+### S2.3 Spread the isolated suites
+
+Each isolated step stays a separate process run but moves off shard 4/4:
+MCP mock suites → 1/4 (≈21s); provider refresh + deadline worktree → 2/4
+(≈13s); stdio-exit-observe + release script → 3/4 (≈16s). The shared run
+passes `--reserve 21,13,16,0` so the per-shard job totals stay balanced.
+
 ### S2.4 Bounded log flush in the Effect test harness
 
 `test/lib/effect.ts` flushed the process-wide log queue after every
@@ -94,28 +95,33 @@ over 120s, so trivial suites such as `test/task/registry.test.ts` (sub-10ms of
 real work per test) timed out. The harness now waits at most 1s for the flush;
 tests that assert on log contents already call `Log.flush()` themselves.
 
-### S2.3 Spread the isolated suites
-
-Each isolated step stays a separate process run but moves off shard 4/4:
-MCP mock suites → 1/4 (≈21s); provider refresh + deadline worktree → 2/4
-(≈13s); stdio-exit-observe + release script → 3/4 (≈16s). The shared run
-passes `--reserve 21,13,16,0` so the per-shard job totals stay balanced.
-
 ## [S3] Out of Scope
 
 - Fixing the root causes of the skipped tests.
 - `bun test --parallel` / changing shard count or the isolated steps.
 - The checkpoint-progress-reconcile flake (PR #2816).
+- The root cause of the stalled process-wide log queue (S2.4); the harness bound
+  only stops it from hanging unrelated tests.
 
 ## Tasks
 - [x] T1: skip the three timing-bound tests — acceptance: each file runs locally with the test reported as skipped and the rest passing (covers: S2.1)
 - [x] T2: add `test-shard.ts` + weights + unit test — acceptance: tests show deterministic, complete, balanced assignment and unknown-file default (covers: S2.2)
 - [x] T3: wire the workflow to the script — acceptance: simulated 4-shard split of the current file list covers every file once with max shard ≤ 300 weighted seconds (depends: T2)
-- [x] T5: bound the harness log flush — acceptance: on Linux CI the 4-file polluter set + registry.test.ts passes (was 8/9 timeouts) (covers: S2.4)
 - [x] T4: spread isolated steps with `--reserve` — acceptance: no shard holds all isolated steps; simulated totals including reserve differ by ≤ 5s (covers: S2.3, depends: T3)
+- [x] T5: bound the harness log flush — acceptance: on Linux CI the 4-file polluter set + registry.test.ts passes (was 8/9 timeouts) (covers: S2.4)
 
 ## Journey log
 - `runtime-worktree.test.ts` is excluded from the shared run and only its
   `deadline-fired` case runs in isolation, so its other 7 cases (≈20s, all pass
   locally) never run in CI. Left as-is here; restoring them is a coverage
   decision, not a speed one.
+- The first PR CI run timed out on shard 4/4 in `task/registry.test.ts`,
+  because the new split put it in a process with different neighbours. On
+  Linux CI, leave-one-out narrowed the trigger to four files; every pairwise
+  combination passed, and the hang did not reproduce on macOS. Phase
+  instrumentation put the whole time in `Log.flush()` inside the testEffect
+  harness, while fs calls and `Instance.provide` were fast. Removing
+  `Instance.disposeAll()` from the test did not help. Which queued log operation
+  stalls is still unknown: the log file stayed empty, so it is not write
+  volume. Follow-up: find it, since `Log.shutdown()` in production waits on the
+  same queue.
