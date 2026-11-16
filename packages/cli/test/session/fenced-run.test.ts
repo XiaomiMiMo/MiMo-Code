@@ -1,0 +1,107 @@
+// A run whose claimed inputs were cancelled out from under it (a stop fence, or
+// boot reconciliation from another controller) can no longer claim lane input,
+// yet a waiting input still supersedes its retries. Each superseded step starts
+// another failing step at once, so the run must stop instead of spinning.
+import path from "path"
+import { afterEach, expect, test } from "bun:test"
+import { Effect, Fiber, Layer } from "effect"
+import { Instance } from "../../src/project/instance"
+import { Session } from "../../src/session"
+import { SessionPrompt } from "../../src/session/prompt"
+import { inboxControllerRef, InboxTable } from "../../src/inbox"
+import { Database, eq } from "../../src/storage"
+import { tmpdir } from "../fixture/fixture"
+import { startScriptedLLMServer } from "../lib/scripted-llm-server"
+
+afterEach(async () => {
+  await Instance.disposeAll()
+})
+
+function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Service>) {
+  return Effect.runPromise(
+    fx.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer))),
+  )
+}
+
+// Every retry waits a minute, so any burst of requests comes from superseded steps.
+function writeSlowRetryConfig(dir: string, origin: string) {
+  const slow = { initialDelayMs: 60_000, maxDelayMs: 60_000, jitterRatio: 0 }
+  return Bun.write(
+    path.join(dir, "mimocode.json"),
+    JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      enabled_providers: ["alibaba"],
+      provider: { alibaba: { options: { apiKey: "test-key", baseURL: `${origin}/v1` } } },
+      agent: { build: { model: "alibaba/qwen-plus" } },
+      retry: {
+        request: { ...slow, mode: "bounded", maxRetries: 5, noDeadline: true },
+        network: slow,
+        server: slow,
+        rateLimit: slow,
+        stream: slow,
+        unknown: slow,
+      },
+    }),
+  )
+}
+
+function waitFor(condition: () => boolean) {
+  return Effect.promise(async () => {
+    while (!condition()) await Bun.sleep(10)
+  }).pipe(Effect.timeout("10 seconds"))
+}
+
+test("a run whose claimed input was cancelled stops instead of spinning on superseded retries", async () => {
+  await using tmp = await tmpdir({ git: true })
+  const unavailable = [
+    JSON.stringify({
+      error: { code: "model_not_found", type: "new_api_error", message: "No available channel for model test/model" },
+    }),
+  ]
+  // The last scripted response repeats, so every request fails with a retryable 503.
+  const stub = startScriptedLLMServer([{ lines: unavailable, status: 503 }])
+  try {
+    await writeSlowRetryConfig(tmp.path, stub.origin)
+    const result = await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const sessions = yield* Session.Service
+            const prompt = yield* SessionPrompt.Service
+            const controller = inboxControllerRef.current
+            if (!controller) throw new Error("inbox controller is not bound")
+            const session = yield* sessions.create({ title: "fenced-run" })
+            const first = yield* prompt
+              .prompt({ sessionID: session.id, agent: "build", parts: [{ type: "text", text: "First question." }] })
+              .pipe(Effect.exit, Effect.forkChild)
+            // The first request failed and the run is waiting out its one-minute retry.
+            yield* waitFor(() => stub.captures.length >= 1)
+            yield* Effect.sleep("200 millis")
+            // Fence the run: its claimed input is cancelled while the run itself keeps going.
+            yield* controller.withStop(session.id, Effect.void)
+            const fenced = Database.use((db) =>
+              db.select().from(InboxTable).where(eq(InboxTable.receiver_session_id, session.id)).all(),
+            )
+            const second = yield* prompt
+              .prompt({ sessionID: session.id, agent: "build", parts: [{ type: "text", text: "Second question." }] })
+              .pipe(Effect.exit, Effect.forkChild)
+            yield* Effect.sleep("1500 millis")
+            const requests = stub.captures.length
+            const firstDone = first.pollUnsafe() !== undefined
+            yield* prompt.cancel(session.id)
+            yield* Fiber.join(first).pipe(Effect.timeout("10 seconds"))
+            yield* Fiber.join(second).pipe(Effect.timeout("10 seconds"))
+            return { fenced: fenced.map((row) => row.state), requests, firstDone }
+          }),
+        ),
+    })
+    expect(result.fenced).toEqual(["cancelled"])
+    // The fenced run ended, and the second input started a fresh run that waits out its
+    // own retry: one request for the first run, one for the second.
+    expect(result.firstDone).toBe(true)
+    expect(result.requests).toBe(2)
+  } finally {
+    await stub.stop()
+  }
+}, 30_000)

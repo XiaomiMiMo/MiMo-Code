@@ -5023,6 +5023,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ? yield* controller.claimNext(lane, claimOwner.runId)
               : yield* controller.extendClaim(lane, claimOwner.runId, claimOwner.receipts[0]?.epoch,
                 step === 0 ? MAX_CLAIM_PER_STEP - claimOwner.receipts.length : MAX_CLAIM_PER_STEP)
+            // A run keeps its claims until it settles them. If none is still claimed, a
+            // stop or boot reconciliation cancelled them while this run kept going: it
+            // can no longer claim lane input, and a waiting input would supersede every
+            // retry and start the next failing step at once. Stop like a cancelled run.
+            if (!extended && claimOwner.receipts.length > 0) {
+              const ids = claimOwner.receipts.map((receipt) => receipt.id)
+              const held = yield* Effect.sync(() => Database.use((db) => db.select({ id: InboxTable.id }).from(InboxTable).where(and(
+                inArray(InboxTable.id, ids), eq(InboxTable.state, "claimed"), eq(InboxTable.run_id, claimOwner.runId),
+              )).get()))
+              if (!held) {
+                yield* slog.warn("run lost its claimed input; stopping", { step, receipts: ids.length })
+                return yield* Effect.interrupt
+              }
+            }
             if (extended) {
               const lease = claimOwner.receipts.map((receipt) => receiptLeases.get(receipt.id)).find((value) => value !== undefined)
               if (lease) for (const receipt of extended.receipts) {
