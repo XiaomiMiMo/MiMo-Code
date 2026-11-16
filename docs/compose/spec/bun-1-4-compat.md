@@ -2,7 +2,7 @@
 feature: bun-1-4-compat
 status: in-progress
 updated: 2026-11-16
-source: chore/bun-1-4-compat-survey
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2821
 ---
 
 # Bun 1.4.4 compatibility survey
