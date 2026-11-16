@@ -398,6 +398,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             eq(InboxTable.epoch, epoch),
           )).returning().all()
           if (rows.length === 0) return undefined
+          // Registered inside the transaction so no reconciliation can run between the
+          // commit and the registration; a rollback leaves an entry that settling removes.
           liveClaimRuns.add(claimRunKey(lane.sessionID, lane.agentID, runId))
           InboxSync.record({ sessionID: lane.sessionID, receipts: rows })
           return {
@@ -477,9 +479,12 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           InboxSync.record({ sessionID: lane.sessionID, receipts: rows, lanes })
           return rows
         }),
+      ).pipe(
+        // A run settles its claims once, when it ends; release it even if the ack fails.
+        Effect.ensuring(Effect.sync(() => {
+          if (expectedRunId != null) liveClaimRuns.delete(claimRunKey(lane.sessionID, lane.agentID, expectedRunId))
+        })),
       )
-      // A run settles its claims once, when it ends.
-      if (expectedRunId != null) liveClaimRuns.delete(claimRunKey(lane.sessionID, lane.agentID, expectedRunId))
       for (const row of rows) yield* publish(toReceipt(row))
     })
 

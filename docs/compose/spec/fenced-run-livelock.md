@@ -40,7 +40,13 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2819
 - Linux CI run with the original trigger set: `Log.flush()` went from 6.4s
   and then over 20s each to 0ms; CPU from 89.9s user to 36ms; registry tests
   from about 1.5s to about 0.14s each.
-- Independent review, two rounds: no critical findings. Fixed from review: test
+- After the safety-audit fixes: the subagent fenced-run test fails without the
+  `prompt.ts` check and passes with it, and `fenced-run.test.ts` passes 3 times
+  in a row (2/2 each). test/inbox, test/actor, test/server, fenced-run,
+  invalid-output-continuation, prompt-effect, fork-queue and
+  external-import-queue: 822 pass, 5 skip, 0 fail. `typecheck` PASS.
+- Independent review, two rounds, plus an independent safety audit: no
+  critical findings. Fixed from review: test
   timing, the stale-key cleanup in `settleClaims`, and the restart test now
   removes one key instead of clearing the set.
 
@@ -89,21 +95,6 @@ parent receives a cancelled notification. With S2.3, a run that is
 still running is fenced only by a stop or an epoch bump, and both cancel the
 waiting inputs too, so nothing is left stranded.
 
-### S2.3 Boot reconciliation keeps claims of runs alive in this process
-
-`reconcileOnBoot` treats every `claimed` row as left over from a crashed process
-and cancels it. A run can outlive the Instance and controller that admitted it,
-for example across `Instance.disposeAll()` after a config change. A later
-controller then cancelled that live run's claims, which is how the CI run got
-fenced. With S2.1 alone it would also cancel legitimate work (see Journey log).
-
-A process-wide set `liveClaimRuns` (`inbox/controller-ref.ts`) records the
-lane and run id each time `claim` claims rows. The entry is removed when the run
-settles: `ack` removes it, and `settleClaims` also removes it when there is
-nothing to ack or no controller is bound. `reconcileOnBoot` cancels only claimed rows whose run is not in
-the set. A restarted process starts with an empty set, so restart recovery is
-unchanged.
-
 ### S2.2 Testing
 
 `test/session/fenced-run.test.ts` sets up this state through public APIs only:
@@ -124,12 +115,47 @@ such as title generation may add some), not a burst. The test waits for this wit
 - "reconcileOnBoot keeps claims of a run still alive in this process until it
   settles them": the claim stays `claimed` through reconciliation, then `ack`
   settles it.
-- The existing restart test now clears `liveClaimRuns` to stand in for a fresh
+- The live-run reconcile test also checks that the filter is selective: in the
+  same reconcile, an orphaned claim (its run's entry removed) is cancelled, and
+  `ack` releases the live run's entry.
+- The existing restart test now removes its run's entry to stand in for a fresh
   process, and still expects `cancelled/never_ran`.
+
+`test/session/fenced-run.test.ts` also has a subagent-lane case: a background
+subagent waiting out a one-minute retry is fenced by a stop while a follow-up
+waits in its lane. It must end with a `cancelled` outcome within 10s and send no
+burst of requests. Without the S2.1 check it never ends.
 
 `test/actor/execution-integration.test.ts` ("new main messages preserve four
 background actors…") covers the end-to-end case: four background subagents keep
 running across `Instance.disposeAll()` and still succeed.
+
+### S2.3 Boot reconciliation keeps claims of runs alive in this process
+
+`reconcileOnBoot` treats every `claimed` row as left over from a crashed process
+and cancels it. A run can outlive the Instance and controller that admitted it,
+for example across `Instance.disposeAll()` after a config change. A later
+controller then cancelled that live run's claims, which is how the CI run got
+fenced. With S2.1 alone it would also cancel legitimate work (see Journey log).
+
+A process-wide set `liveClaimRuns` (`inbox/controller-ref.ts`) records the
+lane and run id each time `claim` claims rows. The entry is added inside the
+claim transaction, so no reconciliation can run between the commit and the
+registration; if the transaction rolls back, settling still removes the entry.
+The entry is removed when the run settles, even if settling fails: `ack` and
+`settleClaims` both remove it in `ensuring`, which also covers runs with nothing
+to ack or no bound controller. `reconcileOnBoot` cancels only claimed rows whose
+run is not in the set. A restarted process starts with an empty set, so restart
+recovery is unchanged.
+
+Run ids come from `nextClaimRunId()`, which stays time-ordered but never repeats
+in the process (`max(Date.now(), last + 1)`). Before, it was `Date.now()`, so two
+runs on one lane started in the same millisecond shared a run id, and with it
+the claim ownership and the `liveClaimRuns` entry.
+
+Trade-off: a run that is alive but wedged now keeps its claims until a stop or a
+process restart. Before, a later controller's reconciliation released them. A
+user stop still clears them, because `cancelInputs` ignores the set.
 
 ## [S3] Out of Scope
 
@@ -140,14 +166,17 @@ running across `Instance.disposeAll()` and still succeed.
   reconciliation still treats them as crashed, as before.
 - Re-kicking a waiting input on a subagent lane after a stop-fenced run is
   interrupted.
+- Logging or expiring `liveClaimRuns` entries that are unusually old (a wedged
+  live run).
 - Moving `subagent-resume-negatives` back into the shared CI process.
 
 ## Tasks
 
 - [x] T1: regression test reproducing the spin — acceptance: fails on main (first run still running after 1.5s) (covers: S2.2)
-- [x] T2: stop a run that no longer holds any claim — acceptance: T1 passes with exactly two provider requests (covers: S2.1, depends: T1)
+- [x] T2: stop a run that no longer holds any claim — acceptance: T1 passes: the first run ends and exactly one request carries the second question (covers: S2.1, depends: T1)
 - [x] T4: boot reconciliation keeps live-run claims — acceptance: the new queue-controller test fails without the change and passes with it; the execution-integration background-actors test passes (covers: S2.3)
 - [x] T3: no regressions in inbox, claim, receipt and supersede suites — acceptance: those suites pass (depends: T2, T4)
+- [x] T5: safety-audit fixes — `liveClaimRuns` is released even when settling fails, run ids never repeat, and a subagent fenced-run test is added — acceptance: the subagent test fails without S2.1 and passes with it; typecheck passes (covers: S2.1, S2.3)
 
 ## Journey log
 
@@ -165,3 +194,8 @@ preserve four background actors awaiting model responses`: children ended as
   acked nothing; with S2.1 the fence check stopped them. So the boot
   reconciliation was the actual source of the fence, both here and on CI, and
   S2.3 fixes it at that point. The S2.1 check stays for runs fenced by a stop.
+- An independent safety audit found nothing critical or major. Fixed from it:
+  release `liveClaimRuns` entries in `ensuring` so a failed ack cannot leave
+  one behind, and make run ids unique. Also added the subagent-lane fenced-run
+  test. Kept the registration inside the claim transaction, because registering
+  after the commit would let a reconciliation run in between.

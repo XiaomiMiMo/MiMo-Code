@@ -25,7 +25,7 @@ import * as Session from "./session"
 import { Agent, resolveStoredAgent } from "../agent/agent"
 import { decideAskRouting, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { makeTerminalNotifier } from "@/actor/notification"
-import { claimRunKey, inboxControllerRef, liveClaimRuns, schedulerRef, type Lane } from "@/inbox"
+import { claimRunKey, inboxControllerRef, liveClaimRuns, nextClaimRunId, schedulerRef, type Lane } from "@/inbox"
 import { MAX_CLAIM_PER_STEP, type Receipt } from "@/inbox/schema"
 import { ActorExecution } from "@/actor/execution"
 import { DEFAULT_LIVENESS_STALL_MS } from "@/actor/schema"
@@ -3910,11 +3910,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const settleClaims = (lane: Lane, owner: ClaimOwner, exit: Exit.Exit<MessageV2.WithParts, unknown>) =>
       Effect.gen(function* () {
         const controller = inboxControllerRef.current
-        if (!controller || owner.receipts.length === 0) {
-          // Nothing to ack here, but the run has ended: stop shielding its claims.
-          liveClaimRuns.delete(claimRunKey(lane.sessionID, lane.agentID, owner.runId))
-          return
-        }
+        if (!controller || owner.receipts.length === 0) return
         const rows = Database.use((db) => db.select().from(InboxTable).where(and(
           inArray(InboxTable.id, owner.receipts.map((receipt) => receipt.id)),
           eq(InboxTable.state, "claimed"), eq(InboxTable.run_id, owner.runId),
@@ -3942,7 +3938,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
           receiptPrompts.delete(receipt.id)
         }
-      })
+      }).pipe(
+        // The run has ended: stop shielding its claims from boot reconciliation, even
+        // when there was nothing to ack or settling failed.
+        Effect.ensuring(Effect.sync(() => liveClaimRuns.delete(claimRunKey(lane.sessionID, lane.agentID, owner.runId)))),
+      )
 
     // Removes the retry records of the user turns this run completed successfully.
     // Called only at the run loop's success exits, never from failure, abort or
@@ -4019,7 +4019,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         claimFrontier?: MessageID,
         claimOwner?: ClaimOwner,
       ) {
-        claimOwner ??= { runId: Date.now(), receipts: [], frontier: claimFrontier }
+        claimOwner ??= { runId: nextClaimRunId(), receipts: [], frontier: claimFrontier }
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
         let structured: unknown | undefined
@@ -7645,7 +7645,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const controller = inboxControllerRef.current
               if (!controller) return undefined
               yield* guard!
-              const runId = Date.now()
+              const runId = nextClaimRunId()
               const claim = yield* controller.claimNext(lane, runId, accepted[0].epoch).pipe(Effect.onExit((exit) => Exit.isFailure(exit)
                 ? Effect.gen(function* () {
                     const receipts = Database.use((db) => db.select({ id: InboxTable.id }).from(InboxTable)

@@ -11,3 +11,7 @@ export const inboxControllerRef: { current: Interface | undefined } = { current:
 export const liveClaimRuns = new Set<string>()
 
 export const claimRunKey = (sessionID: string, agentID: string, runId: number) => `${sessionID}:${agentID}:${runId}`
+
+let lastClaimRunId = 0
+/** Run ids stay time-ordered but never repeat in this process, even for runs started in the same millisecond. */
+export const nextClaimRunId = () => (lastClaimRunId = Math.max(Date.now(), lastClaimRunId + 1))
