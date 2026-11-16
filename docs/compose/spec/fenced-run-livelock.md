@@ -2,7 +2,7 @@
 feature: fenced-run-livelock
 status: delivered
 updated: 2026-11-16
-source: fix/stale-claim-livelock
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2819
 ---
 
 # Fenced run livelock
