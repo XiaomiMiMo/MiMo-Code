@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
+import { fileURLToPath } from "url"
 import { Effect, Layer, Option } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
@@ -45,7 +46,11 @@ describe("Npm.add", () => {
     )
     await fs.writeFile(path.join(pkg, "index.js"), "module.exports = 1\n")
     await fs.mkdir(path.join(tmp.path, "real"))
-    await fs.symlink(path.join(tmp.path, "real"), path.join(tmp.path, "linked"))
+    await fs.symlink(
+      path.join(tmp.path, "real"),
+      path.join(tmp.path, "linked"),
+      process.platform === "win32" ? "junction" : "dir",
+    )
 
     const entry = await Effect.runPromise(
       Npm.Service.use((svc) => svc.add(`file:${pkg}`)).pipe(
@@ -53,7 +58,9 @@ describe("Npm.add", () => {
       ),
     )
 
-    expect(Option.isSome(entry.entrypoint)).toBe(true)
+    const entrypoint = Option.getOrThrow(entry.entrypoint)
+    const file = entrypoint.startsWith("file://") ? fileURLToPath(entrypoint) : entrypoint
+    expect(await fs.realpath(file)).toBe(await fs.realpath(path.join(pkg, "index.js")))
     expect(await fs.realpath(entry.directory)).toBe(await fs.realpath(pkg))
   })
 })

@@ -80,7 +80,7 @@ export const layer = Layer.effect(
     const reify = (input: { dir: string; add?: string[] }) =>
       Effect.gen(function* () {
         yield* flock.acquire(`npm-install:${input.dir}`)
-        const failed = (cause: unknown) => new InstallFailedError({ cause, add: input?.add, dir: input.dir })
+        const failed = (cause: unknown) => new InstallFailedError({ cause, add: input.add, dir: input.dir })
         // Arborist returns an empty tree (no edges, no children) when its root path
         // runs through a symlink, even though it installed everything — e.g. a
         // symlinked ~/.cache, or /tmp on macOS. Hand it the real path.
