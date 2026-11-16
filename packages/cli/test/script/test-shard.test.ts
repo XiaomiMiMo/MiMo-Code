@@ -22,6 +22,12 @@ test("every file lands in exactly one shard and heavy files spread out", () => {
   expect(shards.map((s) => s.load)).toEqual([12, 11])
 })
 
+test("near-zero files are floored so they spread across shards", () => {
+  const files = Array.from({ length: 4 }, (_, i) => `test/z${i}.test.ts`)
+  const shards = assign(files, 2, Object.fromEntries(files.map((f) => [f, 0])))
+  expect(shards.map((s) => s.files.length)).toEqual([2, 2])
+})
+
 test("assignment does not depend on input order", () => {
   const files = Array.from({ length: 20 }, (_, i) => `test/f${i}.test.ts`)
   const weights = Object.fromEntries(files.map((f, i) => [f, (i * 7) % 5]))
@@ -46,16 +52,20 @@ test("the CLI prints one shard of the stdin file list", async () => {
   expect(await $`bun ${script} 1 2 < ${input()}`.text()).toBe("test/x-unknown-1.test.ts\n")
   expect(await $`bun ${script} 2 2 < ${input()}`.text()).toBe("test/x-unknown-2.test.ts\n")
   expect(await $`bun ${script} 2 2 --reserve 0,5 < ${input()}`.text()).toBe("")
-  expect(
-    await $`bun ${script} 3 2 < ${input()}`
+  const exitCode = (args: string[]) =>
+    $`bun ${script} ${args} < ${input()}`
       .nothrow()
       .quiet()
-      .then((r) => r.exitCode),
-  ).not.toBe(0)
-  expect(
-    await $`bun ${script} 1 2 --reserve 1,x < ${input()}`
-      .nothrow()
-      .quiet()
-      .then((r) => r.exitCode),
-  ).not.toBe(0)
+      .then((r) => r.exitCode)
+  for (const bad of [
+    ["3", "2"],
+    ["1", "2", "extra"],
+    ["1", "2", "--reserve"],
+    ["1", "2", "--reserve", ""],
+    ["1", "2", "--reserve", "1,,2"],
+    ["1", "2", "--reserve", "1,x"],
+    ["1", "2", "--reserve", "1,2,3"],
+    ["1", "2", "--reserve", "1", "extra"],
+  ])
+    expect(await exitCode(bad)).not.toBe(0)
 })

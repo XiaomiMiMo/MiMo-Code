@@ -13,10 +13,13 @@ import path from "node:path"
 
 const WEIGHTS = path.join(import.meta.dir, "../test/shard-weights.json")
 const DEFAULT_WEIGHT = 1
+// Per-file load and hook cost that JUnit test-case times leave out; keeps
+// near-zero files from all piling onto whichever shard is lightest last.
+const MIN_WEIGHT = 0.05
 
 export function assign(files: string[], total: number, weights: Record<string, number>, reserve: number[] = []) {
   const shards = Array.from({ length: total }, (_, i) => ({ load: reserve[i] ?? 0, files: [] as string[] }))
-  const weight = (file: string) => weights[file] ?? DEFAULT_WEIGHT
+  const weight = (file: string) => Math.max(weights[file] ?? DEFAULT_WEIGHT, MIN_WEIGHT)
   const sorted = [...new Set(files)].sort((a, b) => weight(b) - weight(a) || (a < b ? -1 : a > b ? 1 : 0))
   for (const file of sorted) {
     const target = shards.reduce((min, shard) => (shard.load < min.load ? shard : min))
@@ -56,9 +59,10 @@ if (import.meta.main) {
     const total = Number(args[1])
     const usage = "usage: test-shard.ts <index> <total> [--reserve s1,s2,...] < files.txt"
     if (!Number.isInteger(index) || !Number.isInteger(total) || index < 1 || index > total) throw new Error(usage)
-    const reserve =
-      args[2] === "--reserve" ? (args[3] ?? "").split(",").map(Number) : args.length > 2 ? [Number.NaN] : []
-    if (reserve.length > total || reserve.some((s) => !Number.isFinite(s) || s < 0)) throw new Error(usage)
+    if (args.length !== 2 && !(args.length === 4 && args[2] === "--reserve")) throw new Error(usage)
+    const parts = args.length === 4 ? args[3]!.split(",") : []
+    if (parts.length > total || parts.some((part) => !/^\d+(\.\d+)?$/.test(part))) throw new Error(usage)
+    const reserve = parts.map(Number)
     const files = (await Bun.stdin.text())
       .split("\n")
       .map((line) => line.trim())

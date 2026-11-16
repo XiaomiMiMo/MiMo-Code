@@ -80,6 +80,8 @@ jobs:
           name: junit-shard-${{ strategy.job-index }}
           path: packages/cli/.artifacts/unit/junit.xml
 
+      # Isolated steps below are pinned to shards 1–3; keep `--reserve` above in
+      # step with their per-shard step time when moving or adding one.
       - name: Run provider refresh tests (isolated)
         if: matrix.shard == '2/4'
         timeout-minutes: 3

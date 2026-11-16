@@ -50,7 +50,8 @@ covering the same code paths.
   path per line, relative to `packages/cli`) from stdin and prints the files
   assigned to shard `<index>` (1-based).
 - Weights come from `packages/cli/test/shard-weights.json` (`{ path: seconds }`).
-  A file absent from the map weighs 1s.
+  A file absent from the map weighs 1s; every weight is floored at 0.05s to
+  stand in for per-file load cost that JUnit case times omit.
 - Assignment is greedy LPT: files sorted by weight descending, then path
   ascending; each goes to the lightest shard, lowest index on ties. Output is
   deterministic for a given input set and weight map, and every input file is
