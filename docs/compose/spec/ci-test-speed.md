@@ -1,6 +1,6 @@
 ---
 feature: ci-test-speed
-status: in-progress
+status: delivered
 updated: 2026-11-16
 source: ci/test-speed
 ---
@@ -8,7 +8,24 @@ source: ci/test-speed
 # CI test speed and flake removal
 
 ## Report
-[Not finalized yet]
+
+**What was built** — Three timing-bound tests are skipped: main-wait's
+30-second refresh test (31s of real sleep), the invalid-output subagent hang
+test, and the cron-bridge `stop … after restart` variant. The unit job now
+splits files across shards by recorded duration (`script/test-shard.ts` plus
+`test/shard-weights.json`) instead of by `cksum` path hash. The isolated suites
+are spread over shards 1–3, and `--reserve 21,13,16,0` accounts for their time.
+On the current file list the simulated weighted load is about 293s on every
+shard. Before, it ranged from about 205s to 390s. The slowest shard was about
+400s against an 8-minute limit; it is now about 293s.
+
+**Verification**
+- `bun test test/actor/main-wait.test.ts test/session/invalid-output-continuation.test.ts test/session/cron-bridge.integration.test.ts test/script/test-shard.test.ts --timeout 120000`: 86 pass, 3 skip (the intended ones), 0 fail.
+- `bun test test/script/test-shard.test.ts` after the review fixes: 6 pass, 0 fail.
+- `bun run typecheck` (packages/cli): PASS. `bun lint`: 0 errors.
+- Simulated the workflow pipeline for shards 1–4 under `bash -e`: 570 files, each assigned exactly once (143/143/143/141); weighted totals including the reserve were 293.5/293.5/293.6/293.5.
+- Independent review: no critical findings. Malformed `--reserve` lists are now rejected and weights have a 0.05s floor.
+- Known risk: files now share a process with different neighbours, so cross-file interference could surface; this PR's CI run is the check.
 
 ## [S1] Problem
 
@@ -81,10 +98,10 @@ passes `--reserve 21,13,16,0` so the per-shard job totals stay balanced.
 - The checkpoint-progress-reconcile flake (PR #2816).
 
 ## Tasks
-- [ ] T1: skip the three timing-bound tests — acceptance: each file runs locally with the test reported as skipped and the rest passing (covers: S2.1)
-- [ ] T2: add `test-shard.ts` + weights + unit test — acceptance: tests show deterministic, complete, balanced assignment and unknown-file default (covers: S2.2)
-- [ ] T3: wire the workflow to the script — acceptance: simulated 4-shard split of the current file list covers every file once with max shard ≤ 300 weighted seconds (depends: T2)
-- [ ] T4: spread isolated steps with `--reserve` — acceptance: no shard holds all isolated steps; simulated totals including reserve differ by ≤ 5s (covers: S2.3, depends: T3)
+- [x] T1: skip the three timing-bound tests — acceptance: each file runs locally with the test reported as skipped and the rest passing (covers: S2.1)
+- [x] T2: add `test-shard.ts` + weights + unit test — acceptance: tests show deterministic, complete, balanced assignment and unknown-file default (covers: S2.2)
+- [x] T3: wire the workflow to the script — acceptance: simulated 4-shard split of the current file list covers every file once with max shard ≤ 300 weighted seconds (depends: T2)
+- [x] T4: spread isolated steps with `--reserve` — acceptance: no shard holds all isolated steps; simulated totals including reserve differ by ≤ 5s (covers: S2.3, depends: T3)
 
 ## Journey log
 - `runtime-worktree.test.ts` is excluded from the shared run and only its
