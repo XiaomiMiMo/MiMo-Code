@@ -1,6 +1,6 @@
 ---
 feature: tui-worker-startup-handshake
-status: in-progress
+status: delivered
 updated: 2026-11-16
 source: fix/tui-worker-startup-handshake
 ---
@@ -8,7 +8,24 @@ source: fix/tui-worker-startup-handshake
 # TUI worker startup handshake
 
 ## Report
-[Not finalized yet]
+
+**What was built**
+- `Rpc.listen` posts `rpc.ready` once its listener is installed, and `Rpc.client` queues requests until it receives `rpc.ready`. Delivery to the TUI worker therefore no longer depends on how the runtime treats messages that arrive before the listener exists.
+- Method failures, unknown methods and failed posts reject the call instead of hanging it.
+- A worker `close` rejects every pending and later call.
+- `thread.ts` disposes the client before terminating the worker, so a deliberate shutdown leaves no stray rejections.
+
+**Verification**
+- `bun test test/util/rpc.test.ts`: 8 pass / 0 fail on both Bun 1.3.14 and Bun 1.4.4. Before the fix: on 1.4.4 the first call timed out (the #2782 stall); the hold-until-ready test failed on both runtimes; a throwing method crashed the 1.3.14 test process (exit 133) and hung on 1.4.4.
+- `bun run typecheck` (packages/cli): pass.
+- `bun test test/util test/cli` (1.3.14): 763 pass / 0 fail.
+- Real TUI from source on Bun 1.4.4 (tmux, up to 45s for the status bar):
+  - Base commit: drew 0/5; the process stayed alive.
+  - This branch: drew 5/5, then 3/3 more after the review fixes. Quitting with Ctrl+C exited 0 with an empty stderr.
+- Homebrew-style single binaries (root pin rewritten to `bun@1.4.4`, `build.ts --single --skip-install`):
+  - Base commit: drew 2/5.
+  - This branch: drew 5/5, then 15/15.
+- Real TUI from source on Bun 1.3.14 with this branch: drew 3/3.
 
 ## [S1] Problem
 
@@ -75,10 +92,11 @@ in `thread.ts`) can therefore never run.
 - Changing the Homebrew formula or the pinned Bun version.
 
 ## Tasks
-- [ ] T1: Ready handshake in `rpc.ts` and worker — acceptance: a real Bun Worker that awaits before `Rpc.listen` answers a call made immediately after construction, under both Bun 1.3.14 and 1.4.4; the client posts no request before `rpc.ready` (covers: S2.1)
-- [ ] T2: Error replies — acceptance: a call to a throwing method or an unknown method rejects with the error message instead of hanging (covers: S2.2)
-- [ ] T3: Termination handling — acceptance: when the worker exits or errors, pending calls reject and later calls reject immediately (covers: S2.3)
-- [ ] T4: Bun 1.4.4 end-to-end evidence — acceptance: with the root pin switched to `bun@1.4.4` in a scratch checkout, the TUI started from source and from a `build.ts --single` binary draws its status bar in repeated starts with this change and stalls without it (depends: T1)
+- [x] T1: Ready handshake in `rpc.ts` and worker — acceptance: a real Bun Worker that awaits before `Rpc.listen` answers a call made immediately after construction, under both Bun 1.3.14 and 1.4.4; the client posts no request before `rpc.ready` (covers: S2.1)
+- [x] T2: Error replies — acceptance: a call to a throwing method or an unknown method rejects with the error message instead of hanging (covers: S2.2)
+- [x] T3: Termination handling — acceptance: when the worker exits or errors, pending calls reject and later calls reject immediately (covers: S2.3)
+- [x] T4: Bun 1.4.4 end-to-end evidence — acceptance: with the root pin switched to `bun@1.4.4` in a scratch checkout, the TUI started from source and from a `build.ts --single` binary draws its status bar in repeated starts with this change and stalls without it (depends: T1)
 
 ## Journey log
+- Bun 1.4.4 delivers a message only if the worker assigns `onmessage` synchronously during module evaluation; after any top-level `await` in the worker or in a module it imports, the message is dropped. Do not rely on listener timing; use the handshake.
 - My first attempt to run the real TUI under 1.4.4 passed a directory path instead of the binary, so the run never actually launched and the "exits on its own" result was wrong. Use `.../bun/1.4.4/bun/bin/bun.native`.
