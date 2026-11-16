@@ -16,10 +16,10 @@ described below was reverted before commit.
 
 | #  | Area | Symptom | 1.3.14 | 1.4.4 | Root cause | Severity |
 | -- | ---- | ------- | ------ | ----- | ---------- | -------- |
-| F1 | TUI startup (Worker messaging) | Interactive TUI never draws. The process stays alive at 0% CPU with an empty worker log. Ctrl+C exits. | Draws in 5/5 starts, about 2–3 s | Hangs in 5/5 starts (compiled binary) and 5/5 (from source) | Bun 1.4.4 drops a `postMessage` sent to a Worker before the worker's global `onmessage` exists. On 1.3.14 it is queued. `thread.ts` posts `server` about 40 ms after `new Worker`, but the worker module body only starts about 500 ms later, after its import graph evaluates. | **Critical** (issue #2782) |
+| F1 | TUI startup (Worker messaging) | Interactive TUI never draws. The process stays alive at 0% CPU with an empty worker log. | Draws in 5/5 starts | Hangs in 5/5 starts (compiled and from source) | Bun 1.4.4 drops a `postMessage` sent to a Worker before the worker's global `onmessage` exists; 1.3.14 queues it. | **Critical** (issue #2782); **fixed runtime-independently by #2820** |
 | F2 | `Bun.stringWidth` | `test/cli/tui/collapse.test.ts` › "keeps one cluster even when it is wider than the whole budget" fails deterministically | `stringWidth("\u1100\u1161\u11A8") === 4` | `=== 2` | Runtime changed grapheme-width rules for conjoining Hangul jamo; 1.4.4 now matches the precomposed syllable `한` (2) | Low (test pins old runtime behaviour; TUI clipping for decomposed jamo changes by 2 cells) |
-| F3 | Install (`bun ci`) | `warn: patches/@npmcli%2Fagent@4.0.0.patch no longer applies (@npmcli/agent is now 4.0.2)` | Silent, patch **not** applied | Warns, patch **not** applied | Pre-existing: `patchedDependencies` keys `@npmcli/agent@4.0.0` but the lockfile resolves 4.0.2. 1.4.4 only makes it visible. | Low (pre-existing) |
-| F4 | Full `bun test` run | 75–77 failures per full run, with different sets on each run | 77 fail, 4 errors | 75 fail, 3 errors | Pre-existing cross-file contamination (`mock.module` leaking between files in one `bun test` process, leaked MCP SDK cancel timers raising `this._transport?.send is not a function` between tests) plus load sensitivity. Not runtime-specific. | Medium (pre-existing; hides real regressions such as F2) |
+| F3 | `@npmcli/agent` proxy patch | Installing an npm plugin with `http(s)_proxy` set fails: `fetch() proxy.url must be a non-empty string` | **Bug in shipped builds**: patch keyed to 4.0.0 never applies to the locked 4.0.2 | Install works (1.4.4 accepts a `URL` here); `bun ci` warns that the patch no longer applies | `@npmcli/agent` exposes `agent.proxy.url` as a `URL`; Bun 1.3.14's `node:http` passes it to `fetch`, which requires a string | **Medium, pre-existing, affects current releases** |
+| F4 | Test isolation | CI on the 1.4.4 pin (rebased on #2820) is red only on F2; the other shard failures from the first run did not recur | CI green | CI: only F2 fails | Not runtime-specific. CI already runs the `mock.module` MCP suites in separate processes. `bun test --isolate` exists on **both** runtimes and makes `test/mcp` pass 152/152 on both, while a plain run fails 32 on both | Info (CI could adopt `--isolate`; unrelated to the pin) |
 | F5 | Compiled binary size | `dist/mimocode-darwin-arm64/bin/mimo` | 101,357,666 B | 128,227,298 B (+27%) | Larger Bun 1.4.4 runtime embedded by `bun build --compile` | Info |
 
 Everything else matched across runtimes: `bun ci` (same 1063 packages in the `node_modules/.bun`
@@ -27,9 +27,11 @@ store, lockfile untouched), `bun run typecheck` (passes), build (`exit 0`, built
 passes), `--version`, `models`, headless `run` (reaches the provider, which returns 401), and
 `serve --port 0` (HTTP 200 on all four endpoints probed).
 
-A temporary main-side "worker ready" handshake (reverted) made the 1.4.4 TUI draw in 5/5 starts.
+A main-side "worker ready" handshake (now merged as #2820) made the 1.4.4 TUI draw in 5/5 starts.
 The privacy dialog, `ctrl+p`, prompt submit and clean exit (`EXIT=0`, about 1 s) all worked.
 No second TUI blocker surfaced behind F1.
+
+With the pin rebased onto #2820, CI fails only on F2. F3 turned out to be a bug in current 1.3.14 releases, not a 1.4 issue.
 
 ## [S1] Problem
 
@@ -153,42 +155,59 @@ two isolated reruns. Production callers are `src/cli/cmd/tui/util/collapse.ts:30
 `prompt/autocomplete.tsx:182`. The only effect is a 2-cell width difference for decomposed jamo
 sequences.
 
-### F3 — `@npmcli/agent` patch is not applied (pre-existing, newly visible)
+### F3 — `@npmcli/agent` proxy patch never applies (bug in shipped builds)
 
-`package.json` `patchedDependencies` lists `@npmcli/agent@4.0.0`, but `bun.lock` resolves
-`@npmcli/agent@4.0.2`. On both runtimes, the installed
-`node_modules/.bun/@npmcli+agent@4.0.2/.../lib/agents.js:35` still reads
-`{ url: this.#proxy }` (unpatched). Only 1.4.4 prints the warning. Install is otherwise identical
-(exit 0, same store entry count, `bun.lock` unchanged).
+`package.json` `patchedDependencies` keys `@npmcli/agent@4.0.0`, but `bun.lock` has resolved
+`@npmcli/agent@4.0.2` since the initial import. So the patch has never applied in this repository.
+1.3.14 skips it silently; 1.4.4 prints `no longer applies`. The patch applies cleanly to 4.0.2.
 
-### F4 — Full-suite test noise (pre-existing, both runtimes)
+The patch matters. `getAgent()` reads `https_proxy` / `http_proxy` / `proxy` from the environment at
+module load and stores the proxy as a `URL`. Its `proxy` getter returns `{ url: <URL> }`. Bun's
+`node:http` reads `agent.proxy.url` and hands it to `fetch()`:
 
-| Run | pass | skip | todo | fail | errors | tests | wall |
-| --- | ---- | ---- | ---- | ---- | ------ | ----- | ---- |
-| full, 1.4.4 | 6219 | 41 | 1 | 75 | 3 | 6336 / 589 files | 1303 s (another agent's 1.3.14 test process shared the CPU for part of the run) |
-| full, 1.3.14 | 6216 | 41 | 1 | 77 | 4 | 6335 / 589 files | 1972 s |
-| 26 files that failed on 1.4.4, 1.3.14 | 143 | 2 | – | 47 | 1 | 192 | 446 s |
-| same 26 files, 1.4.4 | 142 | 2 | – | 48 | 1 | 192 | 406 s |
+| Runtime | unpatched 4.0.2 | patched 4.0.2 |
+| --- | --- | --- |
+| 1.3.14 | `ERROR fetch() proxy.url must be a non-empty string`, request never sent | goes through the proxy |
+| 1.4.4 | goes through the proxy | goes through the proxy |
 
-- 39 failure names are shared between the two full runs. 36 fail only in the 1.4.4 full run, and
-  38 only in the 1.3.14 full run (Project/Worktree/actor tests).
-- Of the 36 failures seen only on 1.4.4, 35 pass when rerun on 1.4.4 (subset run and two isolated
-  reruns of `test/workflow/{sandbox,persistence,manifest-permission,runtime-worktree,tool,model-routing}`,
-  `test/session/{checkpoint-splitover-integration,turn-end-lossless}`, `test/plugin/checkpoint-splitover`).
-  These are flakes. The remaining one is F2.
-- The MCP block (`test/mcp/lifecycle.test.ts` plus `admission-*`, `oauth-*`, `host`,
-  `first-turn-wait`, `tool-progress`, `session/tool-*`) fails identically on **both** runtimes when
-  run together with other files. `test/mcp/lifecycle.test.ts` alone passes 31/31 on both.
-  Cause: `mock.module(...)` (lifecycle.test.ts:126–134) contends with files that loaded the real
-  modules first.
-- Many of the workflow/sandbox failures in the 1.4.4 full run are unhandled
-  `TypeError: this._transport?.send is not a function` from
-  `@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:667` (a request-cancel timer left over
-  from an earlier MCP test with a mocked transport). The error is attributed to whichever test is
-  running when it fires. The same class of "Unhandled error between tests" appears on 1.3.14.
+Reproduced with the released binary (0.1.17, embedded Bun 1.3.14):
 
-Classification: **1.4.4-only deterministic: 1 (F2). 1.4.4-only flaky: 35. Pre-existing on both:
-the rest.** None involve sqlite, fetch/streams, spawn/pty, fs or timer semantics changes.
+```sh
+cd /tmp/example && https_proxy=http://127.0.0.1:8080 mimo plugin left-pad
+# ■  request to https://registry.npmjs.org/left-pad failed, reason: fetch() proxy.url must be a non-empty string
+```
+
+So every npm plugin install via Arborist (`src/npm/index.ts`) fails for users behind a proxy
+configured through the environment, whether or not the proxy works. This is independent of the
+1.4 pin; the fix is to re-key the patch to 4.0.2, which also updates `bun.lock`.
+
+### F4 — Test isolation (not runtime-specific)
+
+An earlier version of this survey compared two plain full `bun test` runs (75–77 failures each) and
+called that "suite noise". That comparison does not reflect CI. `.github/workflows/test.yml` already
+excludes the `mock.module` MCP suites, provider refresh, `runtime-worktree`, `stdio-exit-observe`
+and `subagent-resume-negatives` from the sharded run, and runs them in separate processes.
+
+CI on the 1.4.4 pin:
+
+| Run | Result |
+| --- | --- |
+| first push (base 24c3d937) | shard 1: F2; shard 2: `Bun timeout interrupts and finalizes Effect tests…`; shard 4 isolated step: `subagent resume recovery negatives > cascade resume…` |
+| rebased on #2820 | only F2 (moved to shard 4); all other shards green |
+
+The two non-F2 failures pass 3/3 locally on both runtimes and did not recur, so they are CI timing
+flakes.
+
+`bun test --isolate` (a fresh global per file) exists on 1.3.14 already. 1.4.4 adds `--no-isolate`
+and `--timings` (built-in duration-balanced sharding). Running `test/mcp`:
+
+| Runtime | plain | `--isolate` |
+| --- | --- | --- |
+| 1.3.14 | 120 pass / 32 fail (494 s) | 152 pass / 0 fail (120 s) |
+| 1.4.4 | 120 pass / 32 fail (487 s) | 152 pass / 0 fail (91 s) |
+
+So isolation is available today; it is not something only an upgrade unlocks. Whether `--isolate`
+also covers the process-wide-idleness checks (provider refresh) is untested.
 
 ### F5 — Build and non-TUI smoke
 
@@ -211,37 +230,31 @@ resulting binary is broken because the embedded 1.4.4 runtime triggers F1.
 
 ## [S4] Out of Scope
 
-- Fixing F1 in product code. Another agent owns the worker handshake fix in a separate worktree.
-  This survey only adds the evidence that a worker-side reorder alone is insufficient.
+- Fixing F1 here; it landed separately in #2820.
 - Node build (`script/build-node.ts`), Windows/Linux targets, the `packages/sdk` / plugin tests,
   and authenticated end-to-end model turns (no credentials were used).
 - An exhaustive Bun-API audit. APIs were checked only where a failure pointed at them (`Worker`,
   `Bun.stringWidth`).
-- De-flaking the suite-wide `mock.module` / leaked MCP timer contamination (F4). It is
-  pre-existing, and only recorded here because it hides runtime regressions.
 
 ## Tasks
 
-- [ ] **T1 — TUI worker handshake survives Bun 1.4.x** (owned elsewhere). Acceptance: with the
-  pin at `bun@1.4.4`, a binary from `bun --bun ./script/build.ts --single --skip-install` draws the
-  `ctrl+p` status bar in tmux in 10/10 cold starts. 1.3.14 behaviour is unchanged. The first
-  `client.call` cannot be sent before the worker signals readiness, or it has a bounded timeout
-  with a visible error instead of an infinite hang. A test covers a worker whose import graph is
-  slow.
+Suggested order. Each item keeps 1.3.14 working and removes a 1.4 blocker or an existing bug.
+
+- [x] **T1 — TUI worker handshake survives Bun 1.4.x.** Delivered by #2820 (ready handshake in
+  `src/util/rpc.ts`).
 - [ ] **T2 — `collapse.test.ts` stops pinning runtime-specific jamo width.** Acceptance: the test
-  asserts the clipping invariant (one cluster kept whole even when wider than the budget) with a
-  cluster whose width is the same on 1.3.14 and 1.4.4, or derives the expected width from
-  `Bun.stringWidth`. `bun test test/cli/tui/collapse.test.ts` passes on both runtimes.
-- [ ] **T3 — `@npmcli/agent` patch key matches the resolved version.** Acceptance: the patch is
-  re-keyed to (or regenerated for) `@npmcli/agent@4.0.2`, or removed if no longer needed. `bun ci`
-  on 1.4.4 prints no "no longer applies" warning. The installed `lib/agents.js` contains the
-  patched `this.#proxy.toString()`.
-- [ ] **T4 — Full `bun test` run is order-independent for MCP tests.** Acceptance: the MCP block
-  (`test/mcp/*`, `test/session/tool-*`) passes in a full-suite run on both runtimes, and no
-  "Unhandled error between tests" from `protocol.js` cancel timers is reported.
-- [ ] **T5 — Decide the pin bump.** Acceptance: after T1–T2 land, the pin moves to `bun@1.4.x`
-  with CI green, or the decision not to bump (and to state the supported Bun range for packagers
-  such as Homebrew) is recorded.
+  asserts the clipping invariant with a cluster whose width is the same on 1.3.14 and 1.4.4, and
+  passes on both runtimes. This is the only remaining CI failure on the 1.4.4 pin.
+- [ ] **T3 — Re-key the `@npmcli/agent` patch to 4.0.2.** Acceptance: `patchedDependencies` and
+  `bun.lock` reference `@npmcli/agent@4.0.2`; the installed `lib/agents.js` returns
+  `this.#proxy.toString()`; with `https_proxy` set, `mimo plugin <pkg>` on a 1.3.14 build no longer
+  fails with `proxy.url must be a non-empty string`. Fixes a bug in current releases.
+- [ ] **T4 — Consider `bun test --isolate` in CI.** Acceptance: the hand-written isolated steps are
+  replaced or reduced where `--isolate` gives equal results on 1.3.14 (it does for `test/mcp`),
+  with CI green.
+- [ ] **T5 — Decide the pin bump.** Optional; no upgrade is planned. Acceptance: after T2 lands,
+  either the pin moves to `bun@1.4.x` with CI green, or the supported Bun range for downstream
+  packagers such as Homebrew is documented.
 
 ## Journey log
 
