@@ -9,20 +9,23 @@ import {
   renderProgressDiffBlock,
   buildProgressDiff,
 } from "../../src/session/checkpoint-progress-reconcile"
-import { checkpointPath, tasksDir, progressPath } from "../../src/session/checkpoint-paths"
+import { checkpointPath, metaDir, tasksDir, progressPath } from "../../src/session/checkpoint-paths"
 import { SessionID } from "../../src/session/schema"
+
+let seq = 0
 
 async function withTmpHome<T>(fn: (sid: SessionID) => Promise<T>): Promise<T> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "progress-reconcile-test-"))
   const prevHome = process.env.MIMOCODE_HOME
   process.env.MIMOCODE_HOME = dir
+  const sid = SessionID.make("ses_test_" + Date.now() + "_" + seq++)
   try {
-    const sid = SessionID.make("ses_test_" + Date.now())
     await fs.mkdir(tasksDir(sid), { recursive: true })
     return await fn(sid)
   } finally {
     if (prevHome === undefined) delete process.env.MIMOCODE_HOME
     else process.env.MIMOCODE_HOME = prevHome
+    await fs.rm(metaDir(sid), { recursive: true, force: true })
     await fs.rm(dir, { recursive: true, force: true })
   }
 }
