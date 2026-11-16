@@ -4,7 +4,7 @@ import { Bus } from "../../src/bus"
 import { Session as SessionNs } from "../../src/session"
 import { MessageID, PartID } from "../../src/session/schema"
 import { MessageV2 } from "../../src/session/message-v2"
-import { InboxController, inboxControllerRef, liveClaimRuns, schedulerRef, type Receipt } from "../../src/inbox"
+import { claimRunKey, InboxController, inboxControllerRef, liveClaimRuns, schedulerRef, type Receipt } from "../../src/inbox"
 import { InboxTable, InboxLaneStateTable, InboxSessionEpochTable } from "../../src/inbox/inbox.sql"
 import { Database, eq, and } from "../../src/storage"
 import { Instance } from "../../src/project/instance"
@@ -388,8 +388,8 @@ describe("Inbox controller", () => {
           type: "prompt",
         })
         yield* tq.claimNext(lane, 1)
-        // A restarted process has no live runs.
-        liveClaimRuns.clear()
+        // The claiming run belonged to a process that has since restarted.
+        liveClaimRuns.delete(claimRunKey(session.id, "main", 1))
         yield* tq.reconcileOnBoot(session.id)
         const r = yield* tq.getReceipt(receipt.id)
         expect(r.state).toBe("cancelled")
@@ -406,14 +406,18 @@ describe("Inbox controller", () => {
         const tq = yield* InboxController.Service
         const session = yield* sessions.create({ title: "reconcile-live" })
         const lane = { sessionID: session.id, agentID: "main" }
-        const { message, parts } = userMessage(session.id)
-        const receipt = yield* tq.accept({ lane, message, parts, type: "prompt" })
+        const live = yield* tq.accept({ lane, ...userMessage(session.id), type: "prompt" })
         const claim = yield* tq.claimNext(lane, 1)
-        // A later controller reconciles while the run that claimed the input keeps going.
+        const orphan = yield* tq.accept({ lane, ...userMessage(session.id), type: "prompt" })
+        yield* tq.claimNext(lane, 2)
+        // Run 2 belonged to a process that has since restarted; run 1 keeps going here.
+        liveClaimRuns.delete(claimRunKey(session.id, "main", 2))
         yield* tq.reconcileOnBoot(session.id)
-        expect((yield* tq.getReceipt(receipt.id)).state).toBe("claimed")
-        yield* tq.ack(lane, claim!.claimFrontier, [{ receiptId: receipt.id, outcome: "success" }], 1)
-        expect((yield* tq.getReceipt(receipt.id)).state).toBe("settled")
+        expect((yield* tq.getReceipt(live.id)).state).toBe("claimed")
+        expect((yield* tq.getReceipt(orphan.id)).state).toBe("cancelled")
+        yield* tq.ack(lane, claim!.claimFrontier, [{ receiptId: live.id, outcome: "success" }], 1)
+        expect((yield* tq.getReceipt(live.id)).state).toBe("settled")
+        expect(liveClaimRuns.has(claimRunKey(session.id, "main", 1))).toBe(false)
       }),
     ),
   )

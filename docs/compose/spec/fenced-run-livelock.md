@@ -1,6 +1,6 @@
 ---
 feature: fenced-run-livelock
-status: in-progress
+status: delivered
 updated: 2026-11-16
 source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2819
 ---
@@ -9,33 +9,40 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2819
 
 ## Report
 
-**What was built** — When a run that holds inbox receipts claims nothing new, it
-checks whether any receipt is still `claimed` by its `runId`. If none is, a stop
-or boot reconciliation fenced it: the run logs
-`run lost its claimed input; stopping` and ends as an interrupted run. A waiting
-input on the main lane is then served by a fresh run with normal retry backoff,
-instead of superseding every retry of the fenced run in a zero-backoff loop.
+**What was built**
+
+- A run whose inbox claims were all cancelled while it kept going (fenced)
+  now stops at its next step instead of spinning on superseded retries. A
+  waiting input on the main lane is then served by a fresh run with normal
+  backoff.
+- Boot reconciliation no longer treats claims of runs still alive in this
+  process as crashed. A process-wide `liveClaimRuns` set protects them from
+  claim to settle. This removes the cause of the fence seen on CI, and the
+  same cause would have cancelled background subagents that outlive an
+  `Instance.disposeAll()`.
 
 **Verification**
 
-- `test/session/fenced-run.test.ts`: fails without the fix (the first run never
-  ends within 10s); passes with it (exactly 2 provider requests), 3 runs in a row.
-- 42 test files matching claimNext / extendClaim / withStop / receipt /
-  InboxTable / superseded / prompt.cancel: 752 pass, 7 skip, 0 fail.
-- `bun run typecheck`: PASS.
-- Linux CI run with the original trigger set (subagent-resume-negatives +
-  cron/end-to-end + installation + json-migration + task/registry + a
-  `Log.flush()` probe):
-
-  |                         | baseline (main `prompt.ts`) | with fix          |
-  | ----------------------- | --------------------------- | ----------------- |
-  | `Log.flush()`           | 6.4s, then over 20s each    | 0ms               |
-  | CPU in the probe window | 89.9s user over about 74s   | 36ms user over 8s |
-  | registry test           | about 1.5s each             | about 0.14s each  |
-
-- Independent review: no critical findings. Addressed: test timing (bounded
-  wait instead of a fixed sleep), and the subagent-lane and no-input behaviour
-  are now documented.
+- `test/session/fenced-run.test.ts`: fails without the `prompt.ts` change (the
+  first run never ends within 10s). Passes with it, 3 runs in a row: exactly one
+  request carries the second question.
+- `test/inbox/queue-controller.test.ts`: the new live-run reconcile test fails
+  without the controller change and passes with it. It checks that a live
+  run's claim is kept, an orphaned claim is cancelled, and `ack` releases the
+  entry. The file passes 21/21.
+- `test/actor/execution-integration.test.ts` (four background actors across
+  `Instance.disposeAll()`): failed with only the S2.1 change; passes now.
+- Local run of 180 claim/receipt/inbox/actor/dispose-related files in one
+  process: 2272 pass, 4 fail. All 4 failing files pass on their own, and the
+  fenced-run failure (3 requests) led to the request-count change.
+- PR CI at `f1fa929b`: lint, typecheck and unit shards 1–4 green. `typecheck`
+  PASS after the final review fixes.
+- Linux CI run with the original trigger set: `Log.flush()` went from 6.4s
+  and then over 20s each to 0ms; CPU from 89.9s user to 36ms; registry tests
+  from about 1.5s to about 0.14s each.
+- Independent review, two rounds: no critical findings. Fixed from review: test
+  timing, the stale-key cleanup in `settleClaims`, and the restart test now
+  removes one key instead of clearing the set.
 
 ## [S1] Problem
 
@@ -78,8 +85,9 @@ A fenced run stops even when no input is waiting. Its inputs are already
 lane the runner treats an interrupt as a normal end, so the waiting or remaining
 kick starts the fresh run. On a subagent lane an interrupt also cancels the
 actor, so a still-accepted input waits for the next accept or kick, and the
-parent receives a cancelled notification. With S2.3 only a stop fences a live
-run, and a stop cancels the waiting inputs too, so nothing is left stranded.
+parent receives a cancelled notification. With S2.3, a run that is
+still running is fenced only by a stop or an epoch bump, and both cancel the
+waiting inputs too, so nothing is left stranded.
 
 ### S2.3 Boot reconciliation keeps claims of runs alive in this process
 
@@ -90,8 +98,9 @@ controller then cancelled that live run's claims, which is how the CI run got
 fenced. With S2.1 alone it would also cancel legitimate work (see Journey log).
 
 A process-wide set `liveClaimRuns` (`inbox/controller-ref.ts`) records the
-lane and run id each time `claim` claims rows, and `ack` removes the entry when
-the run settles. `reconcileOnBoot` cancels only claimed rows whose run is not in
+lane and run id each time `claim` claims rows. The entry is removed when the run
+settles: `ack` removes it, and `settleClaims` also removes it when there is
+nothing to ack or no controller is bound. `reconcileOnBoot` cancels only claimed rows whose run is not in
 the set. A restarted process starts with an empty set, so restart recovery is
 unchanged.
 
@@ -137,8 +146,8 @@ running across `Instance.disposeAll()` and still succeed.
 
 - [x] T1: regression test reproducing the spin — acceptance: fails on main (first run still running after 1.5s) (covers: S2.2)
 - [x] T2: stop a run that no longer holds any claim — acceptance: T1 passes with exactly two provider requests (covers: S2.1, depends: T1)
-- [ ] T4: boot reconciliation keeps live-run claims — acceptance: the new queue-controller test fails without the change and passes with it; the execution-integration background-actors test passes (covers: S2.3)
-- [ ] T3: no regressions in inbox, claim, receipt and supersede suites — acceptance: those suites pass (depends: T2, T4)
+- [x] T4: boot reconciliation keeps live-run claims — acceptance: the new queue-controller test fails without the change and passes with it; the execution-integration background-actors test passes (covers: S2.3)
+- [x] T3: no regressions in inbox, claim, receipt and supersede suites — acceptance: those suites pass (depends: T2, T4)
 
 ## Journey log
 

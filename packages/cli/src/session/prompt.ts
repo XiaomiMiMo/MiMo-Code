@@ -25,7 +25,7 @@ import * as Session from "./session"
 import { Agent, resolveStoredAgent } from "../agent/agent"
 import { decideAskRouting, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { makeTerminalNotifier } from "@/actor/notification"
-import { inboxControllerRef, schedulerRef, type Lane } from "@/inbox"
+import { claimRunKey, inboxControllerRef, liveClaimRuns, schedulerRef, type Lane } from "@/inbox"
 import { MAX_CLAIM_PER_STEP, type Receipt } from "@/inbox/schema"
 import { ActorExecution } from "@/actor/execution"
 import { DEFAULT_LIVENESS_STALL_MS } from "@/actor/schema"
@@ -3910,7 +3910,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const settleClaims = (lane: Lane, owner: ClaimOwner, exit: Exit.Exit<MessageV2.WithParts, unknown>) =>
       Effect.gen(function* () {
         const controller = inboxControllerRef.current
-        if (!controller || owner.receipts.length === 0) return
+        if (!controller || owner.receipts.length === 0) {
+          // Nothing to ack here, but the run has ended: stop shielding its claims.
+          liveClaimRuns.delete(claimRunKey(lane.sessionID, lane.agentID, owner.runId))
+          return
+        }
         const rows = Database.use((db) => db.select().from(InboxTable).where(and(
           inArray(InboxTable.id, owner.receipts.map((receipt) => receipt.id)),
           eq(InboxTable.state, "claimed"), eq(InboxTable.run_id, owner.runId),
