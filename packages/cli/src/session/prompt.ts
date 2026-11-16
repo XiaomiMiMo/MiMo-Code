@@ -25,7 +25,7 @@ import * as Session from "./session"
 import { Agent, resolveStoredAgent } from "../agent/agent"
 import { decideAskRouting, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { makeTerminalNotifier } from "@/actor/notification"
-import { inboxControllerRef, schedulerRef, type Lane } from "@/inbox"
+import { claimRunKey, inboxControllerRef, liveClaimRuns, nextClaimRunId, schedulerRef, type Lane } from "@/inbox"
 import { MAX_CLAIM_PER_STEP, type Receipt } from "@/inbox/schema"
 import { ActorExecution } from "@/actor/execution"
 import { DEFAULT_LIVENESS_STALL_MS } from "@/actor/schema"
@@ -3938,7 +3938,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
           receiptPrompts.delete(receipt.id)
         }
-      })
+      }).pipe(
+        // The run has ended: stop shielding its claims from boot reconciliation, even
+        // when there was nothing to ack or settling failed.
+        Effect.ensuring(Effect.sync(() => liveClaimRuns.delete(claimRunKey(lane.sessionID, lane.agentID, owner.runId)))),
+      )
 
     // Removes the retry records of the user turns this run completed successfully.
     // Called only at the run loop's success exits, never from failure, abort or
@@ -4015,7 +4019,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         claimFrontier?: MessageID,
         claimOwner?: ClaimOwner,
       ) {
-        claimOwner ??= { runId: Date.now(), receipts: [], frontier: claimFrontier }
+        claimOwner ??= { runId: nextClaimRunId(), receipts: [], frontier: claimFrontier }
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
         let structured: unknown | undefined
@@ -5023,6 +5027,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ? yield* controller.claimNext(lane, claimOwner.runId)
               : yield* controller.extendClaim(lane, claimOwner.runId, claimOwner.receipts[0]?.epoch,
                 step === 0 ? MAX_CLAIM_PER_STEP - claimOwner.receipts.length : MAX_CLAIM_PER_STEP)
+            // A run keeps its claims until it settles them. If none is still claimed, a
+            // stop or boot reconciliation cancelled them while this run kept going: it
+            // can no longer claim lane input, and a waiting input would supersede every
+            // retry and start the next failing step at once. Stop like a cancelled run.
+            if (!extended && claimOwner.receipts.length > 0) {
+              const ids = claimOwner.receipts.map((receipt) => receipt.id)
+              const held = yield* Effect.sync(() => Database.use((db) => db.select({ id: InboxTable.id }).from(InboxTable).where(and(
+                inArray(InboxTable.id, ids), eq(InboxTable.state, "claimed"), eq(InboxTable.run_id, claimOwner.runId),
+              )).get()))
+              if (!held) {
+                yield* slog.warn("run lost its claimed input; stopping", { step, receipts: ids.length })
+                return yield* Effect.interrupt
+              }
+            }
             if (extended) {
               const lease = claimOwner.receipts.map((receipt) => receiptLeases.get(receipt.id)).find((value) => value !== undefined)
               if (lease) for (const receipt of extended.receipts) {
@@ -7627,7 +7645,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const controller = inboxControllerRef.current
               if (!controller) return undefined
               yield* guard!
-              const runId = Date.now()
+              const runId = nextClaimRunId()
               const claim = yield* controller.claimNext(lane, runId, accepted[0].epoch).pipe(Effect.onExit((exit) => Exit.isFailure(exit)
                 ? Effect.gen(function* () {
                     const receipts = Database.use((db) => db.select({ id: InboxTable.id }).from(InboxTable)
