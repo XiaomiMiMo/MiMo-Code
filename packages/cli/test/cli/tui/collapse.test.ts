@@ -86,10 +86,12 @@ describe("collapse display width", () => {
   })
 
   test("keeps one cluster even when it is wider than the whole budget", () => {
-    // three stacked Hangul jamo segment as a single cluster four cells wide, so a
-    // 2-cell budget cannot fit it — without the guard the head comes back empty
+    // three stacked Hangul jamo segment as a single cluster wider than a 1-cell
+    // budget — without the guard the head comes back empty. Its width is
+    // runtime-specific (4 cells on Bun 1.3, 2 on Bun 1.4), so assert only the
+    // premise rather than an exact width.
     const jamo = "\u1100\u1161\u11A8"
-    expect(Bun.stringWidth(jamo)).toBe(4)
-    expect(Collapse.clip(jamo.repeat(30), 2, 1)).toBe(`${jamo}\n…`)
+    expect(Bun.stringWidth(jamo)).toBeGreaterThan(1)
+    expect(Collapse.clip(jamo.repeat(30), 1, 1)).toBe(`${jamo}\n…`)
   })
 })
