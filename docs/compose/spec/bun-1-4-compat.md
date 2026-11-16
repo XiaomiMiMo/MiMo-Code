@@ -18,7 +18,7 @@ described below was reverted before commit.
 | -- | ---- | ------- | ------ | ----- | ---------- | -------- |
 | F1 | TUI startup (Worker messaging) | Interactive TUI never draws. The process stays alive at 0% CPU with an empty worker log. | Draws in 5/5 starts | Hangs in 5/5 starts (compiled and from source) | Bun 1.4.4 drops a `postMessage` sent to a Worker before the worker's global `onmessage` exists; 1.3.14 queues it. | **Critical** (issue #2782); **fixed runtime-independently by #2820** |
 | F2 | `Bun.stringWidth` | `test/cli/tui/collapse.test.ts` › "keeps one cluster even when it is wider than the whole budget" fails deterministically | `stringWidth("\u1100\u1161\u11A8") === 4` | `=== 2` | Runtime changed grapheme-width rules for conjoining Hangul jamo; 1.4.4 now matches the precomposed syllable `한` (2) | Low (test pins old runtime behaviour; TUI clipping for decomposed jamo changes by 2 cells) |
-| F3 | `@npmcli/agent` proxy patch | Installing an npm plugin with `http(s)_proxy` set fails: `fetch() proxy.url must be a non-empty string` | **Bug in shipped builds**: patch keyed to 4.0.0 never applies to the locked 4.0.2 | Install works (1.4.4 accepts a `URL` here); `bun ci` warns that the patch no longer applies | `@npmcli/agent` exposes `agent.proxy.url` as a `URL`; Bun 1.3.14's `node:http` passes it to `fetch`, which requires a string | **Medium, pre-existing, affects current releases** |
+| F3 | `@npmcli/agent` proxy patch | Installing an npm plugin with `http(s)_proxy` set fails: `fetch() proxy.url must be a non-empty string` | **Bug in shipped builds**: patch keyed to 4.0.0 never applies to the locked 4.0.2 | Install works (1.4.4 accepts a `URL` here); `bun ci` warns that the patch no longer applies | `@npmcli/agent` exposes `agent.proxy.url` as a `URL`; Bun 1.3.14's `node:http` passes it to `fetch`, which requires a string | **Medium, pre-existing, affected releases up to 0.1.17; fixed by #2822** |
 | F4 | Test isolation | CI on the 1.4.4 pin (rebased on #2820) is red only on F2; the other shard failures from the first run did not recur | CI green | CI: only F2 fails | Not runtime-specific. CI already runs the `mock.module` MCP suites in separate processes. `bun test --isolate` exists on **both** runtimes and makes `test/mcp` pass 152/152 on both, while a plain run fails 32 on both | Info (CI could adopt `--isolate`; unrelated to the pin) |
 | F5 | Compiled binary size | `dist/mimocode-darwin-arm64/bin/mimo` | 101,357,666 B | 128,227,298 B (+27%) | Larger Bun 1.4.4 runtime embedded by `bun build --compile` | Info |
 
@@ -31,7 +31,7 @@ A main-side "worker ready" handshake (now merged as #2820) made the 1.4.4 TUI dr
 The privacy dialog, `ctrl+p`, prompt submit and clean exit (`EXIT=0`, about 1 s) all worked.
 No second TUI blocker surfaced behind F1.
 
-With the pin rebased onto #2820, CI fails only on F2. F3 turned out to be a bug in current 1.3.14 releases, not a 1.4 issue.
+With the pin rebased onto #2820, CI fails only on F2. F3 turned out to be a bug in 1.3.14 releases, not a 1.4 issue; it is fixed by #2822.
 
 ## [S1] Problem
 
@@ -179,7 +179,8 @@ cd /tmp/example && https_proxy=http://127.0.0.1:8080 mimo plugin left-pad
 
 So every npm plugin install via Arborist (`src/npm/index.ts`) fails for users behind a proxy
 configured through the environment, whether or not the proxy works. This is independent of the
-1.4 pin; the fix is to re-key the patch to 4.0.2, which also updates `bun.lock`.
+1.4 pin. Fixed by #2822, which re-keys the patch to 4.0.2 and adds `test/npm-proxy.test.ts`. That
+test asserts that `Agent.proxy.url` is a string, so a dropped patch fails on any runtime.
 
 ### F4 — Test isolation (not runtime-specific)
 
@@ -245,7 +246,7 @@ Suggested order. Each item keeps 1.3.14 working and removes a 1.4 blocker or an 
 - [ ] **T2 — `collapse.test.ts` stops pinning runtime-specific jamo width.** Acceptance: the test
   asserts the clipping invariant with a cluster whose width is the same on 1.3.14 and 1.4.4, and
   passes on both runtimes. This is the only remaining CI failure on the 1.4.4 pin.
-- [ ] **T3 — Re-key the `@npmcli/agent` patch to 4.0.2.** Acceptance: `patchedDependencies` and
+- [x] **T3 — Re-key the `@npmcli/agent` patch to 4.0.2.** Delivered by #2822. Acceptance: `patchedDependencies` and
   `bun.lock` reference `@npmcli/agent@4.0.2`; the installed `lib/agents.js` returns
   `this.#proxy.toString()`; with `https_proxy` set, `mimo plugin <pkg>` on a 1.3.14 build no longer
   fails with `proxy.url must be a non-empty string`. Fixes a bug in current releases.
