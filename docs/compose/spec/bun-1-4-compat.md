@@ -210,6 +210,30 @@ and `--timings` (built-in duration-balanced sharding). Running `test/mcp`:
 So isolation is available today; it is not something only an upgrade unlocks. Whether `--isolate`
 also covers the process-wide-idleness checks (provider refresh) is untested.
 
+
+**Rare flake on 1.4.4: `subagent-resume-negatives` › "cascade resume on full actor without fork
+context fails honestly".** On CI with the 1.4.4 pin, it failed 2 times in about 76 runs (about 2.6%):
+`providerCalls` was 1, expected 0. Both failures happened in shard 4's isolated step in early
+runs. Later runs passed every time:
+- 2 normal CI runs;
+- 30 runs of the single test and 30 runs of the whole file on a dedicated runner;
+- 10 consecutive runs in shard 4's isolated step right after the shard step.
+
+Ruled out:
+- The child actor fails at the missing-fork guard (`src/session/prompt.ts`) before any provider
+  call.
+- Test data dirs are per-pid, so no state is shared.
+- No bun/node processes outlive the shard step, and load average was about 1.
+
+On 1.3.14, main passed 12/12, which is too few runs to tell a 2.6% rate apart from zero. So this
+is not shown to be runtime-specific. Hypothesis, not confirmed: the failure notification wakes
+the main session, which reaches the provider before the test samples the count. If so, the
+assertion should be scoped to the child's requests. The test keeps a temporary capture dump
+(`DIAG provider capture`) on this branch so the next occurrence shows who made the call.
+
+`Memory.reconcile` (`pruned: 27`, foreign rows from other files) also failed once on this
+branch; it fails on main too and is a pre-existing flake.
+
 ### F5 — Build and non-TUI smoke
 
 | Check | 1.3.14 binary | 1.4.4 binary |
