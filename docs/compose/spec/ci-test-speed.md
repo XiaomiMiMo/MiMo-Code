@@ -12,7 +12,7 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2817
 **What was built**
 - Three timing-bound tests are skipped: main-wait's 30-second refresh test, the invalid-output subagent hang test, and the cron-bridge `stop … after restart` variant.
 - Unit files are now assigned to shards by recorded duration (`script/test-shard.ts` + `test/shard-weights.json`), replacing the `cksum` hash. Each weight is at least 0.05s.
-- The isolated suites are spread over shards 1–3, and `--reserve` accounts for their time.
+- The isolated suites, which all ran on shard 4/4, are spread across the four shards, and `--reserve` accounts for their time.
 - The Effect test harness now waits at most 1s for the process-wide log flush, so a stalled log queue can no longer hang unrelated tests.
 - `subagent-resume-negatives`, which leaves the log queue stalled, now runs in its own process on shard 4/4.
 - The `models-nonblocking` fetch spy counts only models.dev catalog requests.
@@ -83,7 +83,7 @@ the cksum loop with the script.
 
 ### S2.3 Spread the isolated suites
 
-Each isolated step stays a separate process run but moves off shard 4/4:
+Each isolated step stays a separate process run, pinned to one shard:
 MCP mock suites → 1/4 (≈21s); provider refresh + deadline worktree → 2/4
 (≈13s); stdio-exit-observe + release script → 3/4 (≈16s);
 subagent-resume-negatives → 4/4 (≈14s, see S2.5). The shared run passes
