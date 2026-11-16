@@ -52,10 +52,13 @@ in `thread.ts`) can therefore never run.
   worker.
 
 ### S2.3 Worker termination
-- When the target emits `error` or `close`, the client rejects every pending and
-  queued call. Every later call rejects immediately with an error that says the
-  worker has stopped. Callers that already `.catch` (such as the loopback bind or
+- When the target emits `close`, the client rejects every pending and queued call.
+  Every later call rejects immediately with an error that says the worker has
+  stopped. Callers that already `.catch` (such as the loopback bind or
   `checkUpgrade`) degrade instead of hanging.
+- Only `close` counts as termination. On both Bun 1.3.14 and 1.4.4, an uncaught
+  error in a worker fires `error` and is always followed by `close`, so treating
+  `error` alone as death would add nothing and could misfire.
 - The client subscribes with `addEventListener`, so it does not take over
   `worker.onerror`, which `thread.ts` uses for logging.
 
