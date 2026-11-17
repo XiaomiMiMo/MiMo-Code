@@ -1,19 +1,20 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import * as fs from "fs/promises"
 import path from "path"
-import { Database } from "../../src/storage"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { MemoryFtsTable } from "../../src/memory/fts.sql"
 import { Memory } from "../../src/memory"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
+import { resetMemory } from "../fixture/memory"
 import { testEffect } from "../lib/effect"
 
+// Memory state is process-global; see resetMemory.
+beforeEach(resetMemory)
+
 afterEach(async () => {
-  // Clear shared in-memory DB rows so tests don't bleed into each other.
-  Database.use((db) => db.delete(MemoryFtsTable).run())
   await Instance.disposeAll()
+  await resetMemory()
 })
 
 const it = testEffect(Layer.mergeAll(Memory.defaultLayer, CrossSpawnSpawner.defaultLayer))
@@ -25,7 +26,6 @@ describe("Memory.search", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const root = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
         const file = path.join(root, "global", "knowledge.md")
         const body = "把所有项目知识总结进一个文档。这是本周的目标。npm打包脚本2支持JWT认证。"
@@ -51,7 +51,6 @@ describe("Memory.search", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const root = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
         const body = `${"prefix ".repeat(80)}项目  知识\n𠮷野家 npm打包脚本2 ${"suffix ".repeat(80)}`
         yield* Effect.promise(() => fs.writeFile(path.join(root, "global", "spaces.md"), body))
@@ -70,7 +69,6 @@ describe("Memory.search", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const root = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
         yield* Effect.promise(() =>
           fs.writeFile(path.join(root, "global", "auth.md"), "JWT signing with RS256 algorithm"),
@@ -92,7 +90,6 @@ describe("Memory.search", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const root = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "sessions/ses_a"), { recursive: true }))
         yield* Effect.promise(() => fs.writeFile(path.join(root, "global", "x.md"), "matching content"))
@@ -114,7 +111,6 @@ describe("Memory.search", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const root = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "sessions/ses_a"), { recursive: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "sessions/ses_b"), { recursive: true }))
         yield* Effect.promise(() => fs.writeFile(path.join(root, "sessions/ses_a", "x.md"), "alpha content"))
@@ -132,7 +128,6 @@ describe("Memory.search", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const root = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
         for (let i = 0; i < 15; i++) {
           yield* Effect.promise(() => fs.writeFile(path.join(root, "global", `f${i}.md`), `match ${i}`))
@@ -149,7 +144,6 @@ describe("Memory.search", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const root = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
         yield* Effect.promise(() =>
           fs.writeFile(path.join(root, "global", "x.md"), 'literal "quoted" content with stars'),
@@ -170,7 +164,6 @@ describe("Memory.search", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const root = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(root, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(root, "global"), { recursive: true }))
         yield* Effect.promise(() =>
           fs.writeFile(

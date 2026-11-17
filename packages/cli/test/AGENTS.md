@@ -131,3 +131,13 @@ Use `provideTmpdirInstance(...)` by default when a test only needs one temp inst
 - Yield services directly with `yield* MyService.Service` or `yield* MyTool`.
 - Avoid custom `ManagedRuntime`, `attach(...)`, or ad hoc `run(...)` wrappers when `testEffect(...)` already provides the runtime.
 - When a test needs instance-local state, prefer `provideTmpdirInstance(...)` or `provideInstance(...)` over manual `Instance.provide(...)` inside Promise-style tests.
+
+## Process-Global State
+
+`bun test` runs every file of a shard in one process and does not isolate them. The order of files is up to Bun and differs between machines. Some state is shared by the whole process:
+
+- the in-memory SQLite database (`MIMOCODE_DB=:memory:`), including `memory_fts`;
+- everything under `Global.Path.*` (data, cache, config, state), set once by `test/preload.ts`;
+- module-level singletons and `mock.module` replacements.
+
+A test that asserts on such state must set it up in `beforeEach` (or at the start of the test). It must not count on other files to clean up in `afterEach`. A reset in `afterEach` is still welcome as a courtesy to later files, but correctness must not depend on one. Reset every piece the assertion depends on together. For example, `resetMemory()` from `fixture/memory.ts` clears both the memory root on disk and its FTS index. Clearing only the directory leaves rows that the next reconcile reports as pruned. Where possible, prefer state keyed by a fresh id (a new session id, a new tmpdir) over global counts.
