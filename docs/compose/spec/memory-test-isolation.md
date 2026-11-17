@@ -1,6 +1,6 @@
 ---
 feature: memory-test-isolation
-status: in-progress
+status: delivered
 updated: 2026-11-17
 source: fix/test-isolation-memory
 ---
@@ -8,7 +8,15 @@ source: fix/test-isolation-memory
 # Memory test isolation
 
 ## Report
-[Not finalized yet]
+
+**What was built** — `test/fixture/memory.ts` exports `resetMemory()`. It removes `<Global.Path.data>/memory` and clears `memory_fts` in the same call. The five memory suites call it in `beforeEach`. Their `afterEach` runs `Instance.disposeAll()` and then `resetMemory()`, so later files also start clean. The redundant per-test `fs.rm(root)` calls are gone. `packages/cli/test/AGENTS.md` gains a "Process-Global State" section. No production code changed.
+
+**Verification** (from `packages/cli`)
+- Scratch polluter followed by the old `reconcile.test.ts`: FAIL with `pruned: 1`. This reproduces CI's `pruned: 21` and `pruned: 27`. With the fix: PASS, 6/6.
+- `bun test test/memory test/tool/memory.test.ts`: PASS, 117/0.
+- The local CI shard 3/4 file list (144 files): PASS, 1426/0.
+- `bun run typecheck` (tsgo): PASS. `oxlint` on the touched files: 0 warnings.
+- Independent review: no critical findings. The two minor findings were addressed: a shorter repeated comment, and AGENTS.md wording about `afterEach`.
 
 ## [S1] Problem
 
@@ -54,8 +62,8 @@ Their existing `afterEach` keeps `Instance.disposeAll()`, and its FTS clear beco
 - Product changes to memory root resolution.
 
 ## Tasks
-- [ ] T1: Add `resetMemory()` and use it in `beforeEach`/`afterEach` of the five memory test files — acceptance: the scratch polluter reproduction from S1 passes with the 5 files; all 5 files pass (covers: S2.1, S2.2)
-- [ ] T2: Document the convention in `packages/cli/test/AGENTS.md` (covers: S2.3)
+- [x] T1: Add `resetMemory()` and use it in `beforeEach`/`afterEach` of the five memory test files — acceptance: the scratch polluter reproduction from S1 passes with the 5 files; all 5 files pass (covers: S2.1, S2.2)
+- [x] T2: Document the convention in `packages/cli/test/AGENTS.md` (covers: S2.3)
 
 ## Journey log
 - A probe that ran each preceding file alone with a check file afterwards found no pollution. Bun does not run files in argument order; it orders them by directory and the order differs between macOS and Linux CI. The deterministic repro therefore uses a scratch file in the same directory, and the order Bun actually used is confirmed from its output.

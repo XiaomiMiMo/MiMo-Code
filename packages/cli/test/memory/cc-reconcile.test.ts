@@ -13,8 +13,7 @@ import { provideTmpdirInstance } from "../fixture/fixture"
 import { resetMemory } from "../fixture/memory"
 import { testEffect } from "../lib/effect"
 
-// The memory root and memory_fts are shared by every file in the process, and
-// other suites leave indexed memory files behind: reset both before each test.
+// Memory state is process-global; see resetMemory.
 beforeEach(resetMemory)
 
 afterEach(async () => {
