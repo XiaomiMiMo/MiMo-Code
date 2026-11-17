@@ -2,7 +2,7 @@
 feature: memory-test-isolation
 status: delivered
 updated: 2026-11-17
-source: fix/test-isolation-memory
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2826
 ---
 
 # Memory test isolation
