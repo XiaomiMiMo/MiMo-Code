@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import * as fs from "fs/promises"
 import os from "os"
@@ -10,11 +10,16 @@ import { Memory } from "../../src/memory"
 import { reconcileMemory, walkCcRoot } from "../../src/memory/reconcile"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
+import { resetMemory } from "../fixture/memory"
 import { testEffect } from "../lib/effect"
 
+// The memory root and memory_fts are shared by every file in the process, and
+// other suites leave indexed memory files behind: reset both before each test.
+beforeEach(resetMemory)
+
 afterEach(async () => {
-  Database.use((db) => db.delete(MemoryFtsTable).run())
   await Instance.disposeAll()
+  await resetMemory()
 })
 
 const itLive = testEffect(Layer.mergeAll(Memory.defaultLayer, CrossSpawnSpawner.defaultLayer))
@@ -90,7 +95,6 @@ describe("reconcileMemory cross-root", () => {
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const mimoRoot = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(mimoRoot, { recursive: true, force: true }))
 
         const ccBase = yield* Effect.promise(() => tmpCcBase())
         const slug = "-x"
@@ -125,7 +129,6 @@ Body about cache.`
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const mimoRoot = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(mimoRoot, { recursive: true, force: true }))
 
         const ccBase = yield* Effect.promise(() => tmpCcBase())
         const ccDir = path.join(ccBase, "-y", "memory")
@@ -150,7 +153,6 @@ Body about cache.`
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const mimoRoot = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(mimoRoot, { recursive: true, force: true }))
         yield* Effect.promise(() => fs.mkdir(path.join(mimoRoot, "global"), { recursive: true }))
         yield* Effect.promise(() => fs.writeFile(path.join(mimoRoot, "global", "m.md"), "mimo body"))
 
@@ -188,7 +190,6 @@ cc body`,
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const mimoRoot = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(mimoRoot, { recursive: true, force: true }))
 
         const ccBase = yield* Effect.promise(() => tmpCcBase())
         const ccDir = path.join(ccBase, "-q", "memory")
@@ -228,7 +229,6 @@ body`,
       Effect.gen(function* () {
         const memory = yield* Memory.Service
         const mimoRoot = yield* memory.root()
-        yield* Effect.promise(() => fs.rm(mimoRoot, { recursive: true, force: true }))
 
         const result = yield* Effect.promise(() =>
           reconcileMemory({ mimo: mimoRoot, cc: "/definitely/not/a/real/path/abc123" }),
