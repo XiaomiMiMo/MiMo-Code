@@ -39,6 +39,18 @@ describe("shell", () => {
     expect(Shell.posix("C:/tools/pwsh.exe")).toBe(false)
   })
 
+  test("powershell invocation is non-interactive and keeps the command off the command line", () => {
+    const invocation = Shell.powershell("Write-Output 'marker-text'")
+    expect(invocation.args).toContain("-NonInteractive")
+    expect(invocation.args).toContain("-NoProfile")
+    expect(invocation.args.join(" ")).not.toContain("marker-text")
+    expect(invocation.env.MIMO_PS_COMMAND).toBe("Write-Output 'marker-text'")
+  })
+
+  test.skipIf(process.platform !== "win32")("Windows PowerShell is reported as 5.1 without probing", () => {
+    expect(Shell.powershellVersion("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")).toBe("5.1")
+  })
+
   if (process.platform === "win32") {
     test("rejects blacklisted shells case-insensitively", async () => {
       await withShell("NU.EXE", async () => {

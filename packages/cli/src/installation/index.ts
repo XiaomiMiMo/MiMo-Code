@@ -10,6 +10,7 @@ import { renameSync, copyFileSync, rmSync, unlinkSync, existsSync } from "fs"
 import { BusEvent } from "@/bus/bus-event"
 import { Flag } from "../flag/flag"
 import { Log } from "../util"
+import { WindowsPowerShell } from "../util/windows-powershell"
 import semver from "semver"
 import { InstallationChannel, InstallationVersion } from "./version"
 
@@ -103,7 +104,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
 
       const text = Effect.fnUntraced(
-        function* (cmd: string[], opts?: { cwd?: string; env?: Record<string, string> }) {
+        function* (cmd: string[], opts?: { cwd?: string; env?: Record<string, string | undefined> }) {
           const proc = ChildProcess.make(cmd[0], cmd.slice(1), {
             cwd: opts?.cwd,
             env: opts?.env,
@@ -119,7 +120,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
       )
 
       const run = Effect.fnUntraced(
-        function* (cmd: string[], opts?: { cwd?: string; env?: Record<string, string> }) {
+        function* (cmd: string[], opts?: { cwd?: string; env?: Record<string, string | undefined> }) {
           const proc = ChildProcess.make(cmd[0], cmd.slice(1), {
             cwd: opts?.cwd,
             env: opts?.env,
@@ -179,15 +180,35 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         // Download new version to staging dir (reuses install.ps1 logic)
         const installScriptUrl = process.env.MIMOCODE_INSTALL_SCRIPT_URL ?? "https://mimo.xiaomi.com/install.ps1"
         const downloadResult = yield* run(
-          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; irm $env:INSTALL_SCRIPT_URL | iex"],
-          { env: { MIMOCODE_INSTALL_DIR: stageDir, VERSION: target, INSTALL_SCRIPT_URL: installScriptUrl } },
+          [
+            WindowsPowerShell.executable(),
+            "-NoProfile",
+            "-NonInteractive",
+            "-ep",
+            "Bypass",
+            "-c",
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; irm $env:INSTALL_SCRIPT_URL | iex",
+          ],
+          {
+            env: WindowsPowerShell.env({
+              MIMOCODE_INSTALL_DIR: stageDir,
+              VERSION: target,
+              INSTALL_SCRIPT_URL: installScriptUrl,
+            }),
+          },
         )
-        if (downloadResult.code !== 0) return downloadResult
+        // install.ps1 reports its failure reason with Write-Host, which lands on stdout.
+        const output = `${downloadResult.stdout}\n${downloadResult.stderr}`.trim()
+        if (downloadResult.code !== 0) return { ...downloadResult, stderr: output }
 
         // Replace in-place: Windows allows renaming a running exe
         const stagedExe = path.join(stageDir, "mimo.exe")
         if (!existsSync(stagedExe))
-          return { code: 1 as ChildProcessSpawner.ExitCode, stdout: "", stderr: "staged binary not found at " + stagedExe }
+          return {
+            code: ChildProcessSpawner.ExitCode(1),
+            stdout: "",
+            stderr: [`staged binary not found at ${stagedExe}`, output].filter(Boolean).join("\n"),
+          }
         const oldExe = targetExe + `.old_${pid}`
         renameSync(targetExe, oldExe)
         try {

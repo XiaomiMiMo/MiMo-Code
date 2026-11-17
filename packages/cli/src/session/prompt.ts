@@ -2724,6 +2724,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const shellName = (
         process.platform === "win32" ? path.win32.basename(sh, ".exe") : path.basename(sh)
       ).toLowerCase()
+      const ps = Shell.powershell(input.command)
       const invocations: Record<string, { args: string[] }> = {
         nu: { args: ["-c", input.command] },
         fish: { args: ["-c", input.command] },
@@ -2754,12 +2755,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           ],
         },
         cmd: { args: ["/c", `${Shell.CMD_UTF8_PREFIX}${input.command}`] },
-        powershell: {
-          args: ["-NoProfile", "-Command", `${Shell.POWERSHELL_UTF8_PREFIX}${input.command}`],
-        },
-        pwsh: {
-          args: ["-NoProfile", "-Command", `${Shell.POWERSHELL_UTF8_PREFIX}${input.command}`],
-        },
+        powershell: { args: ps.args },
+        pwsh: { args: ps.args },
         "": { args: ["-c", input.command] },
       }
 
@@ -2776,6 +2773,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         extendEnv: true,
         env: {
           ...shellEnv.env,
+          ...(shellName === "powershell" || shellName === "pwsh" ? ps.env : {}),
           ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
           TERM: "dumb",
         },

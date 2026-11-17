@@ -96,16 +96,37 @@ const FILES = new Set([
 const FLAGS = new Set(["-destination", "-literalpath", "-path"])
 const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
 
+const CHAIN_AND =
+  "If the commands depend on each other and must run sequentially, use a single `bash` call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, or git add before git commit), run these operations sequentially in one command instead of assuming they will interleave correctly across calls."
+
+// Syntax and native-argument limits differ by PowerShell version, so the guidance
+// keys off the probed version rather than the executable name.
+function powershellNotes(label: string, version: string | undefined) {
+  const [major, minor] = (version ?? "0.0").split(".").map(Number)
+  const notes: string[] = []
+  if (major < 7)
+    notes.push(
+      `If the commands depend on each other and must run sequentially, avoid '&&' and '||' in this shell because ${label} does not support them. Use PowerShell conditionals such as \`cmd1; if ($?) { cmd2 }\` when later commands must depend on earlier success. It also lacks the null-coalescing (\`??\`) and ternary (\`a ? b : c\`) operators; use if/else instead.`,
+      "Do not append `2>&1` to external programs; their stderr is already captured, and this version turns redirected stderr into error records.",
+    )
+  else notes.push(CHAIN_AND)
+  if (major < 7 || (major === 7 && minor < 3))
+    notes.push(
+      `${label} drops embedded double quotes and empty-string arguments when calling external programs (e.g. \`git commit -m 'fix "x"'\` loses the quotes). Put such text in a file and pass the file instead (e.g. \`git commit -F msg.txt\`).`,
+    )
+  return notes.join(" ")
+}
+
 export function bashDescription(gpt = false) {
-  const name = Shell.name(Shell.acceptable())
-  const chaining =
-    name === "powershell"
-      ? "If the commands depend on each other and must run sequentially, avoid '&&' in this shell because Windows PowerShell 5.1 does not support it. Use PowerShell conditionals such as `cmd1; if ($?) { cmd2 }` when later commands must depend on earlier success."
-      : "If the commands depend on each other and must run sequentially, use a single `bash` call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, or git add before git commit), run these operations sequentially in one command instead of assuming they will interleave correctly across calls."
+  const shell = Shell.acceptable()
+  const name = Shell.name(shell)
+  const version = PS.has(name) ? Shell.powershellVersion(shell) : undefined
+  const label = name === "powershell" ? `Windows PowerShell ${version}` : `PowerShell ${version ?? ""}`.trim()
+  const chaining = PS.has(name) ? powershellNotes(label, version) : CHAIN_AND
   return (gpt ? GPT_DESCRIPTION : DESCRIPTION)
     .replaceAll("${directory}", Instance.directory)
     .replaceAll("${os}", process.platform)
-    .replaceAll("${shell}", name)
+    .replaceAll("${shell}", PS.has(name) ? `${name} (${label})` : name)
     .replaceAll("${chaining}", chaining)
     .replaceAll("${maxTokens}", String(DEFAULT_MAX_OUTPUT_TOKENS))
 }
@@ -432,10 +453,10 @@ const askDelete = Effect.fn("BashTool.askDelete")(function* (ctx: Tool.Context, 
 
 function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
   if (process.platform === "win32" && PS.has(name)) {
-    const prefixed = `${Shell.POWERSHELL_UTF8_PREFIX}${command}`
-    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", prefixed], {
+    const ps = Shell.powershell(command)
+    return ChildProcess.make(shell, ps.args, {
       cwd,
-      env,
+      env: { ...env, ...ps.env },
       stdin: "ignore",
       detached: false,
     })
