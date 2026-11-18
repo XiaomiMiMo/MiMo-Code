@@ -3116,7 +3116,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
               // An @-mention arrives as text/plain whatever the file holds, and
               // read refuses media. Sniff it: a PDF takes the inline path below
-              // like an attached PDF; image, audio and video go to their tool.
+              // like an attached PDF when the model accepts PDF input, otherwise
+              // it stays a path reference so its bytes are never stored; image,
+              // audio and video go to their tool.
               const mentioned =
                 part.mime === "text/plain"
                   ? yield* Effect.scoped(
@@ -3129,7 +3131,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                       Effect.orElseSucceed(() => undefined),
                     )
                   : undefined
-              if (mentioned && isReadPdfMime(mentioned)) part.mime = mentioned
+              if (mentioned && isReadPdfMime(mentioned)) {
+                const mdl = yield* provider
+                  .getModel(info.model.providerID, info.model.modelID)
+                  .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
+                if (!mdl?.capabilities.input.pdf) {
+                  return [
+                    {
+                      messageID: info.id,
+                      sessionID: input.sessionID,
+                      type: "text",
+                      synthetic: true,
+                      text: `[Attached local file: ${filepath}] (a PDF; the current model has no PDF input support, so it was not attached — extract its contents from the file instead)`,
+                    },
+                    { ...part, messageID: info.id, sessionID: input.sessionID },
+                  ]
+                }
+                part.mime = mentioned
+              }
               const mediaKind = !mentioned
                 ? undefined
                 : isReadImageMime(mentioned)

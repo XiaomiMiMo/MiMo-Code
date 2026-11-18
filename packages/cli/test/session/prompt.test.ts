@@ -717,6 +717,12 @@ describe("session.prompt missing file", () => {
                 limit: { context: 8000, output: 2000 },
                 modalities: { input: ["text", "image"], output: ["text"] },
               },
+              pdf: {
+                name: "PDF",
+                tool_call: true,
+                limit: { context: 8000, output: 2000 },
+                modalities: { input: ["text", "pdf"], output: ["text"] },
+              },
             },
           },
         },
@@ -744,9 +750,15 @@ describe("session.prompt missing file", () => {
               filename: name,
             })
 
-            const resolve = (name: string) =>
+            const resolve = (name: string, modelID = "vision") =>
               prompt
-                .prompt({ sessionID: session.id, agent: "build", noReply: true, parts: [mention(name)] })
+                .prompt({
+                  sessionID: session.id,
+                  agent: "build",
+                  noReply: true,
+                  model: { providerID: ProviderID.make("media-test"), modelID: ModelID.make(modelID) },
+                  parts: [mention(name)],
+                })
                 .pipe(Effect.map((msg) => MessageV2.get({ sessionID: session.id, messageID: msg.info.id }).parts))
 
             // The model takes images but no audio.
@@ -762,7 +774,14 @@ describe("session.prompt missing file", () => {
             expect(audioText).toContain("no audio input support")
             expect(audio.some((part) => part.type === "file" && part.url.startsWith("data:"))).toBe(false)
 
-            const pdf = yield* resolve("doc.pdf")
+            // Without PDF input the mention stays a path reference; nothing is inlined.
+            const pdfPath = yield* resolve("doc.pdf")
+            const pdfPathText = pdfPath.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+            expect(pdfPathText).toContain(`[Attached local file: ${path.join(tmp.path, "doc.pdf")}]`)
+            expect(pdfPathText).toContain("no PDF input support")
+            expect(pdfPath.some((part) => part.type === "file" && part.url.startsWith("data:"))).toBe(false)
+
+            const pdf = yield* resolve("doc.pdf", "pdf")
             const pdfText = pdf.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
             expect(pdfText).toContain("Called the `read` tool")
             expect(pdfText).not.toContain("Cannot read binary file")
