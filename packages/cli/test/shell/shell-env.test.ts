@@ -143,6 +143,10 @@ describe.skipIf(!win)("$SHELL handling on Windows", () => {
           expect(text).not.toContain("avoid '&&'")
           expect(text).not.toContain("aliases of Invoke-WebRequest")
           expect(text).toContain("curl.exe --data @body.json")
+          // A recent failure is not retried, so a hung pwsh cannot stall every tool init.
+          const start = performance.now()
+          expect(await Shell.probePowershellVersion(fake)).toBeUndefined()
+          expect(performance.now() - start).toBeLessThan(10)
         },
       })
     })

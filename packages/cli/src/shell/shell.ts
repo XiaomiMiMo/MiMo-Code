@@ -163,7 +163,9 @@ const POWERSHELL_BOOTSTRAP = [
   "$__mimoCommand = $env:MIMO_PS_COMMAND",
   "Remove-Item Env:MIMO_PS_COMMAND -ErrorAction Ignore",
   // Constrained Language Mode forbids the type/method calls below; $? is always true after
-  // Invoke-Expression, so new error records stand in for failure there.
+  // Invoke-Expression, so new error records stand in for failure there. Known limitation:
+  // errors silenced with -ErrorAction SilentlyContinue are still recorded, so such a command
+  // reports 1 under CLM where full language mode reports 0.
   "if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') { $__mimoErrors = $Error.Count; $global:LASTEXITCODE = 0; Invoke-Expression $__mimoCommand; if ($LASTEXITCODE) { exit $LASTEXITCODE }; if ($Error.Count -gt $__mimoErrors) { exit 1 }; exit 0 }",
   // Separate trys so one failing setter (e.g. no console attached) does not skip the others.
   // InputEncoding too: Windows PowerShell 5.1 otherwise prefixes text piped to native commands with a BOM.
@@ -180,10 +182,10 @@ const POWERSHELL_BOOTSTRAP = [
   ". $__mimoBlock",
   "if ($__mimoOk -ne $false) { exit 0 }",
   // $LASTEXITCODE belongs to the last statement only if that statement ran an external
-  // program; otherwise it may be left over from an earlier command. Unresolvable names
-  // (e.g. `& $exe`) count as external.
+  // program or script (npm/pnpm shims resolve to *.ps1); otherwise it may be left over
+  // from an earlier command. Unresolvable names (e.g. `& $exe`) count as external.
   "$__mimoLast = if ($__mimoParsed.Ast.EndBlock) { $__mimoParsed.Ast.EndBlock.Statements | Select-Object -Last 1 }",
-  "$__mimoNative = @(if ($__mimoLast) { $__mimoLast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | Where-Object { $__n = $_.GetCommandName(); $__r = if ($__n) { Get-Command $__n -ErrorAction Ignore | Select-Object -First 1 }; if ($__r.CommandType -eq 'Alias') { $__r = $__r.ResolvedCommand }; -not $__r -or $__r.CommandType -eq 'Application' } }).Count -gt 0",
+  "$__mimoNative = @(if ($__mimoLast) { $__mimoLast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | Where-Object { $__n = $_.GetCommandName(); $__r = if ($__n) { Get-Command $__n -ErrorAction Ignore | Select-Object -First 1 }; if ($__r.CommandType -eq 'Alias') { $__r = $__r.ResolvedCommand }; -not $__r -or $__r.CommandType -in 'Application', 'ExternalScript' } }).Count -gt 0",
   "if ($__mimoNative -and $LASTEXITCODE) { exit $LASTEXITCODE }",
   // Before pwsh 7.2, `native 2>&1` marks a successful command as failed once it writes to stderr.
   "if ($__mimoNative -and $Error.Count -and \"$($Error[0].FullyQualifiedErrorId)\" -like 'NativeCommandError*') { exit 0 }",
@@ -200,6 +202,8 @@ export function powershell(command: string) {
 
 const versions = new Map<string, string>()
 const probes = new Map<string, Promise<string | undefined>>()
+const failures = new Map<string, number>()
+const RETRY_AFTER_FAILURE_MS = 60_000
 
 // Windows PowerShell is always 5.1 on supported Windows; pwsh versions come from
 // probePowershellVersion() and are undefined until a probe has succeeded.
@@ -208,11 +212,14 @@ export function powershellVersion(file: string) {
   return versions.get(file)
 }
 
-// Async so a cold pwsh start does not block the event loop. Failures are not cached,
-// so a later call retries instead of pinning an unknown version for the process.
+// Async so a cold pwsh start does not block the event loop. A failure is remembered only
+// briefly: a hung pwsh must not add the full timeout to every tool init, yet the version
+// is still picked up once pwsh responds again.
 export function probePowershellVersion(file: string): Promise<string | undefined> {
   const known = powershellVersion(file)
   if (known) return Promise.resolve(known)
+  const failed = failures.get(file)
+  if (failed !== undefined && Date.now() - failed < RETRY_AFTER_FAILURE_MS) return Promise.resolve(undefined)
   const pending = probes.get(file)
   if (pending) return pending
   const probe = new Promise<string | undefined>((resolve) => {
@@ -224,7 +231,10 @@ export function probePowershellVersion(file: string): Promise<string | undefined
     ).stdin?.end()
   }).then((version) => {
     probes.delete(file)
-    if (version) versions.set(file, version)
+    if (version) {
+      versions.set(file, version)
+      failures.delete(file)
+    } else failures.set(file, Date.now())
     return version
   })
   probes.set(file, probe)

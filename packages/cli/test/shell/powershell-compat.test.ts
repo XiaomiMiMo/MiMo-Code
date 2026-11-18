@@ -164,6 +164,16 @@ describe.skipIf(!win || shells.length === 0)("powershell version compat: raw she
     expect(ps(shell, "$exe = 'cmd'; & $exe /c exit 6").code).toBe(6)
   })
 
+  // npm/pnpm/yarn resolve to *.ps1 shims in PowerShell, so a script run last must keep
+  // its own exit code rather than collapsing to 1.
+  each("keeps the exit code of a .ps1 script run last", async ({ shell }) => {
+    await using tmp = await tmpdir()
+    const script = path.join(tmp.path, "shim.ps1")
+    await Bun.write(script, "Write-Output shim; exit 3")
+    expect(ps(shell, `& ${lit(script)}`).code).toBe(3)
+    expect(ps(shell, `Get-Item does-not-exist; & ${lit(script)}`).code).toBe(3)
+  })
+
   // Constrained Language Mode (AppLocker/WDAC) cannot run the full setup; the
   // fallback must still report success and failure.
   each("reports exit codes under Constrained Language Mode", ({ shell }) => {
