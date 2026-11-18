@@ -1,6 +1,6 @@
 ---
 feature: read-media-split
-status: in-progress
+status: delivered
 updated: 2026-11-18
 source: feat/read-media-split
 ---
@@ -8,7 +8,17 @@ source: feat/read-media-split
 # Split media reading out of `read`
 
 ## Report
-[Not finalized yet]
+
+**What was built** — Three built-in tools, `read_image`, `read_audio` and `read_video` (`src/tool/read-media.ts`, shared path/miss helpers in `src/tool/read-common.ts`). Each has a single `file_path` parameter and a static description. The registry offers a tool only when the turn's model, through its adapter, supports that input kind (an `unknown` adapter verdict hides it, and so does an unresolvable model). The tools are hidden in Codex mode, and each one re-checks the gate when it runs. `read` now handles text and directories only: media fails with `Cannot read binary file`, and the model-dependent `describeMedia` paragraph is gone. `@`-mentions of media files are sniffed. Images, audio and video go to the matching media tool; a PDF is inlined only for a model with PDF input and otherwise stays a path reference. Permission (`read` governs the three tools), parallel-readonly gating, dream/distill allowlists, compaction, the system-prompt vision hint, TUI/run rendering and ACP kinds are all wired.
+
+**Verification**
+- `bun run typecheck` (packages/cli): PASS.
+- `bun test --timeout 30000 test/tool/ test/permission/ test/session/system.test.ts test/session/compaction.test.ts test/session/prompt.test.ts test/agent/agent.test.ts test/acp`: PASS (1010 pass, 0 fail). This run predates the final PDF-mention fix; `test/session/prompt.test.ts test/tool/` re-run after it: 784 pass, 0 fail.
+- Full `bun test --timeout 30000` (packages/cli): 6233 pass, 76 fail. The failures fall into three groups:
+  - **PRE-EXISTING:** MCP lifecycle/admission/oauth and Project/Vcs/Worktree git tests (the same 20 failures reproduce on the main checkout).
+  - **Load-only flakes:** several session/actor/instance-dispose tests that pass when run in isolation (82 pass).
+  - **Stale test:** `read-vision-harness.test.ts`, retargeted to `read_image` (6 pass).
+- The `@`-mention regression test fails on the pre-fix head with `Cannot read binary file` and passes now.
 
 ## [S1] Problem
 
@@ -84,10 +94,10 @@ Stored sessions need no migration: past `read` tool parts keep their name, outpu
 
 ## Tasks
 
-- [ ] T1: `src/tool/read-media.ts` with `read_image`, `read_audio`, `read_video` and their descriptions — acceptance: tests cover each tool's success attachment, wrong-format refusal, oversized refusal before read (image shrink path included), missing file, directory, and the execution-time gate output for an incapable model (covers: S2.1, S2.3)
-- [ ] T2: Registry visibility — acceptance: registry tests show a text-only model sees none of the three; an image-only model sees only `read_image`; an audio+video model on `@ai-sdk/anthropic` or an undeclared adapter sees neither `read_audio` nor `read_video`, on `@ai-sdk/openai-compatible` sees both; Codex mode sees none and keeps `view_image`; `describeMedia` is gone (covers: S2.2; depends: T1)
-- [ ] T3: Strip media from `read` — acceptance: `read` on png/pdf/wav/mp4 fails with `Cannot read binary file`, including for a model that declares those modalities; text and directory behavior and existing text tests unchanged; `read.txt` updated (covers: S2.4; depends: T1)
-- [ ] T4: Callers and wiring per [S2.5] — acceptance: permission test shows denying `read` disables the three tools; system prompt vision hint names `read_image`; TUI/run render the tools; `bun typecheck` passes (covers: S2.5; depends: T2, T3)
+- [x] T1: `src/tool/read-media.ts` with `read_image`, `read_audio`, `read_video` and their descriptions — acceptance: tests cover each tool's success attachment, wrong-format refusal, oversized refusal before read (image shrink path included), missing file, directory, and the execution-time gate output for an incapable model (covers: S2.1, S2.3)
+- [x] T2: Registry visibility — acceptance: registry tests show a text-only model sees none of the three; an image-only model sees only `read_image`; an audio+video model on `@ai-sdk/anthropic` or an undeclared adapter sees neither `read_audio` nor `read_video`, on `@ai-sdk/openai-compatible` sees both; Codex mode sees none and keeps `view_image`; `describeMedia` is gone (covers: S2.2; depends: T1)
+- [x] T3: Strip media from `read` — acceptance: `read` on png/pdf/wav/mp4 fails with `Cannot read binary file`, including for a model that declares those modalities; text and directory behavior and existing text tests unchanged; `read.txt` updated (covers: S2.4; depends: T1)
+- [x] T4: Callers and wiring per [S2.5] — acceptance: permission test shows denying `read` disables the three tools; system prompt vision hint names `read_image`; TUI/run render the tools; `bun typecheck` passes (covers: S2.5; depends: T2, T3)
 
 ## Journey log
 
