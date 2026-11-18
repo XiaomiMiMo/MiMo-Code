@@ -119,9 +119,17 @@ export const AppLayer = Layer.suspend(() =>
     // standalone default layers remain convenient for focused tests, while
     // the application graph deliberately provides each stateful service once.
     Actor.appLayer.pipe(
-      Layer.provideMerge(SessionPrompt.appLayer.pipe(
-        Layer.provideMerge(Command.appLayer.pipe(Layer.provideMerge(MCP.defaultLayer))),
-      )),
+      Layer.provideMerge(
+        SessionPrompt.appLayer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Memory.defaultLayer,
+              History.defaultLayer,
+              Command.appLayer.pipe(Layer.provideMerge(MCP.defaultLayer)),
+            ),
+          ),
+        ),
+      ),
     ),
   ).pipe(Layer.provideMerge(Observability.layer), Layer.provideMerge(BashInteractive.defaultLayer)),
 )

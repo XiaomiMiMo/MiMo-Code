@@ -13,9 +13,33 @@ const money = new Intl.NumberFormat("en-US", {
   currency: "USD",
 })
 
+const compactCount = (count: number) => (count > 99 ? "99+" : count.toString())
+
 export function ContextSidebar(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
   const msg = createMemo(() => props.api.state.session.messages(props.session_id))
+  const vectorActivity = createMemo(() => {
+    let memory = 0
+    let history = 0
+    let injected = 0
+    const messages = msg()
+    const parts = messages.flatMap((item) => props.api.state.part(item.id))
+    for (const part of parts) {
+      if (part.type === "tool" && part.state.status === "completed") {
+        const count = part.state.metadata?.vectorSemanticHits
+        if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) continue
+        if (part.tool === "memory") memory = Math.min(100, memory + Math.floor(count))
+        if (part.tool === "history") history = Math.min(100, history + Math.floor(count))
+      }
+      if (part.type === "text" && part.synthetic && !part.ignored) {
+        const origin = part.metadata?.retrievalOrigin
+        if (origin === "memory.hybridSearch" || origin === "history.hybridSearch" || origin === "memory.rebuild") {
+          injected = Math.min(100, injected + 1)
+        }
+      }
+    }
+    return { memory, history, injected }
+  })
   const cost = createMemo(() => msg().reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0))
 
   const [tick, setTick] = createSignal(Date.now())
@@ -104,6 +128,10 @@ export function ContextSidebar(props: { api: TuiPluginApi; session_id: string })
       </Show>
       <Show when={tpsLabel()}>{(label) => <text fg={theme().textMuted}>{label()}</text>}</Show>
       <text fg={theme().textMuted}>{money.format(cost())} spent</text>
+      <text fg={theme().text}>Vector hits / injections</text>
+      <text fg={theme().textMuted}>
+        {`Mem ${compactCount(vectorActivity().memory)} · Hist ${compactCount(vectorActivity().history)} · Inject ${compactCount(vectorActivity().injected)}`}
+      </text>
     </box>
   )
 }

@@ -5,7 +5,9 @@ import { Provider } from "@/provider"
 import { routeToolAttachment } from "@/session/tool-attachment"
 import { cleanDataUrls, page } from "@/history/media"
 import DESCRIPTION from "./history.txt"
+import DESCRIPTION_SEMANTIC from "./history.semantic.txt"
 import * as Tool from "./tool"
+import * as Semantic from "../semantic/candidates"
 
 const parameters = z
   .object({
@@ -45,6 +47,22 @@ function bounded(lines: string[]) {
   }
   if (truncated) result.push(OMIT)
   return { text: result.join("\n"), truncated }
+}
+
+// Render control characters in untrusted identifiers as JSON escapes so a
+// source ID cannot add apparent headers or fields to the tool result.
+function semanticField(value: string) {
+  return JSON.stringify(value).replace(/[\u007f-\u009f\u2028\u2029]/g, (char) =>
+    `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  )
+}
+
+function quoteUntrusted(value: string) {
+  return value
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, " ")
+    .split(/\r\n?|\n|\u2028|\u2029/)
+    .map((line) => `> ${line}`)
+    .join("\n")
 }
 
 // Keep the anchor even when it alone exceeds the budget: fully when it fits,
@@ -120,15 +138,25 @@ export const HistoryTool = Tool.define(
   Effect.gen(function* () {
     const history = yield* History.Service
     const provider = yield* Provider.Service
+    const semanticDescriptionEnabled = Semantic.enabled("history")
+    const toolParameters = semanticDescriptionEnabled
+      ? parameters.extend({
+          query: z.string().optional().describe("Search history with BM25 and local semantic retrieval when available; otherwise BM25 fallback."),
+        })
+      : parameters
     return {
-      description: DESCRIPTION,
-      parameters,
+      description: semanticDescriptionEnabled ? DESCRIPTION_SEMANTIC : DESCRIPTION,
+      parameters: toolParameters,
       execute: (args: z.infer<typeof parameters>, ctx) =>
         Effect.gen(function* () {
-          const reply = (output: string, count = 0, truncated = false) => ({
+          const reply = (output: string, count = 0, truncated = false, vectorSemanticHits = 0) => ({
             title: `History ${args.operation}`,
             output,
-            metadata: { count, truncated },
+            metadata: {
+              count,
+              truncated,
+              ...(vectorSemanticHits > 0 ? { vectorSemanticHits } : {}),
+            },
           })
           if (args.operation === "get") {
             if (!args.part_id) return reply("operation=get requires part_id.")
@@ -183,16 +211,24 @@ export const HistoryTool = Tool.define(
           }
           if (args.operation === "search") {
             if (!args.query) return reply("operation=search requires query.")
-            const hits = yield* history.search({ ...args, query: args.query })
+            const semanticEnabled = Semantic.enabled("history")
+            const hits = semanticEnabled
+              ? yield* history.hybridSearch({ ...args, query: args.query, signal: ctx.abort })
+              : yield* history.search({ ...args, query: args.query })
             if (!hits.length) return reply("0 matches. Broaden the query or use memory search.")
             const out = bounded([
               `Found ${hits.length} matches. Summaries only; use history operation=get part_id=... for full details.`,
               ...hits.map(
-                (h) =>
-                  `### session_id=${h.session_id} message_id=${h.message_id} part_id=${h.part_id} time=${h.time_created}\n${h.tool_name ?? ""} score=${h.score.toFixed(3)}\n${h.snippet}`,
+                (h) => {
+                  if (!semanticEnabled) {
+                    return `### session_id=${h.session_id} message_id=${h.message_id} part_id=${h.part_id} time=${h.time_created}\n${h.tool_name ?? ""} ${"rank" in h ? `rank=${h.rank} retrieval=${h.retrieval}${h.retrieval === "semantic" || h.retrieval === "hybrid" ? " evidence=untrusted outcome=unknown" : ""}${h.bm25_score === undefined ? "" : ` bm25=${h.bm25_score.toFixed(3)}`}` : `score=${h.score.toFixed(3)}`}\n${h.snippet}`
+                  }
+                  return `### session_id=${semanticField(h.session_id)} message_id=${semanticField(h.message_id)} part_id=${semanticField(h.part_id)} time=${h.time_created}\n${semanticField(h.tool_name ?? "")} ${"rank" in h ? `rank=${h.rank} retrieval=${h.retrieval}${h.retrieval === "semantic" || h.retrieval === "hybrid" ? " evidence=untrusted outcome=unknown" : ""}${h.bm25_score === undefined ? "" : ` bm25=${h.bm25_score.toFixed(3)}`}` : `score=${h.score.toFixed(3)}`}\n${quoteUntrusted(h.snippet)}`
+                },
               ),
             ])
-            return reply(out.text, hits.length, out.truncated)
+            const vectorSemanticHits = hits.filter((hit) => "retrieval" in hit && (hit.retrieval === "semantic" || hit.retrieval === "hybrid")).length
+            return reply(out.text, hits.length, out.truncated, vectorSemanticHits)
           }
           if (!args.message_id) return reply("operation=around requires message_id.")
           const result = yield* history.around({ ...args, message_id: args.message_id })

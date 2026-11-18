@@ -1,12 +1,28 @@
 import { Context, Effect, Layer } from "effect"
 import path from "path"
 import os from "os"
+import * as fs from "fs/promises"
+import { createHash } from "crypto"
+import { and, or } from "drizzle-orm"
 import { Global } from "../global"
-import { Database } from "../storage"
+import { Database, eq } from "../storage"
 import { Config } from "../config"
 import { reconcileMemory } from "./reconcile"
 import { buildFtsQuery } from "./fts-query"
 import { restoreSearchSnippet, SNIPPET_START, SNIPPET_END, SNIPPET_ELLIPSIS } from "./search-text"
+import * as SemanticCandidates from "../semantic/candidates"
+import { MemoryFtsTable } from "./fts.sql"
+
+export type HybridResult = {
+  path: string
+  snippet: string
+  scope: string
+  scope_id: string
+  type: string
+  retrieval: "lexical" | "semantic" | "both"
+  rank: number
+  score?: number
+}
 
 type SearchRow = {
   path: string
@@ -16,6 +32,62 @@ type SearchRow = {
   snippet: string
   body: string
   score: number
+}
+
+type HybridScope = { scope: string; scope_id?: string }
+
+function hybridScopeAuthorized(input: {
+  scope?: string
+  scope_id?: string
+  current_project_id?: string
+  current_session_id?: string
+}): boolean {
+  if (!input.scope) return true
+  if (input.scope === "projects") {
+    const hasCurrentIDs = !!input.current_project_id || !!input.current_session_id
+    return hasCurrentIDs
+      ? !!input.current_project_id && (!input.scope_id || input.scope_id === input.current_project_id)
+      : !!input.scope_id
+  }
+  if (input.scope === "sessions") {
+    const hasCurrentIDs = !!input.current_project_id || !!input.current_session_id
+    return hasCurrentIDs
+      ? !!input.current_session_id && (!input.scope_id || input.scope_id === input.current_session_id)
+      : !!input.scope_id
+  }
+  return input.scope !== "projects" && input.scope !== "sessions"
+}
+
+function hybridLexicalScopes(input: {
+  scope?: string
+  scope_id?: string
+  current_project_id?: string
+  current_session_id?: string
+}): HybridScope[] {
+  if (input.scope) {
+    const scope_id = input.scope_id ?? (input.scope === "projects" ? input.current_project_id : input.scope === "sessions" ? input.current_session_id : undefined)
+    return [{ scope: input.scope, ...(scope_id ? { scope_id } : {}) }]
+  }
+  const scopes: HybridScope[] = [{ scope: "global" }]
+  if (input.current_project_id) scopes.push({ scope: "projects", scope_id: input.current_project_id })
+  if (input.current_session_id) scopes.push({ scope: "sessions", scope_id: input.current_session_id })
+  if (!input.scope_id) return scopes
+  return scopes.filter((scope) => scope.scope_id === input.scope_id)
+}
+
+function isExactIdentifierQuery(query: string): boolean {
+  const value = query.trim()
+  return (
+    /(?:^|\b)(?:ses|msg|prt|tsk)_[a-z0-9_-]+\b/i.test(value) ||
+    /\b[a-z]{2,8}_[a-z0-9]{8,}\b/i.test(value) ||
+    /(?:^|\s)(?:\/|\.{1,2}[\\/]|~[\\/]|[a-z]:[\\/])\S+/i.test(value) ||
+    /(?:^|\s)[\w@.+-]+\.[a-z0-9]{1,8}(?=$|\s|[:),])/i.test(value) ||
+    /(?:^|\s)--?[a-z][a-z0-9-]*(?:=[^\s]+)?(?=$|\s)/i.test(value) ||
+    /\b[a-z_$][\w$]*(?:::[a-z_$][\w$]*|\.[a-z_$][\w$]*\s*\(|\s*\(\s*\))/i.test(value) ||
+    /\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/i.test(value) ||
+    /^\s*[0-9a-f]{12,64}\s*$/i.test(value) ||
+    /(?:Traceback \(most recent call last\)|\bat\s+.+\(|\bFile ".+", line \d+|\b[\w./\\-]+:\d+(?::\d+)?\b)/i.test(value)
+  )
 }
 
 export interface Interface {
@@ -30,6 +102,17 @@ export interface Interface {
   }) => Effect.Effect<
     Array<{ path: string; snippet: string; score: number; scope: string; scope_id: string; type: string }>
   >
+  readonly hybridSearch: (input: {
+    query: string
+    scope?: string
+    scope_id?: string
+    type?: string
+    limit?: number
+    signal?: AbortSignal
+    feature?: SemanticCandidates.SemanticFeature
+    current_project_id?: string
+    current_session_id?: string
+  }) => Effect.Effect<HybridResult[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Memory") {}
@@ -57,6 +140,7 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
       scope_id?: string
       type?: string
       limit?: number
+      hybrid_scopes?: HybridScope[]
     }) {
       // Lazy reconcile before search (covers off-tool writes); honour config flag.
       const cfg = yield* config.get()
@@ -99,6 +183,17 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
         conditions.push("memory_fts.type = ?")
         params.push(input.type)
       }
+      if (input.hybrid_scopes) {
+        if (input.hybrid_scopes.length === 0) return []
+        conditions.push(`(${input.hybrid_scopes.map((scope) => {
+          if (scope.scope_id) {
+            params.push(scope.scope, scope.scope_id)
+            return "(memory_fts.scope = ? AND memory_fts.scope_id = ?)"
+          }
+          params.push(scope.scope)
+          return "(memory_fts.scope = ?)"
+        }).join(" OR ")})`)
+      }
       const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : ""
 
       const sql = `
@@ -140,10 +235,137 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
       return mapped.filter((r, i) => i === 0 || r.score >= cutoff).slice(0, limit)
     })
 
+    const hybridSearch = Effect.fn("Memory.hybridSearch")(function* (input: {
+      query: string
+      scope?: string
+      scope_id?: string
+      type?: string
+      limit?: number
+      signal?: AbortSignal
+      feature?: SemanticCandidates.SemanticFeature
+      current_project_id?: string
+      current_session_id?: string
+    }) {
+      if (!hybridScopeAuthorized(input)) return []
+      // Lexical retrieval remains the complete fallback and retains its BM25 score.
+      const lexicalScopes = hybridLexicalScopes(input)
+      const lexical = yield* search({ ...input, hybrid_scopes: lexicalScopes })
+      const limit = input.limit ?? 10
+      const lexicalFallback = () => lexical.slice(0, limit).map((row, index) => ({
+        ...row,
+        retrieval: "lexical" as const,
+        rank: index + 1,
+      }))
+      const merged = new Map<string, HybridResult>()
+      lexical.forEach((row, index) => merged.set(path.resolve(row.path), {
+        ...row,
+        retrieval: "lexical",
+        rank: 1 / (60 + index + 1),
+      }))
+
+      // Implicit semantic recall is limited to shared global memory and this
+      // invocation's project/session. Explicit scope never widens.
+      const effectiveScopeID = input.scope_id ?? (input.scope === "projects" ? input.current_project_id : input.scope === "sessions" ? input.current_session_id : undefined)
+      if (
+        !SemanticCandidates.enabled(input.feature ?? "memory") ||
+        isExactIdentifierQuery(input.query) ||
+        !input.query.trim() ||
+        (input.scope && (input.scope === "projects" || input.scope === "sessions" || input.scope === "cc") && !effectiveScopeID)
+      ) return lexicalFallback()
+
+      const scopeFilter = input.scope
+        ? and(
+            eq(MemoryFtsTable.scope, input.scope),
+            ...(effectiveScopeID ? [eq(MemoryFtsTable.scope_id, effectiveScopeID)] : []),
+          )
+        : or(
+            eq(MemoryFtsTable.scope, "global"),
+            ...(input.current_project_id ? [and(eq(MemoryFtsTable.scope, "projects"), eq(MemoryFtsTable.scope_id, input.current_project_id))] : []),
+            ...(input.current_session_id ? [and(eq(MemoryFtsTable.scope, "sessions"), eq(MemoryFtsTable.scope_id, input.current_session_id))] : []),
+          )
+      const filteredScope = input.scope || !input.scope_id
+        ? scopeFilter
+        : and(scopeFilter, eq(MemoryFtsTable.scope_id, input.scope_id))
+      const conditions = [filteredScope, ...(input.type ? [eq(MemoryFtsTable.type, input.type)] : [])]
+      const eligible = Database.use((db) => db.select({
+        path: MemoryFtsTable.path,
+        scope: MemoryFtsTable.scope,
+        scope_id: MemoryFtsTable.scope_id,
+        type: MemoryFtsTable.type,
+        body: MemoryFtsTable.body,
+      }).from(MemoryFtsTable).where(and(...conditions)).all())
+      const allowed = eligible.map((row) => row.path)
+      if (!allowed.length) return lexicalFallback()
+
+      const semantic = yield* Effect.promise(() => SemanticCandidates.search({
+        corpus: "memory",
+        query: input.query,
+        allowed,
+        limit: Math.min(limit * 3, 50),
+        signal: input.signal,
+      }))
+      if (semantic.status !== "ok") return lexicalFallback()
+
+      const byPath = new Map(eligible.map((row) => [path.resolve(row.path), row]))
+      const seenSemanticPaths = new Set<string>()
+      for (const candidate of [...semantic.hits].sort((a, b) => a.rank - b.rank)) {
+        const canonicalPath = path.resolve(candidate.source)
+        const row = byPath.get(canonicalPath)
+        if (!row || candidate.source !== row.path || !allowed.includes(row.path) || !candidate.text) continue
+        const currentRow = Database.use((db) => db.select({
+          path: MemoryFtsTable.path,
+          scope: MemoryFtsTable.scope,
+          scope_id: MemoryFtsTable.scope_id,
+          type: MemoryFtsTable.type,
+          body: MemoryFtsTable.body,
+        }).from(MemoryFtsTable).where(eq(MemoryFtsTable.path, candidate.source)).get())
+        if (
+          !currentRow || currentRow.scope !== row.scope || currentRow.scope_id !== row.scope_id ||
+          currentRow.type !== row.type || currentRow.body !== row.body
+        ) continue
+        // The database is only an index. Re-read the source and require it to
+        // still match the indexed body and requested scope/type before display.
+        const current = yield* Effect.promise(() => fs.readFile(row.path, "utf8").catch(() => ""))
+        if (!current || current !== currentRow.body || !current.includes(candidate.text)) continue
+        const signature = createHash("sha1").update(candidate.text, "utf8").digest("hex").slice(0, 12)
+        if (candidate.signature !== signature) continue
+        const scopeAllowed = input.scope
+          ? currentRow.scope === input.scope && (!effectiveScopeID || currentRow.scope_id === effectiveScopeID)
+          : currentRow.scope === "global" ||
+            (currentRow.scope === "projects" && currentRow.scope_id === input.current_project_id) ||
+            (currentRow.scope === "sessions" && currentRow.scope_id === input.current_session_id)
+        if (!scopeAllowed || (effectiveScopeID && currentRow.scope_id !== effectiveScopeID) || (input.type && currentRow.type !== input.type)) continue
+        if (seenSemanticPaths.has(canonicalPath)) continue
+        seenSemanticPaths.add(canonicalPath)
+        const existing = merged.get(canonicalPath)
+        if (existing) {
+          existing.retrieval = "both"
+          existing.rank += 1 / (60 + candidate.rank)
+          continue
+        }
+        // Semantic text is an untrusted excerpt; source is verified and shown
+        // so the caller can inspect the authoritative file before relying on it.
+        merged.set(canonicalPath, {
+          path: row.path,
+          snippet: candidate.text,
+          scope: currentRow.scope,
+          scope_id: currentRow.scope_id,
+          type: currentRow.type,
+          retrieval: "semantic",
+          rank: 1 / (60 + candidate.rank),
+        })
+      }
+      return [...merged.values()]
+        .sort((a, b) => b.rank - a.rank)
+        .slice(0, limit)
+        .map((row, index) => ({ ...row, rank: index + 1 }))
+    })
+
     return Service.of({
       root: rootEff,
       reconcile,
       search,
+      hybridSearch,
     })
   }),
 )
