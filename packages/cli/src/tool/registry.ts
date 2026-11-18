@@ -9,14 +9,8 @@ import { GrepTool } from "./grep"
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
 import { ReadTool } from "./read"
-import {
-  type MediaKind,
-  ReadAudioTool,
-  ReadImageTool,
-  ReadVideoTool,
-  mediaToolKind,
-  supportsMedia,
-} from "./read-media"
+import { ReadAudioTool, ReadImageTool, ReadVideoTool, supportsMedia } from "./read-media"
+import { mediaToolKind, type MediaKind } from "./media-kind"
 import { ViewImageTool } from "./view-image"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"

@@ -17,7 +17,7 @@ import { Tool } from "../../tool"
 import { GlobTool } from "../../tool/glob"
 import { GrepTool } from "../../tool/grep"
 import { ReadTool } from "../../tool/read"
-import { ReadImageTool } from "../../tool/read-media"
+import { mediaToolKind } from "../../tool/media-kind"
 import { WebFetchTool } from "../../tool/webfetch"
 import { EditTool } from "../../tool/edit"
 import { WriteTool } from "../../tool/write"
@@ -122,7 +122,9 @@ function grep(info: ToolProps<typeof GrepTool>) {
   })
 }
 
-function read(info: ToolProps<typeof ReadTool> | ToolProps<typeof ReadImageTool>) {
+// Also renders read_image/read_audio/read_video, naming the media kind.
+function read(info: ToolProps<typeof ReadTool>) {
+  const kind = mediaToolKind(info.part.tool)
   const file = normalizePath(info.input.file_path)
   const pairs = Object.entries(info.input).filter(([key, value]) => {
     if (key === "file_path") return false
@@ -131,7 +133,7 @@ function read(info: ToolProps<typeof ReadTool> | ToolProps<typeof ReadImageTool>
   const description = pairs.length ? `[${pairs.map(([key, value]) => `${key}=${value}`).join(", ")}]` : undefined
   inline({
     icon: "→",
-    title: `Read ${file}`,
+    title: `Read ${kind ? `${kind} ` : ""}${file}`,
     ...(description && { description }),
   })
 }
@@ -401,9 +403,7 @@ export const RunCommand = cmd({
           if (part.tool === "bash") return bash(props<typeof BashTool>(part))
           if (part.tool === "glob") return glob(props<typeof GlobTool>(part))
           if (part.tool === "grep") return grep(props<typeof GrepTool>(part))
-          if (part.tool === "read") return read(props<typeof ReadTool>(part))
-          if (part.tool === "read_image" || part.tool === "read_audio" || part.tool === "read_video")
-            return read(props<typeof ReadImageTool>(part))
+          if (part.tool === "read" || mediaToolKind(part.tool)) return read(props<typeof ReadTool>(part))
           if (part.tool === "write") return write(props<typeof WriteTool>(part))
           if (part.tool === "webfetch") return webfetch(props<typeof WebFetchTool>(part))
           if (part.tool === "edit") return edit(props<typeof EditTool>(part))
