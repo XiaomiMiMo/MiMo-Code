@@ -154,8 +154,8 @@ const POWERSHELL_BOOTSTRAP = [
   // InputEncoding too: Windows PowerShell 5.1 otherwise prefixes text piped to native commands with a BOM.
   "try { $OutputEncoding = [Console]::OutputEncoding = [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}",
   "if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }",
-  // 5.1 writes UTF-16 (`>`) or the ANSI code page (Set-Content) by default, and aliases curl/wget to Invoke-WebRequest.
-  "if ($PSVersionTable.PSVersion.Major -lt 6) { foreach ($__c in 'Out-File', 'Set-Content', 'Add-Content') { $PSDefaultParameterValues[\"${__c}:Encoding\"] = 'utf8' }; if (Get-Command curl.exe -CommandType Application -ErrorAction Ignore) { Remove-Item Alias:curl, Alias:wget -Force -ErrorAction Ignore } }",
+  // 5.1 writes UTF-16 (`>`) or the ANSI code page (Set-Content) by default.
+  "if ($PSVersionTable.PSVersion.Major -lt 6) { foreach ($__c in 'Out-File', 'Set-Content', 'Add-Content') { $PSDefaultParameterValues[\"${__c}:Encoding\"] = 'utf8' } }",
   "$global:LASTEXITCODE = 0",
   // Parse the command alone first so a parse error never quotes the appended `$?` capture.
   "try { [void][ScriptBlock]::Create($__mimoCommand); $__mimoBlock = [ScriptBlock]::Create($__mimoCommand + [Environment]::NewLine + '$__mimoOk = $?') } catch { $__e = $_.Exception; if ($__e.InnerException) { $__e = $__e.InnerException }; [Console]::Error.WriteLine($__e.Message); exit 1 }",

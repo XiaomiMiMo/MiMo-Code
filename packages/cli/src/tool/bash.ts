@@ -110,6 +110,10 @@ function powershellNotes(label: string, version: string | undefined) {
       "Do not append `2>&1` to external programs; their stderr is already captured, and this version turns redirected stderr into error records.",
     )
   else notes.push(CHAIN_AND)
+  if (major < 6)
+    notes.push(
+      "In this shell `curl` and `wget` are aliases of Invoke-WebRequest; call `curl.exe` explicitly when you need curl's own options.",
+    )
   if (major < 7 || (major === 7 && minor < 3))
     notes.push(
       `${label} drops embedded double quotes and empty-string arguments when calling external programs (e.g. \`git commit -m 'fix "x"'\` loses the quotes). Put such text in a file and pass the file instead (e.g. \`git commit -F msg.txt\`).`,

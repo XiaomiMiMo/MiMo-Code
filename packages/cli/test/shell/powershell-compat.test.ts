@@ -180,10 +180,12 @@ describe.skipIf(!win || shells.length === 0)("powershell version compat: raw she
     expect(r.stdout.trim()).toBe("shim-ok")
   })
 
-  // Case 8: 5.1 aliases curl/wget to Invoke-WebRequest; pwsh 7 removed them.
-  each("curl resolves to curl.exe", ({ shell }) => {
+  // Case 8: 5.1 aliases curl/wget to Invoke-WebRequest (pwsh 6+ removed them).
+  // The aliases are kept, so the description must point the model at curl.exe.
+  each("curl resolves to curl.exe, or the description says to call curl.exe", async ({ shell }) => {
     const r = ps(shell, "(Get-Command curl | Select-Object -First 1).CommandType")
-    expect(r.stdout.trim()).toBe("Application")
+    if (r.stdout.trim() === "Application") return
+    expect(await description(shell)).toContain("call `curl.exe` explicitly")
   })
 })
 
