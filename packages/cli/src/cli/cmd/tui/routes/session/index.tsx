@@ -78,7 +78,7 @@ import { createPress } from "../../ui/press"
 import { WorkflowTree } from "@tui/component/workflow-tree"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { DialogSubagent } from "./dialog-subagent.tsx"
-import { actorToolBody, actorToolCompleteKey, actorToolPendingLabel, isActorToolRunning } from "./actor-tool-state"
+import { actorToolBody, actorToolCompleteKey, actorToolLabel, actorToolPendingLabel, isActorToolRunning } from "./actor-tool-state"
 import { Flag } from "@/flag/flag"
 import { parseActorNotification, parseAgentInboxPart } from "@/inbox/render"
 import { ActorNotificationWarnings } from "./actor-notification-warnings"
@@ -3478,7 +3478,7 @@ function Task(props: ToolProps<typeof ActorTool>) {
   const content = createMemo(() => {
     const action = inputAction()
     const status = actorStatus()
-    const agent = Locale.titlecase(input().subagent_type ?? actorEntry()?.agent ?? "General")
+    const agent = Locale.titlecase(actorToolLabel(input().subagent_type, actorEntry()?.agent))
     const desc = resolvedDescription()
 
     let header = actorToolBody({
