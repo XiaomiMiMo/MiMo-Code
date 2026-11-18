@@ -1,6 +1,9 @@
 import { describe, expect } from "bun:test"
+import fs from "fs/promises"
+import path from "path"
 import { Effect, Layer } from "effect"
 import { Auth } from "../../src/auth"
+import { Global } from "../../src/global"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -8,6 +11,7 @@ import { testEffect } from "../lib/effect"
 const node = CrossSpawnSpawner.defaultLayer
 
 const it = testEffect(Layer.mergeAll(Auth.defaultLayer, node))
+const file = path.join(Global.Path.data, "auth.json")
 
 describe("Auth", () => {
   it.live("set normalizes trailing slashes in keys", () =>
@@ -80,6 +84,44 @@ describe("Auth", () => {
         yield* auth.remove("anthropic")
         const after = yield* auth.all()
         expect(after["anthropic"]).toBeUndefined()
+      }),
+    ),
+  )
+
+  // A host (MiMo Desktop's platform link) may store non-string metadata such as
+  // `platform_linked: true`. The CLI must still read the credential and must never
+  // drop such entries when it rewrites the file.
+  const linked = {
+    type: "api",
+    key: "sk-linked",
+    metadata: { uid: "42", base_url: "https://api.example.com/v1", platform_linked: true },
+  }
+
+  it.live("all keeps api entries whose metadata carries non-string values", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => fs.writeFile(file, JSON.stringify({ xiaomi: linked })))
+        const data = yield* (yield* Auth.Service).all()
+        expect(data["xiaomi"]).toEqual(
+          new Auth.Api({ type: "api", key: "sk-linked", metadata: { uid: "42", base_url: "https://api.example.com/v1" } }),
+        )
+        yield* Effect.promise(() => fs.rm(file, { force: true }))
+      }),
+    ),
+  )
+
+  it.live("set and remove preserve sibling entries verbatim", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const unknown = { type: "future", value: 1 }
+        yield* Effect.promise(() => fs.writeFile(file, JSON.stringify({ xiaomi: linked, other: unknown })))
+        const auth = yield* Auth.Service
+        yield* auth.set("xiaomi-token-plan-cn", { type: "api", key: "tp-new" })
+        const written = JSON.parse(yield* Effect.promise(() => fs.readFile(file, "utf8")))
+        expect(written).toEqual({ xiaomi: linked, other: unknown, "xiaomi-token-plan-cn": { type: "api", key: "tp-new" } })
+        yield* auth.remove("xiaomi-token-plan-cn")
+        expect(JSON.parse(yield* Effect.promise(() => fs.readFile(file, "utf8")))).toEqual({ xiaomi: linked, other: unknown })
+        yield* Effect.promise(() => fs.rm(file, { force: true }))
       }),
     ),
   )
