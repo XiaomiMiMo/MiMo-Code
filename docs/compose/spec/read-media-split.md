@@ -62,6 +62,8 @@ Each media tool re-checks its gate at execution against the model resolved the s
 
 - `session/system.ts` `<vision-capability>`: the subagent hint says the subagent can `read_image` the file.
 - `session/prompt.ts` `@file` resolution: text and directory parts still call `read`. Media parts keep their current inline path; the synthetic "Called the `…` tool" line names `read_audio`/`read_video` for audio/video and stays `read` for PDF.
+- `@`-mentions (TUI autocomplete, `insertFileReference`, ACP resource links, command-template `@path`) arrive as `text/plain` whatever the file holds. Their MIME is sniffed first: a PDF takes the inline PDF path above; an image, audio or video file is passed to `read_image`/`read_audio`/`read_video` with the turn's model (synthetic line names that tool), so a capable model still receives the attachment and an incapable one gets the tool's gate output.
+- `ToolRegistry.named()` also returns the three media tools (`media.image|audio|video`) for that dispatch. The registry gates only the built-in media tools; a plugin tool that replaces one of those ids is not gated.
 - `permission/index.ts` `READ_TOOLS` gains the three tools, so the `read` permission governs them.
 - `tool/gate.ts` `PARALLEL_READONLY_TOOLS` gains the three tools.
 - `agent/agent.ts` dream and distill allowlists gain `read_image` next to `view_image`.
@@ -89,4 +91,6 @@ Stored sessions need no migration: past `read` tool parts keep their name, outpu
 
 ## Journey log
 
+- Review found that `@`-mentions are `text/plain` parts routed to `read`, so after S2.4 a mentioned image/PDF/audio/video failed with `Cannot read binary file` instead of attaching. Fixed by sniffing mentions in `prompt.ts` and dispatching to the media tool (or the inline PDF path); covered by a `prompt.test.ts` regression test.
+- Audio/video through an adapter with no capability declaration (e.g. `@ai-sdk/openai`) is now unavailable: the old `read` checked only the model's modality, the media tools also require the adapter declaration (fail closed, per S2.1).
 - PDF was first planned as a fourth tool `read_pdf` gated only on the model's `pdf` modality. Dropped: no adapter declaration for PDF exists, MiMo's API does not document PDF input although one MiMo models.dev entry declares it, and a native PDF modality is server-side text extraction plus per-page images — which the bundled pdf skill reproduces (text by default, chosen pages rendered when needed, OCR only for scans). The skill is left untouched: tool names stay out of skills, since the model learns them from tool descriptions.

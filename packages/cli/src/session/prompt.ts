@@ -12,10 +12,15 @@ import {
   classifyAttachment,
   fitsMediaBase64,
   isAudioAttachment,
+  isReadAudioMime,
+  isReadImageMime,
+  isReadPdfMime,
+  isReadVideoMime,
   isVideoAttachment,
   MAX_MEDIA_BASE64_BYTES,
   oversizedAttachmentNotice,
   oversizedMediaNotice,
+  sniffAttachmentMime,
 } from "@/util/media"
 import { shrinkAttachment } from "@/provider/image"
 import { classifyAssistantStep } from "./classify"
@@ -3091,21 +3096,109 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 return [{ ...part, messageID: info.id, sessionID: input.sessionID }]
               }
 
-              const { read } = yield* registry.named()
+              const { read, media: mediaTools } = yield* registry.named()
+              const toolContext = (abort: AbortSignal, extra?: Tool.Context["extra"]): Tool.Context => ({
+                sessionID: input.sessionID,
+                abort,
+                agent: input.agent!,
+                messageID: info.id,
+                extra: { bypassCwdCheck: true, ...extra },
+                messages: [],
+                metadata: () => Effect.void,
+                ask: () => Effect.void,
+              })
               const execRead = (args: Parameters<typeof read.execute>[0], extra?: Tool.Context["extra"]) => {
                 const controller = new AbortController()
                 return read
-                  .execute(args, {
-                    sessionID: input.sessionID,
-                    abort: controller.signal,
-                    agent: input.agent!,
-                    messageID: info.id,
-                    extra: { bypassCwdCheck: true, ...extra },
-                    messages: [],
-                    metadata: () => Effect.void,
-                    ask: () => Effect.void,
-                  })
+                  .execute(args, toolContext(controller.signal, extra))
                   .pipe(Effect.onInterrupt(() => Effect.sync(() => controller.abort())))
+              }
+
+              // An @-mention arrives as text/plain whatever the file holds, and
+              // read refuses media. Sniff it: a PDF takes the inline path below
+              // like an attached PDF; image, audio and video go to their tool.
+              const mentioned =
+                part.mime === "text/plain"
+                  ? yield* Effect.scoped(
+                      Effect.gen(function* () {
+                        const file = yield* fsys.open(filepath, { flag: "r" })
+                        return Option.getOrElse(yield* file.readAlloc(4096), () => new Uint8Array())
+                      }),
+                    ).pipe(
+                      Effect.map((sample) => sniffAttachmentMime(sample, AppFileSystem.mimeType(filepath))),
+                      Effect.orElseSucceed(() => undefined),
+                    )
+                  : undefined
+              if (mentioned && isReadPdfMime(mentioned)) part.mime = mentioned
+              const mediaKind = !mentioned
+                ? undefined
+                : isReadImageMime(mentioned)
+                  ? ("image" as const)
+                  : isReadAudioMime(mentioned)
+                    ? ("audio" as const)
+                    : isReadVideoMime(mentioned)
+                      ? ("video" as const)
+                      : undefined
+
+              if (part.mime === "text/plain" && mediaKind) {
+                const tool = mediaTools[mediaKind]
+                const args = { file_path: filepath }
+                const pieces: Draft<MessageV2.Part>[] = [
+                  {
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: `Called the \`${tool.id}\` tool with the following input: ${JSON.stringify(args)}`,
+                  },
+                ]
+                const exit = yield* provider.getModel(info.model.providerID, info.model.modelID).pipe(
+                  Effect.flatMap((mdl) => {
+                    const controller = new AbortController()
+                    return tool
+                      .execute(args, toolContext(controller.signal, { model: mdl }))
+                      .pipe(Effect.onInterrupt(() => Effect.sync(() => controller.abort())))
+                  }),
+                  Effect.exit,
+                )
+                if (Exit.isFailure(exit)) {
+                  const error = Cause.squash(exit.cause)
+                  log.error("failed to read media file", { error })
+                  const message = error instanceof Error ? error.message : String(error)
+                  yield* bus.publish(Session.Event.Error, {
+                    sessionID: input.sessionID,
+                    error: new NamedError.Unknown({ message }).toObject(),
+                  })
+                  pieces.push({
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: `\`${tool.id}\` tool failed to read ${filepath} with the following error: ${message}`,
+                  })
+                  return pieces
+                }
+                pieces.push({
+                  messageID: info.id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: exit.value.output,
+                })
+                if (!exit.value.attachments?.length) {
+                  pieces.push({ ...part, messageID: info.id, sessionID: input.sessionID })
+                  return pieces
+                }
+                pieces.push(
+                  ...exit.value.attachments.map((a) => ({
+                    ...a,
+                    synthetic: true,
+                    filename: a.filename ?? part.filename,
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                  })),
+                )
+                return pieces
               }
 
               if (part.mime === "text/plain") {

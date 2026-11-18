@@ -83,7 +83,7 @@ function define<ID extends string>(id: ID, kind: MediaKind) {
         const name = path.basename(filepath)
         if (kind !== "image") {
           return [
-            `Cannot attach ${kind} "${name}" — the current model has no ${kind} input support, so the file was not read.`,
+            `Cannot attach ${kind} "${name}" — the current model has no ${kind} input support through its provider, so the file was not read.`,
             `Ask the user to switch to a model with ${kind} input, or use a shell tool (e.g. ffprobe) to inspect its metadata instead.`,
           ].join("\n")
         }
@@ -225,9 +225,13 @@ export const ReadImageTool = define("read_image", "image")
 export const ReadAudioTool = define("read_audio", "audio")
 export const ReadVideoTool = define("read_video", "video")
 
-/** Media tool id → the input modality that gates it. */
-export const MEDIA_TOOL_KINDS: Readonly<Partial<Record<string, MediaKind>>> = {
-  [ReadImageTool.id]: "image",
-  [ReadAudioTool.id]: "audio",
-  [ReadVideoTool.id]: "video",
+const MEDIA_TOOL_KINDS = new Map<string, MediaKind>([
+  [ReadImageTool.id, "image"],
+  [ReadAudioTool.id, "audio"],
+  [ReadVideoTool.id, "video"],
+])
+
+/** The input modality gating a media tool id, or undefined for any other tool. */
+export function mediaToolKind(id: string): MediaKind | undefined {
+  return MEDIA_TOOL_KINDS.get(id)
 }
