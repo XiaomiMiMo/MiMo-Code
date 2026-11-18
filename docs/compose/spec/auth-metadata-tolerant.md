@@ -1,6 +1,6 @@
 ---
 feature: auth-metadata-tolerant
-status: in-progress
+status: delivered
 updated: 2026-11-18
 source: fix/auth-metadata-tolerant
 ---
@@ -8,7 +8,14 @@ source: fix/auth-metadata-tolerant
 # Tolerant auth.json metadata
 
 ## Report
-[Not finalized yet]
+**What was built** — `Auth.all()` now tolerates non-string `metadata` fields on disk `api` entries (they are omitted from the decoded view instead of dropping the credential), and `Auth.set` / `Auth.remove` rewrite the raw JSON so entries and fields the CLI does not understand survive. Desktop one-click-linked `xiaomi` / `xiaomi-token-plan-*` credentials are usable from the CLI and are no longer erased when the CLI re-links another provider.
+
+**Verification**
+- `bun test test/auth test/provider/provider-auth-write.test.ts test/provider/xiaomi-family.test.ts test/plugin/mimo.test.ts` — 45 pass / 0 fail (both new tests failed on base for the intended reason)
+- `bun test test/provider test/cli` — 1048 pass / 0 fail
+- `bun run typecheck` (packages/cli) — pass
+- Manual: Desktop-shaped auth.json under a temp `XDG_DATA_HOME`, `providers list` — base: 0 credentials; branch: 2 credentials
+- Independent review — approved, no critical findings; test cleanup nit addressed
 
 ## [S1] Problem
 
@@ -50,8 +57,8 @@ The in-process `inject` / `MIMOCODE_AUTH_CONTENT` channel keeps returning the pa
 - Changes in MiMo Desktop.
 
 ## Tasks
-- [ ] T1: Lenient decode of api metadata — acceptance: an `auth.json` entry with `metadata.platform_linked: true` is returned by `Auth.all()` with its key and string metadata (covers: S2.1)
-- [ ] T2: Raw-preserving set/remove — acceptance: `Auth.set` on one provider keeps a sibling entry carrying `platform_linked: true` on disk unchanged (covers: S2.2)
+- [x] T1: Lenient decode of api metadata — acceptance: an `auth.json` entry with `metadata.platform_linked: true` is returned by `Auth.all()` with its key and string metadata (covers: S2.1)
+- [x] T2: Raw-preserving set/remove — acceptance: `Auth.set` on one provider keeps a sibling entry carrying `platform_linked: true` on disk unchanged (covers: S2.2)
 
 ## Journey log
 None

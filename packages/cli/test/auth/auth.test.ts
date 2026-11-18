@@ -105,6 +105,7 @@ describe("Auth", () => {
         expect(data["xiaomi"]).toEqual(
           new Auth.Api({ type: "api", key: "sk-linked", metadata: { uid: "42", base_url: "https://api.example.com/v1" } }),
         )
+        yield* Effect.promise(() => fs.rm(file, { force: true }))
       }),
     ),
   )
@@ -120,6 +121,7 @@ describe("Auth", () => {
         expect(written).toEqual({ xiaomi: linked, other: unknown, "xiaomi-token-plan-cn": { type: "api", key: "tp-new" } })
         yield* auth.remove("xiaomi-token-plan-cn")
         expect(JSON.parse(yield* Effect.promise(() => fs.readFile(file, "utf8")))).toEqual({ xiaomi: linked, other: unknown })
+        yield* Effect.promise(() => fs.rm(file, { force: true }))
       }),
     ),
   )
