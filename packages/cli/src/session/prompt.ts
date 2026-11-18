@@ -3237,7 +3237,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: `Called the \`read\` tool with the following input: {"file_path":"${filepath}"}`,
+                    text: `Called the \`${isAudioAttachment(part.mime) ? "read_audio" : isVideoAttachment(part.mime) ? "read_video" : "read"}\` tool with the following input: {"file_path":"${filepath}"}`,
                   }
               // Size gate on stat, before the file is read (see classifyAttachment):
               // an under-limit file is inlined as-is, an oversized image within

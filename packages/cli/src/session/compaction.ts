@@ -111,7 +111,7 @@ export function buildFileManifest(messages: MessageV2.WithParts[], env: { worktr
       if (part.type !== "tool" || part.state.status !== "completed") continue
       const inputPath =
         string(part.state.input.file_path) ?? string(part.state.input.path) ?? string(part.state.input.notebook_path)
-      if (part.tool === "read") {
+      if (part.tool === "read" || part.tool === "read_image" || part.tool === "read_audio" || part.tool === "read_video") {
         add(inputPath, readLabel(part))
         continue
       }

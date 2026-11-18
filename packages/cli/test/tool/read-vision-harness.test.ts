@@ -4,12 +4,10 @@ import path from "path"
 import { Agent } from "../../src/agent/agent"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
-import { LSP } from "../../src/lsp"
 import { Instance } from "../../src/project/instance"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
-import { Instruction } from "../../src/session/instruction"
-import { ReadTool } from "../../src/tool/read"
+import { ReadImageTool } from "../../src/tool/read-media"
 import { Truncate } from "../../src/tool"
 import { Tool } from "../../src/tool"
 import { provideInstance, tmpdirScoped } from "../fixture/fixture"
@@ -86,7 +84,7 @@ const ctxFor = (model: typeof nonVisionModel): Tool.Context => ({
 })
 
 // ctx whose last user message references a modelID the fake provider does not know,
-// so getModel raises a defect (Effect.die) and the read must degrade to non-vision.
+// so getModel raises a defect (Effect.die) and read_image must degrade to non-vision.
 const ctxUnknownModel: Tool.Context = {
   sessionID: SessionID.make("ses_test"),
   messageID: MessageID.make(""),
@@ -123,7 +121,7 @@ const ctxNoModel: Tool.Context = {
 }
 
 // The @file path: messages is empty and the active model is supplied via
-// extra.model (see session/prompt.ts execRead). ctx.messages alone would
+// extra.model (the same contract the @file path uses for read). ctx.messages alone would
 // resolve undefined → wrongly report "no vision support" for a vision model.
 const ctxExtraModel = (model: typeof visionModel): Tool.Context => ({
   sessionID: SessionID.make("ses_test"),
@@ -141,8 +139,6 @@ const baseLayers = Layer.mergeAll(
   Agent.defaultLayer,
   AppFileSystem.defaultLayer,
   CrossSpawnSpawner.defaultLayer,
-  Instruction.defaultLayer,
-  LSP.defaultLayer,
   Truncate.defaultLayer,
 )
 
@@ -165,11 +161,11 @@ const put = Effect.fn("ReadVisionTest.put")(function* (p: string, content: Buffe
 })
 
 const runRead = Effect.fn("ReadVisionTest.run")(function* (dir: string, file: string, ctx: Tool.Context) {
-  const tool = yield* (yield* ReadTool).init()
+  const tool = yield* (yield* ReadImageTool).init()
   return yield* provideInstance(dir)(tool.execute({ file_path: file }, ctx))
 })
 
-describe("tool.read vision harness", () => {
+describe("tool.read_image vision harness", () => {
   nonVision.live("non-vision model reading an image returns a warning and no attachment", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped()

@@ -17,6 +17,7 @@ import { Tool } from "../../tool"
 import { GlobTool } from "../../tool/glob"
 import { GrepTool } from "../../tool/grep"
 import { ReadTool } from "../../tool/read"
+import { ReadImageTool } from "../../tool/read-media"
 import { WebFetchTool } from "../../tool/webfetch"
 import { EditTool } from "../../tool/edit"
 import { WriteTool } from "../../tool/write"
@@ -121,7 +122,7 @@ function grep(info: ToolProps<typeof GrepTool>) {
   })
 }
 
-function read(info: ToolProps<typeof ReadTool>) {
+function read(info: ToolProps<typeof ReadTool> | ToolProps<typeof ReadImageTool>) {
   const file = normalizePath(info.input.file_path)
   const pairs = Object.entries(info.input).filter(([key, value]) => {
     if (key === "file_path") return false
@@ -401,6 +402,8 @@ export const RunCommand = cmd({
           if (part.tool === "glob") return glob(props<typeof GlobTool>(part))
           if (part.tool === "grep") return grep(props<typeof GrepTool>(part))
           if (part.tool === "read") return read(props<typeof ReadTool>(part))
+          if (part.tool === "read_image" || part.tool === "read_audio" || part.tool === "read_video")
+            return read(props<typeof ReadImageTool>(part))
           if (part.tool === "write") return write(props<typeof WriteTool>(part))
           if (part.tool === "webfetch") return webfetch(props<typeof WebFetchTool>(part))
           if (part.tool === "edit") return edit(props<typeof EditTool>(part))

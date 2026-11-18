@@ -5,6 +5,7 @@ import { Agent } from "../../src/agent/agent"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
+import type { Config } from "../../src/config"
 import { provideTmpdirInstance } from "../fixture/fixture"
 
 const it = testEffect(
@@ -194,5 +195,69 @@ describe("ToolRegistry.tools: toolset selection", () => {
       }),
     ),
   )
+  it.live("offers each media tool only when the model and its adapter accept the kind", () => {
+    const model = (input: Array<"text" | "image" | "audio" | "video">) => ({
+      name: input.join("+"),
+      tool_call: true,
+      limit: { context: 8000, output: 1000 },
+      modalities: { input, output: ["text" as const] },
+    })
+    const provider = (npm: string, models: Record<string, ReturnType<typeof model>>) => ({
+      name: npm,
+      npm,
+      env: [],
+      options: { apiKey: "test-key", baseURL: "https://example.com/v1" },
+      models,
+    })
+    const config = {
+      enabled_providers: ["media-compat", "media-anthropic", "media-undeclared"],
+      provider: {
+        "media-compat": provider("@ai-sdk/openai-compatible", {
+          text: model(["text"]),
+          image: model(["text", "image"]),
+          av: model(["text", "audio", "video"]),
+        }),
+        "media-anthropic": provider("@ai-sdk/anthropic", { av: model(["text", "audio", "video"]) }),
+        "media-undeclared": provider("@ai-sdk/openai", { av: model(["text", "audio", "video"]) }),
+      },
+    } satisfies Partial<Config.Info>
+
+    return provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const reg = yield* ToolRegistry.Service
+          const agents = yield* Agent.Service
+          const build = yield* agents.get("build")
+          const media = (providerID: string, modelID: string, harness?: "codex") =>
+            reg
+              .registered({
+                providerID: ProviderID.make(providerID),
+                modelID: ModelID.make(modelID),
+                agent: build,
+                harness,
+              })
+              .pipe(Effect.map((tools) => tools.map((tool) => tool.id)))
+          const only = (ids: string[]) => ids.filter((id) => id.startsWith("read_") || id === "view_image")
+
+          expect(only(yield* media("media-compat", "text"))).toEqual([])
+          expect(only(yield* media("media-compat", "image"))).toEqual(["read_image"])
+          expect(only(yield* media("media-compat", "av"))).toEqual(["read_audio", "read_video"])
+          expect(only(yield* media("media-anthropic", "av"))).toEqual([])
+          expect(only(yield* media("media-undeclared", "av"))).toEqual([])
+          expect(only(yield* media("media-missing", "nope"))).toEqual([])
+          expect(only(yield* media("media-compat", "image", "codex"))).toEqual(["view_image"])
+
+          const tools = yield* reg.tools({
+            providerID: ProviderID.make("media-compat"),
+            modelID: ModelID.make("av"),
+            agent: build,
+          })
+          const read = tools.find((tool) => tool.id === "read")?.description ?? ""
+          expect(read).not.toContain("You can read and understand")
+          expect(read).not.toContain("read_audio")
+        }),
+      { config },
+    )
+  })
 
 })

@@ -450,6 +450,17 @@ test("disabled - disables view_image when read is denied", () => {
   expect(result.has("glob")).toBe(false)
 })
 
+test("disabled - disables the media read tools when read is denied", () => {
+  const tools = ["read_image", "read_audio", "read_video"]
+  const denied = Permission.disabled(tools, [
+    { permission: "*", pattern: "*", action: "allow" },
+    { permission: "read", pattern: "*", action: "deny" },
+  ])
+  expect([...denied].sort()).toEqual(["read_audio", "read_image", "read_video"])
+  const allowed = Permission.disabled(tools, [{ permission: "*", pattern: "*", action: "allow" }])
+  expect(allowed.size).toBe(0)
+})
+
 test("disabled - does not disable when partially denied", () => {
   const result = Permission.disabled(
     ["bash"],

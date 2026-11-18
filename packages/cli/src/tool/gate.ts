@@ -27,7 +27,14 @@ export class FailCascadeError extends ToolResultError {
   }
 }
 
-export const PARALLEL_READONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob"])
+export const PARALLEL_READONLY_TOOLS: ReadonlySet<string> = new Set([
+  "read",
+  "read_image",
+  "read_audio",
+  "read_video",
+  "grep",
+  "glob",
+])
 
 export type GateRequest = {
   readonly id: string

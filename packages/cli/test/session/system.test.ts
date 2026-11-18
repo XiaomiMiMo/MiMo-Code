@@ -188,6 +188,7 @@ describe("session.system", () => {
         )
 
         expect(prompts[0].join("\n")).toContain("<vision-capability>")
+        expect(prompts[0].join("\n")).toContain("so the subagent can `read_image` it")
         expect(prompts[1].join("\n")).toContain("<vision-capability>")
         expect(prompts[2].join("\n")).toContain("<vision-capability>")
         expect(prompts[3].join("\n")).not.toContain("<vision-capability>")
