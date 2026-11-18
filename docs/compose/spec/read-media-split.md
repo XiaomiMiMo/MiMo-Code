@@ -2,7 +2,7 @@
 feature: read-media-split
 status: delivered
 updated: 2026-11-18
-source: feat/read-media-split
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2828
 ---
 
 # Split media reading out of `read`
