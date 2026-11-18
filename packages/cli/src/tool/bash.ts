@@ -100,9 +100,10 @@ const CHAIN_AND =
   "If the commands depend on each other and must run sequentially, use a single `bash` call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, or git add before git commit), run these operations sequentially in one command instead of assuming they will interleave correctly across calls."
 
 // Syntax and native-argument limits differ by PowerShell version, so the guidance
-// keys off the probed version rather than the executable name.
+// keys off the probed version rather than the executable name. An unprobed pwsh is
+// treated as 7.0: no false "&& unsupported" claims, but the quoting advice stays.
 function powershellNotes(label: string, version: string | undefined) {
-  const [major, minor] = (version ?? "0.0").split(".").map(Number)
+  const [major, minor] = (version ?? "7.0").split(".").map(Number)
   const notes: string[] = []
   if (major < 7)
     notes.push(
@@ -116,7 +117,7 @@ function powershellNotes(label: string, version: string | undefined) {
     )
   if (major < 7 || (major === 7 && minor < 3))
     notes.push(
-      `${label} drops embedded double quotes and empty-string arguments when calling external programs (e.g. \`git commit -m 'fix "x"'\` loses the quotes). Put such text in a file and pass the file instead (e.g. \`git commit -F msg.txt\`).`,
+      `${label} drops embedded double quotes and empty-string arguments when calling external programs (e.g. \`git commit -m 'fix "x"'\` loses the quotes, and \`curl.exe -d '{"a":1}'\` sends \`{a:1}\` without any error). Put such text in a file and pass the file instead (e.g. \`git commit -F msg.txt\`, or \`curl.exe --data @body.json\` for JSON request bodies).`,
     )
   return notes.join(" ")
 }
@@ -923,10 +924,11 @@ export const BashTool = Tool.define(
     })
 
     return () =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const shell = Shell.acceptable()
         const name = Shell.name(shell)
         log.info("bash tool using shell", { shell })
+        if (PS.has(name)) yield* Effect.promise(() => Shell.probePowershellVersion(shell))
 
         return {
           description: bashDescription(),

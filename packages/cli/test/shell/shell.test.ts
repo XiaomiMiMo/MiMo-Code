@@ -47,8 +47,10 @@ describe("shell", () => {
     expect(invocation.env.MIMO_PS_COMMAND).toBe("Write-Output 'marker-text'")
   })
 
-  test.skipIf(process.platform !== "win32")("Windows PowerShell is reported as 5.1 without probing", () => {
-    expect(Shell.powershellVersion("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")).toBe("5.1")
+  test.skipIf(process.platform !== "win32")("Windows PowerShell is reported as 5.1 without probing", async () => {
+    const file = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    expect(Shell.powershellVersion(file)).toBe("5.1")
+    expect(await Shell.probePowershellVersion(file)).toBe("5.1")
   })
 
   if (process.platform === "win32") {

@@ -4,6 +4,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { lstatSync } from "fs"
+import fs from "fs/promises"
+import path from "path"
 import { Shell } from "../../src/shell/shell"
 import { BashTool, bashDescription } from "../../src/tool/bash"
 import { Instance } from "../../src/project/instance"
@@ -65,6 +67,8 @@ function present(file: string) {
   }
 }
 
+const gitBash = win ? Shell.gitbash() : undefined
+
 const values: Array<[string, string | undefined]> = [
   ["unset", undefined],
   ["Git Bash /usr/bin/bash", "/usr/bin/bash"],
@@ -77,6 +81,7 @@ const values: Array<[string, string | undefined]> = [
   ["bare powershell", "powershell"],
   ["cmd.exe", "cmd.exe"],
   ["blacklisted fish", "/usr/bin/fish"],
+  ...(gitBash ? [["Windows path without .exe", gitBash.replace(/\.exe$/i, "")] as [string, string]] : []),
 ]
 
 describe.skipIf(!win)("$SHELL handling on Windows", () => {
@@ -107,4 +112,60 @@ describe.skipIf(!win)("$SHELL handling on Windows", () => {
       expect(Shell.name(Shell.acceptable())).toBe("pwsh")
     })
   })
+
+  test.skipIf(!gitBash)("keeps a Windows $SHELL path that omits .exe", async () => {
+    await withShell(gitBash!.replace(/\.exe$/i, ""), async () => {
+      expect(Shell.acceptable().toLowerCase()).toBe(gitBash!.toLowerCase())
+      expect(Shell.preferred().toLowerCase()).toBe(gitBash!.toLowerCase())
+    })
+  })
+
+  test.skipIf(!Bun.which("pwsh.exe"))("caches a successful pwsh version probe", async () => {
+    const pwsh = Bun.which("pwsh.exe")!
+    const version = await Shell.probePowershellVersion(pwsh)
+    expect(version).toMatch(/^\d+\.\d+/)
+    expect(Shell.powershellVersion(pwsh)).toBe(version)
+  })
+
+  // A "pwsh.exe" whose probe cannot report a version (here a renamed cmd.exe).
+  test("an unknown pwsh version is not cached and gets no Windows PowerShell 5.1 guidance", async () => {
+    await using tmp = await tmpdir()
+    const fake = path.join(tmp.path, "pwsh.exe")
+    await fs.copyFile(path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe"), fake)
+    await withShell(fake, async () => {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await runtime.runPromise(BashTool.pipe(Effect.flatMap((info) => info.init())))
+          expect(Shell.powershellVersion(fake)).toBeUndefined()
+          const text = bashDescription()
+          expect(text).toContain("Shell: pwsh (PowerShell)")
+          expect(text).not.toContain("avoid '&&'")
+          expect(text).not.toContain("aliases of Invoke-WebRequest")
+          expect(text).toContain("curl.exe --data @body.json")
+        },
+      })
+    })
+  }, 30_000)
+
+  for (const [layout, dir] of [
+    ["MSYS2", ["msys64", "usr", "bin"]],
+    ["Cygwin", ["cygwin64", "bin"]],
+  ] as const) {
+    test(`maps /usr/bin/zsh onto a ${layout} installation`, async () => {
+      await using tmp = await tmpdir()
+      const zsh = path.join(tmp.path, ...dir, "zsh.exe")
+      await fs.mkdir(path.dirname(zsh), { recursive: true })
+      await Bun.write(zsh, "")
+      const prev = process.env.SystemDrive
+      process.env.SystemDrive = tmp.path
+      try {
+        await withShell("/usr/bin/zsh", async () => {
+          expect(Shell.preferred()).toBe(zsh)
+        })
+      } finally {
+        process.env.SystemDrive = prev
+      }
+    })
+  }
 })

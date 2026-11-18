@@ -68,6 +68,7 @@ async function withShell<T>(shell: string, fn: () => Promise<T>) {
 
 async function description(shell: string) {
   await using tmp = await tmpdir()
+  await Shell.probePowershellVersion(shell)
   return await withShell(shell, () => Instance.provide({ directory: tmp.path, fn: async () => bashDescription() }))
 }
 
@@ -89,7 +90,10 @@ describe.skipIf(!win || shells.length === 0)("powershell version compat: raw she
     const r = ps(shell, `& ${bun} ${lit(script)} 'a"b' '' 'c d'`)
     expect(r.code).toBe(0)
     if (r.stdout.trim() === JSON.stringify(['a"b', "", "c d"])) return
-    expect(await description(shell)).toContain("drops embedded double quotes")
+    const text = await description(shell)
+    expect(text).toContain("drops embedded double quotes")
+    // The silent case: curl.exe -d '{"a":1}' sends {a:1}.
+    expect(text).toContain("curl.exe --data @body.json")
   })
 
   // Case 2: 5.1 `>` / Out-File writes UTF-16LE and Set-Content the ANSI code page.
@@ -153,6 +157,28 @@ describe.skipIf(!win || shells.length === 0)("powershell version compat: raw she
     expect(ps(shell, "Get-Item does-not-exist").code).toBe(1)
     expect(ps(shell, "exit 5").code).toBe(5)
     expect(ps(shell, "throw 'boom'").code).toBe(1)
+    // An earlier external failure must not be reported for a failing cmdlet.
+    expect(ps(shell, "cmd /c exit 7; Get-Item does-not-exist").code).toBe(1)
+    expect(ps(shell, "Get-Item does-not-exist; cmd /c exit 3").code).toBe(3)
+    expect(ps(shell, "if ($true) { cmd /c exit 4 }").code).toBe(4)
+    expect(ps(shell, "$exe = 'cmd'; & $exe /c exit 6").code).toBe(6)
+  })
+
+  // Constrained Language Mode (AppLocker/WDAC) cannot run the full setup; the
+  // fallback must still report success and failure.
+  each("reports exit codes under Constrained Language Mode", ({ shell }) => {
+    const clm = (command: string) => {
+      const invocation = Shell.powershell(command)
+      const args = [...invocation.args]
+      args[args.length - 1] = `$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'; ${args[args.length - 1]}`
+      const proc = Bun.spawnSync([shell, ...args], { stdin: "ignore", env: { ...process.env, ...invocation.env } })
+      return { code: proc.exitCode, stdout: proc.stdout.toString() }
+    }
+    const ok = clm("Write-Output clm-ok")
+    expect(ok.code).toBe(0)
+    expect(ok.stdout).toContain("clm-ok")
+    expect(clm("Get-Item does-not-exist").code).toBe(1)
+    expect(clm("cmd /c exit 4").code).toBe(4)
   })
 
   // Case 6: error records must not quote setup code the model never wrote.
