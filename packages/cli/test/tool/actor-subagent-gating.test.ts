@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { ToolRegistry } from "../../src/tool"
+import { SUBAGENT_ACTOR_DESCRIPTION } from "../../src/tool/actor"
 import { Agent } from "../../src/agent/agent"
-import { hasActorTool } from "../../src/agent/config"
+import { actorToolVariant, hasActorTool } from "../../src/agent/config"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
@@ -35,9 +36,9 @@ const get = (name: string) =>
   })
 
 // `actor` is the only tool that spawns child agents, so no `mode: "subagent"`
-// agent may see it — otherwise a subagent recursively delegates its own work.
-// The gate is on mode, not name, so a user-config subagent (which defaults to
-// `"*": "allow"`) cannot opt itself back in.
+// agent gets the spawn surface: it receives the send-only variant instead. The
+// gate is on mode, not name, so a user-config subagent (which defaults to
+// `"*": "allow"`) cannot opt itself back into spawning.
 describe("ToolRegistry.tools: actor tool subagent gating", () => {
   it.live("primaries still see the actor tool", () =>
     provideTmpdirInstance(() =>
@@ -47,16 +48,34 @@ describe("ToolRegistry.tools: actor tool subagent gating", () => {
     ),
   )
 
-  it.live("native subagents do not see the actor tool", () =>
+  it.live("native subagents see the send-only actor tool", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
-        expect(yield* ids(yield* get("general"))).not.toContain("actor")
-        expect(yield* ids(yield* get("explore"))).not.toContain("actor")
+        for (const name of ["general", "explore"]) {
+          const agent = yield* get(name)
+          expect(yield* ids(agent)).toContain("actor")
+          const tools = yield* (yield* ToolRegistry.Service).tools({
+            providerID: ProviderID.opencode,
+            modelID: ModelID.make("opencode/claude-sonnet-4-6"),
+            agent,
+          })
+          const actor = tools.find((tool) => tool.id === "actor")
+          expect(actor?.description).toBe(SUBAGENT_ACTOR_DESCRIPTION)
+          // the spawn surface is gone from the schema, not merely rejected later
+          const spawn = actor?.parameters.safeParse({
+            operation: { action: "spawn", description: "x", prompt: "y", subagent_type: "explore" },
+          })
+          expect(spawn?.success).toBe(false)
+          const send = actor?.parameters.safeParse({
+            operation: { action: "send", to_actor_id: "main", content: "blocked on X" },
+          })
+          expect(send?.success).toBe(true)
+        }
       }),
     ),
   )
 
-  it.live("user-config subagents do not see the actor tool", () =>
+  it.live("user-config subagents get the send-only variant too", () =>
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -64,8 +83,8 @@ describe("ToolRegistry.tools: actor tool subagent gating", () => {
           expect(helper.mode).toBe("subagent")
           expect(helper.toolAllowlist).toBeUndefined()
           const tools = yield* ids(helper)
-          expect(tools).not.toContain("actor")
-          // still full-capability otherwise — the gate removes only `actor`
+          expect(tools).toContain("actor")
+          // still full-capability otherwise — only the actor surface is reduced
           expect(tools).toContain("edit")
           expect(tools).toContain("bash")
         }),
@@ -87,18 +106,27 @@ describe("ToolRegistry.tools: actor tool subagent gating", () => {
     ),
   )
 
-  // hasActorTool is the predicate ToolRegistry.available masks with, so it must
-  // agree with the resulting schema for every registered agent.
-  it.live("hasActorTool agrees with the mask for every agent", () =>
+  // actorToolVariant is the predicate ToolRegistry.available switches on, so it
+  // must agree with the resulting schema for every registered agent.
+  it.live("actorToolVariant agrees with the schema for every agent", () =>
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
           const agents = yield* (yield* Agent.Service).list()
           for (const agent of agents) {
-            expect({ agent: agent.name, actor: (yield* ids(agent)).includes("actor") }).toEqual({
-              agent: agent.name,
-              actor: hasActorTool(agent),
+            const variant = actorToolVariant(agent)
+            const tools = yield* (yield* ToolRegistry.Service).tools({
+              providerID: ProviderID.opencode,
+              modelID: ModelID.make("opencode/claude-sonnet-4-6"),
+              agent,
             })
+            const actor = tools.find((tool) => tool.id === "actor")
+            expect({ agent: agent.name, present: actor !== undefined }).toEqual({
+              agent: agent.name,
+              present: variant !== "none",
+            })
+            if (variant === "send") expect(actor?.description).toBe(SUBAGENT_ACTOR_DESCRIPTION)
+            if (variant === "full") expect(actor?.description).not.toBe(SUBAGENT_ACTOR_DESCRIPTION)
           }
         }),
       { config: { agent: { helper: { description: "Helper", mode: "subagent" } } } },
@@ -106,23 +134,30 @@ describe("ToolRegistry.tools: actor tool subagent gating", () => {
   )
 })
 
-describe("hasActorTool", () => {
-  test("primaries and system-spawned agents keep it, other subagents don't", () => {
-    expect(hasActorTool({ name: "build", mode: "primary" })).toBe(true)
-    expect(hasActorTool({ name: "helper", mode: "all" })).toBe(true)
-    expect(hasActorTool({ name: "checkpoint-writer", mode: "subagent" })).toBe(true)
-    expect(hasActorTool({ name: "general", mode: "subagent" })).toBe(false)
-    expect(hasActorTool({ name: "explore", mode: "subagent" })).toBe(false)
+describe("actorToolVariant", () => {
+  test("primaries, peers and system-spawned agents get the full surface", () => {
+    expect(actorToolVariant({ name: "build", mode: "primary" })).toBe("full")
+    expect(actorToolVariant({ name: "helper", mode: "all" })).toBe("full")
+    expect(actorToolVariant({ name: "checkpoint-writer", mode: "subagent" })).toBe("full")
+    expect(actorToolVariant(undefined)).toBe("full")
   })
 
-  // dream/distill are system-spawned, so the mode gate exempts them, but their
-  // toolAllowlist omits `actor`.
+  test("other subagents get send only", () => {
+    expect(actorToolVariant({ name: "general", mode: "subagent" })).toBe("send")
+    expect(actorToolVariant({ name: "explore", mode: "subagent" })).toBe("send")
+  })
+
+  // dream/distill are system-spawned, so the mode gate would exempt them, but
+  // their toolAllowlist omits `actor`.
   test("an allowlist without actor wins over the system-spawned exemption", () => {
-    expect(hasActorTool({ name: "distill", mode: "subagent", toolAllowlist: ["read", "memory"] })).toBe(false)
-    expect(hasActorTool({ name: "build", mode: "primary", toolAllowlist: ["read"] })).toBe(false)
+    expect(actorToolVariant({ name: "distill", mode: "subagent", toolAllowlist: ["read", "memory"] })).toBe("none")
+    expect(actorToolVariant({ name: "build", mode: "primary", toolAllowlist: ["read"] })).toBe("none")
   })
 
-  test("an unresolvable agent keeps the tool", () => {
+  test("hasActorTool means spawn-capable", () => {
+    expect(hasActorTool({ name: "build", mode: "primary" })).toBe(true)
+    expect(hasActorTool({ name: "general", mode: "subagent" })).toBe(false)
+    expect(hasActorTool({ name: "distill", mode: "subagent", toolAllowlist: ["read"] })).toBe(false)
     expect(hasActorTool(undefined)).toBe(true)
   })
 })

@@ -10,7 +10,7 @@ import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
 import { ReadTool, describeMedia } from "./read"
 import { ViewImageTool } from "./view-image"
-import { ActorTool } from "./actor"
+import { ActorTool, SUBAGENT_ACTOR_DESCRIPTION, subagentParameters } from "./actor"
 import { TaskTool } from "./task"
 import { CronTool } from "./cron"
 import { WorkflowTool } from "./workflow"
@@ -52,7 +52,7 @@ import { Instruction } from "../session/instruction"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Bus } from "../bus"
 import { Agent } from "../agent/agent"
-import { hasActorTool } from "@/agent/config"
+import { actorToolVariant } from "@/agent/config"
 import { Skill } from "../skill"
 import { Permission } from "@/permission"
 import { ActorRegistry } from "@/actor/registry"
@@ -376,20 +376,28 @@ export const layer = Layer.effect(
       }
 
       // No subagent may spawn further subagents. `actor` is the only tool that
-      // spawns/runs child agents, so mask it out for every `mode: "subagent"`
-      // agent — native (general/explore) AND user-config-defined, which default
-      // to `"*": "allow"` and would otherwise recurse. Gate on mode rather than
-      // agent name so a custom subagent cannot opt itself back in.
+      // spawns/runs child agents, so a subagent gets the send-only variant: the
+      // action union collapses to `send`, which keeps the recursion surface closed
+      // while giving a worker one live channel back to its parent. Gate on mode
+      // rather than agent name so a user-config subagent (which defaults to
+      // `"*": "allow"`) cannot opt itself back in.
       //
-      // SYSTEM_SPAWNED_AGENT_TYPES are exempt: they are spawned by the runtime,
-      // never by a model, so they pose no recursive-delegation risk. The
+      // SYSTEM_SPAWNED_AGENT_TYPES keep the full tool: they are spawned by the
+      // runtime, never by a model, so they pose no recursive-delegation risk. The
       // exemption is also load-bearing for checkpoint-writer, a fork agent whose
       // LLM-visible tool schema must stay byte-identical to its (primary) parent's
       // captured ForkContext.tools or the prefix cache breaks — see ForkContext
       // JSDoc in actor/spawn.ts. Its real tool authority is the actor.tools
       // whitelist set in tryStartCheckpointWriter, which already omits `actor`.
-      if (!hasActorTool(input.agent)) {
+      const actorVariant = actorToolVariant(input.agent)
+      if (actorVariant === "none") {
         filtered = filtered.filter((tool) => tool.id !== ActorTool.id)
+      } else if (actorVariant === "send") {
+        filtered = filtered.map((tool) =>
+          tool.id === ActorTool.id
+            ? { ...tool, parameters: subagentParameters, description: SUBAGENT_ACTOR_DESCRIPTION }
+            : tool,
+        )
       }
 
       return { filtered, useGPTTools }
@@ -443,7 +451,9 @@ export const layer = Layer.effect(
             description: [
               output.description,
               tool.id === ReadTool.id ? yield* describeReadMedia(input) : undefined,
-              tool.id === ActorTool.id ? yield* describeTask(input.agent) : undefined,
+              tool.id === ActorTool.id && actorToolVariant(input.agent) === "full"
+                ? yield* describeTask(input.agent)
+                : undefined,
               tool.id === WorkflowTool.id ? yield* describeWorkflow() : undefined,
               tool.id === ToolScriptTool.id ? yield* describeToolScript(availableTools.filtered) : undefined,
             ]
