@@ -2,7 +2,7 @@
 feature: auth-metadata-tolerant
 status: delivered
 updated: 2026-11-18
-source: fix/auth-metadata-tolerant
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2830
 ---
 
 # Tolerant auth.json metadata
