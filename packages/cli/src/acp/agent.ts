@@ -1495,6 +1495,9 @@ function toToolKind(toolName: string): ToolKind {
       return "search"
 
     case "read":
+    case "read_image":
+    case "read_audio":
+    case "read_video":
       return "read"
 
     default:
@@ -1522,6 +1525,9 @@ function toLocations(toolName: string, input: Record<string, any>): { path: stri
   const tool = toolName.toLocaleLowerCase()
   switch (tool) {
     case "read":
+    case "read_image":
+    case "read_audio":
+    case "read_video":
     case "write":
     case "edit":
     case "multiedit":

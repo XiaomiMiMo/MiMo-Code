@@ -1,5 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect } from "bun:test"
-import { PNG } from "pngjs"
+import { afterEach, describe, expect } from "bun:test"
 import { Cause, Effect, Exit, Layer } from "effect"
 import path from "path"
 import { Agent } from "../../src/agent/agent"
@@ -11,7 +10,7 @@ import { Instance } from "../../src/project/instance"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { ModelID } from "../../src/provider/schema"
 import { Instruction } from "../../src/session/instruction"
-import { ReadTool, describeMedia } from "../../src/tool/read"
+import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "../../src/tool"
 import { Tool } from "../../src/tool"
 import { Filesystem } from "../../src/util"
@@ -20,24 +19,6 @@ import { testEffect } from "../lib/effect"
 import { ProviderTest } from "../fake/provider"
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
-
-// Random noise defeats PNG's own compression, so a small canvas yields a file
-// far larger than the tiny attachment limit the size-gate tests run under.
-function noisyPng(size: number) {
-  let seed = 4242
-  const rand = () => {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff
-    return seed % 256
-  }
-  const png = new PNG({ width: size, height: size })
-  for (let i = 0; i < png.data.length; i += 4) {
-    png.data[i] = rand()
-    png.data[i + 1] = rand()
-    png.data[i + 2] = rand()
-    png.data[i + 3] = 255
-  }
-  return PNG.sync.write(png)
-}
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -422,73 +403,6 @@ describe("tool.read truncation", () => {
     }),
   )
 
-  it.live("image files set truncated to false", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      const png = Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
-        "base64",
-      )
-      yield* put(path.join(dir, "image.png"), png)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "image.png") })
-      expect(result.metadata.truncated).toBe(false)
-      expect(result.attachments).toBeDefined()
-      expect(result.attachments?.length).toBe(1)
-      expect(result.attachments?.[0]).not.toHaveProperty("id")
-      expect(result.attachments?.[0]).not.toHaveProperty("sessionID")
-      expect(result.attachments?.[0]).not.toHaveProperty("messageID")
-    }),
-  )
-
-  it.live("detects attachment media from file contents", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01])
-      yield* put(path.join(dir, "image.bin"), jpeg)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "image.bin") })
-      expect(result.output).toBe("Image read successfully")
-      expect(result.attachments?.[0].mime).toBe("image/jpeg")
-      expect(result.attachments?.[0].url.startsWith("data:image/jpeg;base64,")).toBe(true)
-    }),
-  )
-
-  it.live("refuses sniffed BMP under the finite image allowlist", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      const rowSize = Math.floor((24 * 1 + 31) / 32) * 4
-      const bmp = Buffer.alloc(54 + rowSize)
-      bmp.write("BM", 0, "ascii")
-      bmp.writeUInt32LE(bmp.length, 2)
-      bmp.writeUInt32LE(54, 10)
-      bmp.writeUInt32LE(40, 14)
-      bmp.writeInt32LE(1, 18)
-      bmp.writeInt32LE(1, 22)
-      bmp.writeUInt16LE(1, 26)
-      bmp.writeUInt16LE(24, 28)
-      yield* put(path.join(dir, "screenshot.png"), bmp)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "screenshot.png") })
-      expect(result.attachments).toBeUndefined()
-      expect(result.output).toContain('Cannot attach image "screenshot.png" (image/bmp)')
-      expect(result.output).toContain("image/jpeg, image/png, image/webp, image/gif")
-    }),
-  )
-
-  it.live("large image files are properly attached without error", () =>
-    Effect.gen(function* () {
-      const result = yield* exec(FIXTURES_DIR, { file_path: path.join(FIXTURES_DIR, "large-image.png") })
-      expect(result.metadata.truncated).toBe(false)
-      expect(result.attachments).toBeDefined()
-      expect(result.attachments?.length).toBe(1)
-      expect(result.attachments?.[0].type).toBe("file")
-      expect(result.attachments?.[0]).not.toHaveProperty("id")
-      expect(result.attachments?.[0]).not.toHaveProperty("sessionID")
-      expect(result.attachments?.[0]).not.toHaveProperty("messageID")
-    }),
-  )
-
   it.live(".fbs files (FlatBuffers schema) are read as text, not images", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped()
@@ -551,142 +465,42 @@ describe("tool.read binary detection", () => {
   )
 })
 
-describe("tool.read pdf capability gate", () => {
-  const pdf = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n")
-
-  it.live("attaches a PDF when the active model accepts pdf input", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      yield* put(path.join(dir, "doc.pdf"), pdf)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "doc.pdf") })
-      expect(result.output).toBe("PDF read successfully")
-      expect(result.attachments?.length).toBe(1)
-      expect(result.attachments?.[0].mime).toBe("application/pdf")
-    }),
+describe("tool.read refuses media", () => {
+  // Media belongs to read_image/read_audio/read_video; read refuses it like any
+  // other binary file, even for a model that declares every modality.
+  const allMedia = ProviderTest.model({
+    id: ModelID.make("all-media"),
+    providerID: visionModel.providerID,
+    api: { id: "all-media", url: "https://example.com", npm: "@ai-sdk/openai-compatible" },
+    capabilities: {
+      ...visionModel.capabilities,
+      input: { text: true, image: true, audio: true, video: true, pdf: true },
+    },
+  })
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+    "base64",
   )
+  const cases: Array<[string, Buffer]> = [
+    ["image.png", png],
+    ["doc.pdf", Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n")],
+    ["clip.wav", Buffer.concat([Buffer.from("RIFF"), Buffer.from([0x24, 0, 0, 0]), Buffer.from("WAVEfmt "), Buffer.alloc(24)])],
+    ["clip.mp4", Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42"), Buffer.alloc(12)])],
+    ["image.bin", Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01])],
+    ["clip.webm", Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(12)])],
+  ]
 
-  it.live("refuses a PDF without reading it when the model lacks pdf input", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      yield* put(path.join(dir, "doc.pdf"), pdf)
-      const textOnly = ProviderTest.model({ id: ModelID.make("text-only"), providerID: visionModel.providerID })
+  for (const [name, bytes] of cases) {
+    it.live(`refuses ${name} as a binary file`, () =>
+      Effect.gen(function* () {
+        const dir = yield* tmpdirScoped()
+        yield* put(path.join(dir, name), bytes)
 
-      const result = yield* exec(dir, { file_path: path.join(dir, "doc.pdf") }, { ...ctx, extra: { model: textOnly } })
-      expect(result.attachments).toBeUndefined()
-      expect(result.output).toContain('Cannot attach PDF "doc.pdf"')
-      expect(result.output).toContain(path.join("pdf-official", "SKILL.md"))
-      expect(result.metadata.truncated).toBe(false)
-    }),
-  )
-})
-
-describe("tool.read audio and video capability gate", () => {
-  // Minimal RIFF/WAVE header: sniffed as audio/wav regardless of the mime
-  // lookup, and full of zero bytes so the binary detector would otherwise
-  // refuse it.
-  const wav = Buffer.concat([
-    Buffer.from("RIFF"),
-    Buffer.from([0x24, 0x00, 0x00, 0x00]),
-    Buffer.from("WAVEfmt "),
-    Buffer.alloc(24),
-  ])
-  const mediaModel = (input: { audio?: boolean; video?: boolean; npm?: string }) =>
-    ProviderTest.model({
-      id: ModelID.make("media"),
-      providerID: visionModel.providerID,
-      api: { id: "media", url: "https://example.com", npm: input.npm ?? "@ai-sdk/openai" },
-      capabilities: {
-        ...visionModel.capabilities,
-        input: { ...visionModel.capabilities.input, audio: input.audio ?? false, video: input.video ?? false },
-      },
-    })
-
-  it.live("attaches audio when the active model accepts audio input", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      yield* put(path.join(dir, "clip.wav"), wav)
-
-      const result = yield* exec(
-        dir,
-        { file_path: path.join(dir, "clip.wav") },
-        { ...ctx, extra: { model: mediaModel({ audio: true }) } },
-      )
-      expect(result.output).toContain("Audio read successfully")
-      expect(result.attachments?.length).toBe(1)
-      expect(result.attachments?.[0].mime).toBe("audio/wav")
-      expect(result.attachments?.[0].filename).toBe("clip.wav")
-      expect(result.attachments?.[0].url).toBe(`data:audio/wav;base64,${wav.toString("base64")}`)
-    }),
-  )
-
-  it.live("refuses audio without reading it when the model lacks audio input", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      yield* put(path.join(dir, "clip.wav"), wav)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "clip.wav") })
-      expect(result.attachments).toBeUndefined()
-      expect(result.output).toContain('Cannot attach audio "clip.wav"')
-      expect(result.output).toContain("no audio input support")
-    }),
-  )
-
-  it.live("refuses an audio format outside the finite read allowlist", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      yield* put(path.join(dir, "clip.aac"), Buffer.from("\xff\xf1\0\0\0\0", "binary"))
-
-      const result = yield* exec(
-        dir,
-        { file_path: path.join(dir, "clip.aac") },
-        { ...ctx, extra: { model: mediaModel({ audio: true, npm: "@ai-sdk/openai-compatible" }) } },
-      )
-      expect(result.attachments).toBeUndefined()
-      expect(result.output).toContain('Cannot attach audio "clip.aac" (audio/aac)')
-      expect(result.output).toContain("audio/wav")
-      expect(result.output).toContain("audio/mpeg")
-    }),
-  )
-
-  it.live("attaches video when the active model accepts video input", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42"), Buffer.alloc(12)])
-      yield* put(path.join(dir, "clip.mp4"), mp4)
-
-      const result = yield* exec(
-        dir,
-        { file_path: path.join(dir, "clip.mp4") },
-        { ...ctx, extra: { model: mediaModel({ video: true }) } },
-      )
-      expect(result.output).toContain("Video read successfully")
-      expect(result.attachments?.[0].mime).toBe("video/mp4")
-
-      const denied = yield* exec(dir, { file_path: path.join(dir, "clip.mp4") })
-      expect(denied.attachments).toBeUndefined()
-      expect(denied.output).toContain('Cannot attach video "clip.mp4"')
-    }),
-  )
-
-  it.live("refuses a video format outside the finite read allowlist", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      // EBML header: what a .webm/.mkv starts with. The mime lookup yields
-      // video/webm from the extension, which is outside the finite video list.
-      yield* put(path.join(dir, "clip.webm"), Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(12)]))
-
-      const result = yield* exec(
-        dir,
-        { file_path: path.join(dir, "clip.webm") },
-        { ...ctx, extra: { model: mediaModel({ video: true, npm: "@ai-sdk/openai-compatible" }) } },
-      )
-      expect(result.attachments).toBeUndefined()
-      expect(result.output).toContain('Cannot attach video "clip.webm" (video/webm)')
-      expect(result.output).toContain("video/mp4")
-      expect(result.output).toContain("/tmp/example.mp4")
-    }),
-  )
+        const err = yield* fail(dir, { file_path: path.join(dir, name) }, { ...ctx, extra: { model: allMedia } })
+        expect(err.message).toBe(`Cannot read binary file: ${path.join(dir, name)}`)
+      }),
+    )
+  }
 
   it.live("reads TypeScript .ts as text, not as video/mp2t", () =>
     Effect.gen(function* () {
@@ -694,15 +508,9 @@ describe("tool.read audio and video capability gate", () => {
       const source = 'export const answer = 42\nconsole.log("hello")\n'
       yield* put(path.join(dir, "mod.ts"), source)
 
-      const result = yield* exec(
-        dir,
-        { file_path: path.join(dir, "mod.ts") },
-        { ...ctx, extra: { model: mediaModel({ video: true }) } },
-      )
+      const result = yield* exec(dir, { file_path: path.join(dir, "mod.ts") }, { ...ctx, extra: { model: allMedia } })
       expect(result.attachments).toBeUndefined()
       expect(result.output).toContain("export const answer = 42")
-      expect(result.output).not.toContain("Cannot attach video")
-      expect(result.output).not.toContain("video/mp2t")
     }),
   )
 
@@ -711,202 +519,21 @@ describe("tool.read audio and video capability gate", () => {
       const dir = yield* tmpdirScoped()
       yield* put(path.join(dir, "feature.mts"), "export const title = 'mts'\n")
 
-      const result = yield* exec(
-        dir,
-        { file_path: path.join(dir, "feature.mts") },
-        { ...ctx, extra: { model: mediaModel({ video: true }) } },
-      )
+      const result = yield* exec(dir, { file_path: path.join(dir, "feature.mts") }, { ...ctx, extra: { model: allMedia } })
       expect(result.attachments).toBeUndefined()
       expect(result.output).toContain("export const title")
-      expect(result.output).not.toContain("Cannot attach video")
-    }),
-  )
-})
-
-describe("tool.read media description", () => {
-  const withMedia = (input: { image?: boolean; audio?: boolean; video?: boolean; npm?: string }) =>
-    ProviderTest.model({
-      api: { id: "media", url: "https://example.com", npm: input.npm ?? "@ai-sdk/openai" },
-      capabilities: {
-        ...visionModel.capabilities,
-        input: {
-          ...visionModel.capabilities.input,
-          image: input.image ?? false,
-          audio: input.audio ?? false,
-          video: input.video ?? false,
-        },
-      },
-    })
-
-  it.live("omits the media paragraph for a model without image/audio/video input", () =>
-    Effect.sync(() => {
-      expect(describeMedia(undefined)).toBeUndefined()
-      expect(describeMedia(withMedia({}))).toBeUndefined()
     }),
   )
 
-  it.live("names only the modalities the model accepts", () =>
-    Effect.sync(() => {
-      const image = describeMedia(withMedia({ image: true }))
-      expect(image).toContain("image (jpeg, png, webp, gif)")
-      expect(image).not.toContain("audio")
-      expect(image).not.toContain("video")
-
-      const audio = describeMedia(withMedia({ audio: true }))
-      expect(audio).toContain("audio (wav, mp3)")
-      expect(audio).not.toContain("video")
-      expect(audio).not.toContain("image (")
-
-      const video = describeMedia(withMedia({ video: true }))
-      expect(video).toContain("video (mp4)")
-      expect(video).not.toContain("audio")
-      expect(video).not.toContain("image (")
-
-      expect(describeMedia(withMedia({ image: true, audio: true, video: true }))).toContain(
-        "image (jpeg, png, webp, gif) and audio (wav, mp3) and video (mp4)",
-      )
-    }),
-  )
-
-  it.live("names the finite read allowlist even when the adapter accepts more", () =>
-    Effect.gen(function* () {
-      expect(describeMedia(withMedia({ image: true, audio: true, video: true, npm: "@ai-sdk/openai-compatible" }))).toContain(
-        "image (jpeg, png, webp, gif) and audio (wav, mp3) and video (mp4)",
-      )
-      expect(describeMedia(withMedia({ audio: true, npm: "@ai-sdk/google" }))).toContain("audio (wav, mp3)")
-      expect(describeMedia(withMedia({ video: true, npm: "@ai-sdk/google" }))).toContain("video (mp4)")
-    }),
-  )
-
-  it.live("static read.txt caveats image/PDF on model modalities and names the finite list", () =>
-    Effect.sync(async () => {
+  it.live("read.txt is model-independent and names no media tool", () =>
+    Effect.promise(async () => {
       const description = await Bun.file(path.join(import.meta.dir, "../../src/tool/read.txt")).text()
-      expect(description).toContain("when the model includes those modalities")
-      expect(description).toContain("Image and PDF")
-      expect(description).toContain("jpeg/png/webp/gif")
-      expect(description).toContain("wav/mp3")
-      expect(description).toContain("mp4")
-      expect(description).not.toContain("PDF only when")
-    }),
-  )
-})
-
-describe("tool.read attachment size limit", () => {
-  // The size comes from stat, before any bytes are read. An oversized image is
-  // then read and recompressed; a PDF or an undecodable image is refused, so
-  // the base64 that would have bloated the session DB never exists.
-  // The limits come from Flag.MIMOCODE_MAX_ATTACHMENT_SIZE and
-  // Flag.MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE, lowered here so the fixtures
-  // stay small.
-  const LIMIT = 4096
-  const CEILING = 32 * 1024
-  beforeAll(() => {
-    process.env["MIMOCODE_MAX_ATTACHMENT_SIZE"] = String(LIMIT)
-    process.env["MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE"] = String(CEILING)
-  })
-  afterAll(() => {
-    delete process.env["MIMOCODE_MAX_ATTACHMENT_SIZE"]
-    delete process.env["MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE"]
-  })
-  it.live("recompresses an oversized image under the limit instead of refusing it", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      const bytes = noisyPng(120) // noise defeats PNG compression: ~18 KB raw, over LIMIT and under CEILING
-      expect(bytes.byteLength).toBeGreaterThan(LIMIT)
-      expect(bytes.byteLength).toBeLessThanOrEqual(CEILING)
-      yield* put(path.join(dir, "huge.png"), bytes)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "huge.png") })
-      expect(result.attachments?.length).toBe(1)
-      expect(result.attachments?.[0].mime).toBe("image/jpeg")
-      const url = result.attachments![0].url
-      expect(Buffer.from(url.slice(url.indexOf(",") + 1), "base64").byteLength).toBeLessThanOrEqual(LIMIT)
-      expect(result.output).toContain(`recompressed from ${bytes.byteLength} bytes`)
-      expect(result.metadata.truncated).toBe(false)
-    }),
-  )
-
-  it.live("drops an oversized image that cannot be decoded", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      // Valid PNG signature, garbage body: over the limit and undecodable.
-      const bytes = Buffer.alloc(LIMIT + 1)
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes)
-      yield* put(path.join(dir, "broken.png"), bytes)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "broken.png") })
-      expect(result.attachments).toBeUndefined()
-      expect(result.output).toContain(`"broken.png" (image/png) is ${LIMIT + 1} bytes`)
-      expect(result.output).toContain("could not be compressed")
-    }),
-  )
-
-  it.live("refuses an image over the source ceiling without reading or compressing it", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      // A decodable PNG that compression could handle, but too large to bother.
-      const bytes = noisyPng(200)
-      expect(bytes.byteLength).toBeGreaterThan(CEILING)
-      yield* put(path.join(dir, "giant.png"), bytes)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "giant.png") })
-      expect(result.attachments).toBeUndefined()
-      expect(result.output).toContain(`"giant.png" (image/png) is ${bytes.byteLength} bytes`)
-      expect(result.output).toContain("ceiling above which compression is not attempted")
-      expect(result.output).toContain("It was not read")
-    }),
-  )
-
-  it.live("attaches audio over the attachment limit when it fits the encoded media cap", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      // Audio is bounded by the provider's encoded-size cap (fitsMediaBase64),
-      // not Flag.MIMOCODE_MAX_ATTACHMENT_SIZE, so a file over LIMIT is still read.
-      const bytes = Buffer.concat([
-        Buffer.from("RIFF"),
-        Buffer.from([0x24, 0x00, 0x00, 0x00]),
-        Buffer.from("WAVEfmt "),
-        Buffer.alloc(LIMIT),
-      ])
-      expect(bytes.byteLength).toBeGreaterThan(LIMIT)
-      yield* put(path.join(dir, "long.wav"), bytes)
-      const model = ProviderTest.model({
-        id: ModelID.make("media"),
-        providerID: visionModel.providerID,
-        api: { id: "media", url: "https://example.com", npm: "@ai-sdk/openai" },
-        capabilities: { ...visionModel.capabilities, input: { ...visionModel.capabilities.input, audio: true } },
-      })
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "long.wav") }, { ...ctx, extra: { model } })
-      expect(result.output).toContain("Audio read successfully")
-      expect(result.attachments?.length).toBe(1)
-      expect(result.attachments?.[0].url).toBe(`data:audio/wav;base64,${bytes.toString("base64")}`)
-    }),
-  )
-
-  it.live("refuses an oversized PDF", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      const bytes = Buffer.alloc(LIMIT + 1)
-      Buffer.from("%PDF-1.4").copy(bytes)
-      yield* put(path.join(dir, "huge.pdf"), bytes)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "huge.pdf") })
-      expect(result.attachments).toBeUndefined()
-      expect(result.output).toContain(`"huge.pdf" (application/pdf)`)
-      expect(result.output).toContain("It was not read")
-    }),
-  )
-
-  it.live("still attaches an image just under the limit", () =>
-    Effect.gen(function* () {
-      const dir = yield* tmpdirScoped()
-      const bytes = Buffer.alloc(LIMIT)
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes)
-      yield* put(path.join(dir, "edge.png"), bytes)
-
-      const result = yield* exec(dir, { file_path: path.join(dir, "edge.png") })
-      expect(result.attachments?.length).toBe(1)
+      expect(description).toContain("text files and directories only")
+      expect(description).toContain("images, PDFs, audio and video")
+      expect(description).not.toContain("read_image")
+      expect(description).not.toContain("read_audio")
+      expect(description).not.toContain("read_video")
+      expect(description).not.toContain("attachment")
     }),
   )
 })

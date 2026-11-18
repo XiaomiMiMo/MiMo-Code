@@ -693,6 +693,105 @@ describe("session.prompt missing file", () => {
         ),
     })
   })
+
+  test("routes media @-mentions (text/plain parts) to the media tools or the inline path", async () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+      "base64",
+    )
+    const wav = Buffer.concat([Buffer.from("RIFF"), Buffer.from([0x24, 0, 0, 0]), Buffer.from("WAVEfmt "), Buffer.alloc(24)])
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        enabled_providers: ["media-test"],
+        provider: {
+          "media-test": {
+            name: "Media Test",
+            npm: "@ai-sdk/openai-compatible",
+            env: [],
+            options: { apiKey: "test-key", baseURL: "https://example.com/v1" },
+            models: {
+              vision: {
+                name: "Vision",
+                tool_call: true,
+                limit: { context: 8000, output: 2000 },
+                modalities: { input: ["text", "image"], output: ["text"] },
+              },
+              pdf: {
+                name: "PDF",
+                tool_call: true,
+                limit: { context: 8000, output: 2000 },
+                modalities: { input: ["text", "pdf"], output: ["text"] },
+              },
+            },
+          },
+        },
+        agent: { build: { model: "media-test/vision" } },
+      },
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "shot.png"), png)
+        await Bun.write(path.join(dir, "clip.wav"), wav)
+        await Bun.write(path.join(dir, "doc.pdf"), "%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n")
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({})
+            const mention = (name: string) => ({
+              type: "file" as const,
+              mime: "text/plain",
+              url: `file://${path.join(tmp.path, name)}`,
+              filename: name,
+            })
+
+            const resolve = (name: string, modelID = "vision") =>
+              prompt
+                .prompt({
+                  sessionID: session.id,
+                  agent: "build",
+                  noReply: true,
+                  model: { providerID: ProviderID.make("media-test"), modelID: ModelID.make(modelID) },
+                  parts: [mention(name)],
+                })
+                .pipe(Effect.map((msg) => MessageV2.get({ sessionID: session.id, messageID: msg.info.id }).parts))
+
+            // The model takes images but no audio.
+            const image = yield* resolve("shot.png")
+            const imageText = image.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+            expect(imageText).toContain("Called the `read_image` tool")
+            expect(imageText).not.toContain("Cannot read binary file")
+            expect(image.some((part) => part.type === "file" && part.mime === "image/png" && part.url.startsWith("data:"))).toBe(true)
+
+            const audio = yield* resolve("clip.wav")
+            const audioText = audio.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+            expect(audioText).toContain("Called the `read_audio` tool")
+            expect(audioText).toContain("no audio input support")
+            expect(audio.some((part) => part.type === "file" && part.url.startsWith("data:"))).toBe(false)
+
+            // Without PDF input the mention stays a path reference; nothing is inlined.
+            const pdfPath = yield* resolve("doc.pdf")
+            const pdfPathText = pdfPath.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+            expect(pdfPathText).toContain(`[Attached local file: ${path.join(tmp.path, "doc.pdf")}]`)
+            expect(pdfPathText).toContain("no PDF input support")
+            expect(pdfPath.some((part) => part.type === "file" && part.url.startsWith("data:"))).toBe(false)
+
+            const pdf = yield* resolve("doc.pdf", "pdf")
+            const pdfText = pdf.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+            expect(pdfText).toContain("Called the `read` tool")
+            expect(pdfText).not.toContain("Cannot read binary file")
+            expect(pdf.some((part) => part.type === "file" && part.mime === "application/pdf" && part.url.startsWith("data:"))).toBe(true)
+
+            yield* sessions.remove(session.id)
+          }),
+        ),
+    })
+  })
 })
 
 describe("session.prompt user image attachment envelope", () => {

@@ -48,6 +48,7 @@ import type { GrepTool } from "@/tool/grep"
 import type { EditTool } from "@/tool/edit"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
 import type { ViewImageTool } from "@/tool/view-image"
+import type { ReadImageTool } from "@/tool/read-media"
 import type { WebFetchTool } from "@/tool/webfetch"
 import type { CodeSearchTool } from "@/tool/codesearch"
 import type { WebSearchTool } from "@/tool/websearch"
@@ -2224,6 +2225,13 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "read"}>
           <Read {...toolprops} />
         </Match>
+        <Match
+          when={
+            props.part.tool === "read_image" || props.part.tool === "read_audio" || props.part.tool === "read_video"
+          }
+        >
+          <ReadMedia {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "view_image"}>
           <ViewImage {...toolprops} />
         </Match>
@@ -3277,6 +3285,22 @@ function Read(props: ToolProps<typeof ReadTool>) {
         )}
       </For>
     </>
+  )
+}
+
+// read_image, read_audio and read_video share one parameter shape.
+function ReadMedia(props: ToolProps<typeof ReadImageTool>) {
+  const isRunning = createMemo(() => props.part.state.status === "running")
+  return (
+    <InlineTool
+      icon="→"
+      pending="Reading file..."
+      complete={props.input.file_path}
+      spinner={isRunning()}
+      part={props.part}
+    >
+      Read {normalizePath(props.input.file_path!)}
+    </InlineTool>
   )
 }
 
