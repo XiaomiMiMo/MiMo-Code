@@ -180,7 +180,7 @@ export default [
         current.data.type !== "tool")) throw new Error("Tool part identity mismatch")
       if (source.replay && rest.execution === "not-started") rest.execution = undefined
       if (current) {
-        const tool = MessageV2.ToolPart.parse({ ...current.data, id: current.id, sessionID: current.session_id, messageID: current.message_id })
+        const tool = MessageV2.ToolPart.parse(MessageV2.withToolInput({ ...current.data, id: current.id, sessionID: current.session_id, messageID: current.message_id } as MessageV2.Part))
         if (tool.callID !== rest.callID) throw new Error("Tool call identity mismatch")
         if (tool.execution === "started") rest.execution = "started"
         if ((tool.state.status === "completed" || tool.state.status === "error") &&

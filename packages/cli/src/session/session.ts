@@ -713,7 +713,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         if (row && (row.session_id !== input.sessionID || row.message_id !== input.messageID || row.data.type !== "tool")) {
           throw new Error("Tool part identity mismatch")
         }
-        const current = row ? MessageV2.ToolPart.parse({ ...row.data, id: row.id, messageID: row.message_id, sessionID: row.session_id }) : undefined
+        const current = row ? MessageV2.ToolPart.parse(MessageV2.withToolInput({ ...row.data, id: row.id, messageID: row.message_id, sessionID: row.session_id } as MessageV2.Part)) : undefined
         const next = update(current)
         if (!next) return
         if (next.id !== input.partID || next.sessionID !== input.sessionID || next.messageID !== input.messageID ||
@@ -767,12 +767,12 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
           .get(),
       )
       if (!row) return
-      return {
+      return MessageV2.withToolInput({
         ...row.data,
         id: row.id,
         sessionID: row.session_id,
         messageID: row.message_id,
-      } as MessageV2.Part
+      } as MessageV2.Part)
     })
 
     const create = Effect.fn("Session.create")(function* (input?: {
