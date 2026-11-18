@@ -79,12 +79,12 @@ import { WorkflowTree } from "@tui/component/workflow-tree"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { DialogSubagent } from "./dialog-subagent.tsx"
 import { actorToolBody, actorToolCompleteKey, actorToolPendingLabel, isActorToolRunning } from "./actor-tool-state"
+import { filetype, normalizePath } from "./tool-path"
 import { Flag } from "@/flag/flag"
 import { parseActorNotification, parseAgentInboxPart } from "@/inbox/render"
 import { ActorNotificationWarnings } from "./actor-notification-warnings"
 import { AgentInboxMessages } from "./agent-inbox-messages"
 import { UserMessageBubble } from "./user-message-bubble"
-import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
 import * as Clipboard from "../../util/clipboard"
 import { Toast, useToast } from "../../ui/toast"
@@ -3198,7 +3198,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
         <BlockTool
-          title={"# Wrote " + normalizePath(props.input.file_path!)}
+          title={"# Wrote " + normalizePath(props.input.file_path)}
           part={props.part}
           onClick={collapsed() ? () => setExpanded((prev) => !prev) : undefined}
         >
@@ -3214,7 +3214,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
               <code
                 conceal={false}
                 fg={theme.text}
-                filetype={filetype(props.input.file_path!)}
+                filetype={filetype(props.input.file_path)}
                 syntaxStyle={syntax()}
                 content={code()}
               />
@@ -3228,7 +3228,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
       </Match>
       <Match when={true}>
         <InlineTool icon="←" pending="Preparing write..." complete={props.input.file_path} part={props.part}>
-          Write {normalizePath(props.input.file_path!)}
+          Write {normalizePath(props.input.file_path)}
         </InlineTool>
       </Match>
     </Switch>
@@ -3265,7 +3265,7 @@ function Read(props: ToolProps<typeof ReadTool>) {
         spinner={isRunning()}
         part={props.part}
       >
-        Read {normalizePath(props.input.file_path!)} {input(props.input, ["file_path"])}
+        Read {normalizePath(props.input.file_path)} {input(props.input, ["file_path"])}
       </InlineTool>
       <For each={loaded()}>
         {(filepath) => (
@@ -3290,7 +3290,7 @@ function ViewImage(props: ToolProps<typeof ViewImageTool>) {
       spinner={isRunning()}
       part={props.part}
     >
-      View image {normalizePath(props.input.path!)} {input(props.input, ["path"])}
+      View image {normalizePath(props.input.path)} {input(props.input, ["path"])}
     </InlineTool>
   )
 }
@@ -3566,7 +3566,7 @@ function Edit(props: ToolProps<typeof EditTool>) {
   return (
     <Switch>
       <Match when={props.metadata.diff !== undefined}>
-        <BlockTool title={"← Edit " + normalizePath(props.input.file_path!)} part={props.part}>
+        <BlockTool title={"← Edit " + normalizePath(props.input.file_path)} part={props.part}>
           <box paddingLeft={1}>
             <diff
               diff={diffContent()}
@@ -3593,7 +3593,7 @@ function Edit(props: ToolProps<typeof EditTool>) {
       </Match>
       <Match when={true}>
         <InlineTool icon="←" pending="Preparing edit..." complete={props.input.file_path} part={props.part}>
-          Edit {normalizePath(props.input.file_path!)} {input({ replace_all: props.input.replace_all })}
+          Edit {normalizePath(props.input.file_path)} {input({ replace_all: props.input.replace_all })}
         </InlineTool>
       </Match>
     </Switch>
@@ -3768,20 +3768,6 @@ function Diagnostics(props: { diagnostics?: Record<string, Record<string, any>[]
   )
 }
 
-function normalizePath(input?: string) {
-  if (!input) return ""
-
-  const cwd = process.cwd()
-  const absolute = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const relative = path.relative(cwd, absolute)
-
-  if (!relative) return "."
-  if (!relative.startsWith("..")) return relative
-
-  // outside cwd - use absolute
-  return absolute
-}
-
 function input(input: Record<string, any>, omit?: string[]): string {
   const primitives = Object.entries(input).filter(([key, value]) => {
     if (omit?.includes(key)) return false
@@ -3789,12 +3775,4 @@ function input(input: Record<string, any>, omit?: string[]): string {
   })
   if (primitives.length === 0) return ""
   return `[${primitives.map(([key, value]) => `${key}=${value}`).join(", ")}]`
-}
-
-function filetype(input?: string) {
-  if (!input) return "none"
-  const ext = path.extname(input)
-  const language = LANGUAGE_EXTENSIONS[ext]
-  if (["typescriptreact", "javascriptreact", "javascript"].includes(language)) return "typescript"
-  return language
 }
