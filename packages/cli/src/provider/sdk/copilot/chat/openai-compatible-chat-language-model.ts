@@ -274,7 +274,12 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
     return {
       content,
       finishReason: {
-        unified: mapOpenAICompatibleFinishReason(choice.finish_reason),
+        // Mirror the streaming flush() fallback: gateways that omit
+        // finish_reason but return tool calls ended in a tool call.
+        unified:
+          choice.finish_reason == null && choice.message.tool_calls != null && choice.message.tool_calls.length > 0
+            ? "tool-calls"
+            : mapOpenAICompatibleFinishReason(choice.finish_reason),
         raw: choice.finish_reason ?? undefined,
       },
       usage: {
@@ -342,7 +347,11 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
       unified: ReturnType<typeof mapOpenAICompatibleFinishReason>
       raw: string | undefined
     } = {
-      unified: "other",
+      // Default to "stop" rather than "other". Some gateways (e.g. muse-spark
+      // via zen/go) never send a finish_reason chunk — the stream ends and the
+      // response is delivered normally. Keeping the old default of "other"
+      // caused every such response to be classified as degraded / think-only.
+      unified: "stop",
       raw: undefined,
     }
     const usage: {
@@ -645,6 +654,16 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
           },
 
           flush(controller) {
+            // Gateways that omit finish_reason entirely (e.g. muse-spark via
+            // zen/go) leave the pristine default untouched. If tool call deltas
+            // were streamed, the turn ended in a tool call, not a plain stop —
+            // report "tool-calls" so agent loops continue for tool execution.
+            // Checking unified === "stop" keeps explicit reasons (and the
+            // "error" state, whose raw is also undefined) from being clobbered.
+            if (finishReason.unified === "stop" && finishReason.raw == null && toolCalls.length > 0) {
+              finishReason = { unified: "tool-calls", raw: undefined }
+            }
+
             if (isActiveReasoning) {
               controller.enqueue({
                 type: "reasoning-end",
