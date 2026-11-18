@@ -21,7 +21,7 @@ import { errorMessage } from "@/util/error"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import path from "path"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
-import { mediaToolKind } from "@/tool/read-media"
+import { mediaToolKind } from "@/tool/media-kind"
 
 const log = Log.create({ service: "session.compaction" })
 

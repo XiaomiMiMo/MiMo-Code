@@ -21,8 +21,7 @@ import {
 import IMAGE_DESCRIPTION from "./read-image.txt"
 import AUDIO_DESCRIPTION from "./read-audio.txt"
 import VIDEO_DESCRIPTION from "./read-video.txt"
-
-export type MediaKind = "image" | "audio" | "video"
+import { MEDIA_TOOL_IDS, type MediaKind } from "./media-kind"
 
 const SAMPLE_BYTES = 4096
 
@@ -221,17 +220,6 @@ function define<ID extends string>(id: ID, kind: MediaKind) {
   )
 }
 
-export const ReadImageTool = define("read_image", "image")
-export const ReadAudioTool = define("read_audio", "audio")
-export const ReadVideoTool = define("read_video", "video")
-
-const MEDIA_TOOL_KINDS = new Map<string, MediaKind>([
-  [ReadImageTool.id, "image"],
-  [ReadAudioTool.id, "audio"],
-  [ReadVideoTool.id, "video"],
-])
-
-/** The input modality gating a media tool id, or undefined for any other tool. */
-export function mediaToolKind(id: string): MediaKind | undefined {
-  return MEDIA_TOOL_KINDS.get(id)
-}
+export const ReadImageTool = define(MEDIA_TOOL_IDS.image, "image")
+export const ReadAudioTool = define(MEDIA_TOOL_IDS.audio, "audio")
+export const ReadVideoTool = define(MEDIA_TOOL_IDS.video, "video")

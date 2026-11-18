@@ -1,8 +1,8 @@
 ---
 feature: read-media-split
-status: delivered
+status: in-progress
 updated: 2026-11-18
-source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2828
+source: feat/read-media-render
 ---
 
 # Split media reading out of `read`
@@ -78,8 +78,20 @@ Each media tool re-checks its gate at execution against the model resolved the s
 - `tool/gate.ts` `PARALLEL_READONLY_TOOLS` gains the three tools.
 - `agent/agent.ts` dream and distill allowlists gain `read_image` next to `view_image`.
 - `session/compaction.ts` records files read by the three tools the same way it records `read`.
-- TUI (`cli/cmd/tui/routes/session/index.tsx`) and `cli/cmd/run.ts` render the three tools with the existing `read`-style one-line view (path title).
+- TUI (`cli/cmd/tui/routes/session/index.tsx`) and `cli/cmd/run.ts` render the three tools as a one-line view per [S2.6].
 - ACP (`acp/agent.ts`) reports the three tools with tool kind `read` and their `file_path` as location, like `read`.
+
+### [S2.6] Media tool rendering
+
+The TUI and `mimo run` render each media tool on one line with the `read` icon (`→`) and the media kind between the verb and the path, so the line says which tool ran:
+
+| Tool | Completed line | TUI pending text |
+|---|---|---|
+| `read_image` | `Read image <path>` | `Reading image...` |
+| `read_audio` | `Read audio <path>` | `Reading audio...` |
+| `read_video` | `Read video <path>` | `Reading video...` |
+
+`read` keeps `Read <path> [offset=…, limit=…]`. The existing `Read` renderer in both the TUI and `run.ts` handles all four tools and inserts the kind when the tool is a media tool; there is no separate media renderer. The kind comes from one dependency-free mapping (`tool/media-kind.ts`: tool id → `image | audio | video`) that `read-media.ts`, the registry, compaction, the TUI and `run.ts` all use, so the TUI does not import the tool runtime.
 
 Stored sessions need no migration: past `read` tool parts keep their name, output and attachments, and `session/tool-attachment.ts` still gates historical media (including PDFs) per model.
 
@@ -99,8 +111,11 @@ Stored sessions need no migration: past `read` tool parts keep their name, outpu
 - [x] T3: Strip media from `read` — acceptance: `read` on png/pdf/wav/mp4 fails with `Cannot read binary file`, including for a model that declares those modalities; text and directory behavior and existing text tests unchanged; `read.txt` updated (covers: S2.4; depends: T1)
 - [x] T4: Callers and wiring per [S2.5] — acceptance: permission test shows denying `read` disables the three tools; system prompt vision hint names `read_image`; TUI/run render the tools; `bun typecheck` passes (covers: S2.5; depends: T2, T3)
 
+- [ ] T5: Kind-labelled media rendering per [S2.6] — acceptance: `mediaToolKind` maps exactly the three ids and nothing else (unit test); TUI and `run.ts` print `Read image|audio|video <path>` (a `mimo run` from source shows `Read image <path>` for a `read_image` call); `bun typecheck` passes (covers: S2.6)
+
 ## Journey log
 
+- [S2.6] amends the first delivery, which rendered all three media tools as `Read <path>`: a `read_video` line could not be told apart from a `read` call, which matters because `read` refuses media.
 - Review found that `@`-mentions are `text/plain` parts routed to `read`, so after S2.4 a mentioned image/PDF/audio/video failed with `Cannot read binary file` instead of attaching. Fixed by sniffing mentions in `prompt.ts` and dispatching to the media tool (or the inline PDF path); covered by a `prompt.test.ts` regression test.
 - Audio/video through an adapter with no capability declaration (e.g. `@ai-sdk/openai`) is now unavailable: the old `read` checked only the model's modality, the media tools also require the adapter declaration (fail closed, per S2.1).
 - PDF was first planned as a fourth tool `read_pdf` gated only on the model's `pdf` modality. Dropped: no adapter declaration for PDF exists, MiMo's API does not document PDF input although one MiMo models.dev entry declares it, and a native PDF modality is server-side text extraction plus per-page images — which the bundled pdf skill reproduces (text by default, chosen pages rendered when needed, OCR only for scans). The skill is left untouched: tool names stay out of skills, since the model learns them from tool descriptions.
