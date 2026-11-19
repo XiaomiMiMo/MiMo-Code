@@ -1,6 +1,6 @@
 import { test, expect, beforeEach } from "bun:test"
-import { Effect } from "effect"
-import { mkdtempSync, rmSync } from "fs"
+import { Effect, Result } from "effect"
+import { mkdirSync, mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import {
@@ -33,6 +33,35 @@ beforeEach(() => {
   clearAllLoopStates()
   // Drain any session tasks left from prior tests
   removeSessionCronTasks(getSessionCronTasks().map((t) => t.id))
+})
+
+test("durable add fails when the task file cannot be written", async () => {
+  const dir = freshDir()
+  try {
+    await provided(
+      Effect.gen(function* () {
+        const sched = yield* Scheduler
+        yield* sched.start(baseStartOpts(dir))
+        yield* Effect.gen(function* () {
+          mkdirSync(join(dir, ".mimocode", "scheduled_tasks.json"), { recursive: true })
+          const result = yield* sched
+            .add({
+              session_id: "ses_test",
+              cron: "*/5 * * * *",
+              prompt: "example",
+              recurring: true,
+              durable: true,
+            })
+            .pipe(Effect.result)
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result)) expect(result.failure.message).toContain("writeCronTasks")
+          expect(yield* sched.list({ durable_only: true })).toEqual([])
+        }).pipe(Effect.ensuring(sched.stop()))
+      }),
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("add + get + remove session-only task", async () => {
