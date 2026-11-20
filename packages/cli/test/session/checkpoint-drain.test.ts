@@ -29,6 +29,7 @@ const ref = {
 
 // Outcomes of every writer the stub spawned, in order, so a test can settle one.
 const spawned: Deferred.Deferred<AgentOutcome>[] = []
+let spawnReturnGate: Deferred.Deferred<void> | undefined
 
 // Actor stub that never resolves its outcome — simulates a writer subagent
 // stuck waiting on an LLM round-trip the shutdown budget can't afford.
@@ -53,6 +54,7 @@ const hangingActor = Layer.effect(
           counter += 1
           const outcome = yield* Deferred.make<AgentOutcome>()
           spawned.push(outcome)
+          if (spawnReturnGate) yield* Deferred.await(spawnReturnGate)
           return {
             actorID: `${input.agentType}-${counter}`,
             sessionID: input.sessionID,
@@ -129,6 +131,98 @@ const start = (sessionID: SessionID) =>
 
 describe("SessionCheckpoint.drainWriters", () => {
   it.live(
+    "concurrent starts queue while the first actor is still registering",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const info = yield* seedSession()
+        const gate = yield* Deferred.make<void>()
+        spawnReturnGate = gate
+        yield* Effect.addFinalizer(() =>
+          Deferred.succeed(gate, undefined).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                spawnReturnGate = undefined
+              }),
+            ),
+          ),
+        )
+        const first = yield* start(info.id).pipe(Effect.forkChild({ startImmediately: true }))
+        for (let i = 0; i < 200 && spawned.length === 0; i++) yield* Effect.sleep("10 millis")
+        expect(spawned).toHaveLength(1)
+        const second = yield* start(info.id).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Effect.sleep("100 millis")
+        yield* Deferred.succeed(gate, undefined)
+        spawnReturnGate = undefined
+        expect(yield* Fiber.join(first)).toBe("started")
+        expect(yield* Fiber.join(second)).toBe("queued")
+        expect(spawned).toHaveLength(1)
+      }),
+    ),
+  )
+
+  it.live(
+    "cancelling a waiting start keeps later starts behind actor registration",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const info = yield* seedSession()
+        const gate = yield* Deferred.make<void>()
+        spawnReturnGate = gate
+        yield* Effect.addFinalizer(() =>
+          Deferred.succeed(gate, undefined).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                spawnReturnGate = undefined
+              }),
+            ),
+          ),
+        )
+        const first = yield* start(info.id).pipe(Effect.forkChild({ startImmediately: true }))
+        for (let i = 0; i < 200 && spawned.length === 0; i++) yield* Effect.sleep("10 millis")
+        expect(spawned).toHaveLength(1)
+        const cancelled = yield* start(info.id).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Effect.sleep("10 millis")
+        yield* Fiber.interrupt(cancelled)
+        const next = yield* start(info.id).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Effect.sleep("100 millis")
+        expect(spawned).toHaveLength(1)
+        yield* Deferred.succeed(gate, undefined)
+        spawnReturnGate = undefined
+        expect(yield* Fiber.join(first)).toBe("started")
+        expect(yield* Fiber.join(next)).toBe("queued")
+      }),
+    ),
+  )
+
+  it.live(
+    "different sessions register checkpoint writers concurrently",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const firstInfo = yield* seedSession()
+        const secondInfo = yield* seedSession()
+        const gate = yield* Deferred.make<void>()
+        spawnReturnGate = gate
+        yield* Effect.addFinalizer(() =>
+          Deferred.succeed(gate, undefined).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                spawnReturnGate = undefined
+              }),
+            ),
+          ),
+        )
+        const first = yield* start(firstInfo.id).pipe(Effect.forkChild({ startImmediately: true }))
+        const second = yield* start(secondInfo.id).pipe(Effect.forkChild({ startImmediately: true }))
+        for (let i = 0; i < 200 && spawned.length < 2; i++) yield* Effect.sleep("10 millis")
+        expect(spawned).toHaveLength(2)
+        yield* Deferred.succeed(gate, undefined)
+        spawnReturnGate = undefined
+        expect(yield* Fiber.join(first)).toBe("started")
+        expect(yield* Fiber.join(second)).toBe("started")
+      }),
+    ),
+  )
+
+  it.live(
     "no active writers → drained=0, timedOut=0",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -165,9 +259,7 @@ describe("SessionCheckpoint.drainWriters", () => {
         expect(yield* start(info.id)).toBe("started")
 
         // startImmediately: drain must snapshot the writer before it settles.
-        const drain = yield* svc
-          .drainWriters({ timeoutMs: 5_000 })
-          .pipe(Effect.forkChild({ startImmediately: true }))
+        const drain = yield* svc.drainWriters({ timeoutMs: 5_000 }).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.succeed(spawned[0], { status: "success" })
         expect(yield* Fiber.join(drain)).toEqual({ drained: 1, timedOut: 0 })
       }),
