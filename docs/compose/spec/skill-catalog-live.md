@@ -65,11 +65,9 @@ The catalog moves from the system tail to persisted synthetic text parts on the 
 - Name precedence is unchanged: MCP prompts override built-in/config commands of the same name, and skills never override anything.
 - Slash completion therefore shows skills before every MCP server settles, and a new skill appears on the next `GET /command`. The desktop menu already revalidates every time it opens.
 
-### S2.6 Derived skill directories
+### S2.6 Agent permission stays fixed
 
-Paths inside a directory of the current skill snapshot are trusted by the `external_directory` guard (file tools and bash). A skill directory that appears after startup can be read without a permission prompt; a removed one loses that trust.
-
-The agent permission keeps the skill-directory allowlist from startup and is not rebuilt: `SessionPrefixSnapshot.profileKey` hashes the agent permission, so rebuilding it would re-pin frozen prefixes and make compaction miss its snapshot. The guard reads `Skill.dirs()` live instead.
+The agent permission, including its startup allowlist of skill directories for `external_directory`, is not rebuilt when skills change. `SessionPrefixSnapshot.profileKey` hashes the agent permission, so rebuilding it would re-pin frozen prefixes mid-turn and make compaction miss its snapshot. Reading a skill created outside the project after startup asks for `external_directory` permission as before.
 
 ### S2.7 Testing boundaries
 
@@ -90,6 +88,7 @@ Tests use real temp directories and the real session loop, with no mocking of `S
 - File watchers or push notifications for skill changes.
 - A token budget for the catalog (the system tail has none today).
 - External-root on/off flags (still read at startup).
+- Trusting skill directories created after startup in the `external_directory` guard. A trust exemption that returns before asking would bypass explicit deny rules; doing it safely needs a deny-aware check and is a separate change.
 - Desktop changes. The desktop updates its engine pin and revises its prompt-assembly R14 spec in its own repository.
 
 ## Tasks
@@ -99,9 +98,9 @@ Tests use real temp directories and the real session loop, with no mocking of `S
 - [ ] T3: Remove skills from the system tail in both assemblies; update the prompt texts — acceptance: the request system contains no catalog, and existing prefix-parity tests pass. (covers: S2.3, depends: T2)
 - [ ] T4: Legacy handling — strip the catalog from frozen systems with a one-time rotate; keep suppressing legacy user-side parts — acceptance: a session pinned with a legacy catalog sends a stripped system and receives an entry reminder on its next turn. (covers: S2.4, depends: T3)
 - [ ] T5: Live `Command.list`/`get` with non-blocking MCP prompts — acceptance: `GET /command` lists a newly created skill without a restart and returns skills while an MCP server is still pending. (covers: S2.5, depends: T1)
-- [ ] T6: The `external_directory` guard trusts current skill directories without changing the agent permission — acceptance: a skill directory created after startup is not prompted, a removed one is prompted again, and skill changes across turns keep a single prefix snapshot. (covers: S2.6, depends: T1)
+- [ ] T6: Skill changes never change the agent permission — acceptance: adding, removing, and editing skills across turns keeps a single prefix snapshot for the session. (covers: S2.6, depends: T2)
 
 ## Journey log
 
-- First version of S2.6 rebuilt the agent when skill directories changed. Review found this changes the prefix profile key (it hashes the agent permission), re-pinning frozen prefixes mid-turn and breaking compaction's snapshot lookup. Moved the live check into the `external_directory` guard instead.
+- First version of S2.6 rebuilt the agent when skill directories changed. Review found this changes the prefix profile key (it hashes the agent permission), re-pinning frozen prefixes mid-turn and breaking compaction's snapshot lookup. A second attempt trusted live skill directories inside the `external_directory` guard, but an early return there bypasses explicit deny rules. Dropped both; the agent permission stays fixed and post-startup trust is out of scope.
 - Considered one-level-only discovery to cut scan cost. Measurement showed glob is not the cost (≈7 ms recursive vs ≈4 ms flat across all roots); parsing is, and a stat-keyed parse cache removes it. Kept recursion; the only nested layout found locally (desktop `mimo-browser-use`) is a packaging bug tracked as a desktop follow-up.

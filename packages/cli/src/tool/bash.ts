@@ -3,7 +3,6 @@ import { childProcessEnv } from "@/util/child-process-env"
 import os from "os"
 import { createWriteStream, existsSync, realpathSync } from "node:fs"
 import * as Tool from "./tool"
-import { inSkillDirectory } from "./external-directory"
 import path from "path"
 import DESCRIPTION from "./bash.txt"
 import GPT_DESCRIPTION from "./bash.gpt.txt"
@@ -391,10 +390,8 @@ const parse = Effect.fn("BashTool.parse")(function* (command: string, ps: boolea
 })
 
 const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) {
-  const dirs: string[] = []
-  for (const dir of scan.dirs) if (!(yield* inSkillDirectory(dir))) dirs.push(dir)
-  if (dirs.length > 0) {
-    const globs = dirs.map((dir) => {
+  if (scan.dirs.size > 0) {
+    const globs = Array.from(scan.dirs).map((dir) => {
       if (process.platform === "win32") return AppFileSystem.normalizePathPattern(path.join(dir, "*"))
       return path.join(dir, "*")
     })
