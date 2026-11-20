@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { Process } from "@/util"
 import { which } from "@/util/which"
+import { WindowsPowerShell } from "@/util/windows-powershell"
 import pulseA from "../asset/pulse-a.wav" with { type: "file" }
 import pulseB from "../asset/pulse-b.wav" with { type: "file" }
 import pulseC from "../asset/pulse-c.wav" with { type: "file" }
@@ -40,7 +41,8 @@ function args(kind: Kind, file: string, volume: number) {
   if (kind === "afplay" || kind === "omxplayer" || kind === "aplay" || kind === "cmdmp3") return [kind, file]
   if (kind === "play") return [kind, "-v", String(volume), file]
   if (kind === "cvlc") return [kind, `--gain=${volume}`, "--play-and-exit", file]
-  return [kind, "-c", `(New-Object Media.SoundPlayer '${file.replace(/'/g, "''")}').PlaySync()`]
+  const exe = process.platform === "win32" ? WindowsPowerShell.executable() : kind
+  return [exe, "-NoProfile", "-NonInteractive", "-c", `(New-Object Media.SoundPlayer '${file.replace(/'/g, "''")}').PlaySync()`]
 }
 
 let item: Player | null | undefined
@@ -77,7 +79,7 @@ function asset() {
 
 function pick() {
   if (kind !== undefined) return kind
-  kind = LIST.find((item) => which(item)) ?? null
+  kind = LIST.find((item) => (item === "powershell.exe" && process.platform === "win32") || which(item)) ?? null
   return kind
 }
 
@@ -88,6 +90,7 @@ function run(file: string, volume: number) {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",
+    env: kind === "powershell.exe" ? WindowsPowerShell.env() : undefined,
   })
 }
 

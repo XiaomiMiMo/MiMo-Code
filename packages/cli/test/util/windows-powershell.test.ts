@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { spawnSync } from "child_process"
 import fs from "fs/promises"
 import path from "path"
+import { extractZip } from "../../src/util/archive"
 import { WindowsPowerShell } from "../../src/util/windows-powershell"
 import { tmpdir } from "../fixture/fixture"
 
@@ -58,5 +59,37 @@ describe.skipIf(!win)("WindowsPowerShell.executable", () => {
     )
     expect(proc.stdout).toContain("Archive")
     expect(proc.stdout).not.toContain("ps7-modules")
+  })
+})
+
+async function zipWith(dir: string, name: string, text: string) {
+  const src = path.join(dir, "src")
+  await fs.mkdir(src, { recursive: true })
+  await Bun.write(path.join(src, name), text)
+  const zip = path.join(dir, "a.zip")
+  expect(Bun.spawnSync(["tar", "-a", "-c", "-f", zip, "-C", src, name]).exitCode).toBe(0)
+  return zip
+}
+
+describe.skipIf(!win)("extractZip", () => {
+  test("ignores a PowerShell 7 Archive module inherited from a pwsh parent", async () => {
+    await using tmp = await tmpdir()
+    const zip = await zipWith(tmp.path, "a.txt", "hello")
+    process.env.PSModulePath = await inheritedPs7ModulePath(tmp.path)
+    const out = path.join(tmp.path, "out")
+    await extractZip(zip, out)
+    expect(await Bun.file(path.join(out, "a.txt")).text()).toBe("hello")
+  })
+
+  test("works when WindowsPowerShell is missing from PATH", async () => {
+    await using tmp = await tmpdir()
+    const zip = await zipWith(tmp.path, "a.txt", "hello")
+    process.env.PATH = (saved.PATH ?? "")
+      .split(";")
+      .filter((p) => !/WindowsPowerShell/i.test(p))
+      .join(";")
+    const out = path.join(tmp.path, "out")
+    await extractZip(zip, out)
+    expect(await Bun.file(path.join(out, "a.txt")).text()).toBe("hello")
   })
 })

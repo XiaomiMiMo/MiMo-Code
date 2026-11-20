@@ -9,6 +9,7 @@ import path from "path"
 import os from "os"
 import { Filesystem } from "../../util"
 import { Process } from "../../util"
+import { WindowsPowerShell } from "../../util/windows-powershell"
 
 interface UninstallArgs {
   keepConfig: boolean
@@ -375,9 +376,12 @@ async function cleanWindowsPath() {
       [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
     }
   `
-  const result = await Process.run(["powershell", "-ep", "Bypass", "-c", script], {
-    nothrow: true,
-    env: { MIMOCODE_UNINSTALL_DIR: installDir },
-  })
+  const result = await Process.run(
+    [WindowsPowerShell.executable(), "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", script],
+    {
+      nothrow: true,
+      env: WindowsPowerShell.env({ MIMOCODE_UNINSTALL_DIR: installDir }),
+    },
+  )
   if (result.code !== 0) throw new Error(result.stderr.toString() || "Failed to clean User PATH")
 }
