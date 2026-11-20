@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { ulid } from "ulid"
 import { Effect, Fiber, Layer } from "effect"
 import { Inbox } from "../../src/inbox"
 import * as Controller from "../../src/inbox/controller"
@@ -23,6 +24,42 @@ const register = (sessionID: SessionID, actorID = "main", mode: "peer" | "subage
   }))
 const user = (sessionID: SessionID, agentID = "main"): MessageV2.User => ({
   id: MessageID.ascending(), sessionID, agentID, role: "user", agent: "general", model, time: { created: Date.now() },
+})
+const assistant = (sessionID: SessionID, parentID: MessageID): MessageV2.Assistant => ({
+  id: MessageID.ascending(),
+  sessionID,
+  role: "assistant",
+  agent: "build",
+  mode: "build",
+  parentID,
+  path: { cwd: "/tmp/example", root: "/tmp/example" },
+  cost: 0,
+  tokens: { output: 0, input: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  modelID: model.modelID,
+  providerID: model.providerID,
+  time: { created: Date.now() },
+  finish: "end_turn",
+})
+const consumedReceipt = (id: string, sessionID: SessionID, inputMessageID: MessageID, deliveryMessageID: MessageID) => ({
+  id,
+  receiver_session_id: sessionID,
+  receiver_actor_id: "main",
+  sender_session_id: null,
+  sender_actor_id: null,
+  type: "prompt",
+  content: null,
+  input_message_id: inputMessageID,
+  state: "settled" as const,
+  epoch: 0,
+  run_id: 1,
+  claim_frontier: inputMessageID,
+  consumed: true,
+  outcome: "success" as const,
+  delivery_message_id: deliveryMessageID,
+  error: null,
+  idempotency_key: "",
+  created_at: Date.now(),
+  time_updated: Date.now(),
 })
 
 describe("Inbox unified admission", () => {
@@ -50,6 +87,42 @@ describe("Inbox unified admission", () => {
     const claimedRows = Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.receiver_session_id, session.id)).all())
     expect(MessageV2.renderedOrder(messages, claimedRows, session.id, new Set(claim!.receipts.map((receipt) => receipt.id)), () => { throw new Error("Unexpected input load") }))
       .toEqual(messages)
+  })))
+
+  it.live("stale consumed receipt is skipped without suppressing another delivered input", provideTmpdirInstance(() => Effect.gen(function* () {
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create()
+    const kept = user(session.id)
+    const stale = user(session.id)
+    const delivery = assistant(session.id, kept.id)
+    yield* sessions.updateMessage(kept)
+    yield* sessions.updatePart({ id: PartID.ascending(), sessionID: session.id, messageID: kept.id, type: "text", text: "KEPT-INPUT" })
+    yield* sessions.updateMessage(stale)
+    yield* sessions.updatePart({ id: PartID.ascending(), sessionID: session.id, messageID: stale.id, type: "text", text: "STALE-INPUT" })
+    yield* sessions.updateMessage(delivery)
+    yield* sessions.updatePart({ id: PartID.ascending(), sessionID: session.id, messageID: delivery.id, type: "text", text: "DELIVERY" })
+
+    yield* sessions.removeMessage({ sessionID: session.id, messageID: stale.id })
+
+    const keptReceiptID = ulid()
+    const staleReceiptID = ulid()
+    yield* Effect.sync(() => Database.use((db) => db.insert(InboxTable).values([
+      consumedReceipt(keptReceiptID, session.id, kept.id, delivery.id),
+      consumedReceipt(staleReceiptID, session.id, stale.id, delivery.id),
+    ]).run()))
+
+    const rows = yield* Effect.sync(() =>
+      Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.receiver_session_id, session.id)).all()),
+    )
+    expect(rows.find((row) => row.id === staleReceiptID)?.input_message_id).toBe(stale.id)
+    const remaining = yield* sessions.messages({ sessionID: session.id })
+    expect(remaining.map((message) => message.info.id)).toEqual([kept.id, delivery.id])
+
+    const branch = yield* sessions.fork({ sessionID: session.id })
+    const copied = yield* sessions.messages({ sessionID: branch.id })
+    expect(copied.flatMap((message) => message.parts.flatMap((part) =>
+      part.type === "text" ? [part.text] : [],
+    ))).toEqual(["KEPT-INPUT", "DELIVERY"])
   })))
 
   it.live("each step claims at most the configured batch and later steps pick up remaining input", provideTmpdirInstance(() => Effect.gen(function* () {

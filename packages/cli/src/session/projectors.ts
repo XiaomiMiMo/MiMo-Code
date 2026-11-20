@@ -1,10 +1,11 @@
-import { NotFoundError, eq, and, sql, type Database } from "../storage"
+import { NotFoundError, eq, and, inArray, sql, type Database } from "../storage"
 import type { MessageID, PartID, SessionID } from "./schema"
 import { SyncEvent } from "@/sync"
 import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionTable, MessageTable, PartTable } from "./session.sql"
 import { ActorRegistryTable } from "@/actor/actor.sql"
+import { InboxTable } from "@/inbox/inbox.sql"
 import { ACTIVITY_COALESCE_MS } from "@/actor/schema"
 import { Log } from "../util"
 
@@ -157,6 +158,14 @@ export default [
     assertMessageOwner(db, data.sessionID, data.messageID)
     db.delete(MessageTable)
       .where(and(eq(MessageTable.id, data.messageID), eq(MessageTable.session_id, data.sessionID)))
+      .run()
+    db.update(InboxTable)
+      .set({ state: "cancelled", outcome: "never_ran" })
+      .where(and(
+        eq(InboxTable.receiver_session_id, data.sessionID),
+        eq(InboxTable.input_message_id, data.messageID),
+        inArray(InboxTable.state, ["accepted", "claimed"]),
+      ))
       .run()
   }),
 

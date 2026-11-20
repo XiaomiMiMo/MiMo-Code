@@ -2,7 +2,8 @@ import { Context, Deferred, Effect, Layer } from "effect"
 import { ulid } from "ulid"
 import { and, Database, eq, inArray, ne, or, sql } from "@/storage"
 import { NotFoundError } from "@/storage"
-import { SessionTable } from "@/session/session.sql"
+import { notExists } from "drizzle-orm"
+import { MessageTable, SessionTable } from "@/session/session.sql"
 import { MessageV2 } from "@/session/message-v2"
 import { Bus } from "@/bus"
 import { SyncEvent } from "@/sync"
@@ -614,6 +615,21 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             ))
             .returning().all()
           receipts.push(...crashed)
+          // A receipt can outlive its input message after a revert. Keep the row
+          // for revision accounting, but never admit work whose input is gone.
+          const missingInput = db.update(InboxTable)
+            .set({ state: "cancelled", outcome: "never_ran", time_updated: now })
+            .where(and(
+              eq(InboxTable.receiver_session_id, sessionID),
+              promptOnly,
+              eq(InboxTable.state, "accepted"),
+              notExists(db.select({ id: MessageTable.id }).from(MessageTable).where(and(
+                eq(MessageTable.id, InboxTable.input_message_id),
+                eq(MessageTable.session_id, InboxTable.receiver_session_id),
+              ))),
+            ))
+            .returning().all()
+          receipts.push(...missingInput)
           InboxSync.record({ sessionID, receipts, lanes: laneRows })
           return db
             .select({

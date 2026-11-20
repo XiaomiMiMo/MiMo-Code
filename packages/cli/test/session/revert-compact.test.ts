@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { ulid } from "ulid"
 import fs from "fs/promises"
 import path from "path"
 import { Effect, Layer } from "effect"
@@ -9,6 +10,8 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { Snapshot } from "../../src/snapshot"
 import { Log } from "../../src/util"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
+import { InboxTable } from "../../src/inbox/inbox.sql"
+import { Database, eq } from "../../src/storage"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -88,6 +91,50 @@ const tool = Effect.fn("test.tool")(function* (sessionID: SessionID, messageID: 
 
 const read = (file: string) => Effect.promise(() => fs.readFile(file, "utf-8"))
 const write = (file: string, text: string) => Effect.promise(() => fs.writeFile(file, text))
+
+const consumedReceipt = (id: string, sessionID: SessionID, inputMessageID: MessageID, deliveryMessageID: MessageID) => ({
+  id,
+  receiver_session_id: sessionID,
+  receiver_actor_id: "default",
+  sender_session_id: null,
+  sender_actor_id: null,
+  type: "prompt",
+  content: null,
+  input_message_id: inputMessageID,
+  state: "settled" as const,
+  epoch: 0,
+  run_id: 1,
+  claim_frontier: inputMessageID,
+  consumed: true,
+  outcome: "success" as const,
+  delivery_message_id: deliveryMessageID,
+  error: null,
+  idempotency_key: "",
+  created_at: Date.now(),
+  time_updated: Date.now(),
+})
+
+const acceptedReceipt = (id: string, sessionID: SessionID, inputMessageID: MessageID) => ({
+  id,
+  receiver_session_id: sessionID,
+  receiver_actor_id: "default",
+  sender_session_id: null,
+  sender_actor_id: null,
+  type: "prompt",
+  content: null,
+  input_message_id: inputMessageID,
+  state: "accepted" as const,
+  epoch: 0,
+  run_id: null,
+  claim_frontier: null,
+  consumed: false,
+  outcome: null,
+  delivery_message_id: null,
+  error: null,
+  idempotency_key: "",
+  created_at: Date.now(),
+  time_updated: Date.now(),
+})
 
 const tokens = {
   input: 0,
@@ -447,6 +494,71 @@ describe("revert + compact workflow", () => {
 
           const msgs = yield* session.messages({ sessionID: sid })
           expect(msgs.length).toBe(1)
+        }),
+      { git: true },
+    ),
+  )
+
+  it.live(
+    "cleanup cancels the accepted receipt for a removed input and preserves terminal history",
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const sessions = yield* Session.Service
+          const revert = yield* SessionRevert.Service
+
+          const info = yield* sessions.create({})
+          const sid = info.id
+
+          const kept = yield* user(sid)
+          yield* text(sid, kept.id, "KEPT-INPUT")
+          const delivery = yield* assistant(sid, kept.id, dir)
+          yield* text(sid, delivery.id, "KEPT-DELIVERY")
+
+          const removed = yield* user(sid)
+          yield* text(sid, removed.id, "REMOVED-INPUT")
+
+          const keptReceiptID = ulid()
+          const removedSettledReceiptID = ulid()
+          const removedAcceptedReceiptID = ulid()
+          yield* Effect.sync(() => Database.use((db) => db.insert(InboxTable).values([
+            consumedReceipt(keptReceiptID, sid, kept.id, delivery.id),
+            consumedReceipt(removedSettledReceiptID, sid, removed.id, delivery.id),
+            acceptedReceipt(removedAcceptedReceiptID, sid, removed.id),
+          ]).run()))
+
+          yield* sessions.setRevert({
+            sessionID: sid,
+            revert: { messageID: removed.id },
+            summary: { additions: 0, deletions: 0, files: 0 },
+          })
+          yield* revert.cleanup(yield* sessions.get(sid))
+
+          const remaining = yield* sessions.messages({ sessionID: sid })
+          expect(remaining.map((message) => message.info.id)).toEqual([kept.id, delivery.id])
+          const receipts = yield* Effect.sync(() =>
+            Database.use((db) => db.select().from(InboxTable).where(eq(InboxTable.receiver_session_id, sid)).all()),
+          )
+          expect(receipts).toHaveLength(3)
+          const removedAccepted = receipts.find((row) => row.id === removedAcceptedReceiptID)!
+          expect(removedAccepted.state).toBe("cancelled")
+          expect(removedAccepted.outcome).toBe("never_ran")
+          expect(removedAccepted.input_message_id).toBe(removed.id)
+          const removedSettled = receipts.find((row) => row.id === removedSettledReceiptID)!
+          expect(removedSettled.state).toBe("settled")
+          expect(removedSettled.outcome).toBe("success")
+          expect(removedSettled.consumed).toBe(true)
+          expect(removedSettled.delivery_message_id).toBe(delivery.id)
+          const keptReceipt = receipts.find((row) => row.id === keptReceiptID)!
+          expect(keptReceipt.input_message_id).toBe(kept.id)
+          expect(keptReceipt.state).toBe("settled")
+          expect(keptReceipt.delivery_message_id).toBe(delivery.id)
+
+          const branch = yield* sessions.fork({ sessionID: sid })
+          const copied = yield* sessions.messages({ sessionID: branch.id })
+          expect(copied.flatMap((message) => message.parts.flatMap((part) =>
+            part.type === "text" ? [part.text] : [],
+          ))).toEqual(["KEPT-INPUT", "KEPT-DELIVERY"])
         }),
       { git: true },
     ),

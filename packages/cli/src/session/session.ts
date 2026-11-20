@@ -835,7 +835,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         // still-queued ones are hidden by the same rule the model uses.
         const body = MessageV2.renderedOrder(all, receipts, input.sessionID, new Set(
           receipts.filter((row) => row.consumed).map((row) => row.id),
-        ), (messageID) => MessageV2.get({ sessionID: input.sessionID, messageID }))
+        ), (messageID) => MessageV2.find({ sessionID: input.sessionID, messageID }))
         const bodyIDs = new Set(body.map((msg) => msg.info.id))
         const queuedIDs = receipts
           .filter((row) => row.input_message_id && !bodyIDs.has(row.input_message_id) &&
