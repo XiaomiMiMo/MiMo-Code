@@ -93,14 +93,26 @@ export function diffSkillCatalog(input: {
 // verbose catalog or the empty-catalog sentence. buildSystemArray joins parts
 // with a blank line, so the separator goes with the block.
 const LEGACY_SYSTEM_CATALOG =
-  /(?:\n\n)?Skills available in this session:\n(?:<available_skills>[\s\S]*?<\/available_skills>|No skills are currently available\.)/
+  /(?:\n\n)?Skills available in this session:\n(?:<available_skills>[\s\S]*?<\/available_skills>|No skills are currently available\.)/g
 
 /**
- * Remove a legacy catalog block from a frozen system prompt. A block that the
- * host-supplied system itself contains is host content and stays.
+ * Remove legacy catalog blocks from a frozen system prompt. Blocks that the
+ * host-supplied system itself contains are host content: as many leading
+ * occurrences as the host has stay, and the engine's tail copies go.
  */
 export function stripLegacySkillCatalog(system: readonly string[], hostSystem = ""): string[] {
+  const hostBlocks = new Map<string, number>()
+  for (const match of hostSystem.matchAll(LEGACY_SYSTEM_CATALOG)) {
+    const block = match[0].trimStart()
+    hostBlocks.set(block, (hostBlocks.get(block) ?? 0) + 1)
+  }
   return system.map((part) =>
-    part.replace(LEGACY_SYSTEM_CATALOG, (block) => (hostSystem.includes(block.trimStart()) ? block : "")),
+    part.replace(LEGACY_SYSTEM_CATALOG, (match) => {
+      const block = match.trimStart()
+      const keep = hostBlocks.get(block) ?? 0
+      if (keep === 0) return ""
+      hostBlocks.set(block, keep - 1)
+      return match
+    }),
   )
 }

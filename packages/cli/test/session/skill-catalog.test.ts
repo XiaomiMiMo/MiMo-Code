@@ -104,6 +104,12 @@ describe("legacy system catalog strip", () => {
       .toEqual(["base"])
   })
 
+  test("keeps a block the host system contains and still strips the engine block", () => {
+    const block = "Skills available in this session:\nNo skills are currently available."
+    const host = `host prompt\n\n${block}`
+    expect(stripLegacySkillCatalog([`${host}\n\nmiddle\n\n${block}`], host)).toEqual([`${host}\n\nmiddle`])
+  })
+
   test("leaves systems without a catalog unchanged", () => {
     const system = ["base prompt\n\ninstructions"]
     expect(stripLegacySkillCatalog(system)).toEqual(system)
