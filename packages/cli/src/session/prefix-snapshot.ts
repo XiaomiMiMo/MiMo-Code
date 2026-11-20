@@ -7,6 +7,7 @@ import { and, Database, eq } from "@/storage"
 import type { Permission } from "@/permission"
 import type { MessageID, SessionID } from "./schema"
 import { SessionPrefixSnapshotTable, type SessionPrefixToolSnapshot } from "./session.sql"
+import { stripLegacySkillCatalog } from "./skill-catalog"
 
 export type Info = typeof SessionPrefixSnapshotTable.$inferSelect
 
@@ -172,6 +173,52 @@ export const rotate = Effect.fn("SessionPrefixSnapshot.rotate")(function* (input
   const snapshot = yield* get(input.sessionID, input.profileKey)
   if (!snapshot) return yield* Effect.die(new Error("Failed to read rotated session prefix snapshot"))
   return snapshot
+})
+
+/** Replace only the frozen system; tools and watermark stay as pinned. */
+export const replaceSystem = Effect.fn("SessionPrefixSnapshot.replaceSystem")(function* (input: {
+  sessionID: SessionID
+  profileKey: string
+  system: string[]
+}) {
+  yield* Effect.sync(() =>
+    Database.use((db) =>
+      db
+        .update(SessionPrefixSnapshotTable)
+        .set({
+          system: input.system,
+          system_hash: systemHash(input.system),
+          updated_at: Date.now(),
+        })
+        .where(
+          and(
+            eq(SessionPrefixSnapshotTable.session_id, input.sessionID),
+            eq(SessionPrefixSnapshotTable.profile_key, input.profileKey),
+          ),
+        )
+        .run(),
+    ),
+  )
+  const snapshot = yield* get(input.sessionID, input.profileKey)
+  if (!snapshot) return yield* Effect.die(new Error("Failed to read session prefix snapshot after system replace"))
+  return snapshot
+})
+
+/**
+ * The frozen prefix for a profile. Prefixes pinned while the skill catalog
+ * lived in the system tail still carry it; strip it once and persist the
+ * result, since the catalog now arrives as a user-turn reminder.
+ */
+export const getFrozen = Effect.fn("SessionPrefixSnapshot.getFrozen")(function* (input: {
+  sessionID: SessionID
+  profileKey: string
+  hostSystem?: string
+}) {
+  const frozen = yield* get(input.sessionID, input.profileKey)
+  if (!frozen) return frozen
+  const system = stripLegacySkillCatalog(frozen.system, input.hostSystem)
+  if (system.every((part, index) => part === frozen.system[index])) return frozen
+  return yield* replaceSystem({ sessionID: input.sessionID, profileKey: input.profileKey, system })
 })
 
 export const advance = Effect.fn("SessionPrefixSnapshot.advance")(function* (input: {

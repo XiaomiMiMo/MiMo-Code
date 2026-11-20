@@ -251,6 +251,7 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket): Hono => {
       async (c) =>
         jsonRequest("InstanceRoutes.skill.list", c, function* () {
           const skill = yield* Skill.Service
+          yield* skill.refresh()
           return yield* skill.all()
         }),
     )

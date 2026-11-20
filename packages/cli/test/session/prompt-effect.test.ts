@@ -1907,6 +1907,48 @@ it.live("persists auto as its own harness mode", () =>
   ),
 )
 
+// [skill-catalog-live S2.2] Compaction drops earlier catalog reminders from the
+// window, so the next user turn carries a full catalog entry again.
+it.live("re-announces the full skill catalog after compaction", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ dir, llm }) {
+      yield* Effect.promise(() =>
+        Bun.write(
+          path.join(dir, ".mimocode", "skill", "window-skill", "SKILL.md"),
+          "---\nname: window-skill\ndescription: Survives compaction.\n---\n\n# window-skill\n",
+        ),
+      )
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const compaction = yield* SessionCompaction.Service
+      const chat = yield* sessions.create({ title: "Skill catalog compaction" })
+      const entry = "Skill catalog for this conversation."
+      const turn = (text: string) =>
+        prompt.prompt({ sessionID: chat.id, agent: "build", model: ref, noReply: true, parts: [{ type: "text", text }] })
+
+      yield* turn("first query")
+      yield* llm.text("first answer")
+      yield* prompt.loop({ sessionID: chat.id })
+      expect(JSON.stringify((yield* llm.inputs)[0])).toContain(entry)
+
+      yield* compaction.create({ sessionID: chat.id, agent: "compaction", model: ref, auto: false })
+      const snapshot = yield* sessions.messages({ sessionID: chat.id })
+      yield* llm.text("summary")
+      yield* compaction.process({ parentID: snapshot.at(-1)!.info.id, messages: snapshot, sessionID: chat.id, auto: false })
+
+      yield* turn("after compaction")
+      yield* llm.text("continued")
+      yield* prompt.loop({ sessionID: chat.id })
+
+      const after = JSON.stringify((yield* llm.inputs).at(-1))
+      expect(after).not.toContain("first query")
+      expect(after.split(entry).length - 1).toBe(1)
+      expect(after).toContain("<name>window-skill</name>")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("uses the frozen system and appends the compaction prompt to the existing conversation", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {
@@ -2634,9 +2676,11 @@ it.live(
             .flatMap((message) => message.role === "system" && typeof message.content === "string" ? [message.content] : [])
             .join("\n")
           expect(system).not.toContain("Working directory:")
-          expect(system).toContain("Skills available in this session:")
-          expect(system.indexOf("Skills available in this session:")).toBeLessThan(system.indexOf(marker))
+          // [skill-catalog-live S2.3] The skill catalog is a user-turn reminder, not system text.
+          expect(system).not.toContain("Skills available in this session:")
+          expect(system).not.toContain("<available_skills>")
           expect(system.trim().endsWith(marker)).toBe(true)
+          expect(JSON.stringify(inputs[0].messages)).toContain("<system-reminder>\\nSkill catalog for this conversation.")
         }),
         { git: true, config: providerCfg },
       ),
@@ -4251,11 +4295,20 @@ const flappingSession = Effect.fnUntraced(function* (
   return requests
 })
 
-const lastUserText = (request: Record<string, unknown>) =>
-  JSON.stringify(
-    (request.messages as Array<{ role: string; content: unknown }>).findLast((message) => message.role === "user")
-      ?.content,
+// Excludes the skill catalog reminder so MCP assertions see only MCP reminders.
+const lastUserText = (request: Record<string, unknown>) => {
+  const content = (request.messages as Array<{ role: string; content: unknown }>).findLast(
+    (message) => message.role === "user",
+  )?.content
+  return JSON.stringify(
+    Array.isArray(content)
+      ? content.filter(
+          (item: { type?: string; text?: string }) =>
+            !(item.type === "text" && item.text?.startsWith("<system-reminder>\nSkill catalog")),
+        )
+      : content,
   )
+}
 
 flappingMcpIt.live("keeps the tool list byte-stable while every MCP server disconnects and reconnects", () =>
   provideTmpdirServer(

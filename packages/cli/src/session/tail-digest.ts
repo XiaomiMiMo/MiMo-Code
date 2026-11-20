@@ -124,8 +124,8 @@ function isLegacyBoundary(boundary: WithParts, newest: WithParts): boolean {
  * array — so a same-millisecond tail message cannot escape collapse by
  * sorting before the boundary's synthetic time.
  *
- * User-role messages are never dropped: the last user is where insertReminders
- * persists skill-catalog gates, and a file-only or
+ * User-role messages are never dropped: the last user is where turn-boundary
+ * reminders (skill catalog, MCP) are persisted, and a file-only or
  * synthetic-only user turn is still an instruction the provider must see.
  * Collapsing it would mark the reminder "already sent" while the provider
  * never receives it.

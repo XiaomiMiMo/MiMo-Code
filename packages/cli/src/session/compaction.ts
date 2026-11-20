@@ -389,7 +389,11 @@ export const layer: Layer.Layer<
         system: promptConfig.system ?? "",
         permission: Agent.runtimePermission(parentAgent, parentSession.permission),
       })
-      const frozen = yield* SessionPrefixSnapshot.get(input.sessionID, profileKey)
+      const frozen = yield* SessionPrefixSnapshot.getFrozen({
+        sessionID: input.sessionID,
+        profileKey,
+        hostSystem: promptConfig.system,
+      })
       if (!frozen) {
         log.warn("compaction prefix snapshot missing", { sessionID: input.sessionID, profileKey })
       }
