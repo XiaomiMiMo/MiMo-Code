@@ -1,6 +1,6 @@
 ---
 feature: skill-catalog-live
-status: in-progress
+status: delivered
 updated: 2026-11-20
 source: feat/skill-catalog-live
 ---
@@ -8,7 +8,23 @@ source: feat/skill-catalog-live
 # Skill Catalog Live
 
 ## Report
-[Not finalized yet]
+
+**What was built** — Skill discovery is a per-directory snapshot refreshed at its triggers: the user-turn boundary, `Command.list`/`get`, `GET /skill`, and a name miss in `skill`/`skill_search`. Each refresh globs the existing roots and reparses only `SKILL.md` files whose `(path, mtime, size)` changed. Refreshes are single-flight with tickets, so a caller never accepts a scan that started before its request, and an interrupted scan cannot wedge later callers. Builtin extraction runs once per process; an empty remote pull is retried after 5 minutes.
+
+The catalog left the system tail. It is a persisted user-turn reminder tagged `skillReminder`: a full entry per context window, then deltas listing added or changed skills and removed names. It is appended only before the turn's first assistant step. The system prompt no longer depends on skills, so it stays byte-stable while skills change.
+
+Prefixes frozen by older engines have their catalog block stripped once through `SessionPrefixSnapshot.getFrozen`, in the main loop, prefix capture, and compaction. Host-supplied copies of that block are kept. Legacy user-side catalogs stay suppressed.
+
+Slash commands list live skills without waiting for MCP servers: MCP prompt commands are collected in the background, and `get` waits for them only on a miss. The agent permission is unchanged, which keeps the prefix profile key stable.
+
+**Verification** — From `packages/cli`. The full suite was not run locally; it is slow, CI runs it, and CI isolates the MCP mock suites.
+- PASS — `bun run typecheck` on the final head.
+- PASS — related tests at `ac91189c`: 268 tests (skill, catalog, system, message-v2, prefix and fork prefix, tool skill and skill-search, command, agent, installation, mcp-singleton) and 304 tests (prompt-effect, prompt-skill-command-multi, title-first-turn, rebuild boundary and tail-digest, checkpoint-fork-mode, session-recovery). 0 failed.
+- PASS — after review fixes: the 6 related files, 56 tests; `prompt-effect -t compaction`, 9 tests; delta and legacy prompt-loop tests; `skill-catalog.test.ts`, 12 tests.
+- PASS — `test/command/command-live.test.ts` times out against the old `Command`, confirming the regression test.
+- PASS — oxlint on changed files shows no diagnostics beyond the main baseline; `git diff --check` is clean.
+- PRE-EXISTING — `test/mcp/*` mock suites fail when they share a process with other files. CI runs them isolated (`.github/workflows/test.yml`).
+- PASS — independent review plus two follow-up reviews. Both major findings were resolved: the profile-key churn from rebuilding the agent, and the refresh interruption hang. A later deny-bypass finding was resolved by dropping that code.
 
 ## [S1] Problem
 
@@ -93,12 +109,12 @@ Tests use real temp directories and the real session loop, with no mocking of `S
 
 ## Tasks
 
-- [ ] T1: Live skill snapshot with parse cache, single-flight `refresh()`, process-once builtin extraction and URL pulls — acceptance: a unit test adds, edits, and removes `SKILL.md` files under real temp roots and observes `refresh()` reflect each change; an unchanged file is not reparsed. (covers: S2.1)
-- [ ] T2: Turn-boundary skill reminders (entry and delta) via `ensurePersistedUserSynthetic` and `skillReminder` replay — acceptance: prompt-loop tests show an entry on the first turn, a delta after add/change/remove, nothing when unchanged, nothing mid-turn, and an entry again after compaction. (covers: S2.2, depends: T1)
-- [ ] T3: Remove skills from the system tail in both assemblies; update the prompt texts — acceptance: the request system contains no catalog, and existing prefix-parity tests pass. (covers: S2.3, depends: T2)
-- [ ] T4: Legacy handling — strip the catalog from frozen systems with a one-time rotate; keep suppressing legacy user-side parts — acceptance: a session pinned with a legacy catalog sends a stripped system and receives an entry reminder on its next turn. (covers: S2.4, depends: T3)
-- [ ] T5: Live `Command.list`/`get` with non-blocking MCP prompts — acceptance: `GET /command` lists a newly created skill without a restart and returns skills while an MCP server is still pending. (covers: S2.5, depends: T1)
-- [ ] T6: Skill changes never change the agent permission — acceptance: adding, removing, and editing skills across turns keeps a single prefix snapshot for the session. (covers: S2.6, depends: T2)
+- [x] T1: Live skill snapshot with parse cache, single-flight `refresh()`, process-once builtin extraction and URL pulls — acceptance: a unit test adds, edits, and removes `SKILL.md` files under real temp roots and observes `refresh()` reflect each change; an unchanged file is not reparsed. (covers: S2.1)
+- [x] T2: Turn-boundary skill reminders (entry and delta) via `ensurePersistedUserSynthetic` and `skillReminder` replay — acceptance: prompt-loop tests show an entry on the first turn, a delta after add/change/remove, nothing when unchanged, nothing mid-turn, and an entry again after compaction. (covers: S2.2, depends: T1)
+- [x] T3: Remove skills from the system tail in both assemblies; update the prompt texts — acceptance: the request system contains no catalog, and existing prefix-parity tests pass. (covers: S2.3, depends: T2)
+- [x] T4: Legacy handling — strip the catalog from frozen systems with a one-time rotate; keep suppressing legacy user-side parts — acceptance: a session pinned with a legacy catalog sends a stripped system and receives an entry reminder on its next turn. (covers: S2.4, depends: T3)
+- [x] T5: Live `Command.list`/`get` with non-blocking MCP prompts — acceptance: `GET /command` lists a newly created skill without a restart and returns skills while an MCP server is still pending. (covers: S2.5, depends: T1)
+- [x] T6: Skill changes never change the agent permission — acceptance: adding, removing, and editing skills across turns keeps a single prefix snapshot for the session. (covers: S2.6, depends: T2)
 
 ## Journey log
 
