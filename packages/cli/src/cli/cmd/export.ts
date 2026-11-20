@@ -193,7 +193,7 @@ export function captureExportData(sessionID: SessionID) {
       messages: Array.from(MessageV2.stream(sessionID, { agentID: "*" })).reverse(),
       queue: QueueSync.capture(sessionID, tx),
     }
-  })
+  }, { behavior: "deferred" })
 }
 
 export function sanitize(data: ReturnType<typeof captureExportData>) {

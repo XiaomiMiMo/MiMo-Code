@@ -161,6 +161,16 @@ export function effect(fn: () => any | Promise<any>) {
 
 type NotPromise<T> = T extends Promise<any> ? never : T
 
+/**
+ * Runs `callback` in a transaction, joining the caller's transaction when one is open.
+ *
+ * The default is BEGIN IMMEDIATE. Several mimo processes share one WAL database,
+ * and SQLite consults the busy handler only when a connection holds no read
+ * snapshot. A deferred transaction that reads before it writes therefore fails
+ * its write upgrade with SQLITE_BUSY at once whenever another process is writing,
+ * whatever busy_timeout says. Taking the write lock at BEGIN puts the wait inside
+ * the busy handler. Pass `behavior: "deferred"` only for transactions that never write.
+ */
 export function transaction<T>(
   callback: (tx: TxOrDb) => NotPromise<T>,
   options?: {
@@ -173,7 +183,7 @@ export function transaction<T>(
     if (err instanceof LocalContext.NotFound) {
       const effects: (() => void | Promise<void>)[] = []
       const txCallback = InstanceState.bind((tx: TxOrDb) => ctx.provide({ tx, effects }, () => callback(tx)))
-      const result = Client().transaction(txCallback, { behavior: options?.behavior })
+      const result = Client().transaction(txCallback, { behavior: options?.behavior ?? "immediate" })
       for (const effect of effects) effect()
       return result as NotPromise<T>
     }
