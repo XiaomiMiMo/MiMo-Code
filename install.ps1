@@ -33,6 +33,9 @@ function Exit-Install {
     param([Int] $Code = 1)
     if ($IS_EXECUTED_FROM_IEX) {
         $Global:LASTEXITCODE = $Code
+        # `exit` would close the user's terminal under `irm | iex`, while `break`
+        # makes `powershell -c "... | iex"` (mimo upgrade) exit 0 on failure.
+        if ($Code -ne 0) { throw "MiMoCode installation failed." }
         break
     } else {
         exit $Code
@@ -163,17 +166,21 @@ try {
 }
 
 # Extract and install
+# Not Expand-Archive: it resolves through PSModulePath, and Windows PowerShell
+# started from pwsh can load PowerShell 7's Archive module, which fails on .NET Framework.
+$ExtractDir = Join-Path $TmpDir "extract"
 try {
-    Expand-Archive -Path $ZipPath -DestinationPath $TmpDir -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $ExtractDir)
 } catch {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
     Write-Err "Failed to extract archive.`n$($_.Exception.Message)"
 }
 
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-$BinName = if (Test-Path (Join-Path $TmpDir "mimo.exe")) { "mimo.exe" } else { "mimo" }
+$BinName = if (Test-Path (Join-Path $ExtractDir "mimo.exe")) { "mimo.exe" } else { "mimo" }
 try {
-    Move-Item -Path (Join-Path $TmpDir $BinName) -Destination (Join-Path $InstallDir "mimo.exe") -Force -ErrorAction Stop
+    Move-Item -Path (Join-Path $ExtractDir $BinName) -Destination (Join-Path $InstallDir "mimo.exe") -Force -ErrorAction Stop
 } catch {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
     Write-Err "Failed to install binary. If MiMoCode is currently running, please close it and retry.`n$($_.Exception.Message)"

@@ -12,6 +12,7 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { Global } from "@/global"
 import { Log } from "@/util"
 import { which } from "@/util/which"
+import { WindowsPowerShell } from "@/util/windows-powershell"
 
 const log = Log.create({ service: "ripgrep" })
 const VERSION = "15.1.0"
@@ -233,9 +234,13 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | ChildPro
       const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient)
       const spawner = yield* ChildProcessSpawner
 
-      const run = Effect.fnUntraced(function* (command: string, args: string[], opts?: { cwd?: string }) {
+      const run = Effect.fnUntraced(function* (
+        command: string,
+        args: string[],
+        opts?: { cwd?: string; env?: Record<string, string | undefined> },
+      ) {
         const handle = yield* spawner.spawn(
-          ChildProcess.make(command, args, { cwd: opts?.cwd, extendEnv: true, stdin: "ignore" }),
+          ChildProcess.make(command, args, { cwd: opts?.cwd, env: opts?.env, extendEnv: true, stdin: "ignore" }),
         )
         const [stdout, stderr, code] = yield* Effect.all(
           [
@@ -256,13 +261,16 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | ChildPro
         const dir = yield* fs.makeTempDirectoryScoped({ directory: Global.Path.bin, prefix: "ripgrep-" })
 
         if (config.extension === "zip") {
-          const shell = (yield* Effect.sync(() => which("powershell.exe") ?? which("pwsh.exe"))) ?? "powershell.exe"
-          const result = yield* run(shell, [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `$global:ProgressPreference = 'SilentlyContinue'; Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${dir.replaceAll("'", "''")}' -Force`,
-          ])
+          const result = yield* run(
+            WindowsPowerShell.executable(),
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              `$global:ProgressPreference = 'SilentlyContinue'; Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${dir.replaceAll("'", "''")}' -Force`,
+            ],
+            { env: WindowsPowerShell.env() },
+          )
           if (result.code !== 0) {
             return yield* Effect.fail(error(result.stderr || result.stdout, result.code))
           }

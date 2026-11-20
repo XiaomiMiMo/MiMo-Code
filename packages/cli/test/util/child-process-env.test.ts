@@ -103,7 +103,7 @@ test("all inherited external process paths use childProcessEnv", async () => {
 
   const uninstall = await Bun.file(path.join(root, "cli", "cmd", "uninstall.ts")).text()
   expect(uninstall).not.toContain("childProcessEnv")
-  expect(uninstall).toContain("env: { MIMOCODE_UNINSTALL_DIR: installDir }")
+  expect(uninstall).toContain("env: WindowsPowerShell.env({ MIMOCODE_UNINSTALL_DIR: installDir })")
 
   const ripgrep = await Bun.file(path.join(root, "file", "ripgrep.ts")).text()
   expect(ripgrep).not.toMatch(/env: env\(\),\s*extendEnv: true/)
