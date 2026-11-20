@@ -420,6 +420,14 @@ export const Flag = {
   MIMOCODE_DISABLE_CHANNEL_DB: !falsy("MIMOCODE_DISABLE_CHANNEL_DB"),
   MIMOCODE_SKIP_MIGRATIONS: truthy("MIMOCODE_SKIP_MIGRATIONS"),
   MIMOCODE_STRICT_CONFIG_DEPS: truthy("MIMOCODE_STRICT_CONFIG_DEPS"),
+  // How long, in milliseconds, a SQLite connection waits for a lock before it
+  // fails with SQLITE_BUSY. A large database with a competing writer can hold the
+  // write lock longer than the 5 s this used to be hardcoded to, and the failure
+  // surfaced as "database is locked" on a subagent's first write. Read lazily so
+  // tests and in-process embedders can flip it at runtime.
+  get MIMOCODE_SQLITE_BUSY_TIMEOUT_MS() {
+    return number("MIMOCODE_SQLITE_BUSY_TIMEOUT_MS") ?? 30_000
+  },
 
   MIMOCODE_WORKSPACE_ID: process.env["MIMOCODE_WORKSPACE_ID"],
   MIMOCODE_EXPERIMENTAL_HTTPAPI: truthy("MIMOCODE_EXPERIMENTAL_HTTPAPI"),
