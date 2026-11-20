@@ -502,6 +502,31 @@ Put user-wide settings in `~/.config/mimocode/mimocode.jsonc` (or `mimocode.json
 
 To declare which input modalities a custom model supports (image, audio, video, PDF), run `/modalities` in the TUI — a multi-select dialog that persists the setting to config without hand-editing.
 
+### MCP Servers
+
+Add local stdio or remote HTTP Model Context Protocol (MCP) servers under the top-level `mcp` key in `~/.config/mimocode/mimocode.jsonc` (or `.mimocode/mimocode.jsonc` for a single project):
+
+```jsonc
+{
+  "mcp": {
+    "deja": {
+      "type": "local",
+      "command": ["npx", "-y", "@vshulcz/deja-vu", "mcp"],
+      "enabled": true
+    },
+    "docs": {
+      "type": "remote",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Local servers accept `command` (array of command and arguments), optional `environment`, `timeout` (ms, default `5000`), `enabled`, `sampling` (`"deny"`, `"ask"`, or `"allow"`), and `alwaysDirectTools`. Remote servers accept `url`, optional `headers`, `oauth` (or `false` to skip OAuth discovery), `timeout`, `enabled`, `sampling`, and `alwaysDirectTools`. Run `mimo mcp` to list, add, or authenticate configured MCP servers.
+
 ### Key Options
 
 - Provider and model selection
