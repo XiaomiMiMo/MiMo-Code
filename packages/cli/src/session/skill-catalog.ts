@@ -21,7 +21,11 @@ export function isSkillCatalogReminder(text: string) {
 }
 
 /** A user-side catalog persisted by an older engine (no reminder metadata). */
-export function isLegacySkillCatalogPart(part: { synthetic?: boolean; text: string; metadata?: Record<string, unknown> }) {
+export function isLegacySkillCatalogPart(part: {
+  synthetic?: boolean
+  text: string
+  metadata?: Record<string, unknown>
+}) {
   return !!part.synthetic && !part.metadata?.[SKILL_REMINDER_METADATA_KEY] && isSkillCatalogReminder(part.text)
 }
 
@@ -36,7 +40,9 @@ export function skillFingerprint(skill: CatalogSkill) {
 }
 
 export function catalogState(skills: readonly CatalogSkill[]): Record<string, string> {
-  return Object.fromEntries(skills.map((skill) => [skill.name, skillFingerprint(skill)]).toSorted(([a], [b]) => a.localeCompare(b)))
+  return Object.fromEntries(
+    skills.map((skill) => [skill.name, skillFingerprint(skill)]).toSorted(([a], [b]) => a.localeCompare(b)),
+  )
 }
 
 export function skillReminderRev(meta: SkillReminderMeta) {
@@ -89,7 +95,12 @@ export function diffSkillCatalog(input: {
 const LEGACY_SYSTEM_CATALOG =
   /(?:\n\n)?Skills available in this session:\n(?:<available_skills>[\s\S]*?<\/available_skills>|No skills are currently available\.)/
 
-/** Remove a legacy catalog block from a frozen system prompt. */
-export function stripLegacySkillCatalog(system: readonly string[]): string[] {
-  return system.map((part) => part.replace(LEGACY_SYSTEM_CATALOG, ""))
+/**
+ * Remove a legacy catalog block from a frozen system prompt. A block that the
+ * host-supplied system itself contains is host content and stays.
+ */
+export function stripLegacySkillCatalog(system: readonly string[], hostSystem = ""): string[] {
+  return system.map((part) =>
+    part.replace(LEGACY_SYSTEM_CATALOG, (block) => (hostSystem.includes(block.trimStart()) ? block : "")),
+  )
 }

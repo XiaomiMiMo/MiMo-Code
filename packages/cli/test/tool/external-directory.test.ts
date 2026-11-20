@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test"
+import fs from "fs/promises"
 import path from "path"
 import { Effect } from "effect"
 import type { Tool } from "../../src/tool"
 import { Instance } from "../../src/project/instance"
-import { assertExternalDirectory } from "../../src/tool/external-directory"
+import { assertExternalDirectory, assertExternalDirectoryEffect } from "../../src/tool/external-directory"
 import { Filesystem } from "../../src/util"
-import { tmpdir } from "../fixture/fixture"
+import { provideInstance, tmpdir } from "../fixture/fixture"
+import { Skill } from "../../src/skill"
+import { EffectLogger } from "../../src/effect"
 import type { Permission } from "../../src/permission"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { Global } from "../../src/global"
@@ -292,4 +295,49 @@ describe("tool.assertExternalDirectory", () => {
       expect(req!.always).toEqual([expected])
     })
   }
+})
+
+// [skill-catalog-live T6] Paths inside a skill directory discovered after
+// startup are trusted live, without rebuilding the agent (whose permission is
+// part of the frozen-prefix profile key); a removed skill loses the trust.
+describe("tool.assertExternalDirectory skill directories", () => {
+  test("follows the live skill snapshot", async () => {
+    const { requests, ctx } = makeCtx()
+    await using home = await tmpdir({ outsideGit: true })
+    await using project = await tmpdir({ git: true, outsideGit: true })
+    const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
+    process.env.HOME = home.path
+    process.env.USERPROFILE = home.path
+    try {
+      const skillDir = path.join(home.path, ".agents", "skills", "late-skill")
+      const target = path.join(skillDir, "scripts", "run.py")
+      const asked = Effect.gen(function* () {
+        requests.length = 0
+        yield* assertExternalDirectoryEffect(ctx, target)
+        return requests.filter((request) => request.permission === "external_directory").length
+      })
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const skill = yield* Skill.Service
+          expect(yield* asked).toBe(1)
+
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(skillDir, "SKILL.md"),
+              "---\nname: late-skill\ndescription: Created after startup.\n---\n\n# late-skill\n",
+            ),
+          )
+          yield* skill.refresh()
+          expect(yield* asked).toBe(0)
+
+          yield* Effect.promise(() => fs.rm(skillDir, { recursive: true }))
+          yield* skill.refresh()
+          expect(yield* asked).toBe(1)
+        }).pipe(provideInstance(project.path), Effect.provide(Skill.defaultLayer), Effect.provide(EffectLogger.layer)),
+      )
+    } finally {
+      process.env.HOME = previous.HOME
+      process.env.USERPROFILE = previous.USERPROFILE
+    }
+  })
 })

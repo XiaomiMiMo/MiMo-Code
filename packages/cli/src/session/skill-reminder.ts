@@ -23,4 +23,3 @@ export function renderSkillCatalogReminder(change: SkillCatalogChange) {
     "</system-reminder>",
   ].join("\n")
 }
-

@@ -297,6 +297,9 @@ describe("skill command with additional mentions", () => {
           yield* Effect.promise(() => fs.rm(path.join(dir, ".mimocode", "skill", "skill-alpha"), { recursive: true }))
           yield* llm.text("third")
           yield* turn("third request")
+          yield* writeSkill(dir, "skill-beta", "BETA_BODY_MARKER", "Edited beta description.")
+          yield* llm.text("fourth")
+          yield* turn("fourth request")
 
           const requests = yield* llm.inputs
           const first = usersOf(requests[0])
@@ -308,17 +311,26 @@ describe("skill command with additional mentions", () => {
             "entry",
             "delta",
             "delta",
+            "delta",
           ])
-          const [, added, removed] = persisted.map((part) => (part.type === "text" ? part.text : ""))
+          const [, added, removed, changed] = persisted.map((part) => (part.type === "text" ? part.text : ""))
           expect(added).toContain(DELTA)
           expect(added).toContain("<name>skill-beta</name>")
           expect(added).not.toContain("<name>skill-alpha</name>")
           expect(removed).toContain("Removed skills (no longer available; do not load or follow them): skill-alpha")
           expect(removed).not.toContain("<name>skill-beta</name>")
 
+          expect(changed).toContain("<description>Edited beta description.</description>")
+          expect(changed).not.toContain("Removed skills")
+
           expect(usersOf(requests[2])).toContain("do not load or follow them): skill-alpha")
-          expect(systemOf(requests[1])).toBe(systemOf(requests[0]))
-          expect(systemOf(requests[2])).toBe(systemOf(requests[0]))
+          for (const request of requests.slice(1)) expect(systemOf(request)).toBe(systemOf(requests[0]))
+          // Skill directory changes must not change the agent permission hashed
+          // into the prefix profile key, or the frozen prefix would be re-pinned.
+          const snapshots = Database.use((db) =>
+            db.select().from(SessionPrefixSnapshotTable).where(eq(SessionPrefixSnapshotTable.session_id, session.id)).all(),
+          )
+          expect(snapshots).toHaveLength(1)
 
           yield* sessions.remove(session.id)
         }),

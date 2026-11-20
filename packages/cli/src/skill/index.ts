@@ -2,7 +2,6 @@ import os from "os"
 import path from "path"
 import { pathToFileURL } from "url"
 import z from "zod"
-import fs from "fs/promises"
 import { Deferred, Duration, Effect, Exit, Layer, Context, Option } from "effect"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import type { Agent } from "@/agent/agent"
@@ -94,9 +93,17 @@ type Snapshot = {
   key: string
 }
 
+type Flight = {
+  done: Deferred.Deferred<void>
+  // Highest refresh ticket issued before this scan started; those requests are
+  // all satisfied by it.
+  covers: number
+}
+
 type DirectoryState = {
   current: Snapshot
-  flight?: Deferred.Deferred<void>
+  tickets: number
+  flight?: Flight
 }
 
 type Discovered = {
@@ -165,7 +172,10 @@ export const layer = Layer.effect(
     )
     // A cancelled first extraction must not become the process-wide answer.
     const builtinRoot = cachedBuiltinRoot.pipe(Effect.onInterrupt(() => invalidateBuiltinRoot))
-    const pulled = new Map<string, string[]>()
+    // An empty pull may be a network failure; retry it after a while instead of
+    // caching it for the process lifetime.
+    const PULL_RETRY_MS = 5 * 60 * 1000
+    const pulled = new Map<string, { dirs: string[]; at: number }>()
     const parsed = new Map<string, ParseEntry>()
 
     const discover = Effect.fnUntraced(function* (directory: string, worktree: string) {
@@ -220,11 +230,12 @@ export const layer = Layer.effect(
       }
 
       for (const url of cfg.skills?.urls ?? []) {
-        let dirs = pulled.get(url)
-        if (!dirs) {
-          dirs = yield* discovery.pull(url)
-          pulled.set(url, dirs)
-        }
+        const cached = pulled.get(url)
+        const dirs =
+          cached && (cached.dirs.length > 0 || Date.now() - cached.at < PULL_RETRY_MS)
+            ? cached.dirs
+            : yield* discovery.pull(url)
+        if (dirs !== cached?.dirs) pulled.set(url, { dirs, at: Date.now() })
         for (const dir of dirs) {
           yield* scan(state, dir, SKILL_PATTERN)
         }
@@ -237,12 +248,13 @@ export const layer = Layer.effect(
     // so a broken SKILL.md reports its error once per file version, not once
     // per refresh.
     const parse = Effect.fnUntraced(function* (match: string) {
-      const stat = yield* Effect.tryPromise(() => fs.stat(match)).pipe(Effect.option)
+      const stat = yield* fsys.stat(match).pipe(Effect.option)
       if (Option.isNone(stat)) {
         parsed.delete(match)
         return undefined
       }
-      const { mtimeMs, size } = stat.value
+      const mtimeMs = Option.match(stat.value.mtime, { onNone: () => 0, onSome: (date) => date.getTime() })
+      const size = Number(stat.value.size)
       const hit = parsed.get(match)
       if (hit && hit.mtimeMs === mtimeMs && hit.size === size) return hit
       const md = yield* Effect.tryPromise({
@@ -315,37 +327,54 @@ export const layer = Layer.effect(
         }
       })
 
-      log.info("init", { count: Object.keys(skills).length })
+      log.info("snapshot", { count: Object.keys(skills).length })
       return { skills, dirs: Array.from(dirs), key } satisfies Snapshot
     })
 
     const state = yield* InstanceState.make(
       Effect.fn("Skill.state")(function* (ctx) {
         const current = yield* build(yield* discover(ctx.directory, ctx.worktree))
-        return { current } satisfies DirectoryState as DirectoryState
+        const initial: DirectoryState = { current, tickets: 0 }
+        return initial
       }),
     )
 
-    // Single-flight per directory: a refresh that starts while another is
-    // running joins it instead of scanning twice.
+    // Single-flight per directory. Each call takes a ticket; it may only join a
+    // scan that started after the ticket was issued, so a refresh always sees
+    // disk state at least as new as the moment it was requested.
     const refresh = Effect.fn("Skill.refresh")(function* () {
-      const s = yield* InstanceState.get(state)
-      if (s.flight) {
-        yield* Deferred.await(s.flight).pipe(Effect.exit)
+      // A directory scanned for the first time is already fresh.
+      if (!(yield* InstanceState.has(state))) {
+        yield* InstanceState.get(state)
         return
       }
-      const flight = yield* Deferred.make<void>()
-      s.flight = flight
+      const s = yield* InstanceState.get(state)
       const ctx = yield* InstanceState.context
-      yield* Effect.gen(function* () {
-        s.current = yield* build(yield* discover(ctx.directory, ctx.worktree), s.current)
-      }).pipe(
-        Effect.onExit((exit) =>
-          Effect.sync(() => {
-            if (s.flight === flight) s.flight = undefined
-          }).pipe(Effect.andThen(Deferred.done(flight, Exit.asVoid(exit)))),
-        ),
-      )
+      const ticket = ++s.tickets
+      while (true) {
+        // The running flight to wait for, or undefined once this call ran its own scan.
+        const running = yield* Effect.uninterruptibleMask((restore): Effect.Effect<Flight | undefined> => {
+          if (s.flight) return Effect.succeed(s.flight)
+          const flight: Flight = { done: Deferred.makeUnsafe<void>(), covers: s.tickets }
+          s.flight = flight
+          return restore(
+            Effect.gen(function* () {
+              s.current = yield* build(yield* discover(ctx.directory, ctx.worktree), s.current)
+            }),
+          ).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                if (s.flight === flight) s.flight = undefined
+              }).pipe(Effect.andThen(Deferred.done(flight.done, Exit.asVoid(exit)))),
+            ),
+            Effect.as(undefined),
+          )
+        })
+        if (!running) return
+        // An interrupted scan satisfies nobody; take another turn and scan.
+        const exit = yield* Deferred.await(running.done).pipe(Effect.exit)
+        if (Exit.isSuccess(exit) && running.covers >= ticket) return
+      }
     })
 
     const snapshot = Effect.fnUntraced(function* () {

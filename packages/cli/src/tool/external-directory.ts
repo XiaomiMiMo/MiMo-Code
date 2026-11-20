@@ -10,6 +10,7 @@ import { Instance } from "../project/instance"
 import { ProjectID } from "../project/schema"
 import { assertMemoryWriteAllowed, assertAgentWriteSandbox } from "./memory-path-guard"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { Skill } from "@/skill"
 
 type Kind = "file" | "directory"
 
@@ -17,6 +18,21 @@ type Options = {
   bypass?: boolean
   kind?: Kind
 }
+
+/**
+ * Whether a path sits inside a directory of the current skill snapshot. The
+ * agent permission carries the skill directories known at startup; this check
+ * covers skills added since. It is read live instead of rebuilding the agent,
+ * whose permission is part of the frozen-prefix profile key.
+ *
+ * Resolved through `Effect.serviceOption` so callers keep R = never; without a
+ * Skill service (unit tests, detached fibers) nothing extra is trusted.
+ */
+export const inSkillDirectory = Effect.fn("Tool.inSkillDirectory")(function* (target: string) {
+  const skill = yield* Effect.serviceOption(Skill.Service)
+  if (Option.isNone(skill)) return false
+  return (yield* skill.value.dirs()).some((dir) => AppFileSystem.contains(dir, target))
+})
 
 export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirectory")(function* (
   ctx: Tool.Context,
@@ -47,6 +63,8 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
   // base here, exactly as the memory subtree above. Genuinely external user paths
   // are unaffected and still prompt.
   if (AppFileSystem.contains(path.join(Global.Path.data, "worktree"), full)) return
+
+  if (yield* inSkillDirectory(full)) return
 
   const kind = options?.kind ?? "file"
   const dir = kind === "directory" ? full : path.dirname(full)

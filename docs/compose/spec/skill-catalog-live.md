@@ -25,9 +25,9 @@ Slash completion (`GET /command`) has the same staleness: `Command` caches its l
 Skill discovery becomes a snapshot computed when it is needed, with no time-based expiry:
 
 - **Triggers**: the user-turn boundary before the catalog reminder (S2.2), `Command.list`/`Command.get` (S2.5), `GET /skill`, and a name miss in the `skill` tool or `skill_search` (one rescan, then report not found). Inside a turn, later steps reuse the snapshot taken at that turn's boundary.
-- **Per refresh**: recompute the root list from the current config and directory, glob every root with the existing patterns, and parse each `SKILL.md` through a cache keyed by `(path, mtimeMs, size)`. Unchanged files are not parsed again; files that disappeared drop out of the cache.
-- **Process-wide one-offs**: builtin bundle extraction runs once per process (its marker check is unchanged). Remote `skills.urls` are pulled once per process and per directory and reused afterwards, so a turn never touches the network. `Skill.reload()` keeps its meaning: it forces a full rescan and a fresh URL pull.
-- **Concurrency**: refreshes for the same directory are single-flight; a refresh started while another is in flight joins it.
+- **Per refresh**: recompute the root list from the current config and directory, glob every root with the existing patterns, and parse each `SKILL.md` through a cache keyed by `(path, mtimeMs, size)`. Unchanged files are not parsed again, and a failed parse is cached too, so its error is reported once per file version. When the inputs are unchanged, the previous snapshot object is kept.
+- **Process-wide one-offs**: builtin bundle extraction runs once per process (its marker check is unchanged). Each remote `skills.urls` entry is pulled once per process and reused afterwards; an empty result (possibly a network failure) is retried after 5 minutes. `Skill.reload()` keeps its meaning: it re-extracts, clears the pull and parse caches, and rescans.
+- **Concurrency**: refreshes for the same directory are single-flight. Each call takes a ticket and may only join a scan that started after its ticket was issued, so it always sees disk state at least as new as its request. An interrupted scan satisfies no one; waiters scan again. The first access to a directory scans once and counts as fresh.
 - **Cost**: measured on a developer machine, all roots globbed in ~7 ms and 39 `SKILL.md` files parsed in ~5 ms warm (~19 ms cold). A cached-parse refresh stays in that range, which is negligible next to a model request. This is why the design does not add a file watcher or directory-mtime fingerprint gate.
 - **Unchanged rules**: directory layout rules, scan roots, external-root flags, duplicate-name precedence, and frontmatter validation are unchanged.
 
@@ -59,16 +59,17 @@ The catalog moves from the system tail to persisted synthetic text parts on the 
 
 ### S2.5 Commands are live and do not block on MCP
 
-- `Command` keeps caching only the static and config-derived commands.
-- `list`/`get` compose those cached commands with:
-  - MCP prompts from clients that are currently connected, read through a non-blocking MCP accessor that does not await `settled`;
-  - the current skills after `Skill.refresh()`.
-- Name precedence is unchanged: static/config commands win, then MCP prompts, then skills.
+- `Command` caches the static and config-derived commands per directory.
+- MCP prompt commands are collected in the background once every MCP server has settled (same timing and content as before). `list` never waits for them; `get` waits for the collection only when a name is not found yet.
+- `list`/`get` compose the cached commands, the MCP prompt commands, and the current skills after `Skill.refresh()`.
+- Name precedence is unchanged: MCP prompts override built-in/config commands of the same name, and skills never override anything.
 - Slash completion therefore shows skills before every MCP server settles, and a new skill appears on the next `GET /command`. The desktop menu already revalidates every time it opens.
 
 ### S2.6 Derived skill directories
 
-The agent's `external_directory` allowlist for skill directories follows the current snapshot. A skill directory that appears after startup can be read without a permission prompt, and a removed skill directory is no longer allowlisted. Implementation: the `Skill` service publishes a bus event when the snapshot's directory set changes, and `Agent` invalidates its instance state on that event.
+Paths inside a directory of the current skill snapshot are trusted by the `external_directory` guard (file tools and bash). A skill directory that appears after startup can be read without a permission prompt; a removed one loses that trust.
+
+The agent permission keeps the skill-directory allowlist from startup and is not rebuilt: `SessionPrefixSnapshot.profileKey` hashes the agent permission, so rebuilding it would re-pin frozen prefixes and make compaction miss its snapshot. The guard reads `Skill.dirs()` live instead.
 
 ### S2.7 Testing boundaries
 
@@ -98,8 +99,9 @@ Tests use real temp directories and the real session loop, with no mocking of `S
 - [ ] T3: Remove skills from the system tail in both assemblies; update the prompt texts — acceptance: the request system contains no catalog, and existing prefix-parity tests pass. (covers: S2.3, depends: T2)
 - [ ] T4: Legacy handling — strip the catalog from frozen systems with a one-time rotate; keep suppressing legacy user-side parts — acceptance: a session pinned with a legacy catalog sends a stripped system and receives an entry reminder on its next turn. (covers: S2.4, depends: T3)
 - [ ] T5: Live `Command.list`/`get` with non-blocking MCP prompts — acceptance: `GET /command` lists a newly created skill without a restart and returns skills while an MCP server is still pending. (covers: S2.5, depends: T1)
-- [ ] T6: Agent skill-directory allowlist follows the snapshot — acceptance: a skill directory created after startup is allowlisted for `external_directory` without a restart. (covers: S2.6, depends: T1)
+- [ ] T6: The `external_directory` guard trusts current skill directories without changing the agent permission — acceptance: a skill directory created after startup is not prompted, a removed one is prompted again, and skill changes across turns keep a single prefix snapshot. (covers: S2.6, depends: T1)
 
 ## Journey log
 
+- First version of S2.6 rebuilt the agent when skill directories changed. Review found this changes the prefix profile key (it hashes the agent permission), re-pinning frozen prefixes mid-turn and breaking compaction's snapshot lookup. Moved the live check into the `external_directory` guard instead.
 - Considered one-level-only discovery to cut scan cost. Measurement showed glob is not the cost (≈7 ms recursive vs ≈4 ms flat across all roots); parsing is, and a stat-keyed parse cache removes it. Kept recursion; the only nested layout found locally (desktop `mimo-browser-use`) is a packaging bug tracked as a desktop follow-up.

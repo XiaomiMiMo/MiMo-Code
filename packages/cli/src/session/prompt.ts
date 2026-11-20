@@ -214,7 +214,6 @@ import {
   SKILL_REMINDER_KEY,
   SKILL_REMINDER_METADATA_KEY,
   skillReminderRev,
-  stripLegacySkillCatalog,
 } from "./skill-catalog"
 import { renderSkillCatalogReminder } from "./skill-reminder"
 
@@ -716,17 +715,6 @@ export const layer = Layer.effect(
     // yet acquired ActorExecution are not started after Stop.
     const cascadeEpochBySession = new Map<SessionID, number>()
 
-    // Prefixes pinned while the skill catalog lived in the system tail still
-    // carry it. Strip it once and persist the result: the catalog now arrives as
-    // a user-turn reminder, and every later request reuses one stable system.
-    const frozenPrefix = Effect.fnUntraced(function* (sessionID: SessionID, profileKey: string) {
-      const frozen = yield* SessionPrefixSnapshot.get(sessionID, profileKey)
-      if (!frozen) return frozen
-      const system = stripLegacySkillCatalog(frozen.system)
-      if (system.every((part, index) => part === frozen.system[index])) return frozen
-      return yield* SessionPrefixSnapshot.replaceSystem({ sessionID, profileKey, system })
-    })
-
     // Late-bind prefix-capture helper so SessionCheckpoint.tryStartCheckpointWriter
     // can call buildLLMRequestPrefix without forming a layer cycle
     // (ToolRegistry → SessionCheckpoint → ToolRegistry). See prefix-capture-ref.ts.
@@ -762,7 +750,11 @@ export const layer = Layer.effect(
           system: capturePrompt.system ?? "",
           permission: runtimePermission,
         })
-        const frozen = yield* frozenPrefix(input.sessionID, key)
+        const frozen = yield* SessionPrefixSnapshot.getFrozen({
+          sessionID: input.sessionID,
+          profileKey: key,
+          hostSystem: capturePrompt.system,
+        })
         const additions = frozen
           ? []
           : yield* Effect.gen(function* () {
@@ -6144,7 +6136,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   system: sessionPrompt.system ?? "",
                   permission: runtimePermission,
                 })
-                const frozen = yield* frozenPrefix(sessionID, prefixProfileKey)
+                const frozen = yield* SessionPrefixSnapshot.getFrozen({
+                  sessionID,
+                  profileKey: prefixProfileKey,
+                  hostSystem: sessionPrompt.system,
+                })
                 const currentAdditions = Effect.fnUntraced(function* () {
                   const [env, instructions] = yield* Effect.all([
                     Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
