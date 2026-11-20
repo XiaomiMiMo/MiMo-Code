@@ -97,6 +97,10 @@ Tests use real temp directories and the real session loop, with no mocking of `S
 - legacy user-side catalogs stay suppressed;
 - slash commands still return skills while an MCP server is pending.
 
+### S2.8 Known limitation
+
+The `external_directory` allowlist for skill directories is fixed when the agent is first built for a directory. Reading files of a skill created outside the project after that point asks for `external_directory` permission once, and the user can allow it permanently. A skill directory removed after startup stays allowlisted until the process restarts. This is accepted: catalog visibility and skill loading are live; only this permission convenience is not.
+
 ## [S3] Out of Scope
 
 - Changing skill directory layout rules (recursive `**/SKILL.md` stays). The open standard does not mandate a flat layout, and recursion costs ~2–3 ms more than a one-level glob on measured roots.
@@ -104,7 +108,7 @@ Tests use real temp directories and the real session loop, with no mocking of `S
 - File watchers or push notifications for skill changes.
 - A token budget for the catalog (the system tail has none today).
 - External-root on/off flags (still read at startup).
-- Trusting skill directories created after startup in the `external_directory` guard. A trust exemption that returns before asking would bypass explicit deny rules; doing it safely needs a deny-aware check and is a separate change.
+- Trusting skill directories created after startup in the `external_directory` guard (see S2.8). A trust exemption that returns before asking would bypass explicit deny rules; doing it safely needs a deny-aware check and is a separate change.
 - Desktop changes. The desktop updates its engine pin and revises its prompt-assembly R14 spec in its own repository.
 
 ## Tasks
