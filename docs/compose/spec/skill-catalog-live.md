@@ -2,7 +2,7 @@
 feature: skill-catalog-live
 status: delivered
 updated: 2026-11-20
-source: feat/skill-catalog-live
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2840
 ---
 
 # Skill Catalog Live
