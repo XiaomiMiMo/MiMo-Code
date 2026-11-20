@@ -174,6 +174,35 @@ export const rotate = Effect.fn("SessionPrefixSnapshot.rotate")(function* (input
   return snapshot
 })
 
+/** Replace only the frozen system; tools and watermark stay as pinned. */
+export const replaceSystem = Effect.fn("SessionPrefixSnapshot.replaceSystem")(function* (input: {
+  sessionID: SessionID
+  profileKey: string
+  system: string[]
+}) {
+  yield* Effect.sync(() =>
+    Database.use((db) =>
+      db
+        .update(SessionPrefixSnapshotTable)
+        .set({
+          system: input.system,
+          system_hash: systemHash(input.system),
+          updated_at: Date.now(),
+        })
+        .where(
+          and(
+            eq(SessionPrefixSnapshotTable.session_id, input.sessionID),
+            eq(SessionPrefixSnapshotTable.profile_key, input.profileKey),
+          ),
+        )
+        .run(),
+    ),
+  )
+  const snapshot = yield* get(input.sessionID, input.profileKey)
+  if (!snapshot) return yield* Effect.die(new Error("Failed to read session prefix snapshot after system replace"))
+  return snapshot
+})
+
 export const advance = Effect.fn("SessionPrefixSnapshot.advance")(function* (input: {
   sessionID: SessionID
   profileKey: string

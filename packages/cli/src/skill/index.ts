@@ -2,7 +2,8 @@ import os from "os"
 import path from "path"
 import { pathToFileURL } from "url"
 import z from "zod"
-import { Duration, Effect, Layer, Context } from "effect"
+import fs from "fs/promises"
+import { Deferred, Duration, Effect, Exit, Layer, Context, Option } from "effect"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import type { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
@@ -79,20 +80,32 @@ export const NameMismatchError = NamedError.create(
   }),
 )
 
-type State = {
-  skills: Record<string, Info>
-  dirs: Set<string>
+type ParseEntry = {
+  mtimeMs: number
+  size: number
+  md?: { data: Record<string, unknown>; content: string }
 }
 
-type DiscoveryState = {
-  matches: string[]
+type Snapshot = {
+  skills: Record<string, Info>
   dirs: string[]
+  // Identity of the inputs (ordered SKILL.md paths with stat signatures). An
+  // equal key means the rebuilt snapshot would be identical, so it is kept.
+  key: string
+}
+
+type DirectoryState = {
+  current: Snapshot
+  flight?: Deferred.Deferred<void>
+}
+
+type Discovered = {
+  matches: string[]
   bundledRoots: string[]
 }
 
 type ScanState = {
   matches: Set<string>
-  dirs: Set<string>
 }
 
 export interface Interface {
@@ -101,60 +114,11 @@ export interface Interface {
   readonly dirs: () => Effect.Effect<string[]>
   readonly available: (agent?: Agent.Info) => Effect.Effect<Info[]>
   readonly modelInvocable: (agent?: Agent.Info) => Effect.Effect<Info[]>
+  /** Rescan the current directory's roots; unchanged SKILL.md files are not reparsed. */
+  readonly refresh: () => Effect.Effect<void>
+  /** Like refresh, but also re-extracts builtin skills and re-pulls `skills.urls`. */
   readonly reload: () => Effect.Effect<void>
 }
-
-const add = Effect.fnUntraced(function* (state: State, match: string, bundledRoots: string[], bus: Bus.Interface) {
-  const md = yield* Effect.tryPromise({
-    try: () => ConfigMarkdown.parse(match),
-    catch: (err) => err,
-  }).pipe(
-    Effect.catch(
-      Effect.fnUntraced(function* (err) {
-        const message = ConfigMarkdown.FrontmatterError.isInstance(err)
-          ? err.data.message
-          : `Failed to parse skill ${match}`
-        const { Session } = yield* Effect.promise(() => import("@/session"))
-        yield* bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
-        log.error("failed to load skill", { skill: match, err })
-        return undefined
-      }),
-    ),
-  )
-
-  if (!md) return
-
-  const parsed = Frontmatter.safeParse(md.data)
-  if (!parsed.success) return
-
-  const isBundled = bundledRoots.some((root) => match.startsWith(root))
-  const existing = state.skills[parsed.data.name]
-
-  if (existing) {
-    // User overrides always win: bundled must not overwrite non-bundled
-    if (isBundled && !existing.bundled) return
-    if (!isBundled && existing.bundled) {
-      log.info("user skill overrides bundled", { name: parsed.data.name, location: match })
-    } else {
-      log.warn("duplicate skill name", {
-        name: parsed.data.name,
-        existing: existing.location,
-        duplicate: match,
-      })
-    }
-  }
-
-  state.dirs.add(path.dirname(match))
-  state.skills[parsed.data.name] = {
-    name: parsed.data.name,
-    description: parsed.data.description,
-    aliases: parsed.data.aliases,
-    location: match,
-    content: md.content,
-    disable_model_invocation: parsed.data["disable-model-invocation"],
-    bundled: isBundled || undefined,
-  }
-})
 
 const scan = Effect.fnUntraced(function* (
   state: ScanState,
@@ -180,113 +144,7 @@ const scan = Effect.fnUntraced(function* (
     }),
   )
 
-  for (const match of matches.toSorted()) {
-    state.matches.add(match)
-    state.dirs.add(path.dirname(match))
-  }
-})
-
-const discoverStableSkills = Effect.fnUntraced(function* (
-  fsys: AppFileSystem.Interface,
-) {
-  const state: ScanState = { matches: new Set(), dirs: new Set() }
-  const bundledRoots: string[] = []
-
-  // Extract builtin skills to disk first (user skills with same name override)
-  if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS) {
-    const builtinSkillRoot = yield* extractBuiltinBundle(fsys).pipe(
-      Effect.catch(() => Effect.succeed(undefined)),
-    )
-    if (builtinSkillRoot && (yield* fsys.isDir(builtinSkillRoot))) {
-      bundledRoots.push(builtinSkillRoot)
-      yield* scan(state, builtinSkillRoot, BUILTIN_SKILL_PATTERN, { scope: "builtin" })
-      if (Flag.MIMOCODE_DISABLE_OFFICIAL_SKILLS) {
-        const skillsRoot = path.join(builtinSkillRoot, "skills")
-        for (const name of OFFICIAL_SKILL_NAMES) {
-          const prefix = path.join(skillsRoot, name) + path.sep
-          for (const match of state.matches) {
-            if (match.startsWith(prefix)) {
-              state.matches.delete(match)
-              state.dirs.delete(path.dirname(match))
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Dotted path segments under skills/ are host-private (e.g. Codex .system)
-  // and must not match.
-  for (const dir of externalSkillDirs()) {
-    const root = path.join(Global.Path.home, dir)
-    if (!(yield* fsys.isDir(root))) continue
-    yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { scope: "global" })
-  }
-
-  return {
-    matches: Array.from(state.matches),
-    dirs: Array.from(state.dirs),
-    bundledRoots,
-  }
-})
-
-const discoverSkills = Effect.fnUntraced(function* (
-  config: Config.Interface,
-  discovery: Discovery.Interface,
-  fsys: AppFileSystem.Interface,
-  stable: DiscoveryState,
-  directory: string,
-  worktree: string,
-) {
-  const state: ScanState = { matches: new Set(stable.matches), dirs: new Set(stable.dirs) }
-  const bundledRoots = [...stable.bundledRoots]
-
-  const upDirs = yield* fsys
-    .up({ targets: externalSkillDirs(), start: directory, stop: worktree })
-    .pipe(Effect.catch(() => Effect.succeed([] as string[])))
-
-  for (const root of upDirs) {
-    yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { scope: "project" })
-  }
-
-  const configDirs = yield* config.directories()
-  for (const dir of configDirs) {
-    yield* scan(state, dir, MIMOCODE_SKILL_PATTERN)
-  }
-
-  const cfg = yield* config.get()
-  for (const item of cfg.skills?.paths ?? []) {
-    const expanded = item.startsWith("~/") ? path.join(os.homedir(), item.slice(2)) : item
-    const dir = path.isAbsolute(expanded) ? expanded : path.join(directory, expanded)
-    if (!(yield* fsys.isDir(dir))) {
-      log.warn("skill path not found", { path: dir })
-      continue
-    }
-
-    yield* scan(state, dir, SKILL_PATTERN)
-  }
-
-  for (const url of cfg.skills?.urls ?? []) {
-    const pulledDirs = yield* discovery.pull(url)
-    for (const dir of pulledDirs) {
-      yield* scan(state, dir, SKILL_PATTERN)
-    }
-  }
-
-  return {
-    matches: Array.from(state.matches),
-    dirs: Array.from(state.dirs),
-    bundledRoots,
-  }
-})
-
-const loadSkills = Effect.fnUntraced(function* (state: State, discovered: DiscoveryState, bus: Bus.Interface) {
-  yield* Effect.forEach(discovered.matches, (match) => add(state, match, discovered.bundledRoots, bus), {
-    concurrency: 1,
-    discard: true,
-  })
-
-  log.info("init", { count: Object.keys(state.skills).length })
+  for (const match of matches.toSorted()) state.matches.add(match)
 })
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Skill") {}
@@ -298,46 +156,218 @@ export const layer = Layer.effect(
     const config = yield* Config.Service
     const bus = yield* Bus.Service
     const fsys = yield* AppFileSystem.Service
-    const [cachedStable, invalidateStable] = yield* Effect.cachedInvalidateWithTTL(
-      discoverStableSkills(fsys),
+
+    // Process-wide one-offs: builtin extraction and remote pulls never run on a
+    // turn's critical path after the first time. `reload` resets them.
+    const [cachedBuiltinRoot, invalidateBuiltinRoot] = yield* Effect.cachedInvalidateWithTTL(
+      extractBuiltinBundle(fsys).pipe(Effect.catch(() => Effect.succeed(undefined))),
       Duration.infinity,
     )
-    // A cancelled first scan must not become the process-wide snapshot.
-    const stable = cachedStable.pipe(Effect.onInterrupt(() => invalidateStable))
-    const discovered = yield* InstanceState.make(
-      Effect.fn("Skill.discovery")(function* (ctx) {
-        return yield* discoverSkills(config, discovery, fsys, yield* stable, ctx.directory, ctx.worktree)
-      }),
-    )
+    // A cancelled first extraction must not become the process-wide answer.
+    const builtinRoot = cachedBuiltinRoot.pipe(Effect.onInterrupt(() => invalidateBuiltinRoot))
+    const pulled = new Map<string, string[]>()
+    const parsed = new Map<string, ParseEntry>()
+
+    const discover = Effect.fnUntraced(function* (directory: string, worktree: string) {
+      const state: ScanState = { matches: new Set() }
+      const bundledRoots: string[] = []
+
+      if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS) {
+        const root = yield* builtinRoot
+        if (root && (yield* fsys.isDir(root))) {
+          bundledRoots.push(root)
+          yield* scan(state, root, BUILTIN_SKILL_PATTERN, { scope: "builtin" })
+          if (Flag.MIMOCODE_DISABLE_OFFICIAL_SKILLS) {
+            const skillsRoot = path.join(root, "skills")
+            for (const name of OFFICIAL_SKILL_NAMES) {
+              const prefix = path.join(skillsRoot, name) + path.sep
+              for (const match of state.matches) {
+                if (match.startsWith(prefix)) state.matches.delete(match)
+              }
+            }
+          }
+        }
+      }
+
+      // Dotted path segments under skills/ are host-private (e.g. Codex .system)
+      // and must not match.
+      for (const dir of externalSkillDirs()) {
+        const root = path.join(Global.Path.home, dir)
+        if (!(yield* fsys.isDir(root))) continue
+        yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { scope: "global" })
+      }
+
+      const upDirs = yield* fsys
+        .up({ targets: externalSkillDirs(), start: directory, stop: worktree })
+        .pipe(Effect.catch(() => Effect.succeed([] as string[])))
+      for (const root of upDirs) {
+        yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { scope: "project" })
+      }
+
+      for (const dir of yield* config.directories()) {
+        yield* scan(state, dir, MIMOCODE_SKILL_PATTERN)
+      }
+
+      const cfg = yield* config.get()
+      for (const item of cfg.skills?.paths ?? []) {
+        const expanded = item.startsWith("~/") ? path.join(os.homedir(), item.slice(2)) : item
+        const dir = path.isAbsolute(expanded) ? expanded : path.join(directory, expanded)
+        if (!(yield* fsys.isDir(dir))) {
+          log.warn("skill path not found", { path: dir })
+          continue
+        }
+        yield* scan(state, dir, SKILL_PATTERN)
+      }
+
+      for (const url of cfg.skills?.urls ?? []) {
+        let dirs = pulled.get(url)
+        if (!dirs) {
+          dirs = yield* discovery.pull(url)
+          pulled.set(url, dirs)
+        }
+        for (const dir of dirs) {
+          yield* scan(state, dir, SKILL_PATTERN)
+        }
+      }
+
+      return { matches: Array.from(state.matches), bundledRoots } satisfies Discovered
+    })
+
+    // Parse through a (path, mtime, size) cache. A failed parse is cached too,
+    // so a broken SKILL.md reports its error once per file version, not once
+    // per refresh.
+    const parse = Effect.fnUntraced(function* (match: string) {
+      const stat = yield* Effect.tryPromise(() => fs.stat(match)).pipe(Effect.option)
+      if (Option.isNone(stat)) {
+        parsed.delete(match)
+        return undefined
+      }
+      const { mtimeMs, size } = stat.value
+      const hit = parsed.get(match)
+      if (hit && hit.mtimeMs === mtimeMs && hit.size === size) return hit
+      const md = yield* Effect.tryPromise({
+        try: () => ConfigMarkdown.parse(match),
+        catch: (err) => err,
+      }).pipe(
+        Effect.map((value) => ({ data: value.data as Record<string, unknown>, content: value.content })),
+        Effect.catch(
+          Effect.fnUntraced(function* (err) {
+            const message = ConfigMarkdown.FrontmatterError.isInstance(err)
+              ? err.data.message
+              : `Failed to parse skill ${match}`
+            const { Session } = yield* Effect.promise(() => import("@/session"))
+            yield* bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
+            log.error("failed to load skill", { skill: match, err })
+            return undefined
+          }),
+        ),
+      )
+      const entry: ParseEntry = { mtimeMs, size, md }
+      parsed.set(match, entry)
+      return entry
+    })
+
+    const build = Effect.fnUntraced(function* (discovered: Discovered, previous?: Snapshot) {
+      const entries = yield* Effect.forEach(discovered.matches, (match) => parse(match), { concurrency: 8 })
+      const key = JSON.stringify([
+        discovered.bundledRoots,
+        discovered.matches.map((match, index) => {
+          const entry = entries[index]
+          return entry ? [match, entry.mtimeMs, entry.size] : [match]
+        }),
+      ])
+      if (previous && previous.key === key) return previous
+
+      const skills: Record<string, Info> = {}
+      const dirs = new Set<string>()
+      discovered.matches.forEach((match, index) => {
+        const entry = entries[index]
+        if (!entry) return
+        dirs.add(path.dirname(match))
+        if (!entry.md) return
+        const frontmatter = Frontmatter.safeParse(entry.md.data)
+        if (!frontmatter.success) return
+
+        const isBundled = discovered.bundledRoots.some((root) => match.startsWith(root))
+        const existing = skills[frontmatter.data.name]
+        if (existing) {
+          // User overrides always win: bundled must not overwrite non-bundled
+          if (isBundled && !existing.bundled) return
+          if (!isBundled && existing.bundled) {
+            log.info("user skill overrides bundled", { name: frontmatter.data.name, location: match })
+          } else {
+            log.warn("duplicate skill name", {
+              name: frontmatter.data.name,
+              existing: existing.location,
+              duplicate: match,
+            })
+          }
+        }
+
+        skills[frontmatter.data.name] = {
+          name: frontmatter.data.name,
+          description: frontmatter.data.description,
+          aliases: frontmatter.data.aliases,
+          location: match,
+          content: entry.md.content,
+          disable_model_invocation: frontmatter.data["disable-model-invocation"],
+          bundled: isBundled || undefined,
+        }
+      })
+
+      log.info("init", { count: Object.keys(skills).length })
+      return { skills, dirs: Array.from(dirs), key } satisfies Snapshot
+    })
+
     const state = yield* InstanceState.make(
       Effect.fn("Skill.state")(function* (ctx) {
-        const s: State = { skills: {}, dirs: new Set() }
-        yield* loadSkills(s, yield* InstanceState.get(discovered), bus)
-        return s
+        const current = yield* build(yield* discover(ctx.directory, ctx.worktree))
+        return { current } satisfies DirectoryState as DirectoryState
       }),
     )
 
-    const get = Effect.fn("Skill.get")(function* (name: string) {
+    // Single-flight per directory: a refresh that starts while another is
+    // running joins it instead of scanning twice.
+    const refresh = Effect.fn("Skill.refresh")(function* () {
       const s = yield* InstanceState.get(state)
-      return s.skills[name]
+      if (s.flight) {
+        yield* Deferred.await(s.flight).pipe(Effect.exit)
+        return
+      }
+      const flight = yield* Deferred.make<void>()
+      s.flight = flight
+      const ctx = yield* InstanceState.context
+      yield* Effect.gen(function* () {
+        s.current = yield* build(yield* discover(ctx.directory, ctx.worktree), s.current)
+      }).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (s.flight === flight) s.flight = undefined
+          }).pipe(Effect.andThen(Deferred.done(flight, Exit.asVoid(exit)))),
+        ),
+      )
+    })
+
+    const snapshot = Effect.fnUntraced(function* () {
+      return (yield* InstanceState.get(state)).current
+    })
+
+    const get = Effect.fn("Skill.get")(function* (name: string) {
+      return (yield* snapshot()).skills[name]
     })
 
     const all = Effect.fn("Skill.all")(function* () {
-      const s = yield* InstanceState.get(state)
-      return Object.values(s.skills)
+      return Object.values((yield* snapshot()).skills)
     })
 
     const dirs = Effect.fn("Skill.dirs")(function* () {
-      return (yield* InstanceState.get(discovered)).dirs
+      return (yield* snapshot()).dirs
     })
 
     // Authorization only: `deny` means unusable by anyone, so this is also the
     // set a user slash invocation resolves against.
     const available = Effect.fn("Skill.available")(function* (agent?: Agent.Info) {
-      const s = yield* InstanceState.get(state)
-      let list: Info[] = Object.values(s.skills)
-
-      list = list.toSorted((a, b) => a.name.localeCompare(b.name))
+      const list = Object.values((yield* snapshot()).skills).toSorted((a, b) => a.name.localeCompare(b.name))
       if (!agent) return list
       return list.filter((skill) => Permission.evaluate("skill", skill.name, agent.permission).action !== "deny")
     })
@@ -349,12 +379,13 @@ export const layer = Layer.effect(
     })
 
     const reload = Effect.fn("Skill.reload")(function* () {
-      yield* invalidateStable
-      yield* InstanceState.invalidate(discovered)
-      yield* InstanceState.invalidate(state)
+      yield* invalidateBuiltinRoot
+      pulled.clear()
+      parsed.clear()
+      yield* refresh()
     })
 
-    return Service.of({ get, all, dirs, available, modelInvocable, reload })
+    return Service.of({ get, all, dirs, available, modelInvocable, refresh, reload })
   }),
 )
 
@@ -365,7 +396,7 @@ export const defaultLayer = layer.pipe(
   Layer.provide(AppFileSystem.defaultLayer),
 )
 
-export function fmt(list: Info[], opts: { verbose: boolean }) {
+export function fmt(list: Pick<Info, "name" | "description" | "location">[], opts: { verbose: boolean }) {
   if (list.length === 0) return "No skills are currently available."
   if (opts.verbose) {
     return [

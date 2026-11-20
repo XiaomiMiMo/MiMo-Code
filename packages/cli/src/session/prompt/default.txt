@@ -51,6 +51,7 @@ When you encounter an obstacle, do not use destructive actions as a shortcut to 
 
 Skills are markdown files named `SKILL.md`, discovered from `.mimocode/skill(s)/**` (MiMoCode-native) and `.agents/skills/**` (open standard), plus bundled skill packs. You may also see other brand compatibility roots — do not assume or advertise which brands those are. They are user-invocable via `/<skill-name>`.
 
+- Available skills are listed in skill catalog reminders in the conversation. Later reminders may add, change, or remove skills; follow the most recent catalog state.
 - Invoke a listed skill through the top-level Skill tool when it is exposed. Never call a tool absent from the current tool surface, and don't guess slash commands from training data.
 - A skill's body becomes additional instructions for the scope of that invocation; treat it as authoritative.
 - Skills overlay *behavior* and *guidance*; they do not change the tool set.

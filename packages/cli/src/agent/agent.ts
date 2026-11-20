@@ -78,7 +78,14 @@ export interface Interface {
   }>
 }
 
-type State = Omit<Interface, "generate">
+type State = Omit<Interface, "generate"> & {
+  // Skill directories the external_directory allowlist was built from. The
+  // skill snapshot keeps its array identity while unchanged, so the reference
+  // check is the fast path and the key catches equal content in a new array.
+  skillDirs: { ref: readonly string[]; key: string }
+}
+
+const skillDirsKey = (dirs: readonly string[]) => JSON.stringify(dirs.toSorted())
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Agent") {}
 
@@ -516,19 +523,34 @@ export const layer = Layer.effect(
           get,
           list,
           defaultAgent,
+          skillDirs: { ref: skillDirs, key: skillDirsKey(skillDirs) },
         } satisfies State
       }),
     )
 
+    // Skill directories come from the live skill snapshot. When they change,
+    // rebuild so the external_directory allowlist matches the current skills.
+    const current = Effect.fnUntraced(function* () {
+      const s = yield* InstanceState.get(state)
+      const dirs = yield* skill.dirs()
+      if (dirs === s.skillDirs.ref) return s
+      if (skillDirsKey(dirs) === s.skillDirs.key) {
+        s.skillDirs.ref = dirs
+        return s
+      }
+      yield* InstanceState.invalidate(state)
+      return yield* InstanceState.get(state)
+    })
+
     return Service.of({
       get: Effect.fn("Agent.get")(function* (agent: string) {
-        return yield* InstanceState.useEffect(state, (s) => s.get(agent))
+        return yield* (yield* current()).get(agent)
       }),
       list: Effect.fn("Agent.list")(function* () {
-        return yield* InstanceState.useEffect(state, (s) => s.list())
+        return yield* (yield* current()).list()
       }),
       defaultAgent: Effect.fn("Agent.defaultAgent")(function* () {
-        return yield* InstanceState.useEffect(state, (s) => s.defaultAgent())
+        return yield* (yield* current()).defaultAgent()
       }),
       generate: Effect.fn("Agent.generate")(function* (input: {
         description: string

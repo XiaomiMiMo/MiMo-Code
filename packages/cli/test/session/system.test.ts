@@ -5,6 +5,8 @@ import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { SystemPrompt } from "../../src/session/system"
+import { diffSkillCatalog } from "../../src/session/skill-catalog"
+import { renderSkillCatalogReminder } from "../../src/session/skill-reminder"
 import { provideInstance, tmpdir } from "../fixture/fixture"
 import { ProviderTest } from "../fake/provider"
 
@@ -208,13 +210,16 @@ describe("session.system", () => {
         directory: tmp.path,
         fn: async () => {
           const build = await load(tmp.path, (svc) => svc.get("build"))
-          const prompt = await Effect.runPromise(
+          const catalog = await Effect.runPromise(
             Effect.gen(function* () {
-              return yield* (yield* SystemPrompt.Service).skills(build!)
+              return yield* (yield* SystemPrompt.Service).skillCatalog(build!)
             }).pipe(Effect.provide(SystemPrompt.defaultLayer)),
           )
+          const change = diffSkillCatalog({ announced: undefined, current: catalog })
+          expect(change?.kind).toBe("entry")
+          const prompt = renderSkillCatalogReminder(change!)
 
-          expect(prompt).toContain("Skills available in this session:")
+          expect(prompt).toContain("<available_skills>")
           expect(prompt).not.toContain("first user query")
           expect(prompt).not.toContain("skill_search")
           expect(prompt).not.toContain("Use the skill tool")
@@ -226,7 +231,7 @@ describe("session.system", () => {
     }
   })
 
-  test("skills output is sorted by name and stable across calls", async () => {
+  test("skill catalog reminder is sorted by name and stable across calls", async () => {
     await using tmp = await tmpdir({
       git: true,
       init: async (dir) => {
@@ -262,7 +267,8 @@ description: ${description}
           const build = await load(tmp.path, (svc) => svc.get("build"))
           const runSkills = Effect.gen(function* () {
             const svc = yield* SystemPrompt.Service
-            return yield* svc.skills(build!)
+            const change = diffSkillCatalog({ announced: undefined, current: yield* svc.skillCatalog(build!) })
+            return change ? renderSkillCatalogReminder(change) : undefined
           }).pipe(Effect.provide(SystemPrompt.defaultLayer))
 
           const first = await Effect.runPromise(runSkills)

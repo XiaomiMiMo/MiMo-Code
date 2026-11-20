@@ -377,7 +377,7 @@ const live: Layer.Layer<
         { system },
       )
 
-      // Keep skill reminders at the tail and instruction files after them.
+      // Caller-controlled tail: environment/format, then instruction files.
       system.push(...input.system)
 
       // Collapse to a single system message. The historical 2-part split existed

@@ -1,10 +1,12 @@
 import { afterEach, test, expect } from "bun:test"
 import { Effect, Layer } from "effect"
+import fs from "fs/promises"
 import path from "path"
 import { provideInstance, tmpdir, provideTmpdirInstance } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Agent } from "../../src/agent/agent"
 import { Permission } from "../../src/permission"
+import { Skill } from "../../src/skill"
 import { ToolRegistry } from "../../src/tool"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -1184,3 +1186,44 @@ itTool.live("build's tool list swaps file tools only in Codex mode", () =>
     }),
   ),
 )
+
+// [skill-catalog-live T6] The external_directory allowlist for skill directories
+// follows the live skill snapshot: a skill created outside the project after
+// startup is readable without a prompt, and loses the allowance once removed.
+test("skill directory allowlist follows skill refreshes", async () => {
+  await using home = await tmpdir()
+  await using project = await tmpdir({ git: true })
+  const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
+  process.env.HOME = home.path
+  process.env.USERPROFILE = home.path
+  try {
+    const skillDir = path.join(home.path, ".agents", "skills", "late-skill")
+    const target = path.join(skillDir, "scripts", "run.py")
+    const external = Effect.fnUntraced(function* () {
+      const build = yield* Agent.Service.use((svc) => svc.get("build"))
+      return Permission.evaluate("external_directory", target, build.permission).action
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const skill = yield* Skill.Service
+        expect(yield* external()).toBe("ask")
+
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            "---\nname: late-skill\ndescription: Created after startup.\n---\n\n# late-skill\n",
+          ),
+        )
+        yield* skill.refresh()
+        expect(yield* external()).toBe("allow")
+
+        yield* Effect.promise(() => fs.rm(skillDir, { recursive: true }))
+        yield* skill.refresh()
+        expect(yield* external()).toBe("ask")
+      }).pipe(provideInstance(project.path), Effect.provide(Layer.mergeAll(Agent.defaultLayer, Skill.defaultLayer))),
+    )
+  } finally {
+    process.env.HOME = previous.HOME
+    process.env.USERPROFILE = previous.USERPROFILE
+  }
+})

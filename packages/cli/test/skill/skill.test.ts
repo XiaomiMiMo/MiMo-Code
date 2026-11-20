@@ -3,6 +3,8 @@ import { Cause, Effect, Exit, Fiber, Layer, Scope } from "effect"
 import { Glob } from "@mimo-ai/shared/util/glob"
 import { Instance } from "../../src/project/instance"
 import { Skill } from "../../src/skill"
+import { Bus } from "../../src/bus"
+import { Session } from "../../src/session"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideInstance, provideTmpdirInstance, tmpdir } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -22,7 +24,7 @@ withEnv({
 
 const node = CrossSpawnSpawner.defaultLayer
 
-const it = testEffect(Layer.mergeAll(Skill.defaultLayer, node))
+const it = testEffect(Layer.mergeAll(Skill.defaultLayer, Bus.layer, node))
 
 async function createGlobalSkill(homeDir: string) {
   const skillDir = path.join(homeDir, ".claude", "skills", "global-test-skill")
@@ -271,44 +273,101 @@ description: A skill in the .claude/skills directory.
     }),
   )
 
-  it.live("keeps one global snapshot across project instances until reload", () =>
+  // [skill-catalog-live T1] Discovery is a snapshot taken at the trigger: a new
+  // instance scans fresh, and refresh() reflects add / edit / remove on disk.
+  it.live("refresh reflects added, edited, and removed skills without reload", () =>
     Effect.gen(function* () {
-      const home = yield* Effect.acquireRelease(
+      const temp = () => Effect.acquireRelease(
         Effect.promise(() => tmpdir({ git: true })),
         (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
       )
-      const firstProject = yield* Effect.acquireRelease(
-        Effect.promise(() => tmpdir({ git: true })),
-        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
-      )
-      const secondProject = yield* Effect.acquireRelease(
-        Effect.promise(() => tmpdir({ git: true })),
-        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
-      )
+      const home = yield* temp()
+      const firstProject = yield* temp()
+      const secondProject = yield* temp()
 
       yield* withHome(
         home.path,
         Effect.gen(function* () {
           yield* Effect.promise(() => createSkill(home.path, ".claude", "first-global", "First snapshot"))
           const skill = yield* Skill.Service
-          expect((yield* skill.all().pipe(provideInstance(firstProject.path))).map((item) => item.name)).toEqual([
-            "first-global",
-          ])
+          const names = (dir: string) =>
+            skill.all().pipe(provideInstance(dir), Effect.map((list) => list.map((item) => item.name).toSorted()))
+          expect(yield* names(firstProject.path)).toEqual(["first-global"])
 
           yield* Effect.promise(() => createSkill(home.path, ".agents", "second-global", "Added later"))
-          expect((yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name)).toEqual([
-            "first-global",
-          ])
+          // A directory scanned for the first time sees the current disk.
+          expect(yield* names(secondProject.path)).toEqual(["first-global", "second-global"])
+          // An existing snapshot changes only at a trigger.
+          expect(yield* names(firstProject.path)).toEqual(["first-global"])
+          yield* skill.refresh().pipe(provideInstance(firstProject.path))
+          expect(yield* names(firstProject.path)).toEqual(["first-global", "second-global"])
 
-          yield* skill.reload().pipe(provideInstance(secondProject.path))
-          expect((yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name).toSorted()).toEqual([
-            "first-global",
-            "second-global",
-          ])
+          yield* Effect.promise(() => createSkill(home.path, ".claude", "first-global", "Edited description"))
+          yield* skill.refresh().pipe(provideInstance(firstProject.path))
+          expect((yield* skill.get("first-global").pipe(provideInstance(firstProject.path)))?.description).toBe(
+            "Edited description",
+          )
+
+          yield* Effect.promise(() => fs.rm(path.join(home.path, ".agents", "skills", "second-global"), { recursive: true }))
+          yield* skill.refresh().pipe(provideInstance(firstProject.path))
+          expect(yield* names(firstProject.path)).toEqual(["first-global"])
         }),
       )
     }),
     30_000,
+  )
+
+  it.live("refresh keeps the same snapshot when nothing changed on disk", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => createSkill(dir, ".agents", "stable-skill", "Unchanged"))
+          const skill = yield* Skill.Service
+          yield* skill.refresh()
+          const before = yield* skill.get("stable-skill")
+          expect(before?.description).toBe("Unchanged")
+          yield* skill.refresh()
+          expect(yield* skill.get("stable-skill")).toBe(before)
+          expect(yield* skill.dirs()).toBe(yield* skill.dirs())
+        }),
+      { git: true },
+    ),
+  )
+
+  // chmod cannot make a file unreadable on Windows or for root.
+  ;(process.platform === "win32" || process.getuid?.() === 0 ? it.live.skip : it.live)("an unreadable SKILL.md reports one error per file version across refreshes", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const file = path.join(dir, ".agents", "skills", "broken", "SKILL.md")
+          yield* Effect.promise(() => Bun.write(file, "---\nname: broken\ndescription: unreadable\n---\n"))
+          yield* Effect.promise(() => fs.chmod(file, 0o000))
+          yield* Effect.addFinalizer(() => Effect.promise(() => fs.chmod(file, 0o644)))
+          const bus = yield* Bus.Service
+          const errors: unknown[] = []
+          const off = yield* bus.subscribeCallback(Session.Event.Error, (event) => {
+            errors.push(event)
+          })
+          yield* Effect.addFinalizer(() => Effect.sync(off))
+          const skill = yield* Skill.Service
+          yield* skill.refresh()
+          yield* skill.refresh()
+          yield* skill.refresh()
+          yield* Effect.sleep("50 millis")
+          expect(errors).toHaveLength(1)
+
+          yield* Effect.promise(async () => {
+            await fs.chmod(file, 0o644)
+            await Bun.write(file, "---\nname: broken\ndescription: unreadable, new version\n---\n")
+            await fs.chmod(file, 0o000)
+          })
+          yield* skill.refresh()
+          yield* Effect.sleep("50 millis")
+          expect(errors).toHaveLength(2)
+          expect(yield* skill.get("broken")).toBeUndefined()
+        }),
+      { git: true },
+    ),
   )
 
   it.live("interrupted global discovery does not poison later project instances", () =>

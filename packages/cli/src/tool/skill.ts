@@ -24,7 +24,9 @@ export const SkillTool = Tool.define(
       parameters: Parameters,
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const info = yield* skill.get(params.name)
+          // A name the current snapshot lacks may be a skill created since this
+          // turn's rescan; look once more before reporting it missing.
+          const info = (yield* skill.get(params.name)) ?? (yield* skill.refresh().pipe(Effect.andThen(skill.get(params.name))))
           if (!info) {
             // A common miss: the name is a built-in WORKFLOW, not a skill (e.g.
             // the user said "run the naming workflow"). Redirect instead of

@@ -208,6 +208,15 @@ import { mcpToolSearchMode, usesCodexMode } from "@/tool/gpt"
 import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
 import { SessionReminder } from "./reminder"
+import {
+  diffSkillCatalog,
+  readSkillReminderMeta,
+  SKILL_REMINDER_KEY,
+  SKILL_REMINDER_METADATA_KEY,
+  skillReminderRev,
+  stripLegacySkillCatalog,
+} from "./skill-catalog"
+import { renderSkillCatalogReminder } from "./skill-reminder"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -707,6 +716,17 @@ export const layer = Layer.effect(
     // yet acquired ActorExecution are not started after Stop.
     const cascadeEpochBySession = new Map<SessionID, number>()
 
+    // Prefixes pinned while the skill catalog lived in the system tail still
+    // carry it. Strip it once and persist the result: the catalog now arrives as
+    // a user-turn reminder, and every later request reuses one stable system.
+    const frozenPrefix = Effect.fnUntraced(function* (sessionID: SessionID, profileKey: string) {
+      const frozen = yield* SessionPrefixSnapshot.get(sessionID, profileKey)
+      if (!frozen) return frozen
+      const system = stripLegacySkillCatalog(frozen.system)
+      if (system.every((part, index) => part === frozen.system[index])) return frozen
+      return yield* SessionPrefixSnapshot.replaceSystem({ sessionID, profileKey, system })
+    })
+
     // Late-bind prefix-capture helper so SessionCheckpoint.tryStartCheckpointWriter
     // can call buildLLMRequestPrefix without forming a layer cycle
     // (ToolRegistry → SessionCheckpoint → ToolRegistry). See prefix-capture-ref.ts.
@@ -742,20 +762,18 @@ export const layer = Layer.effect(
           system: capturePrompt.system ?? "",
           permission: runtimePermission,
         })
-        const frozen = yield* SessionPrefixSnapshot.get(input.sessionID, key)
+        const frozen = yield* frozenPrefix(input.sessionID, key)
         const additions = frozen
           ? []
           : yield* Effect.gen(function* () {
-              const [env, skills, instructions] = yield* Effect.all([
+              const [env, instructions] = yield* Effect.all([
                 Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
                   ? sys.environment(model)
                   : Effect.succeed([]),
-                sys.skills({ ...ag, permission: runtimePermission }),
                 instruction.system().pipe(Effect.orDie),
               ])
               return [
                 ...env,
-                ...(skills ? [skills] : []),
                 ...(Flag.MIMOCODE_DISABLE_INSTRUCTIONS ? [] : instructions.content),
               ]
             })
@@ -2358,6 +2376,44 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         searchExposed,
         mcpReadiness,
       }
+    })
+
+    // Skill catalog as a user-turn reminder (turn boundary only). Skills are
+    // rescanned here, then compared with the latest catalog state announced in
+    // this context window: the first reminder is the full catalog, later ones
+    // carry only added, changed, and removed skills.
+    const announceSkillReminders = Effect.fn("SessionPrompt.announceSkillReminders")(function* (input: {
+      messages: MessageV2.WithParts[]
+      agent: Agent.Info
+      session: Session.Info
+    }) {
+      const userIndex = input.messages.findLastIndex((message) => message.info.role === "user")
+      if (userIndex < 0) return
+      // Mid-turn the user message precedes this turn's assistant steps; appending
+      // would rewrite cached history, so changes wait for the next user turn.
+      if (input.messages.slice(userIndex + 1).some((message) => message.info.role === "assistant")) return
+      yield* sys.refreshSkills()
+      let announced: Record<string, string> | undefined
+      for (const message of input.messages) {
+        if (message.info.role !== "user") continue
+        for (const part of message.parts) {
+          if (part.type !== "text" || !part.synthetic || part.ignored) continue
+          const meta = readSkillReminderMeta(part.metadata?.[SKILL_REMINDER_METADATA_KEY])
+          if (meta) announced = meta.skills
+        }
+      }
+      const current = yield* sys.skillCatalog({
+        ...input.agent,
+        permission: Agent.runtimePermission(input.agent, input.session.permission),
+      })
+      const change = diffSkillCatalog({ announced, current })
+      if (!change) return
+      yield* ensurePersistedUserSynthetic({
+        message: input.messages[userIndex],
+        reminder: { key: SKILL_REMINDER_KEY, rev: skillReminderRev(change.meta) },
+        text: renderSkillCatalogReminder(change),
+        metadata: { [SKILL_REMINDER_METADATA_KEY]: change.meta },
+      })
     })
 
     // Standard synthetic user reminders on the last user message (turn boundary
@@ -5750,6 +5806,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
+          yield* announceSkillReminders({ messages: msgs, agent, session })
           msgs = yield* insertReminders({ messages: msgs, agent, model, session })
 
           const msg: MessageV2.Assistant = {
@@ -6087,13 +6144,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   system: sessionPrompt.system ?? "",
                   permission: runtimePermission,
                 })
-                const frozen = yield* SessionPrefixSnapshot.get(sessionID, prefixProfileKey)
+                const frozen = yield* frozenPrefix(sessionID, prefixProfileKey)
                 const currentAdditions = Effect.fnUntraced(function* () {
-                  const [env, skills, instructions] = yield* Effect.all([
+                  const [env, instructions] = yield* Effect.all([
                     Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
                       ? sys.environment(model)
                       : Effect.succeed([]),
-                    sys.skills({ ...agent, permission: runtimePermission }),
                     instruction.system().pipe(Effect.orDie),
                   ])
                   if (!session.parentID && !instructionsNotified.has(sessionID)) {
@@ -6107,7 +6163,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   return [
                     ...env,
                     ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
-                    ...(skills ? [skills] : []),
                     ...(Flag.MIMOCODE_DISABLE_INSTRUCTIONS ? [] : instructions.content),
                   ]
                 })
