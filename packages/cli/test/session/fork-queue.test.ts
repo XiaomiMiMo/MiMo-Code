@@ -1,4 +1,5 @@
 import { describe, expect, spyOn } from "bun:test"
+import { ulid } from "ulid"
 import { Effect, Exit, Layer } from "effect"
 import { AppLayer } from "../../src/effect/app-runtime"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -81,6 +82,28 @@ const admitPrompt = Effect.fn(function* (sessionID: SessionID, messageID: Messag
 const receipts = (sessionID: SessionID) => Effect.sync(() => Database.use((db) => db.select().from(InboxTable)
   .where(eq(InboxTable.receiver_session_id, sessionID)).all()))
 
+const consumedReceipt = (id: string, sessionID: SessionID, inputMessageID: MessageID, deliveryMessageID: MessageID) => ({
+  id,
+  receiver_session_id: sessionID,
+  receiver_actor_id: "main",
+  sender_session_id: null,
+  sender_actor_id: null,
+  type: "prompt",
+  content: null,
+  input_message_id: inputMessageID,
+  state: "settled" as const,
+  epoch: 0,
+  run_id: 1,
+  claim_frontier: inputMessageID,
+  consumed: true,
+  outcome: "success" as const,
+  delivery_message_id: deliveryMessageID,
+  error: null,
+  idempotency_key: "",
+  created_at: Date.now(),
+  time_updated: Date.now(),
+})
+
 function byText(messages: MessageV2.WithParts[], text: string) {
   const found = messages.find((message) => message.parts.some((part) => part.type === "text" && part.text === text))
   if (!found) throw new Error(`Missing copied message: ${text}`)
@@ -134,6 +157,44 @@ describe("Session.fork queue history", () => {
       expect(positions).toEqual([...positions].sort((a, b) => a - b))
     }), { git: true, config }),
     20000,
+  )
+
+  it.live(
+    "prompt skips a stale consumed receipt without suppressing its surviving delivery input",
+    provideTmpdirServer(({ llm }) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const prompt = yield* SessionPrompt.Service
+        const source = yield* sessions.create({ title: "stale receipt prompt" })
+        yield* Effect.addFinalizer(() => prompt.cancel(source.id))
+        const kept = yield* user(source.id, "KEPT-INPUT", false)
+        const stale = yield* user(source.id, "STALE-INPUT", false)
+        const delivery = yield* assistant(kept, "DELIVERY")
+
+        yield* sessions.removeMessage({ sessionID: source.id, messageID: stale.id })
+        yield* Effect.sync(() => Database.use((db) => db.insert(InboxTable).values([
+          consumedReceipt(ulid(), source.id, kept.id, delivery.id),
+          consumedReceipt(ulid(), source.id, stale.id, delivery.id),
+        ]).run()))
+        const rows = yield* receipts(source.id)
+        expect(rows.some((row) => row.input_message_id === stale.id)).toBe(true)
+
+        yield* llm.text("PROMPT-ANSWER")
+        const result = yield* prompt.prompt({
+          sessionID: source.id,
+          agent: "build",
+          parts: [{ type: "text", text: "NEW-PROMPT" }],
+        })
+        expect(result.parts.some((part) => part.type === "text" && part.text === "PROMPT-ANSWER")).toBe(true)
+        const request = JSON.stringify((yield* llm.inputs)[0].messages)
+        expect(request).toContain("KEPT-INPUT")
+        expect(request).toContain("DELIVERY")
+        expect(request).toContain("NEW-PROMPT")
+        expect(request).not.toContain("STALE-INPUT")
+      }),
+      { git: true, config },
+    ),
+    20_000,
   )
 
   it.live(
