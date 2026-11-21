@@ -9,7 +9,7 @@ import {
   type LoopEndedEvent,
   type StartOpts,
 } from "@/cron/scheduler"
-import { clearAllLoopStates } from "@/cron/loop-state"
+import { clearAllLoopStates, listLoopStates } from "@/cron/loop-state"
 import { removeSessionCronTasks, getSessionCronTasks, addSessionCronTask } from "@/cron/cron-task"
 import { DEFAULT_JITTER } from "@/cron/cron-jitter"
 
@@ -437,6 +437,58 @@ test("keepalive armLoop after fire retains owner via LoopState", async () => {
       expect(after.length).toBe(1)
       expect(after[0]!.createdBySessionId).toBe("ses_b")
       expect(yield* sched.list({ kind: "loop", session_id: "ses_a" })).toEqual([])
+
+      yield* sched.stop()
+    }),
+  )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("session-less endLoop on a multi-owner prompt tears down all tasks and all state", async () => {
+  const dir = freshDir()
+  await provided(
+    Effect.gen(function* () {
+      const sched = yield* Scheduler
+      yield* sched.start(baseStartOpts(dir))
+
+      yield* sched.armLoop({ prompt: "shared", delay_seconds: 120, reason_length: 0, session_id: "ses_a" })
+      yield* sched.armLoop({ prompt: "shared", delay_seconds: 120, reason_length: 0, session_id: "ses_b" })
+      expect(getSessionCronTasks().filter((t) => t.prompt === "shared").length).toBe(2)
+
+      // No session_id: prompt-wide teardown. Task removal was already
+      // prompt-wide; state teardown must match or orphaned LoopState rows
+      // would resurrect the loop via the keepalive sweep.
+      yield* sched.endLoop("shared", "user_abort")
+
+      expect(getSessionCronTasks().filter((t) => t.prompt === "shared")).toEqual([])
+      expect(listLoopStates().filter((s) => s.prompt === "shared")).toEqual([])
+
+      yield* sched.stop()
+    }),
+  )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("session-less armLoop on a multi-owner prompt does not supersede other sessions' tasks", async () => {
+  const dir = freshDir()
+  await provided(
+    Effect.gen(function* () {
+      const sched = yield* Scheduler
+      yield* sched.start(baseStartOpts(dir))
+
+      yield* sched.armLoop({ prompt: "shared", delay_seconds: 120, reason_length: 0, session_id: "ses_a" })
+      yield* sched.armLoop({ prompt: "shared", delay_seconds: 120, reason_length: 0, session_id: "ses_b" })
+
+      // Ownerless re-arm (e.g. a session-less keepalive path): it may claim
+      // unmarked tasks but must not remove tasks stamped to live sessions.
+      const r = yield* sched.armLoop({ prompt: "shared", delay_seconds: 120, reason_length: 0 })
+      expect(r).not.toBe(null)
+      expect(r!.supersededCount).toBe(0)
+
+      const tasks = getSessionCronTasks().filter((t) => t.prompt === "shared")
+      expect(tasks.length).toBe(3)
+      const stamps = tasks.map((t) => t.createdBySessionId).sort()
+      expect(stamps).toEqual([undefined, "ses_a", "ses_b"])
 
       yield* sched.stop()
     }),

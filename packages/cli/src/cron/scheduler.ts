@@ -106,7 +106,7 @@ export interface Interface {
   readonly endLoop: (
     prompt: string,
     reason: LoopEndedReason,
-    opts?: { via_keepalive?: boolean },
+    opts?: { via_keepalive?: boolean; session_id?: string },
   ) => Effect.Effect<void>
   readonly nextFireTime: () => Effect.Effect<number | null>
   /**
@@ -404,7 +404,23 @@ const makeImpl = (): Interface => {
       if (!rt || rt.opts.isKilled()) return null
       const cfg = rt?.cfg ?? DEFAULT_JITTER
       const now = Date.now()
-      const existing = LoopState.getLoopState(input.prompt)
+      const existing = LoopState.getLoopState(input.prompt, input.session_id)
+
+      // LoopState entries and loop tasks are scoped per (prompt, owner
+      // session) — identical prompts armed by different sessions must not
+      // clobber each other. Ownerless rows (created before session stamping
+      // or by keepalive flows) are treated as matching anyone's scope, the
+      // same legacy tolerance findById / list use. Resolve the owner from the
+      // explicit input, then LoopState (which outlives the task); prior tasks
+      // only contribute a stamp below after filtering to the resolved scope.
+      const owner = input.session_id || existing?.createdBySessionId || undefined
+      // Scoping is symmetric with endLoop: unmarked tasks are within anyone's
+      // scope (legacy tolerance), but tasks stamped to a session are only
+      // claimed by that session. An ownerless caller (session-less keepalive
+      // re-arm) must NOT supersede tasks another session still owns — with a
+      // shared prompt it would kill the other session's live loop task and
+      // steal its ownership via the inheritedSessionId stamp.
+      const owns = (t: CronTask) => !t.createdBySessionId || (owner !== undefined && t.createdBySessionId === owner)
 
       if (existing && now - existing.startedAt >= cfg.recurringMaxAgeMs) {
         // PR #1479 finding #5: clear any prior loop task and the LoopState
@@ -413,13 +429,13 @@ const makeImpl = (): Interface => {
         // armLoop again, and a fresh LoopState{startedAt:now} is created —
         // the max-age cap is defeated and the loop runs forever.
         const stalePrior = getSessionCronTasks().filter(
-          (t) => t.kind === "loop" && t.prompt === input.prompt,
+          (t) => t.kind === "loop" && t.prompt === input.prompt && owns(t),
         )
         if (stalePrior.length > 0) {
           removeSessionCronTasks(stalePrior.map((p) => p.id))
           if (rt) for (const p of stalePrior) rt.nextFireAt.delete(p.id)
         }
-        LoopState.deleteLoopState(input.prompt)
+        LoopState.deleteLoopState(input.prompt, input.session_id)
         rt.opts.onLoopEnded({ reason: "aged_out", prompt: input.prompt })
         return null
       }
@@ -432,18 +448,13 @@ const makeImpl = (): Interface => {
       if (target.getTime() <= now) target.setUTCMinutes(target.getUTCMinutes() + 1)
 
       const prior = getSessionCronTasks().filter(
-        (t) => t.kind === "loop" && t.prompt === input.prompt,
+        (t) => t.kind === "loop" && t.prompt === input.prompt && owns(t),
       )
       // Keepalive re-arms omit session_id and, after the one-shot loop task has
-      // fired and been removed, often find no prior row either. Resolve the
-      // owner from the explicit input, then any still-live stamped prior, then
-      // LoopState (which outlives the task). Truthiness treats "" as unmarked,
-      // matching fireTargetSessionId / findById / list.
-      const inheritedSessionId =
-        input.session_id ||
-        prior.find((p) => p.createdBySessionId)?.createdBySessionId ||
-        existing?.createdBySessionId ||
-        undefined
+      // fired and been removed, often find no prior row either. Any still-live
+      // stamped prior in scope can also carry the owner forward. Truthiness
+      // treats "" as unmarked, matching fireTargetSessionId / findById / list.
+      const inheritedSessionId = owner || prior.find((p) => p.createdBySessionId)?.createdBySessionId || undefined
       if (prior.length > 0) {
         removeSessionCronTasks(prior.map((p) => p.id))
         if (rt) for (const p of prior) rt.nextFireAt.delete(p.id)
@@ -498,14 +509,30 @@ const makeImpl = (): Interface => {
 
   const endLoop: Interface["endLoop"] = (prompt, reason, opts) =>
     Effect.gen(function* () {
+      // Same (prompt, owner) scoping as armLoop: when the caller knows the
+      // owner, only that session's loop task + LoopState entry are ended —
+      // another session's identical-prompt loop is untouched. Without a
+      // session_id the legacy prompt-wide teardown is preserved for BOTH
+      // tasks and state: deleting only a single resolved entry on a
+      // multi-owner prompt would orphan the rest, and the keepalive sweep
+      // would resurrect the ended loop from those stale rows.
       const prior = getSessionCronTasks().filter(
-        (t) => t.kind === "loop" && t.prompt === prompt,
+        (t) =>
+          t.kind === "loop" &&
+          t.prompt === prompt &&
+          (opts?.session_id === undefined ||
+            !t.createdBySessionId ||
+            t.createdBySessionId === opts.session_id),
       )
       if (prior.length > 0) {
         removeSessionCronTasks(prior.map((p) => p.id))
         if (rt) for (const p of prior) rt.nextFireAt.delete(p.id)
       }
-      LoopState.deleteLoopState(prompt)
+      if (opts?.session_id === undefined) {
+        LoopState.deleteAllLoopStates(prompt)
+      } else {
+        LoopState.deleteLoopState(prompt, opts.session_id)
+      }
       if (rt) {
         rt.opts.onLoopEnded({
           reason,
