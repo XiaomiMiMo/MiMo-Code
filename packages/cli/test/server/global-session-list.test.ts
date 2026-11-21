@@ -113,7 +113,7 @@ describe("session.listGlobal", () => {
     expect(ids).not.toContain(second.id)
   })
 
-  // [TP-CC-R9-05] Desktop polls this list on focus; per-session prompts made it tens of MB.
+  // Desktop clients poll this list; per-session system prompts made the full view tens of MB.
   test("summary view omits per-session prompt, permission and diffs; the default view keeps them", async () => {
     await using tmp = await tmpdir({ git: true })
     const system = "s".repeat(64 * 1024)
@@ -157,7 +157,6 @@ describe("session.listGlobal", () => {
     expect(SessionNs.GlobalInfo.safeParse(item).success).toBe(true)
   })
 
-  // [TP-CC-R9-05] The route keeps its default response and validates `view`.
   test("route returns full sessions by default and summaries for view=summary", async () => {
     await using tmp = await tmpdir({ git: true })
     const system = "s".repeat(64 * 1024)
