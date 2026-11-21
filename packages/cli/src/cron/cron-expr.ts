@@ -17,7 +17,8 @@ const FIELD_RANGES: [number, number][] = [
   [0, 23],
   [1, 31],
   [1, 12],
-  [0, 6],
+  // Vixie cron accepts both 0 and 7 for Sunday in the day-of-week field.
+  [0, 7],
 ]
 
 function expandField(token: string, [lo, hi]: [number, number]): number[] | null {
@@ -43,12 +44,15 @@ export function parseCronExpression(expr: string): CronFields | null {
   if (parts.length !== 5) return null
   const fields = parts.map((p, i) => expandField(p, FIELD_RANGES[i]))
   if (fields.some((f) => f === null)) return null
+  // Vixie cron treats 7 as an alias for Sunday (0); normalize it so the
+  // runtime only ever sees 0-6.
+  const dow = fields[4]!.map((d) => (d === 7 ? 0 : d))
   return {
     minute: fields[0]!,
     hour: fields[1]!,
     dom: fields[2]!,
     month: fields[3]!,
-    dow: fields[4]!,
+    dow: [...new Set(dow)].sort((a, b) => a - b),
     domStar: isStar(parts[2]!),
     dowStar: isStar(parts[4]!),
   }
