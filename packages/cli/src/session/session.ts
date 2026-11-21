@@ -59,17 +59,41 @@ export function isDefaultTitle(title: string) {
 
 type SessionRow = typeof SessionTable.$inferSelect
 
-export function fromRow(row: SessionRow): Info {
+// Columns of the "brief" list view. It leaves out the per-session JSON payloads:
+// `prompt` holds the full system prompt (tens of KB per session), and listing every
+// session with it blocks this process for the whole read and serialization.
+const briefColumns = {
+  id: SessionTable.id,
+  slug: SessionTable.slug,
+  project_id: SessionTable.project_id,
+  workspace_id: SessionTable.workspace_id,
+  directory: SessionTable.directory,
+  parent_id: SessionTable.parent_id,
+  context_from: SessionTable.context_from,
+  context_watermark: SessionTable.context_watermark,
+  title: SessionTable.title,
+  title_source: SessionTable.title_source,
+  title_revision: SessionTable.title_revision,
+  version: SessionTable.version,
+  summary_additions: SessionTable.summary_additions,
+  summary_deletions: SessionTable.summary_deletions,
+  summary_files: SessionTable.summary_files,
+  time_created: SessionTable.time_created,
+  time_updated: SessionTable.time_updated,
+  time_compacting: SessionTable.time_compacting,
+  time_archived: SessionTable.time_archived,
+}
+type BriefRow = Pick<SessionRow, keyof typeof briefColumns>
+
+function fromBriefRow(row: BriefRow) {
   const summary =
     row.summary_additions !== null || row.summary_deletions !== null || row.summary_files !== null
       ? {
           additions: row.summary_additions ?? 0,
           deletions: row.summary_deletions ?? 0,
           files: row.summary_files ?? 0,
-          diffs: row.summary_diffs ?? undefined,
         }
       : undefined
-  const revert = row.revert ?? undefined
   return {
     id: row.id,
     slug: row.slug,
@@ -84,15 +108,24 @@ export function fromRow(row: SessionRow): Info {
     titleRevision: row.title_revision,
     version: row.version,
     summary,
-    revert,
-    permission: row.permission ?? undefined,
-    prompt: row.prompt ? PromptConfig.parse(row.prompt) : undefined,
     time: {
       created: row.time_created,
       updated: row.time_updated,
       compacting: row.time_compacting ?? undefined,
       archived: row.time_archived ?? undefined,
     },
+  }
+}
+
+export function fromRow(row: SessionRow): Info {
+  const base = fromBriefRow(row)
+  const revert = row.revert ?? undefined
+  return {
+    ...base,
+    summary: base.summary ? { ...base.summary, diffs: row.summary_diffs ?? undefined } : undefined,
+    revert,
+    permission: row.permission ?? undefined,
+    prompt: row.prompt ? PromptConfig.parse(row.prompt) : undefined,
   }
 }
 
@@ -1154,6 +1187,8 @@ export function* listGlobal(input?: {
   search?: string
   limit?: number
   archived?: boolean
+  // "brief" omits `prompt`, `permission`, `revert` and `summary.diffs`; the default stays full.
+  view?: "full" | "brief"
 }) {
   const conditions: SQL[] = []
 
@@ -1177,19 +1212,16 @@ export function* listGlobal(input?: {
   }
 
   const limit = input?.limit ?? 100
+  const where = conditions.length > 0 ? and(...conditions) : undefined
+  const order = [desc(SessionTable.time_updated), desc(SessionTable.id)]
 
-  const rows = Database.use((db) => {
-    const query =
-      conditions.length > 0
-        ? db
-            .select()
-            .from(SessionTable)
-            .where(and(...conditions))
-        : db.select().from(SessionTable)
-    return query.orderBy(desc(SessionTable.time_updated), desc(SessionTable.id)).limit(limit).all()
-  })
+  const sessions: Info[] = Database.use((db) =>
+    input?.view === "brief"
+      ? db.select(briefColumns).from(SessionTable).where(where).orderBy(...order).limit(limit).all().map(fromBriefRow)
+      : db.select().from(SessionTable).where(where).orderBy(...order).limit(limit).all().map(fromRow),
+  )
 
-  const ids = [...new Set(rows.map((row) => row.project_id))]
+  const ids = [...new Set(sessions.map((session) => session.projectID))]
   const projects = new Map<string, ProjectInfo>()
 
   if (ids.length > 0) {
@@ -1209,8 +1241,8 @@ export function* listGlobal(input?: {
     }
   }
 
-  for (const row of rows) {
-    const project = projects.get(row.project_id) ?? null
-    yield { ...fromRow(row), project }
+  for (const session of sessions) {
+    const project = projects.get(session.projectID) ?? null
+    yield { ...session, project }
   }
 }
