@@ -2,20 +2,20 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { loadDebugIdentity, readAccountSession } from "../../src/phone/identity"
+import { loadDebugIdentity, readPassportCredential } from "../../src/phone/identity"
 
 const NOW = 1_800_000_000_000
 const valid = {
   version: 1,
   mode: "isolated-debug",
   origin: "https://connect.example.test",
-  environment: "debug-test",
+  environment: "china-test",
   subject: "debug:7f6c2f9e-0000-4000-8000-000000000001",
   issuedAt: NOW - 1000,
   expiresAt: NOW + 60_000,
   role: "cli",
-  accountSessionId: "7f6c2f9e-0000-4000-8000-000000000002",
-  accessToken: "token-value",
+  loginInstanceId: "0123456789abcdef0123456789abcdef",
+  accessToken: "t".repeat(43),
 }
 
 async function withFile(content: unknown, run: (file: string) => Promise<void>) {
@@ -30,14 +30,13 @@ async function withFile(content: unknown, run: (file: string) => Promise<void>) 
 }
 
 describe("debug identity", () => {
-  test("a valid CLI profile becomes the connector account", async () => {
+  test("a valid CLI profile becomes a bare-bearer connector account", async () => {
     await withFile(valid, async (file) => {
       expect(await loadDebugIdentity(file, () => NOW)).toEqual({
         origin: "https://connect.example.test",
-        environment: "debug-test",
+        environment: "china-test",
         subject: valid.subject,
-        accountSessionId: valid.accountSessionId,
-        accessToken: "token-value",
+        serviceToken: "t".repeat(43),
       })
     })
   })
@@ -52,6 +51,7 @@ describe("debug identity", () => {
     for (const [change, problem] of [
       [{ role: "phone" }, "invalid"],
       [{ mode: "production" }, "invalid"],
+      [{ environment: "china-production" }, "invalid"],
       [{ expiresAt: NOW }, "expired"],
       [{ origin: "https://connect.example.test/api" }, "invalid"],
       [{ origin: "http://connect.example.test" }, "invalid"],
@@ -69,47 +69,36 @@ describe("debug identity", () => {
   })
 })
 
-describe("handed-over account session", () => {
-  const handoff = {
-    accountOrigin: "https://account.example.test",
-    connectOrigin: "https://connect.example.test",
-    clientInstanceId: "7f6c2f9e-0000-4000-8000-000000000009",
-    session: {
-      accountSessionId: "7f6c2f9e-0000-4000-8000-000000000002",
-      subject: "3001",
-      environment: "test-production",
-      accessExpiresAt: "2027-02-01T00:00:00Z",
-      refreshExpiresAt: "2027-02-02T00:00:00Z",
-      renewAfter: "2027-01-31T23:58:00Z",
-    },
-    credentials: {
-      tokenType: "Bearer",
-      accessToken: "a".repeat(43),
-      refreshToken: "r".repeat(43),
-      logoutToken: "l".repeat(43),
-    },
+describe("Passport credential file", () => {
+  const file = {
+    connectOrigin: "https://connect.example.test/",
+    environment: "china-production",
+    userId: "2469486853",
+    serviceToken: "V1:opaque/token+value=",
   }
 
-  test("becomes a stored session with its origins and tokens", async () => {
-    await withFile(handoff, async (file) => {
-      expect(await readAccountSession(file, () => NOW)).toMatchObject({
+  test("becomes the credential kept for the connector, on the bare origin", async () => {
+    await withFile(file, async (path) => {
+      expect(await readPassportCredential(path)).toEqual({
         version: 1,
-        accountOrigin: "https://account.example.test",
         connectOrigin: "https://connect.example.test",
-        subject: "3001",
-        accountSessionId: handoff.session.accountSessionId,
-        refreshToken: "r".repeat(43),
+        environment: "china-production",
+        userId: "2469486853",
+        serviceToken: "V1:opaque/token+value=",
       })
     })
   })
 
-  test("a missing, non-HTTPS or expired handoff is refused", async () => {
-    expect(await readAccountSession(undefined)).toBe("missing")
-    await withFile({ ...handoff, connectOrigin: "http://connect.example.test" }, async (file) =>
-      expect(await readAccountSession(file, () => NOW)).toBe("invalid"),
-    )
-    await withFile(handoff, async (file) =>
-      expect(await readAccountSession(file, () => Date.parse("2027-03-01T00:00:00Z"))).toBe("expired"),
-    )
+  test("a missing, non-HTTPS, header-unsafe or unknown-environment file is refused", async () => {
+    expect(await readPassportCredential(undefined)).toBe("missing")
+    for (const change of [
+      { connectOrigin: "http://connect.example.test" },
+      { connectOrigin: "https://connect.example.test/api" },
+      { serviceToken: "two words" },
+      { environment: "debug-test" },
+      { extra: true },
+    ]) {
+      await withFile({ ...file, ...change }, async (path) => expect(await readPassportCredential(path)).toBe("invalid"))
+    }
   })
 })

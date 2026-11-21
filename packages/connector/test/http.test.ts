@@ -18,7 +18,7 @@ describe("Connect HTTP rules", () => {
         clock: () => Date.now() + 5_000,
       })
       const api = new ConnectApi(http)
-      // The first answer teaches the client the service clock.
+      // Proofs are issued at the service time each challenge carries, never the local clock.
       expect(await api.offersCliProfile()).toBe(true)
       expect((await api.register("dev-box")).deviceId).toMatch(/^[0-9a-f-]{36}$/)
     } finally {
@@ -61,12 +61,15 @@ describe("Connect HTTP rules", () => {
     await expect(h.api.offersCliProfile()).rejects.toMatchObject({ code: "internal_error", status: 500 })
   })
 
-  test("every actor request carries bearer, version, request id, client info and the CLI profile", async () => {
+  test("every actor request carries the Passport credential, version, request id, client info and the CLI profile", async () => {
     using h = await harness()
     const deviceId = await h.register()
     await h.api.createPairingCode(1)
     const request = h.service.requests.at(-1)!
-    expect(request.headers.get("Authorization")).toBe(`Bearer ${h.service.accessToken}`)
+    expect(request.headers.get("Authorization")).toBe(`Bearer ${h.service.serviceToken}`)
+    expect(request.headers.get("Mimo-Passport-User")).toBe(h.service.userId)
+    expect(request.headers.get("Mimo-Passport-CUser")).toBeNull()
+    expect(request.headers.get("X-Request-Id")).toBeNull()
     expect(request.headers.get("Mimo-Connect-Version")).toBe("1.0")
     expect(request.headers.get("Mimo-Connect-Profile")).toBe("cli-connector-v1")
     expect(request.headers.get("X-Device-Id")).toBe(deviceId)
@@ -88,6 +91,34 @@ describe("Connect HTTP rules", () => {
       h.service.tamper.set(path, tamper)
       await expect(h.api.createPairingCode(1), name).rejects.toMatchObject({ code: "protocol" })
     }
+  })
+
+  test("a device challenge outside the contract never signs a proof", async () => {
+    using h = await harness()
+    await h.register()
+    const path = "/api/connect/device-challenges"
+    const edit = (change: (data: Record<string, unknown>) => void) => async (response: Response) => {
+      const envelope = (await response.clone().json()) as { data: Record<string, unknown> }
+      change(envelope.data)
+      return new Response(JSON.stringify(envelope), { status: response.status, headers: response.headers })
+    }
+    const cases: [string, (r: Response) => Promise<Response>][] = [
+      ["no service time", edit((d) => delete d.serverTime)],
+      ["the retired account session", edit((d) => (d.accountSessionId = crypto.randomUUID()))],
+      ["a malformed login instance", edit((d) => (d.loginInstanceId = "ABC"))],
+      ["another environment", edit((d) => (d.environment = "global-test"))],
+      ["a lifetime beyond the nonce's", edit((d) => (d.expiresAt = new Date(Date.parse(d.serverTime as string) + 120_000).toISOString()))],
+    ]
+    for (const [name, tamper] of cases) {
+      h.service.tamper.set(path, tamper)
+      await expect(h.api.createPairingCode(1), name).rejects.toMatchObject({ code: "protocol" })
+    }
+    // The proof names the login instance and is issued at the service time.
+    await h.api.createPairingCode(1)
+    const proof = h.service.requests.at(-1)!.headers.get("X-Device-Proof")!
+    const claims = JSON.parse(Buffer.from(proof.split(".")[1], "base64url").toString())
+    expect(claims.loginInstanceId).toBe(h.service.loginInstanceId)
+    expect(claims).not.toHaveProperty("accountSessionId")
   })
 
   test("service rejections keep their code; Retry-After starts a cooldown without a request", async () => {

@@ -54,11 +54,11 @@ const UpgradeMetadata = z.strictObject({
   bindingId: Uuid,
   connectorId: Uuid,
   targetKind: z.literal("cli").nullable(),
-  protocolVersion: z.literal(4).nullable(),
+  protocolVersion: z.literal(1).nullable(),
   grantVersion: Count,
 })
 export const GrantView = z.strictObject({
-  protocolVersion: z.literal(4),
+  protocolVersion: z.literal(1),
   targetKind: z.literal("cli"),
   bindingId: Uuid,
   connectorId: Uuid,
@@ -73,7 +73,7 @@ export type GrantView = z.infer<typeof GrantView>
 export const Lane = z.enum(["command", "state", "text"])
 export type Lane = z.infer<typeof Lane>
 export const ChannelCredential = z.strictObject({
-  protocolVersion: z.literal(4),
+  protocolVersion: z.literal(1),
   targetKind: z.literal("cli"),
   bindingId: Uuid,
   connectorId: Uuid,
@@ -108,8 +108,7 @@ export class ConnectApi {
       const data = await this.http.request({
         method: "GET",
         path: `${ROOT}/connector-capabilities`,
-        version: "1.0",
-        profile: false,
+          profile: false,
         proof: false,
       })
       return parse(Discovery, data).profiles.includes("cli-connector-v1")
@@ -123,7 +122,6 @@ export class ConnectApi {
     const data = await this.http.request({
       method: "POST",
       path: `${ROOT}/devices`,
-      version: "1.0",
       body: { role: "cli", name },
       profile: true,
       proof: true,
@@ -170,8 +168,7 @@ export class ConnectApi {
       const data = await this.http.request({
         method: "GET",
         path: `${ROOT}/devices/${deviceId}/bindings`,
-        version: "1.0",
-        query: cursor ? { cursor } : undefined,
+          query: cursor ? { cursor } : undefined,
         profile: true,
         proof: true,
       })
@@ -200,7 +197,6 @@ export class ConnectApi {
     const data = await this.http.request({
       method: "POST",
       path: `${ROOT}/bindings/${bindingId}/content-upgrade-metadata`,
-      version: "4.0",
       body: { connectionEpoch },
       profile: true,
       proof: true,
@@ -223,9 +219,8 @@ export class ConnectApi {
     const data = await this.http.request({
       method: "PUT",
       path: `${ROOT}/bindings/${bindingId}/content-grant`,
-      version: "4.0",
       body: {
-        protocolVersion: 4,
+        protocolVersion: 1,
         targetKind: "cli",
         connectionEpoch: input.connectionEpoch,
         expectedVersion: input.expectedVersion,
@@ -242,7 +237,7 @@ export class ConnectApi {
   }
 
   async grant(bindingId: string) {
-    const grant = parse(GrantView, await this.get4(`${ROOT}/bindings/${bindingId}/content-grant`))
+    const grant = parse(GrantView, await this.get1(`${ROOT}/bindings/${bindingId}/content-grant`))
     if (grant.bindingId !== bindingId) throw new ConnectError("protocol")
     return grant
   }
@@ -254,8 +249,7 @@ export class ConnectApi {
     const data = await this.http.request({
       method: "POST",
       path: `${ROOT}/bindings/${bindingId}/content-channel-tokens/cli`,
-      version: "4.0",
-      body: { protocolVersion: 4, ...input },
+      body: { protocolVersion: 1, ...input },
       profile: true,
       proof: true,
     })
@@ -273,14 +267,10 @@ export class ConnectApi {
   }
 
   private get1(path: string) {
-    return this.http.request({ method: "GET", path, version: "1.0", profile: true, proof: true })
-  }
-
-  private get4(path: string) {
-    return this.http.request({ method: "GET", path, version: "4.0", profile: true, proof: true })
+    return this.http.request({ method: "GET", path, profile: true, proof: true })
   }
 
   private post1(path: string, body: Record<string, number>) {
-    return this.http.request({ method: "POST", path, version: "1.0", body, profile: true, proof: true })
+    return this.http.request({ method: "POST", path, body, profile: true, proof: true })
   }
 }

@@ -21,6 +21,7 @@ describe("phone connection", () => {
         "secure_storage_unavailable",
         "not_signed_in",
         "account_rejected",
+        "not_admitted",
         "service_without_cli",
         "state_unreadable",
         "registration_conflict",

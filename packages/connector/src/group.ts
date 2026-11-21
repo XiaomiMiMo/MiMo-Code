@@ -11,6 +11,7 @@ import { Dispatcher } from "./dispatcher"
 import type { ConnectHttp } from "./http"
 import { ContentLane, type Fence } from "./lane"
 import type { AgentBackend } from "./ports"
+import type { HeartbeatRuntime } from "./heartbeat"
 import type { Dial } from "./socket"
 import type { StateFile } from "./state"
 import type { Submissions } from "./submissions"
@@ -22,6 +23,7 @@ export type GroupContext = {
   http: ConnectHttp
   origin: () => string
   dial: Dial
+  heartbeats: HeartbeatRuntime
   backend: AgentBackend
   submissions: Submissions
   state: StateFile
@@ -118,7 +120,7 @@ export class DeviceGroup {
     for (const credential of credentials) {
       this.lanes.set(
         credential.lane,
-        new ContentLane(credential.lane, credential, this.context.http, this.context.origin, this.context.dial, {
+        new ContentLane(credential.lane, credential, this.context.http, this.context.origin, this.context.dial, this.context.heartbeats, {
           onFence: (lane, fence) => this.gate(lane, fence),
           onFrame: (lane, frame) => {
             if (lane === "command") this.dispatcher?.handle(frame)

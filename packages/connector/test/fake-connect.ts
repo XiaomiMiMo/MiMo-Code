@@ -1,7 +1,9 @@
-// In-process stand-in for the Connect service, strict enough to catch wire
-// mistakes: it verifies every device proof (ES256 over the JWS, claims, nonce
-// single use, body digest), enforces the version / profile / request-id header
-// rules and answers with the real envelope. Tests script business state on it.
+// In-process stand-in for the Connect 1.0 service, strict enough to catch wire
+// mistakes: it checks the Passport credential headers, verifies every device
+// proof (ES256 over the JWS, closed claims, nonce single use, body digest, login
+// instance), enforces the version / profile / request-id header rules, requires
+// the server-v1 heartbeat on every socket and answers with the real envelope.
+// Tests script business state on it.
 
 import type { Server, ServerWebSocket } from "bun"
 import { base64url, canonical, fromBase64url, hex, sha256 } from "../src/json"
@@ -12,8 +14,9 @@ type Socket = ServerWebSocket<{ path: string; lane?: string }>
 
 export type FakeOptions = {
   environment?: string
-  accountSessionId?: string
-  accessToken?: string
+  userId?: string
+  serviceToken?: string
+  loginInstanceId?: string
 }
 
 class FakeError extends Error {
@@ -27,8 +30,11 @@ class FakeError extends Error {
 
 export class FakeConnect {
   readonly environment: string
-  readonly accountSessionId: string
-  readonly accessToken: string
+  readonly userId: string
+  readonly serviceToken: string
+  loginInstanceId: string
+  /** False: the account is not on the admission list (device challenges answer 403). */
+  admitted = true
   private server!: Server<{ path: string; lane?: string }>
   private nonces = new Map<string, { method: string; path: string; thumbprint: string }>()
   /** Every HTTP request, for assertions. */
@@ -36,7 +42,7 @@ export class FakeConnect {
   /** Scripted failures: path -> [status, code, retryAfter?] consumed once. */
   readonly failNext = new Map<string, [number, string, string?]>()
   /** Mutations applied to the next envelope for `path` (to break the wire on purpose). */
-  readonly tamper = new Map<string, (response: Response) => Response>()
+  readonly tamper = new Map<string, (response: Response) => Response | Promise<Response>>()
   devices = new Map<string, { name: string; thumbprint: string }>()
   epoch = 0
   discovery: "cli" | "empty" | "missing" = "cli"
@@ -57,9 +63,10 @@ export class FakeConnect {
   sendTransportReady = true
 
   constructor(options: FakeOptions = {}) {
-    this.environment = options.environment ?? "debug-test"
-    this.accountSessionId = options.accountSessionId ?? crypto.randomUUID()
-    this.accessToken = options.accessToken ?? "A".repeat(43)
+    this.environment = options.environment ?? "china-test"
+    this.userId = options.userId ?? "2469486853"
+    this.serviceToken = options.serviceToken ?? "S".repeat(64)
+    this.loginInstanceId = options.loginInstanceId ?? "0123456789abcdef0123456789abcdef"
   }
 
   get origin(): string {
@@ -70,9 +77,18 @@ export class FakeConnect {
     return {
       origin: this.origin,
       environment: this.environment,
-      accountSessionId: this.accountSessionId,
-      accessToken: this.accessToken,
+      serviceToken: this.serviceToken,
+      userId: this.userId,
     }
+  }
+
+  /** The unified login credential (xiaomi-account §3.2), on HTTP and on every upgrade. */
+  private authenticated(headers: Headers): boolean {
+    return (
+      headers.get("Authorization") === `Bearer ${this.serviceToken}` &&
+      headers.get("Mimo-Passport-User") === this.userId &&
+      headers.get("Mimo-Passport-CUser") === null
+    )
   }
 
   start(): this {
@@ -83,6 +99,7 @@ export class FakeConnect {
         open: (ws) => this.wsOpen(ws),
         message: (ws, message) => this.wsMessage(ws, String(message)),
         close: (ws) => {
+          this.heartbeats.delete(ws)
           if (ws === this.control) this.control = undefined
         },
       },
@@ -112,10 +129,10 @@ export class FakeConnect {
       this.failNext.delete(path)
       return this.error(id, scripted[0], scripted[1], "1.0", scripted[2])
     }
-    if (request.headers.get("Authorization") !== `Bearer ${this.accessToken}`) {
-      return this.error(id, 401, "unauthenticated", null)
-    }
+    if (!this.authenticated(request.headers)) return this.error(id, 401, "unauthenticated", null)
     const version = request.headers.get("Mimo-Connect-Version")
+    if (version !== "1.0") return this.error(id, 426, "protocol_incompatible", null)
+    if (request.headers.get("X-Request-Id") !== null) throw new Error("fake connect: X-Request-Id is retired")
     const profile = request.headers.get("Mimo-Connect-Profile")
     const respond = (data: unknown, status = 200, v = version) => {
       const response = this.envelope(id, v, data, status, profile)
@@ -136,13 +153,16 @@ export class FakeConnect {
       })
     }
     if (path === "/api/connect/device-challenges") {
+      if (!this.admitted) return this.error(id, 403, "allowlist_denied", version)
       const nonce = crypto.randomUUID()
       this.nonces.set(nonce, { method: body.method, path: body.path, thumbprint: body.keyThumbprint })
+      const now = Date.now()
       return respond({
         nonce,
-        accountSessionId: this.accountSessionId,
+        loginInstanceId: this.loginInstanceId,
         environment: this.environment,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        expiresAt: new Date(now + 60_000).toISOString(),
+        serverTime: new Date(now).toISOString(),
       })
     }
     // Everything below is a CLI actor endpoint: profile required, proof required.
@@ -219,7 +239,7 @@ export class FakeConnect {
         bindingId: meta[1],
         connectorId: [...this.devices.keys()][0],
         targetKind: grant ? "cli" : null,
-        protocolVersion: grant ? 4 : null,
+        protocolVersion: grant ? 1 : null,
         grantVersion: (grant?.grantVersion as number) ?? 0,
       }
     }
@@ -227,7 +247,7 @@ export class FakeConnect {
     if (grant && method === "GET") return this.grants.get(grant[1])
     if (grant && method === "PUT") {
       const view = {
-        protocolVersion: 4,
+        protocolVersion: 1,
         targetKind: "cli",
         bindingId: grant[1],
         connectorId: [...this.devices.keys()][0],
@@ -244,7 +264,7 @@ export class FakeConnect {
     const token = path.match(/^\/api\/connect\/bindings\/([^/]+)\/content-channel-tokens\/cli$/)
     if (token) {
       return {
-        protocolVersion: 4,
+        protocolVersion: 1,
         targetKind: "cli",
         bindingId: token[1],
         connectorId: [...this.devices.keys()][0],
@@ -298,6 +318,8 @@ export class FakeConnect {
     const header = JSON.parse(new TextDecoder().decode(fromBase64url(h)))
     const claims = JSON.parse(new TextDecoder().decode(fromBase64url(c)))
     if (header.alg !== "ES256" || header.typ !== "mimo-device-proof+jwt") return undefined
+    const claimKeys = "aud,bodyDigest,environment,exp,iat,loginInstanceId,method,nonce,path"
+    if (Object.keys(claims).sort().join(",") !== claimKeys) return undefined
     const key = await crypto.subtle.importKey("jwk", header.jwk, { name: "ECDSA", namedCurve: "P-256" }, false, [
       "verify",
     ])
@@ -324,10 +346,16 @@ export class FakeConnect {
       claims.path !== path ||
       claims.bodyDigest !== digest ||
       claims.aud !== this.origin ||
-      claims.accountSessionId !== this.accountSessionId ||
+      claims.loginInstanceId !== this.loginInstanceId ||
       claims.environment !== this.environment ||
       // Same window as the service: at most 1 s ahead of its clock, at most 60 s old.
-      !(claims.exp > claims.iat && claims.exp - claims.iat <= 60 && claims.iat - now <= 1 && now - claims.iat <= 60)
+      !(
+        claims.exp > claims.iat &&
+        claims.exp - claims.iat <= 60 &&
+        claims.iat - now <= 1 &&
+        now - claims.iat <= 60 &&
+        claims.exp > now
+      )
     ) {
       return undefined
     }
@@ -365,20 +393,105 @@ export class FakeConnect {
     if (request.headers.get("Mimo-Connect-Version") || request.headers.get("Mimo-Connect-Profile")) {
       return new Response(null, { status: 400 })
     }
+    if (this.rejectUpgrade) {
+      const [status, retryAfter] = this.rejectUpgrade
+      this.rejectUpgrade = undefined
+      return new Response(null, { status, headers: retryAfter ? { "Retry-After": retryAfter } : {} })
+    }
+    if (!this.authenticated(request.headers)) return new Response(null, { status: 401 })
+    // R60: every authenticated control / content socket negotiates the service heartbeat.
+    if (request.headers.get("Mimo-Heartbeat") !== "server-v1") return new Response(null, { status: 426 })
     const thumbprint = await this.verifyProof("GET", path, undefined, request.headers.get("X-Device-Proof"))
     const deviceId = request.headers.get("X-Device-Id")
     if (!thumbprint || !deviceId || this.devices.get(deviceId)?.thumbprint !== thumbprint) {
       return new Response(null, { status: 401 })
     }
     const lane = path.split("/").pop()
-    server.upgrade(request, { data: { path, lane }, headers: { "Sec-WebSocket-Protocol": expected } })
+    const echo: Record<string, string> = { "Sec-WebSocket-Protocol": expected }
+    if (this.echoHeartbeat) echo["Mimo-Heartbeat"] = "server-v1"
+    echo["Mimo-Request-Id"] = request.headers.get("Mimo-Request-Id") ?? ""
+    server.upgrade(request, { data: { path, lane }, headers: echo })
     return undefined
+  }
+
+  /** Scripted refusal of the next upgrade: [status, Retry-After]. */
+  rejectUpgrade: [number, string?] | undefined
+  /** When false, the 101 leaves out the heartbeat echo (a broken service). */
+  echoHeartbeat = true
+  /** Heartbeat state per socket: connection id and the probe awaiting a pong. */
+  readonly heartbeats = new Map<Socket, { connectionId: string; sequence: number; pending?: number }>()
+  /** Control pongs that renewed the lease, in order. */
+  readonly renewals: number[] = []
+
+  private heartbeatReady(ws: Socket): void {
+    const connectionId = crypto.randomUUID()
+    this.heartbeats.set(ws, { connectionId, sequence: 0 })
+    ws.send(
+      JSON.stringify({
+        protocolVersion: 1,
+        type: "heartbeat-ready",
+        connectionId,
+        policyVersion: 1,
+        pingIntervalMs: 25000,
+        ackTimeoutMs: 10000,
+        watchdogTimeoutMs: 45000,
+        freezeGraceMs: 10000,
+      }),
+    )
+  }
+
+  /** Probe a socket like the service scheduler does. */
+  ping(ws: Socket): number {
+    const heartbeat = this.heartbeats.get(ws)!
+    heartbeat.sequence += 1
+    heartbeat.pending = heartbeat.sequence
+    ws.send(
+      JSON.stringify({
+        protocolVersion: 1,
+        type: "heartbeat-ping",
+        connectionId: heartbeat.connectionId,
+        policyVersion: 1,
+        sequence: heartbeat.sequence,
+      }),
+    )
+    return heartbeat.sequence
+  }
+
+  private heartbeatFrame(ws: Socket, frame: Record<string, unknown>): void {
+    const heartbeat = this.heartbeats.get(ws)
+    const keys = Object.keys(frame).sort().join(",")
+    if (
+      !heartbeat ||
+      frame.protocolVersion !== 1 ||
+      frame.connectionId !== heartbeat.connectionId ||
+      frame.policyVersion !== 1
+    ) {
+      return ws.close(1008, "invalid_heartbeat")
+    }
+    if (frame.type === "heartbeat-check") {
+      if (keys !== "connectionId,policyVersion,protocolVersion,type") return ws.close(1008, "invalid_heartbeat")
+      // The service re-sends the probe in flight (same sequence) or starts a new one.
+      if (heartbeat.pending !== undefined) heartbeat.sequence -= 1
+      this.ping(ws)
+      return
+    }
+    if (
+      frame.type !== "heartbeat-pong" ||
+      keys !== "connectionId,policyVersion,protocolVersion,sequence,type" ||
+      frame.sequence !== heartbeat.pending
+    ) {
+      return ws.close(1008, "invalid_heartbeat")
+    }
+    heartbeat.pending = undefined
+    if (ws === this.control) this.renewals.push(frame.sequence as number)
+    ws.send(JSON.stringify({ ...frame, type: "heartbeat-confirmed" }))
   }
 
   private wsOpen(ws: Socket): void {
     if (ws.data.path === "/api/connect/control") {
       this.control = ws
       this.epoch += 1
+      this.heartbeatReady(ws)
       ws.send(
         JSON.stringify({
           type: "ready",
@@ -394,11 +507,9 @@ export class FakeConnect {
   private wsMessage(ws: Socket, message: string): void {
     const frame = JSON.parse(message) as Record<string, unknown>
     this.frames.push({ path: ws.data.path, frame })
-    if (ws.data.path === "/api/connect/control") {
-      if (frame.type === "heartbeat")
-        ws.send(JSON.stringify({ protocolVersion: 1, type: "pong", connectionEpoch: this.epoch }))
-      return
-    }
+    if (typeof frame.type === "string" && frame.type.startsWith("heartbeat-")) return this.heartbeatFrame(ws, frame)
+    // Anything else on control is not part of the contract (the retired client heartbeat included).
+    if (ws.data.path === "/api/connect/control") return ws.close(1008, "invalid_request")
     if (frame.type === "attach") {
       this.lanes.set(ws.data.lane!, ws)
       const binding = this.bindings.get(frame.bindingId as string)
@@ -409,7 +520,7 @@ export class FakeConnect {
       const attach = this.lastAttach(ws.data.path)
       ws.send(
         JSON.stringify({
-          protocolVersion: 4,
+          protocolVersion: 1,
           type: "fence-confirmed",
           bindingId: attach.bindingId,
           targetKind: "cli",
@@ -427,9 +538,10 @@ export class FakeConnect {
     }
     if (frame.type === "fence-ack" && this.sendTransportReady) {
       const attach = this.lastAttach(ws.data.path)
+      if (!this.heartbeats.has(ws)) this.heartbeatReady(ws)
       ws.send(
         JSON.stringify({
-          protocolVersion: 4,
+          protocolVersion: 1,
           type: "transport-ready",
           channelId: crypto.randomUUID(),
           bindingId: attach.bindingId,
@@ -442,7 +554,6 @@ export class FakeConnect {
         }),
       )
     }
-    if (frame.type === "ping") ws.send(JSON.stringify({ protocolVersion: 4, type: "pong" }))
   }
 
   private lastAttach(path: string): Record<string, unknown> {
@@ -478,7 +589,7 @@ export class FakeConnect {
     this.fenceStates.set(lane, state)
     this.lanes.get(lane)!.send(
       JSON.stringify({
-        protocolVersion: 4,
+        protocolVersion: 1,
         type: "fence",
         bindingId: attach.bindingId,
         targetKind: "cli",

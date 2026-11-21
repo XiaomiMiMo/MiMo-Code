@@ -54,14 +54,17 @@ export async function bodyDigest(body: Json | undefined): Promise<string> {
 export type ProofInput = {
   key: DeviceKey
   origin: string
-  accountSessionId: string
+  /** The login instance Connect attributed the challenge to (xiaomi-account §3.3). */
+  loginInstanceId: string
   environment: string
   method: "GET" | "POST" | "PUT"
   path: string
   body: Json | undefined
   nonce: string
-  /** Seconds since epoch. */
-  now: number
+  /** Service time the challenge was issued at, seconds since epoch. */
+  issuedAt: number
+  /** The challenge's own expiry, seconds since epoch; the proof never outlives it. */
+  notAfter: number
 }
 
 /** Lifetime of a proof. Connect accepts at most 60 s between iat and exp. */
@@ -71,10 +74,10 @@ export async function deviceProof(input: ProofInput): Promise<string> {
   const header = { alg: "ES256", typ: "mimo-device-proof+jwt", jwk: input.key.jwk }
   const claims = {
     aud: input.origin,
-    iat: input.now,
-    exp: input.now + PROOF_SECONDS,
+    iat: input.issuedAt,
+    exp: Math.min(input.issuedAt + PROOF_SECONDS, input.notAfter),
     nonce: input.nonce,
-    accountSessionId: input.accountSessionId,
+    loginInstanceId: input.loginInstanceId,
     environment: input.environment,
     method: input.method,
     path: input.path,

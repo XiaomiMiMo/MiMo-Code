@@ -51,7 +51,7 @@ async function setup(options: { canSend?: boolean } = {}) {
     request(operation: string, fields: Record<string, Json> = {}) {
       const ids = { requestId: crypto.randomUUID(), dispatchId: crypto.randomUUID() }
       dispatcher.handle({
-        protocolVersion: 4,
+        protocolVersion: 1,
         type: "request",
         operation,
         bindingId: scope.bindingId,
@@ -94,7 +94,7 @@ describe("dispatcher", () => {
     await s.until(() => s.sent.length === 1)
     const { lane, frame } = s.sent[0]
     expect(lane).toBe("command")
-    expect(frame).toMatchObject({ ...wire, ...ids, protocolVersion: 4, type: "sessions-page", nextCursor: null })
+    expect(frame).toMatchObject({ ...wire, ...ids, protocolVersion: 1, type: "sessions-page", nextCursor: null })
     expect(frame.canSend).toBeUndefined()
     expect(Object.keys(frame).sort()).toEqual([...TARGET_KEYS, "entries", "nextCursor", "revision", "type"].sort())
     expect(frame.entries).toEqual([
@@ -242,7 +242,7 @@ describe("dispatcher", () => {
     await using s = await setup()
     const reading = s.request("subscribe-session", { sessionId: "ses_1" })
     await s.until(() => s.sent.length === 2)
-    s.dispatcher.handle({ protocolVersion: 4, type: "subscription-closed", ...wire, ...reading, code: "cancelled" })
+    s.dispatcher.handle({ protocolVersion: 1, type: "subscription-closed", ...wire, ...reading, code: "cancelled" })
     s.backend.snapshots.set("ses_1", { ...s.backend.snapshots.get("ses_1")!, title: "Renamed" })
     s.backend.changed("ses_1")
     await Bun.sleep(260)
@@ -262,7 +262,7 @@ describe("dispatcher", () => {
     const messageId = s.sent[0].frame.messageId
     expect(s.backend.submits).toEqual([{ sessionId: "ses_1", messageId, text: "do it" }])
     s.dispatcher.handle({
-      protocolVersion: 4,
+      protocolVersion: 1,
       type: "request",
       operation: "submission-status",
       ...wire,

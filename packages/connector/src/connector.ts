@@ -12,11 +12,12 @@ import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { ControlChannel } from "./control"
 import { DeviceGroup, type GroupContext } from "./group"
+import { HeartbeatRuntime } from "./heartbeat"
 import { ConnectError, ConnectHttp, type AccountSession, type ClientInfo } from "./http"
 import { InstanceLock } from "./lock"
 import { generateDeviceKey, importDeviceKey, type DeviceKey, type PrivateJwk } from "./proof"
 import type { AgentBackend, SecretStore } from "./ports"
-import { bunDial, type Dial } from "./socket"
+import { wsDial, type Dial } from "./socket"
 import { StateFile, type Consent, type ConnectorState } from "./state"
 import { Submissions } from "./submissions"
 
@@ -27,7 +28,7 @@ const RECONNECT_MIN_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 /** A generation that stayed up this long resets the reconnect backoff. */
 const STABLE_MS = 60_000
-/** How often the account is read again, so short-lived access tokens are renewed in time. */
+/** How often the account is read again, so a newer credential of the same sign-in is picked up. */
 const ACCOUNT_CHECK_MS = 30_000
 const READ_ONLY: Consent["scopes"] = ["sessions:list", "sessions:read"]
 const READ_SEND: Consent["scopes"] = ["sessions:list", "sessions:read", "sessions:send"]
@@ -41,6 +42,8 @@ export type UnavailableReason =
   | "secure_storage_unavailable"
   | "not_signed_in"
   | "account_rejected"
+  /** The account is not on the service's admission list (internal testing). */
+  | "not_admitted"
   | "service_without_cli"
   | "state_unreadable"
   | "registration_conflict"
@@ -92,6 +95,8 @@ type Runtime = {
   http: ConnectHttp
   api: ConnectApi
   deviceId: string
+  /** The single heartbeat owner of every socket of this runtime. */
+  heartbeats: HeartbeatRuntime
 }
 
 export class Connector {
@@ -122,7 +127,7 @@ export class Connector {
   constructor(private readonly options: ConnectorOptions) {
     this.state = new StateFile(options.stateFile, options.secrets, options.clock)
     this.submissions = new Submissions(options.backend, this.state, options.clock)
-    this.dial = options.dial ?? bunDial
+    this.dial = options.dial ?? wsDial
     this.clock = options.clock ?? Date.now
     this.lock = new InstanceLock(`${options.stateFile}.lock`)
   }
@@ -171,7 +176,7 @@ export class Connector {
     await this.connect(session)
   }
 
-  /** Keep the runtime on a current access token; a changed or ended sign-in starts over. */
+  /** Keep the runtime on the current credential; a changed or ended sign-in starts over. */
   private watchAccount(runtime: Runtime, session: number): void {
     clearInterval(this.accountTimer)
     this.accountTimer = setInterval(async () => {
@@ -182,7 +187,7 @@ export class Connector {
         next.subject === runtime.account.subject &&
         next.environment === runtime.account.environment &&
         next.origin === runtime.account.origin &&
-        next.accountSessionId === runtime.account.accountSessionId
+        next.userId === runtime.account.userId
       if (same) runtime.account = next
       else if (this.generation) this.lost()
     }, ACCOUNT_CHECK_MS)
@@ -296,6 +301,7 @@ export class Connector {
         })
       }
     } catch (error) {
+      if (error instanceof ConnectError && error.code === "allowlist_denied") return "not_admitted"
       if (error instanceof ConnectError && (error.status === 401 || error.status === 403)) return "account_rejected"
       // This key is already registered for the account under another name.
       if (error instanceof ConnectError && error.code === "conflict") return "registration_conflict"
@@ -311,6 +317,7 @@ export class Connector {
       http,
       api,
       deviceId,
+      heartbeats: new HeartbeatRuntime(),
     }
   }
 
@@ -335,7 +342,7 @@ export class Connector {
     const runtime = this.runtime
     if (!this.enabled || !runtime || session !== this.session) return
     const generation: Generation = { control: undefined!, epoch: 0, startedAt: this.clock(), ended: false }
-    generation.control = new ControlChannel(runtime.http, () => runtime.account.origin, this.dial, {
+    generation.control = new ControlChannel(runtime.http, () => runtime.account.origin, this.dial, runtime.heartbeats, {
       onClosed: () => {
         if (this.generation === generation) this.lost()
       },
@@ -584,6 +591,7 @@ export class Connector {
       http: runtime.http,
       origin: () => runtime.account.origin,
       dial: this.dial,
+      heartbeats: runtime.heartbeats,
       backend: this.options.backend,
       submissions: this.submissions,
       state: this.state,

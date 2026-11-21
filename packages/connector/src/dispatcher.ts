@@ -166,7 +166,7 @@ export class Dispatcher {
   private target(frame: Record<string, unknown>): Target | undefined {
     const { bindingId, deviceGroupId, connectionEpoch, grantVersion } = this.scope
     if (
-      frame.protocolVersion !== 4 ||
+      frame.protocolVersion !== 1 ||
       frame.bindingId !== bindingId ||
       frame.deviceGroupId !== deviceGroupId ||
       frame.connectionEpoch !== connectionEpoch ||
@@ -179,7 +179,7 @@ export class Dispatcher {
       return undefined
     }
     const target: Target = {
-      protocolVersion: 4,
+      protocolVersion: 1,
       bindingId,
       connectionEpoch,
       deviceGroupId,

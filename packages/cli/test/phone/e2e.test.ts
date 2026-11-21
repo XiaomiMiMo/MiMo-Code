@@ -111,7 +111,7 @@ describe("phone connection end to end", () => {
                 (f) => f.path.endsWith("/command") && f.frame.type === "attach",
               )!.frame
               const target = {
-                protocolVersion: 4,
+                protocolVersion: 1,
                 bindingId: attach.bindingId,
                 connectionEpoch: attach.connectionEpoch,
                 deviceGroupId: attach.deviceGroupId,

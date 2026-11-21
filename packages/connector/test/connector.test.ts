@@ -87,6 +87,13 @@ describe("connector", () => {
     expect(s.connector.status).toEqual({ state: "unavailable", reason: "service_without_cli" })
   })
 
+  test("an account outside the admission list is reported as such, not as a rejected sign-in", async () => {
+    await using s = await setup()
+    s.service.admitted = false
+    await s.connector.start()
+    expect(s.connector.status).toEqual({ state: "unavailable", reason: "not_admitted" })
+  })
+
   test("start registers once, goes online and keeps the key in the protected store", async () => {
     await using s = await setup()
     await s.connector.start()
@@ -136,7 +143,7 @@ describe("connector", () => {
     // A forwarded phone request is answered on the command lane.
     const attach = s.service.frames.findLast((f) => f.path.endsWith("/command") && f.frame.type === "attach")!.frame
     const request = {
-      protocolVersion: 4,
+      protocolVersion: 1,
       type: "request",
       operation: "sessions-list",
       bindingId,

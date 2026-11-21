@@ -13,14 +13,22 @@ import { deviceProof, keyThumbprint, type DeviceKey } from "./proof"
 export const PROFILE = "cli-connector-v1"
 const PROFILE_HEADER = "Mimo-Connect-Profile"
 
-/** The account the CLI is signed in as (formal login or an isolated debug identity). */
+/**
+ * The account the CLI is signed in as: a Xiaomi Passport credential (`serviceToken`
+ * and plain `userId`, xiaomi-account §3.2) or an isolated debug identity, which is a
+ * bare bearer issued by a non-production Connect service.
+ */
 export type AccountSession = {
   /** Connect public origin, e.g. `https://connect.example`; also the proof audience. */
   origin: string
   environment: string
-  accountSessionId: string
-  accessToken: string
+  /** `Authorization: Bearer` value: the Passport serviceToken or the debug access token. */
+  serviceToken: string
+  /** `Mimo-Passport-User`; absent only for a debug identity. */
+  userId?: string
 }
+
+export const PASSPORT_USER_HEADER = "Mimo-Passport-User"
 
 export type ClientInfo = {
   /** Version of the running CLI; sent as X-Client-Version only when it is a release semver. */
@@ -30,7 +38,7 @@ export type ClientInfo = {
 
 export class ConnectError extends Error {
   constructor(
-    /** Service error code, or a client-side kind: `protocol`, `network`, `cooldown`. */
+    /** Service error code, or a client-side kind: `protocol`, `network`, `cooldown`, `handshake`. */
     readonly code: string,
     readonly status?: number,
     /** Milliseconds the service asked us to wait (429/503 and cooldown). */
@@ -56,7 +64,6 @@ export class ConnectError extends Error {
 export type HttpRequest = {
   method: "GET" | "POST" | "PUT"
   path: string
-  version: "1.0" | "4.0"
   body?: Json
   /** Only the bindings list takes a query; it is not part of the signed path. */
   query?: Record<string, string>
@@ -72,32 +79,27 @@ export type HttpOptions = {
   deviceId: () => string | undefined
   client: ClientInfo
   fetch?: typeof fetch
-  /** Seconds since epoch for proof iat; injectable for tests. */
-  now?: () => number
   /** Milliseconds clock for cooldowns. */
   clock?: () => number
 }
 
+export const CONTRACT_VERSION = "1.0"
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const LOGIN_INSTANCE = /^[0-9a-f]{32}$/
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/
+/** A challenge never lives longer than this (plus the service's small overshoot). */
+const MAX_CHALLENGE_MS = 61_000
 /** Connect envelopes are bounded; a larger body is not a Connect response. */
 const MAX_RESPONSE_BYTES = 65536
 
 export class ConnectHttp {
   private cooldownUntil = 0
-  /**
-   * Service clock minus local clock, from the last response's Date header.
-   * Connect accepts a proof issued at most 1 s ahead of its own clock, so a
-   * local clock running fast would otherwise get every proof rejected.
-   */
-  private serverOffsetMs = 0
   private readonly fetch: typeof fetch
-  private readonly now: () => number
   private readonly clock: () => number
 
   constructor(private readonly options: HttpOptions) {
     this.fetch = options.fetch ?? fetch
-    this.now = options.now ?? (() => Math.floor((this.clock() + this.serverOffsetMs) / 1000))
     this.clock = options.clock ?? Date.now
   }
 
@@ -111,7 +113,7 @@ export class ConnectHttp {
     if (wait > 0) throw new ConnectError("cooldown", undefined, wait)
     const account = this.options.account()
     const headers = await this.headers(account, input)
-    headers.set("Mimo-Connect-Version", input.version)
+    headers.set("Mimo-Connect-Version", CONTRACT_VERSION)
     if (input.body !== undefined) headers.set("Content-Type", "application/json")
     const query = input.query ? `?${new URLSearchParams(input.query).toString()}` : ""
     const response = await this.send(`${account.origin}${input.path}${query}`, {
@@ -123,11 +125,17 @@ export class ConnectHttp {
     return this.unwrap(response, input, headers.get("Mimo-Request-Id")!)
   }
 
-  /** Headers for a WSS handshake: bearer, proof and device id; never version or profile. */
-  async handshakeHeaders(path: string): Promise<Headers> {
+  /**
+   * Headers for a WSS handshake: credential, proof, device id and request id, plus
+   * the mechanisms to negotiate; never version or profile. The 101 must echo the
+   * request id and every mechanism (see `DialInput.echo`).
+   */
+  async handshakeHeaders(path: string, mechanisms: Record<string, string>): Promise<Headers> {
     const wait = this.cooldownRemainingMs()
     if (wait > 0) throw new ConnectError("cooldown", undefined, wait)
-    return this.headers(this.options.account(), { method: "GET", path, version: "1.0", profile: false, proof: true })
+    const headers = await this.headers(this.options.account(), { method: "GET", path, profile: false, proof: true })
+    for (const [name, value] of Object.entries(mechanisms)) headers.set(name, value)
+    return headers
   }
 
   /** Record a Retry-After the service sent on a rejected WSS upgrade. */
@@ -140,27 +148,29 @@ export class ConnectHttp {
 
   private async headers(account: AccountSession, input: HttpRequest): Promise<Headers> {
     const headers = new Headers({
-      Authorization: `Bearer ${account.accessToken}`,
+      Authorization: `Bearer ${account.serviceToken}`,
       "Mimo-Request-Id": crypto.randomUUID(),
       "X-Client-Platform": this.options.client.platform,
     })
+    if (account.userId !== undefined) headers.set(PASSPORT_USER_HEADER, account.userId)
     // Optional and diagnostic; a development build without a release version leaves it out.
     if (SEMVER.test(this.options.client.version)) headers.set("X-Client-Version", this.options.client.version)
     if (input.profile) headers.set(PROFILE_HEADER, PROFILE)
     if (!input.proof) return headers
-    const nonce = await this.challenge(account, input.method, input.path)
+    const challenge = await this.challenge(account, input.method, input.path)
     headers.set(
       "X-Device-Proof",
       await deviceProof({
         key: this.options.key,
         origin: account.origin,
-        accountSessionId: account.accountSessionId,
+        loginInstanceId: challenge.loginInstanceId,
         environment: account.environment,
         method: input.method,
         path: input.path,
         body: input.body,
-        nonce,
-        now: this.now(),
+        nonce: challenge.nonce,
+        issuedAt: challenge.issuedAt,
+        notAfter: challenge.notAfter,
       }),
     )
     const deviceId = this.options.deviceId()
@@ -168,37 +178,45 @@ export class ConnectHttp {
     return headers
   }
 
-  private async challenge(account: AccountSession, method: string, path: string): Promise<string> {
+  /**
+   * One device challenge, bound to this login, key, method and path. The proof is
+   * issued at the service time the challenge carries: the local clock never stands
+   * in for the service clock, which accepts a proof at most 1 s ahead of its own.
+   */
+  private async challenge(account: AccountSession, method: string, path: string) {
     const data = await this.request({
       method: "POST",
       path: "/api/connect/device-challenges",
-      version: "1.0",
       body: { method, path, keyThumbprint: await keyThumbprint(this.options.key.jwk) },
       profile: false,
       proof: false,
     })
+    const keys = Object.keys(data).sort().join(",")
+    const serverTime = typeof data.serverTime === "string" && ISO.test(data.serverTime) ? Date.parse(data.serverTime) : NaN
+    const expiresAt = typeof data.expiresAt === "string" && ISO.test(data.expiresAt) ? Date.parse(data.expiresAt) : NaN
     if (
+      keys !== "environment,expiresAt,loginInstanceId,nonce,serverTime" ||
       typeof data.nonce !== "string" ||
       !UUID.test(data.nonce) ||
-      data.accountSessionId !== account.accountSessionId ||
-      data.environment !== account.environment
+      typeof data.loginInstanceId !== "string" ||
+      !LOGIN_INSTANCE.test(data.loginInstanceId) ||
+      data.environment !== account.environment ||
+      !(expiresAt - serverTime > 0 && expiresAt - serverTime <= MAX_CHALLENGE_MS)
     ) {
       throw new ConnectError("protocol")
     }
-    return data.nonce
+    const issuedAt = Math.floor(serverTime / 1000)
+    const notAfter = Math.floor(expiresAt / 1000)
+    if (notAfter <= issuedAt) throw new ConnectError("protocol")
+    return { nonce: data.nonce, loginInstanceId: data.loginInstanceId, issuedAt, notAfter }
   }
 
   private async send(url: string, init: RequestInit): Promise<Response> {
-    let response: Response
     try {
-      response = await this.fetch(url, init)
+      return await this.fetch(url, init)
     } catch {
       throw new ConnectError("network")
     }
-    // Date has whole seconds and is truncated, so the estimate never runs ahead of the service.
-    const date = Date.parse(response.headers.get("Date") ?? "")
-    if (Number.isFinite(date)) this.serverOffsetMs = date - this.clock()
-    return response
   }
 
   private async unwrap(response: Response, input: HttpRequest, sentId: string): Promise<Record<string, unknown>> {
@@ -221,7 +239,7 @@ export class ConnectHttp {
       const retry = response.status === 429 || response.status === 503 ? this.cooldownRemainingMs() : undefined
       throw new ConnectError(code, response.status, retry, sentId)
     }
-    if (envelope.contractVersion !== input.version || response.headers.get("Mimo-Connect-Version") !== input.version) {
+    if (envelope.contractVersion !== CONTRACT_VERSION || response.headers.get("Mimo-Connect-Version") !== CONTRACT_VERSION) {
       throw new ConnectError("protocol", response.status)
     }
     // A profile request is answered in the same profile; a plain request never is.

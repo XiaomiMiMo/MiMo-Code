@@ -1,5 +1,6 @@
 export * from "./api"
 export * from "./control"
+export * from "./heartbeat"
 export * from "./http"
 export * from "./json"
 export * from "./lane"

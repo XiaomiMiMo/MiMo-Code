@@ -1,31 +1,30 @@
 // The account the phone connector signs in with.
 //
-// MiMo Code has no Connect account sign-in yet, so the connector runs with an
-// isolated debug identity issued by a non-production Connect service
-// (`identity issue`, file `cli.json`). The file is named explicitly by
-// MIMOCODE_PHONE_DEBUG_IDENTITY; nothing is searched for or guessed.
+// MiMo Code has no Xiaomi account sign-in of its own yet. Until it has, the
+// connector takes one of two explicitly named files, never searched for:
+//  - MIMOCODE_PHONE_PASSPORT_CREDENTIAL: the Passport login credential of the
+//    MiMo service (serviceToken and plain userId, the pair a signed-in Desktop
+//    holds). It is imported once into protected storage and used from there.
+//  - MIMOCODE_PHONE_DEBUG_IDENTITY: an isolated debug identity issued by a
+//    non-production Connect service (`IdentityBootstrap issue`, file `cli.json`).
 
-import type { ConnectorAccount, StoredSession } from "@mimo-ai/connector"
+import { PassportCredential, type ConnectorAccount } from "@mimo-ai/connector"
 import { readFile } from "node:fs/promises"
 import z from "zod"
 
 export const DEBUG_IDENTITY_ENV = "MIMOCODE_PHONE_DEBUG_IDENTITY"
-/**
- * A signed-in account session handed over from the account service's sign-in
- * (until MiMo Code signs in by itself). Imported once into protected storage;
- * the stored copy is renewed from then on and the file is no longer read.
- */
-export const ACCOUNT_SESSION_ENV = "MIMOCODE_PHONE_ACCOUNT_SESSION"
+export const PASSPORT_CREDENTIAL_ENV = "MIMOCODE_PHONE_PASSPORT_CREDENTIAL"
 
 const DebugIdentity = z.object({
   version: z.literal(1),
   mode: z.literal("isolated-debug"),
   role: z.literal("cli"),
   origin: z.string().url(),
-  environment: z.string().min(1),
+  /** Debug identities only exist on test services. */
+  environment: z.enum(["china-test", "global-test"]),
   subject: z.string().min(1),
-  accountSessionId: z.string().min(1),
-  accessToken: z.string().min(1),
+  loginInstanceId: z.string().regex(/^[0-9a-f]{32}$/),
+  accessToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   /** Epoch milliseconds. */
   issuedAt: z.number().int().positive(),
   expiresAt: z.number().int().positive(),
@@ -37,58 +36,42 @@ export async function loadDebugIdentity(
   file: string | undefined,
   now: () => number = Date.now,
 ): Promise<ConnectorAccount | IdentityProblem> {
-  if (!file) return "missing"
-  let raw: string
-  try {
-    raw = await readFile(file, "utf8")
-  } catch {
-    return "unreadable"
-  }
-  let parsed: z.infer<typeof DebugIdentity>
-  try {
-    parsed = DebugIdentity.parse(JSON.parse(raw))
-  } catch {
-    return "invalid"
-  }
+  const parsed = await readJson(file, DebugIdentity)
+  if (typeof parsed === "string") return parsed
   if (parsed.expiresAt <= now()) return "expired"
   const origin = new URL(parsed.origin)
   // The origin is the proof audience: exactly scheme, host and port, nothing else.
   if (origin.origin !== parsed.origin) return "invalid"
   const loopback = origin.hostname === "127.0.0.1" || origin.hostname === "localhost"
   if (origin.protocol !== "https:" && !(origin.protocol === "http:" && loopback)) return "invalid"
+  // A debug identity is a bare bearer: no Passport user header.
   return {
     origin: origin.origin,
     environment: parsed.environment,
     subject: parsed.subject,
-    accountSessionId: parsed.accountSessionId,
-    accessToken: parsed.accessToken,
+    serviceToken: parsed.accessToken,
   }
 }
 
-const Handoff = z.object({
-  accountOrigin: z.string().url(),
+const CredentialFile = z.strictObject({
   connectOrigin: z.string().url(),
-  session: z.object({
-    accountSessionId: z.string(),
-    subject: z.string().min(1),
-    environment: z.string().min(1),
-    accessExpiresAt: z.string(),
-    refreshExpiresAt: z.string(),
-    renewAfter: z.string().optional(),
-  }),
-  credentials: z.object({
-    tokenType: z.literal("Bearer"),
-    accessToken: z.string(),
-    refreshToken: z.string(),
-    logoutToken: z.string().optional(),
-  }),
+  environment: z.string(),
+  userId: z.string(),
+  serviceToken: z.string(),
 })
 
-/** Read a handed-over account session; origins must be plain HTTPS origins. */
-export async function readAccountSession(
-  file: string | undefined,
-  now: () => number = Date.now,
-): Promise<StoredSession | IdentityProblem> {
+/** Read a Passport credential file; the origin must be a plain HTTPS origin. */
+export async function readPassportCredential(file: string | undefined): Promise<PassportCredential | IdentityProblem> {
+  const parsed = await readJson(file, CredentialFile)
+  if (typeof parsed === "string") return parsed
+  const url = new URL(parsed.connectOrigin)
+  if (url.protocol !== "https:" || url.origin !== parsed.connectOrigin.replace(/\/$/, "")) return "invalid"
+  // The connector's own schema checks the values (header-safe, known environment).
+  const credential = PassportCredential.safeParse({ version: 1, ...parsed, connectOrigin: url.origin })
+  return credential.success ? credential.data : "invalid"
+}
+
+async function readJson<T>(file: string | undefined, schema: z.ZodType<T>): Promise<T | IdentityProblem> {
   if (!file) return "missing"
   let raw: string
   try {
@@ -96,29 +79,9 @@ export async function readAccountSession(
   } catch {
     return "unreadable"
   }
-  let handoff: z.infer<typeof Handoff>
   try {
-    handoff = Handoff.parse(JSON.parse(raw))
+    return schema.parse(JSON.parse(raw))
   } catch {
     return "invalid"
-  }
-  for (const origin of [handoff.accountOrigin, handoff.connectOrigin]) {
-    const url = new URL(origin)
-    if (url.protocol !== "https:" || url.origin !== origin.replace(/\/$/, "")) return "invalid"
-  }
-  if (Date.parse(handoff.session.refreshExpiresAt) <= now()) return "expired"
-  return {
-    version: 1,
-    accountOrigin: new URL(handoff.accountOrigin).origin,
-    connectOrigin: new URL(handoff.connectOrigin).origin,
-    environment: handoff.session.environment,
-    subject: handoff.session.subject,
-    accountSessionId: handoff.session.accountSessionId,
-    accessToken: handoff.credentials.accessToken,
-    accessExpiresAt: handoff.session.accessExpiresAt,
-    renewAfter: handoff.session.renewAfter,
-    refreshToken: handoff.credentials.refreshToken,
-    refreshExpiresAt: handoff.session.refreshExpiresAt,
-    logoutToken: handoff.credentials.logoutToken,
   }
 }
