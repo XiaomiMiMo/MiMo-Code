@@ -3296,12 +3296,6 @@ export type GlobalSession = {
   parentID?: string
   contextFrom?: string
   contextWatermark?: string
-  summary?: {
-    additions: number
-    deletions: number
-    files: number
-    diffs?: Array<SnapshotFileDiff>
-  }
   title: string
   titleSource: "fallback" | "generated" | "user"
   titleRevision: number
@@ -3312,17 +3306,10 @@ export type GlobalSession = {
     compacting?: number
     archived?: number
   }
-  permission?: PermissionRuleset
-  prompt?: {
-    system?: string
-    systemMode?: "append" | "replace-agent"
-    harness: "auto" | "codex" | "default"
-  }
-  revert?: {
-    messageID: string
-    partID?: string
-    snapshot?: string
-    diff?: string
+  summary?: {
+    additions: number
+    deletions: number
+    files: number
   }
   project: ProjectSummary | null
 }
