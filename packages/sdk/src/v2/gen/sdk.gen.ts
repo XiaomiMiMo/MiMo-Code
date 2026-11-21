@@ -1039,7 +1039,7 @@ export class Session extends HeyApiClient {
       search?: string
       limit?: number
       archived?: boolean
-      view?: "full" | "summary"
+      view?: "full" | "brief"
     },
     options?: Options<never, ThrowOnError>,
   ) {

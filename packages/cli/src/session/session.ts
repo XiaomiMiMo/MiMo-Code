@@ -59,10 +59,10 @@ export function isDefaultTitle(title: string) {
 
 type SessionRow = typeof SessionTable.$inferSelect
 
-// Columns of the "summary" list view. It leaves out the per-session JSON payloads:
+// Columns of the "brief" list view. It leaves out the per-session JSON payloads:
 // `prompt` holds the full system prompt (tens of KB per session), and listing every
 // session with it blocks this process for the whole read and serialization.
-const listColumns = {
+const briefColumns = {
   id: SessionTable.id,
   slug: SessionTable.slug,
   project_id: SessionTable.project_id,
@@ -83,9 +83,9 @@ const listColumns = {
   time_compacting: SessionTable.time_compacting,
   time_archived: SessionTable.time_archived,
 }
-type ListRow = Pick<SessionRow, keyof typeof listColumns>
+type BriefRow = Pick<SessionRow, keyof typeof briefColumns>
 
-function fromListRow(row: ListRow) {
+function fromBriefRow(row: BriefRow) {
   const summary =
     row.summary_additions !== null || row.summary_deletions !== null || row.summary_files !== null
       ? {
@@ -118,7 +118,7 @@ function fromListRow(row: ListRow) {
 }
 
 export function fromRow(row: SessionRow): Info {
-  const base = fromListRow(row)
+  const base = fromBriefRow(row)
   const revert = row.revert ?? undefined
   return {
     ...base,
@@ -1187,8 +1187,8 @@ export function* listGlobal(input?: {
   search?: string
   limit?: number
   archived?: boolean
-  // "summary" omits `prompt`, `permission`, `revert` and `summary.diffs`; the default stays full.
-  view?: "full" | "summary"
+  // "brief" omits `prompt`, `permission`, `revert` and `summary.diffs`; the default stays full.
+  view?: "full" | "brief"
 }) {
   const conditions: SQL[] = []
 
@@ -1216,8 +1216,8 @@ export function* listGlobal(input?: {
   const order = [desc(SessionTable.time_updated), desc(SessionTable.id)]
 
   const sessions: Info[] = Database.use((db) =>
-    input?.view === "summary"
-      ? db.select(listColumns).from(SessionTable).where(where).orderBy(...order).limit(limit).all().map(fromListRow)
+    input?.view === "brief"
+      ? db.select(briefColumns).from(SessionTable).where(where).orderBy(...order).limit(limit).all().map(fromBriefRow)
       : db.select().from(SessionTable).where(where).orderBy(...order).limit(limit).all().map(fromRow),
   )
 

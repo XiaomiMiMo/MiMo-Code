@@ -114,7 +114,7 @@ describe("session.listGlobal", () => {
   })
 
   // Desktop clients poll this list; per-session system prompts made the full view tens of MB.
-  test("summary view omits per-session prompt, permission and diffs; the default view keeps them", async () => {
+  test("brief view omits per-session prompt, permission and diffs; the default view keeps them", async () => {
     await using tmp = await tmpdir({ git: true })
     const system = "s".repeat(64 * 1024)
     const patch = "p".repeat(16 * 1024)
@@ -132,7 +132,7 @@ describe("session.listGlobal", () => {
         return created
       },
     })
-    const find = (view?: "full" | "summary") =>
+    const find = (view?: "full" | "brief") =>
       [...svc.listGlobal({ directory: tmp.path, limit: 10, view })].find((entry) => entry.id === session.id)
 
     const full = await Instance.provide({ directory: tmp.path, fn: () => svc.get(session.id) })
@@ -143,7 +143,7 @@ describe("session.listGlobal", () => {
       expect(item).toEqual({ ...full, project: item!.project })
     }
 
-    const item = find("summary")
+    const item = find("brief")
     expect(item).toBeDefined()
     expect(item).not.toHaveProperty("prompt")
     expect(item).not.toHaveProperty("permission")
@@ -157,7 +157,7 @@ describe("session.listGlobal", () => {
     expect(SessionNs.GlobalInfo.safeParse(item).success).toBe(true)
   })
 
-  test("route returns full sessions by default and summaries for view=summary", async () => {
+  test("route returns full sessions by default and brief sessions for view=brief", async () => {
     await using tmp = await tmpdir({ git: true })
     const system = "s".repeat(64 * 1024)
     const session = await Instance.provide({
@@ -179,9 +179,9 @@ describe("session.listGlobal", () => {
 
     expect((await read(""))?.prompt?.system).toBe(system)
     expect((await read("&view=full"))?.prompt?.system).toBe(system)
-    const summary = await read("&view=summary")
-    expect(summary).toBeDefined()
-    expect(summary).not.toHaveProperty("prompt")
+    const brief = await read("&view=brief")
+    expect(brief).toBeDefined()
+    expect(brief).not.toHaveProperty("prompt")
     expect((await request("&view=compact")).status).toBe(400)
   })
 })

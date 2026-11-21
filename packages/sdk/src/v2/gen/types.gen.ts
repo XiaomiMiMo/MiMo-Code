@@ -4875,9 +4875,9 @@ export type ExperimentalSessionListData = {
      */
     archived?: boolean
     /**
-     * Response detail (default full). `summary` omits prompt, permission, revert and summary.diffs from every session
+     * Response detail (default full). `brief` omits prompt, permission, revert and summary.diffs from every session
      */
-    view?: "full" | "summary"
+    view?: "full" | "brief"
   }
   url: "/experimental/session"
 }
