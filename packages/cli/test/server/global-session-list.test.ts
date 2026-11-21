@@ -4,6 +4,7 @@ import z from "zod"
 import { Instance } from "../../src/project/instance"
 import { Project } from "../../src/project"
 import { Session as SessionNs } from "../../src/session"
+import { Server } from "../../src/server/server"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 
@@ -113,18 +114,16 @@ describe("session.listGlobal", () => {
   })
 
   // [TP-CC-R9-05] Desktop polls this list on focus; per-session prompts made it tens of MB.
-  test("lists summaries without per-session prompt, permission or diffs", async () => {
+  test("summary view omits per-session prompt, permission and diffs; the default view keeps them", async () => {
     await using tmp = await tmpdir({ git: true })
     const system = "s".repeat(64 * 1024)
     const patch = "p".repeat(16 * 1024)
+    const permission = [{ permission: "bash", pattern: "*", action: "allow" as const }]
 
     const session = await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const created = await svc.create({
-          title: "heavy-session",
-          permission: [{ permission: "bash", pattern: "*", action: "allow" }],
-        })
+        const created = await svc.create({ title: "heavy-session", permission })
         await svc.resolvePrompt({ sessionID: created.id, fallback: { system } })
         await svc.setSummary({
           sessionID: created.id,
@@ -133,8 +132,18 @@ describe("session.listGlobal", () => {
         return created
       },
     })
+    const find = (view?: "full" | "summary") =>
+      [...svc.listGlobal({ directory: tmp.path, limit: 10, view })].find((entry) => entry.id === session.id)
 
-    const item = [...svc.listGlobal({ directory: tmp.path, limit: 10 })].find((entry) => entry.id === session.id)
+    const full = await Instance.provide({ directory: tmp.path, fn: () => svc.get(session.id) })
+    for (const item of [find(), find("full")]) {
+      expect(item?.prompt?.system).toBe(system)
+      expect(item?.permission).toEqual(permission)
+      expect(item?.summary?.diffs?.[0]?.patch).toBe(patch)
+      expect(item).toEqual({ ...full, project: item!.project })
+    }
+
+    const item = find("summary")
     expect(item).toBeDefined()
     expect(item).not.toHaveProperty("prompt")
     expect(item).not.toHaveProperty("permission")
@@ -143,12 +152,37 @@ describe("session.listGlobal", () => {
     expect(item?.title).toBe("heavy-session")
     expect(item?.directory).toBe(session.directory)
     expect(item?.time.created).toBe(session.time.created)
+    expect(item?.project?.id).toBe(session.projectID)
     expect(JSON.stringify(item).length).toBeLessThan(2048)
     expect(SessionNs.GlobalInfo.safeParse(item).success).toBe(true)
+  })
 
-    const full = await Instance.provide({ directory: tmp.path, fn: () => svc.get(session.id) })
-    expect(full.prompt?.system).toBe(system)
-    expect(full.permission).toEqual([{ permission: "bash", pattern: "*", action: "allow" }])
-    expect(full.summary?.diffs?.[0]?.patch).toBe(patch)
+  // [TP-CC-R9-05] The route keeps its default response and validates `view`.
+  test("route returns full sessions by default and summaries for view=summary", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const system = "s".repeat(64 * 1024)
+    const session = await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const created = await svc.create({ title: "route-session" })
+        await svc.resolvePrompt({ sessionID: created.id, fallback: { system } })
+        return created
+      },
+    })
+    const request = (query: string) =>
+      Server.Default().app.request(`/experimental/session?directory=${encodeURIComponent(tmp.path)}&roots=true${query}`)
+    const read = async (query: string) => {
+      const response = await request(query)
+      expect(response.status).toBe(200)
+      const list = (await response.json()) as Array<{ id: string; prompt?: { system?: string } }>
+      return list.find((entry) => entry.id === session.id)
+    }
+
+    expect((await read(""))?.prompt?.system).toBe(system)
+    expect((await read("&view=full"))?.prompt?.system).toBe(system)
+    const summary = await read("&view=summary")
+    expect(summary).toBeDefined()
+    expect(summary).not.toHaveProperty("prompt")
+    expect((await request("&view=compact")).status).toBe(400)
   })
 })

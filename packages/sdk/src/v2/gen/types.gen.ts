@@ -3296,6 +3296,12 @@ export type GlobalSession = {
   parentID?: string
   contextFrom?: string
   contextWatermark?: string
+  summary?: {
+    additions: number
+    deletions: number
+    files: number
+    diffs?: Array<SnapshotFileDiff>
+  }
   title: string
   titleSource: "fallback" | "generated" | "user"
   titleRevision: number
@@ -3306,10 +3312,17 @@ export type GlobalSession = {
     compacting?: number
     archived?: number
   }
-  summary?: {
-    additions: number
-    deletions: number
-    files: number
+  permission?: PermissionRuleset
+  prompt?: {
+    system?: string
+    systemMode?: "append" | "replace-agent"
+    harness: "auto" | "codex" | "default"
+  }
+  revert?: {
+    messageID: string
+    partID?: string
+    snapshot?: string
+    diff?: string
   }
   project: ProjectSummary | null
 }
@@ -4861,6 +4874,10 @@ export type ExperimentalSessionListData = {
      * Include archived sessions (default false)
      */
     archived?: boolean
+    /**
+     * Response detail (default full). `summary` omits prompt, permission, revert and summary.diffs from every session
+     */
+    view?: "full" | "summary"
   }
   url: "/experimental/session"
 }

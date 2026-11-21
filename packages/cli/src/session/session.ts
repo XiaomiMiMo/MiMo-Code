@@ -59,9 +59,9 @@ export function isDefaultTitle(title: string) {
 
 type SessionRow = typeof SessionTable.$inferSelect
 
-// The global list carries no per-session JSON payloads: `prompt` holds the full
-// system prompt (tens of KB per session), and listing every session with it
-// blocks this process for the whole read and serialization.
+// Columns of the "summary" list view. It leaves out the per-session JSON payloads:
+// `prompt` holds the full system prompt (tens of KB per session), and listing every
+// session with it blocks this process for the whole read and serialization.
 const listColumns = {
   id: SessionTable.id,
   slug: SessionTable.slug,
@@ -230,20 +230,11 @@ export const ProjectInfo = z
   })
 export type ProjectInfo = z.output<typeof ProjectInfo>
 
-export const GlobalInfo = Info.omit({ summary: true, permission: true, prompt: true, revert: true })
-  .extend({
-    summary: z
-      .object({
-        additions: z.number(),
-        deletions: z.number(),
-        files: z.number(),
-      })
-      .optional(),
-    project: ProjectInfo.nullable(),
-  })
-  .meta({
-    ref: "GlobalSession",
-  })
+export const GlobalInfo = Info.extend({
+  project: ProjectInfo.nullable(),
+}).meta({
+  ref: "GlobalSession",
+})
 export type GlobalInfo = z.output<typeof GlobalInfo>
 
 export const ManualTitle = z.string().trim().min(1).transform(value => Array.from(value).slice(0, 80).join(""))
@@ -1196,6 +1187,8 @@ export function* listGlobal(input?: {
   search?: string
   limit?: number
   archived?: boolean
+  // "summary" omits `prompt`, `permission`, `revert` and `summary.diffs`; the default stays full.
+  view?: "full" | "summary"
 }) {
   const conditions: SQL[] = []
 
@@ -1219,19 +1212,16 @@ export function* listGlobal(input?: {
   }
 
   const limit = input?.limit ?? 100
+  const where = conditions.length > 0 ? and(...conditions) : undefined
+  const order = [desc(SessionTable.time_updated), desc(SessionTable.id)]
 
-  const rows = Database.use((db) => {
-    const query =
-      conditions.length > 0
-        ? db
-            .select(listColumns)
-            .from(SessionTable)
-            .where(and(...conditions))
-        : db.select(listColumns).from(SessionTable)
-    return query.orderBy(desc(SessionTable.time_updated), desc(SessionTable.id)).limit(limit).all()
-  })
+  const sessions: Info[] = Database.use((db) =>
+    input?.view === "summary"
+      ? db.select(listColumns).from(SessionTable).where(where).orderBy(...order).limit(limit).all().map(fromListRow)
+      : db.select().from(SessionTable).where(where).orderBy(...order).limit(limit).all().map(fromRow),
+  )
 
-  const ids = [...new Set(rows.map((row) => row.project_id))]
+  const ids = [...new Set(sessions.map((session) => session.projectID))]
   const projects = new Map<string, ProjectInfo>()
 
   if (ids.length > 0) {
@@ -1251,8 +1241,8 @@ export function* listGlobal(input?: {
     }
   }
 
-  for (const row of rows) {
-    const project = projects.get(row.project_id) ?? null
-    yield { ...fromListRow(row), project } satisfies GlobalInfo
+  for (const session of sessions) {
+    const project = projects.get(session.projectID) ?? null
+    yield { ...session, project }
   }
 }
