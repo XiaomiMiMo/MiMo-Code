@@ -1,4 +1,4 @@
-import { test, expect, beforeEach } from "bun:test"
+import { test, expect, beforeEach, spyOn } from "bun:test"
 import { Effect } from "effect"
 import { mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
@@ -118,6 +118,103 @@ test("armLoop clamps delay_seconds to [60, 3600]", async () => {
       yield* sched.stop()
     }),
   )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+// Regression: armLoop truncated `now + delay` DOWN to the minute boundary
+// (setUTCSeconds(0, 0)), so an arm issued mid-minute could pin nextFireAt
+// to an instant far earlier than delay_seconds — a 60s arm at second 59
+// fired ~1s later. A loop must never fire earlier than its requested delay.
+test("armLoop never fires earlier than delay_seconds (minute truncation)", async () => {
+  const dir = freshDir()
+  const minute = Math.floor(Date.now() / 60_000) * 60_000
+  const fixed = minute + 59_000 // arm at :59s — worst case for truncation
+  const spy = spyOn(Date, "now").mockReturnValue(fixed)
+  try {
+    await provided(
+      Effect.gen(function* () {
+        const sched = yield* Scheduler
+        yield* sched.start(baseStartOpts(dir))
+        try {
+          const res = yield* sched.armLoop({ prompt: "delay-bound", delay_seconds: 60, reason_length: 0 })
+          expect(res).not.toBe(null)
+          // Both `now + delay` and round-up-to-minute fixes satisfy this bound;
+          // the truncated baseline lands ~1s out and fails.
+          expect(res!.scheduledFor - fixed).toBeGreaterThanOrEqual(60_000)
+
+          // The pinned fire instant must agree with what was reported.
+          const next = yield* sched.nextFireTime()
+          expect(next).toBe(res!.scheduledFor)
+        } finally {
+          yield* sched.stop()
+        }
+      }),
+    )
+  } finally {
+    spy.mockRestore()
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+// Regression (restart path): the early-fire fix pins nextFireAt in the
+// runtime's in-memory Map, which stop() discards. Session loop tasks and
+// LoopState survive stop→start, so the first tick recomputed the fire time
+// via oneShotJitteredNextCronRunMs — which pulls :00/:30 targets up to
+// oneShotMaxMs early, re-introducing early fires on restart. The tick must
+// re-pin from LoopState.lastScheduledFor instead.
+test("stop→start re-pins loop to requested instant; no early pull on :00/:30", async () => {
+  const dir = freshDir()
+  // Arm so now + 60s lands exactly on a :00/:30 minute boundary — the
+  // one-shot jitter's early-pull band. Force a deterministic 30s pull via
+  // oneShotFloorMs = oneShotMaxMs so the recomputed (buggy) fire time is
+  // exactly `boundary - 30s`.
+  const boundary = Math.ceil(Date.now() / 1_800_000) * 1_800_000
+  const fixed = boundary - 60_000
+  const jitterCfg = { ...DEFAULT_JITTER, oneShotFloorMs: 30_000, oneShotMaxMs: 30_000 }
+  const spy = spyOn(Date, "now").mockReturnValue(fixed)
+  try {
+    await provided(
+      Effect.gen(function* () {
+        const sched = yield* Scheduler
+        yield* sched.start(baseStartOpts(dir))
+        const res = yield* sched.armLoop({ prompt: "restart-bound", delay_seconds: 60, reason_length: 0 })
+        expect(res!.scheduledFor).toBe(boundary)
+        yield* sched.stop()
+
+        // Restart: nextFireAt is rebuilt empty; the loop task + LoopState
+        // persist. A stray 1s interval tick could fire a due task mid-test,
+        // but assertions below only ever check "not fired" before the
+        // boundary and "fired" at it, so they stay deterministic.
+        const fires: string[] = []
+        yield* sched.start({
+          ...baseStartOpts(dir),
+          isLoading: () => false,
+          onFire: (t) => fires.push(t.id),
+          jitterConfig: jitterCfg,
+        })
+        try {
+          yield* sched.tickOnce()
+          // Buggy recompute yields boundary - 30s; the re-pin must keep the
+          // exact instant armLoop reported.
+          expect(yield* sched.nextFireTime()).toBe(boundary)
+
+          // Standing at the pulled-early instant: the loop must NOT fire.
+          spy.mockReturnValue(boundary - 30_000)
+          yield* sched.tickOnce()
+          expect(fires.length).toBe(0)
+
+          // At the requested instant it fires exactly once.
+          spy.mockReturnValue(boundary)
+          yield* sched.tickOnce()
+          expect(fires.length).toBe(1)
+        } finally {
+          yield* sched.stop()
+        }
+      }),
+    )
+  } finally {
+    spy.mockRestore()
+  }
   rmSync(dir, { recursive: true, force: true })
 })
 
