@@ -2,6 +2,7 @@ import { Effect, Layer, Logger } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { OtlpLogger, OtlpSerialization } from "effect/unstable/observability"
 import * as EffectLogger from "./logger"
+import { parseOtlpHeaders } from "./otlp-headers"
 import { Flag } from "@/flag/flag"
 import { InstallationChannel, InstallationVersion } from "@/installation/version"
 import { ensureProcessMetadata } from "@/util/mimo-process"
@@ -10,16 +11,7 @@ const base = Flag.OTEL_EXPORTER_OTLP_ENDPOINT
 export const enabled = !!base
 const processID = crypto.randomUUID()
 
-const headers = Flag.OTEL_EXPORTER_OTLP_HEADERS
-  ? Flag.OTEL_EXPORTER_OTLP_HEADERS.split(",").reduce(
-      (acc, x) => {
-        const [key, ...value] = x.split("=")
-        acc[key] = value.join("=")
-        return acc
-      },
-      {} as Record<string, string>,
-    )
-  : undefined
+const headers = Flag.OTEL_EXPORTER_OTLP_HEADERS ? parseOtlpHeaders(Flag.OTEL_EXPORTER_OTLP_HEADERS) : undefined
 
 export function resource(): { serviceName: string; serviceVersion: string; attributes: Record<string, string> } {
   const processMetadata = ensureProcessMetadata("main")
