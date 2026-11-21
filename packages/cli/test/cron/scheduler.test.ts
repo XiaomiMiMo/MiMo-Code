@@ -1,4 +1,4 @@
-import { test, expect, beforeEach } from "bun:test"
+import { test, expect, beforeEach, spyOn } from "bun:test"
 import { Effect } from "effect"
 import { mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
@@ -118,6 +118,41 @@ test("armLoop clamps delay_seconds to [60, 3600]", async () => {
       yield* sched.stop()
     }),
   )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+// Regression: armLoop truncated `now + delay` DOWN to the minute boundary
+// (setUTCSeconds(0, 0)), so an arm issued mid-minute could pin nextFireAt
+// to an instant far earlier than delay_seconds — a 60s arm at second 59
+// fired ~1s later. A loop must never fire earlier than its requested delay.
+test("armLoop never fires earlier than delay_seconds (minute truncation)", async () => {
+  const dir = freshDir()
+  const minute = Math.floor(Date.now() / 60_000) * 60_000
+  const fixed = minute + 59_000 // arm at :59s — worst case for truncation
+  const spy = spyOn(Date, "now").mockReturnValue(fixed)
+  try {
+    await provided(
+      Effect.gen(function* () {
+        const sched = yield* Scheduler
+        yield* sched.start(baseStartOpts(dir))
+        try {
+          const res = yield* sched.armLoop({ prompt: "delay-bound", delay_seconds: 60, reason_length: 0 })
+          expect(res).not.toBe(null)
+          // Both `now + delay` and round-up-to-minute fixes satisfy this bound;
+          // the truncated baseline lands ~1s out and fails.
+          expect(res!.scheduledFor - fixed).toBeGreaterThanOrEqual(60_000)
+
+          // The pinned fire instant must agree with what was reported.
+          const next = yield* sched.nextFireTime()
+          expect(next).toBe(res!.scheduledFor)
+        } finally {
+          yield* sched.stop()
+        }
+      }),
+    )
+  } finally {
+    spy.mockRestore()
+  }
   rmSync(dir, { recursive: true, force: true })
 })
 

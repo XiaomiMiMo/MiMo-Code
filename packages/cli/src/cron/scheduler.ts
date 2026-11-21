@@ -427,9 +427,17 @@ const makeImpl = (): Interface => {
       const clamped = Math.max(60, Math.min(3600, input.delay_seconds))
       const wasClamped = clamped !== input.delay_seconds
 
-      const target = new Date(now + clamped * 1000)
+      // Round the target UP to a minute boundary — never DOWN. Truncating
+      // with setUTCSeconds(0, 0) rewinds the target toward `now`, so an arm
+      // issued mid-minute (worst case: second 59) pinned nextFireAt as little
+      // as ~1s out for a 60–3600s delay and the loop fired early. Comparing
+      // against `now + clamped * 1000` (not `now`) covers the old
+      // `target <= now` past-truncation bump as well, and keeps target aligned
+      // with the `m h * * *` cron expression stored below.
+      const requested = now + clamped * 1000
+      const target = new Date(requested)
       target.setUTCSeconds(0, 0)
-      if (target.getTime() <= now) target.setUTCMinutes(target.getUTCMinutes() + 1)
+      if (target.getTime() < requested) target.setUTCMinutes(target.getUTCMinutes() + 1)
 
       const prior = getSessionCronTasks().filter(
         (t) => t.kind === "loop" && t.prompt === input.prompt,
