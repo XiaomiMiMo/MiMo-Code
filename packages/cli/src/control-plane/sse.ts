@@ -45,8 +45,9 @@ export async function parseSSE(
 
         if (!data.length) return
         const raw = data.join("\n")
+        let parsed: unknown
         try {
-          onEvent(JSON.parse(raw))
+          parsed = JSON.parse(raw)
         } catch {
           onEvent({
             type: "sse.message",
@@ -56,7 +57,9 @@ export async function parseSSE(
               retry,
             },
           })
+          return
         }
+        onEvent(parsed)
       })
     }
   } finally {
