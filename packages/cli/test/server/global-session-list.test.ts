@@ -21,6 +21,15 @@ const svc = {
   setArchived(input: z.output<typeof SessionNs.SetArchivedInput>) {
     return run(SessionNs.Service.use((svc) => svc.setArchived(input)))
   },
+  resolvePrompt(input: Parameters<SessionNs.Interface["resolvePrompt"]>[0]) {
+    return run(SessionNs.Service.use((svc) => svc.resolvePrompt(input)))
+  },
+  setSummary(input: Parameters<SessionNs.Interface["setSummary"]>[0]) {
+    return run(SessionNs.Service.use((svc) => svc.setSummary(input)))
+  },
+  get(id: SessionNs.Info["id"]) {
+    return run(SessionNs.Service.use((svc) => svc.get(id)))
+  },
 }
 
 describe("session.listGlobal", () => {
@@ -101,5 +110,45 @@ describe("session.listGlobal", () => {
 
     expect(ids).toContain(first.id)
     expect(ids).not.toContain(second.id)
+  })
+
+  // [TP-CC-R9-05] Desktop polls this list on focus; per-session prompts made it tens of MB.
+  test("lists summaries without per-session prompt, permission or diffs", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const system = "s".repeat(64 * 1024)
+    const patch = "p".repeat(16 * 1024)
+
+    const session = await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const created = await svc.create({
+          title: "heavy-session",
+          permission: [{ permission: "bash", pattern: "*", action: "allow" }],
+        })
+        await svc.resolvePrompt({ sessionID: created.id, fallback: { system } })
+        await svc.setSummary({
+          sessionID: created.id,
+          summary: { additions: 3, deletions: 1, files: 1, diffs: [{ file: "a.ts", patch, additions: 3, deletions: 1 }] },
+        })
+        return created
+      },
+    })
+
+    const item = [...svc.listGlobal({ directory: tmp.path, limit: 10 })].find((entry) => entry.id === session.id)
+    expect(item).toBeDefined()
+    expect(item).not.toHaveProperty("prompt")
+    expect(item).not.toHaveProperty("permission")
+    expect(item).not.toHaveProperty("revert")
+    expect(item?.summary).toEqual({ additions: 3, deletions: 1, files: 1 })
+    expect(item?.title).toBe("heavy-session")
+    expect(item?.directory).toBe(session.directory)
+    expect(item?.time.created).toBe(session.time.created)
+    expect(JSON.stringify(item).length).toBeLessThan(2048)
+    expect(SessionNs.GlobalInfo.safeParse(item).success).toBe(true)
+
+    const full = await Instance.provide({ directory: tmp.path, fn: () => svc.get(session.id) })
+    expect(full.prompt?.system).toBe(system)
+    expect(full.permission).toEqual([{ permission: "bash", pattern: "*", action: "allow" }])
+    expect(full.summary?.diffs?.[0]?.patch).toBe(patch)
   })
 })

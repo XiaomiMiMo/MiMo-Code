@@ -59,17 +59,41 @@ export function isDefaultTitle(title: string) {
 
 type SessionRow = typeof SessionTable.$inferSelect
 
-export function fromRow(row: SessionRow): Info {
+// The global list carries no per-session JSON payloads: `prompt` holds the full
+// system prompt (tens of KB per session), and listing every session with it
+// blocks this process for the whole read and serialization.
+const listColumns = {
+  id: SessionTable.id,
+  slug: SessionTable.slug,
+  project_id: SessionTable.project_id,
+  workspace_id: SessionTable.workspace_id,
+  directory: SessionTable.directory,
+  parent_id: SessionTable.parent_id,
+  context_from: SessionTable.context_from,
+  context_watermark: SessionTable.context_watermark,
+  title: SessionTable.title,
+  title_source: SessionTable.title_source,
+  title_revision: SessionTable.title_revision,
+  version: SessionTable.version,
+  summary_additions: SessionTable.summary_additions,
+  summary_deletions: SessionTable.summary_deletions,
+  summary_files: SessionTable.summary_files,
+  time_created: SessionTable.time_created,
+  time_updated: SessionTable.time_updated,
+  time_compacting: SessionTable.time_compacting,
+  time_archived: SessionTable.time_archived,
+}
+type ListRow = Pick<SessionRow, keyof typeof listColumns>
+
+function fromListRow(row: ListRow) {
   const summary =
     row.summary_additions !== null || row.summary_deletions !== null || row.summary_files !== null
       ? {
           additions: row.summary_additions ?? 0,
           deletions: row.summary_deletions ?? 0,
           files: row.summary_files ?? 0,
-          diffs: row.summary_diffs ?? undefined,
         }
       : undefined
-  const revert = row.revert ?? undefined
   return {
     id: row.id,
     slug: row.slug,
@@ -84,15 +108,24 @@ export function fromRow(row: SessionRow): Info {
     titleRevision: row.title_revision,
     version: row.version,
     summary,
-    revert,
-    permission: row.permission ?? undefined,
-    prompt: row.prompt ? PromptConfig.parse(row.prompt) : undefined,
     time: {
       created: row.time_created,
       updated: row.time_updated,
       compacting: row.time_compacting ?? undefined,
       archived: row.time_archived ?? undefined,
     },
+  }
+}
+
+export function fromRow(row: SessionRow): Info {
+  const base = fromListRow(row)
+  const revert = row.revert ?? undefined
+  return {
+    ...base,
+    summary: base.summary ? { ...base.summary, diffs: row.summary_diffs ?? undefined } : undefined,
+    revert,
+    permission: row.permission ?? undefined,
+    prompt: row.prompt ? PromptConfig.parse(row.prompt) : undefined,
   }
 }
 
@@ -197,11 +230,20 @@ export const ProjectInfo = z
   })
 export type ProjectInfo = z.output<typeof ProjectInfo>
 
-export const GlobalInfo = Info.extend({
-  project: ProjectInfo.nullable(),
-}).meta({
-  ref: "GlobalSession",
-})
+export const GlobalInfo = Info.omit({ summary: true, permission: true, prompt: true, revert: true })
+  .extend({
+    summary: z
+      .object({
+        additions: z.number(),
+        deletions: z.number(),
+        files: z.number(),
+      })
+      .optional(),
+    project: ProjectInfo.nullable(),
+  })
+  .meta({
+    ref: "GlobalSession",
+  })
 export type GlobalInfo = z.output<typeof GlobalInfo>
 
 export const ManualTitle = z.string().trim().min(1).transform(value => Array.from(value).slice(0, 80).join(""))
@@ -1182,10 +1224,10 @@ export function* listGlobal(input?: {
     const query =
       conditions.length > 0
         ? db
-            .select()
+            .select(listColumns)
             .from(SessionTable)
             .where(and(...conditions))
-        : db.select().from(SessionTable)
+        : db.select(listColumns).from(SessionTable)
     return query.orderBy(desc(SessionTable.time_updated), desc(SessionTable.id)).limit(limit).all()
   })
 
@@ -1211,6 +1253,6 @@ export function* listGlobal(input?: {
 
   for (const row of rows) {
     const project = projects.get(row.project_id) ?? null
-    yield { ...fromRow(row), project }
+    yield { ...fromListRow(row), project } satisfies GlobalInfo
   }
 }
