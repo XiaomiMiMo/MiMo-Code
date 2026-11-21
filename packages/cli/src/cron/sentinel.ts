@@ -88,7 +88,15 @@ export const resolveAtFireTime = async (
   }
   if (isLoopFile(stored)) {
     const file = await readLoopFile(workspaceRoot)
-    if (!file) return LOOP_FILE_ABSENT_REMINDER
+    if (!file) {
+      // The model was just told loop.md is gone, so any cached content is
+      // stale. Drop it so a recreated file (even with identical content)
+      // re-sends the full body instead of the "unchanged" reminder, same
+      // semantics as resetOnCompaction: anything that invalidates the model's
+      // view of the file must invalidate the cache.
+      lastLoopFileContent.delete(key)
+      return LOOP_FILE_ABSENT_REMINDER
+    }
     if (lastLoopFileContent.get(key) === file.content) return LOOP_FILE_UNCHANGED_REMINDER
     lastLoopFileContent.set(key, file.content)
     return formatLoopFileFire(file.path, file.content, isDynamic(stored))
