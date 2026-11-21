@@ -184,3 +184,32 @@ test("resetOnCompaction(sessionID) is scoped, does not clear sibling sessions", 
 
   rmSync(dir, { recursive: true, force: true })
 })
+
+// Regression: an absent fire told the model "loop.md no longer exists", so the
+// cached content is stale. If the file is recreated with identical content, the
+// next fire must re-send the full fenced body — not the "unchanged" reminder,
+// which would refer to content the model was told was gone.
+test("loop.md restored after an absent fire re-sends full content", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-"))
+  mkdirSync(join(dir, ".mimocode"), { recursive: true })
+  const p = join(dir, ".mimocode", "loop.md")
+  writeFileSync(p, "restored tasks")
+
+  // First fire delivers the full fenced content and warms the cache.
+  const first = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir)
+  expect(first).toContain("restored tasks")
+
+  // File deleted → absent reminder; the cache must be invalidated.
+  rmSync(p)
+  const absent = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir)
+  expect(absent).toMatch(/no longer present/)
+
+  // Recreated with identical content → full fenced body again, not "unchanged".
+  writeFileSync(p, "restored tasks")
+  const restored = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir)
+  expect(restored).toContain("restored tasks")
+  expect(restored).toContain("Loop tasks (from")
+  expect(restored).not.toMatch(/unchanged/)
+
+  rmSync(dir, { recursive: true, force: true })
+})
