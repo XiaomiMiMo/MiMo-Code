@@ -78,6 +78,7 @@ const mcp = Layer.succeed(
     add: () => Effect.succeed({ status: { status: "disabled" as const } }),
     connect: () => Effect.void,
     disconnect: () => Effect.void,
+    suspend: () => Effect.void,
     getPrompt: () => Effect.succeed(undefined),
     readResource: () => Effect.succeed(undefined),
     startAuth: () => Effect.die("unexpected MCP auth in spawn-lifecycle tests"),

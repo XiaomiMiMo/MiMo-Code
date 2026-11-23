@@ -255,7 +255,7 @@ export const McpRoutes = lazy(() =>
         jsonRequest("McpRoutes.disconnect", c, function* () {
           const { name } = c.req.valid("param")
           const mcp = yield* MCP.Service
-          yield* mcp.disconnect(name, { suspend: c.req.valid("query").suspend === "true" })
+          yield* c.req.valid("query").suspend === "true" ? mcp.suspend(name) : mcp.disconnect(name)
           return true
         }),
     ),

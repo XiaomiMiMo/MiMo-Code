@@ -81,7 +81,7 @@ class MockStdioTransport {
   pid = 12345
   onerror?: unknown
   onStderr?: unknown
-  constructor(opts: any) {
+  constructor(opts: { command: string; args: string[]; env: Record<string, string> }) {
     stdioLaunches.push({ command: opts.command, args: opts.args, env: { ...opts.env } })
   }
   async start() {
@@ -1345,14 +1345,26 @@ test(
 // ========================================================================
 
 const { HostMcp } = await import("../../src/mcp/host")
+const { releaseTurnClients } = await import("../../src/mcp/index")
 const local = { type: "local" as const, command: ["echo", "test"] }
 const call = { toolCallId: "call_1", messages: [], abortSignal: new AbortController().signal }
-const published = (tools: Record<string, any>) =>
+type Tools = Effect.Success<ReturnType<MCPNS.Interface["tools"]>>
+const published = (tools: Tools) =>
   JSON.stringify(
     Object.entries(tools)
       .toSorted(([a], [b]) => a.localeCompare(b))
-      .map(([name, tool]) => [name, tool.description, tool.inputSchema.jsonSchema]),
+      .map(([name, tool]) => [name, tool.description, tool.inputSchema]),
   )
+const run = (tools: Tools, name: string) =>
+  Effect.promise(() =>
+    Promise.resolve(tools[name]!.execute!({}, call)).then(
+      () => "ok",
+      (error: Error) => error.message,
+    ),
+  )
+
+/** A released client closes in the background once nothing holds it. */
+const settle = Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)))
 
 function addServer(mcp: MCPNS.Interface, name: string) {
   lastCreatedClientName = name
@@ -1370,9 +1382,9 @@ test(
       yield* addServer(mcp, "idle")
       const before = published(yield* mcp.tools())
 
-      yield* mcp.disconnect("idle", { suspend: true })
+      yield* mcp.suspend("idle")
+      yield* settle
       expect(getOrCreateClientState("idle").closed).toBe(true)
-      expect((yield* mcp.status())["idle"]).toBeUndefined() // add()ed servers are not in config
       expect((yield* mcp.clients())["idle"]).toBeUndefined()
       const created = clientCreateCount
 
@@ -1382,36 +1394,98 @@ test(
       expect(published(tools)).toBe(before)
       expect(clientCreateCount).toBe(created + 1)
       expect(stdioLaunches.at(-1)).toEqual(stdioLaunches.at(-2)!)
-      yield* Effect.promise(() => tools["idle_act"]!.execute!({ x: "1" }, call) as Promise<unknown>)
+      expect(yield* run(tools, "idle_act")).toBe("ok")
       expect(getOrCreateClientState("idle").toolCalls).toHaveLength(1)
     }),
   ),
 )
 
 test(
-  "a dormant server that cannot restart keeps its tools; calls fail readably and recover later",
+  "a dormant server that cannot restart keeps its tools, backs off, and recovers on a later call",
   withInstance({}, (mcp) =>
     Effect.gen(function* () {
       yield* addServer(mcp, "flaky")
       const before = published(yield* mcp.tools())
-      yield* mcp.disconnect("flaky", { suspend: true })
+      yield* mcp.suspend("flaky")
 
       connectShouldFail = true
-      yield* mcp.connect("flaky")
+      connectError = "spawn ENOENT"
+      expect(published(yield* mcp.tools())).toBe(before)
+      const attempted = clientCreateCount
+      // Backing off: later steps publish the same list without another start attempt.
       const tools = yield* mcp.tools()
       expect(published(tools)).toBe(before)
-      const failed = yield* Effect.promise(() =>
-        (tools["flaky_act"]!.execute!({}, call) as Promise<unknown>).then(
-          () => undefined,
-          (error: Error) => error.message,
-        ),
-      )
+      expect(clientCreateCount).toBe(attempted)
+      // A call is an explicit use: it retries at once and reports why the start failed.
+      const failed = yield* run(tools, "flaky_act")
       expect(failed).toContain("could not be restarted")
+      expect(failed).toContain("spawn ENOENT")
 
       connectShouldFail = false
-      yield* Effect.promise(() => tools["flaky_act"]!.execute!({}, call) as Promise<unknown>)
+      expect(yield* run(tools, "flaky_act")).toBe("ok")
       expect(getOrCreateClientState("flaky").toolCalls).toHaveLength(1)
       expect(published(yield* mcp.tools())).toBe(before)
+    }),
+  ),
+)
+
+test(
+  "a restart that hangs is waited on by one tools() call only and blocks no other accessor",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      yield* addServer(mcp, "slow")
+      yield* addServer(mcp, "quick")
+      const before = published(yield* mcp.tools())
+      yield* mcp.suspend("slow")
+
+      connectShouldHang = true
+      const waiting = yield* mcp.tools().pipe(Effect.forkChild({ startImmediately: true }))
+      const started = Date.now()
+      // The attempt is in flight: nothing below may queue behind it.
+      const tools = yield* mcp.tools()
+      expect((yield* mcp.clients())["quick"]).toBeDefined()
+      expect(Date.now() - started).toBeLessThan(2_000)
+      expect(published(tools)).toBe(before)
+      expect(yield* run(tools, "quick_act")).toBe("ok")
+      yield* Fiber.interrupt(waiting)
+    }),
+  ),
+)
+
+test(
+  "suspend lets a turn that holds the client finish before the process is closed",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      yield* addServer(mcp, "busy")
+      const context = { sessionId: "ses_1", turnId: "turn_1" }
+      const tools = yield* mcp.tools(context)
+
+      yield* mcp.suspend("busy")
+      expect(getOrCreateClientState("busy").closed).toBe(false)
+      expect(yield* run(tools, "busy_act")).toBe("ok")
+
+      yield* releaseTurnClients(context)
+      yield* settle
+      expect(getOrCreateClientState("busy").closed).toBe(true)
+    }),
+  ),
+)
+
+test(
+  "a restart triggered by a tool call binds the new client to the calling turn",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      yield* addServer(mcp, "late")
+      yield* mcp.suspend("late")
+      connectShouldFail = true
+      const context = { sessionId: "ses_1", turnId: "turn_1" }
+      const tools = yield* mcp.tools(context)
+      expect(yield* mcp.clients(context)).toEqual({})
+
+      connectShouldFail = false
+      expect(yield* run(tools, "late_act")).toBe("ok")
+      expect(Object.keys(yield* mcp.clients(context))).toEqual(["late"])
+      yield* releaseTurnClients(context)
     }),
   ),
 )
@@ -1424,7 +1498,7 @@ test(
       const before = published(yield* mcp.tools())
       const created = clientCreateCount
 
-      ;((yield* mcp.clients())["crashy"] as any).onclose()
+      ;(yield* mcp.clients())["crashy"]!.onclose!()
       expect((yield* mcp.clients())["crashy"]).toBeUndefined()
 
       expect(published(yield* mcp.tools())).toBe(before)
@@ -1441,27 +1515,25 @@ test(
       yield* mcp.disconnect("manual")
       expect(Object.keys(yield* mcp.tools())).toEqual([])
       // A later suspend of a disabled server must not resurrect it.
-      yield* mcp.disconnect("manual", { suspend: true })
+      yield* mcp.suspend("manual")
       expect(Object.keys(yield* mcp.tools())).toEqual([])
 
       lastCreatedClientName = "hosted"
       HostMcp.set({ hosted: local })
-      try {
+      yield* Effect.gen(function* () {
         const before = published(yield* mcp.tools())
         expect(before).toContain("hosted_test_tool")
-        yield* mcp.disconnect("hosted", { suspend: true })
+        yield* mcp.suspend("hosted")
         expect((yield* mcp.status())["hosted"]).toEqual({ status: "connected" })
         yield* mcp.connect("hosted")
         expect((yield* mcp.clients())["hosted"]).toBeDefined()
         expect(published(yield* mcp.tools())).toBe(before)
 
-        yield* mcp.disconnect("hosted", { suspend: true })
+        yield* mcp.suspend("hosted")
         HostMcp.set({ hosted: { ...local, enabled: false } })
         expect(Object.keys(yield* mcp.tools())).toEqual([])
         expect((yield* mcp.status())["hosted"]).toEqual({ status: "disabled" })
-      } finally {
-        HostMcp.set({})
-      }
+      }).pipe(Effect.ensuring(Effect.sync(() => HostMcp.set({}))))
     }),
   ),
 )
