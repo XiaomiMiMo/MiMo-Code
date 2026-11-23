@@ -1284,14 +1284,33 @@ export const layer = Layer.effect(
       // The host republished this server while it was dormant: refreshHost owns that rebuild.
       if (fromHost && s.host[name] !== JSON.stringify(HostMcp.get()[name])) return
       const identity = { fromHost, hostRevision: fromHost ? HostMcp.revisionOf(name) : undefined }
-      const result = yield* create(name, mcp, identity, launch?.env)
-      if (result.mcpClient) {
-        // Disconnected or rebuilt by someone else while this attempt was connecting.
-        if (!isDormant(s, name)) return yield* releaseMcpClient(result.mcpClient)
-        yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout, hostEffectiveSampling(mcp, fromHost), identity)
-        if (s.clients[name]) delete s.revival[name]
-        return
-      }
+      // Uninterruptible from the moment the client exists until it is registered or
+      // released: an instance disposed in between must not orphan the new process.
+      const result = yield* Effect.uninterruptibleMask((restore) =>
+        restore(create(name, mcp, identity, launch?.env)).pipe(
+          Effect.tap((created) => {
+            if (!created.mcpClient) return Effect.void
+            // Disconnected or rebuilt by someone else while this attempt was connecting.
+            if (!isDormant(s, name)) return releaseMcpClient(created.mcpClient)
+            return storeClient(
+              s,
+              name,
+              created.mcpClient,
+              created.defs!,
+              mcp.timeout,
+              hostEffectiveSampling(mcp, fromHost),
+              identity,
+            ).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  if (s.clients[name]) delete s.revival[name]
+                }),
+              ),
+            )
+          }),
+        ),
+      )
+      if (result.mcpClient) return
       if (result.status.status === "needs_auth" || result.status.status === "needs_client_registration") {
         // Only the user can fix this, so it must show: the server leaves dormancy with the real status.
         forget(s, name)

@@ -1363,8 +1363,11 @@ const run = (tools: Tools, name: string) =>
     ),
   )
 
-/** A released client closes in the background once nothing holds it. */
-const settle = Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)))
+/** A released client closes in the background once nothing holds it; resolves when the mock's close() ran. */
+const closed = (name: string) =>
+  Effect.promise(async () => {
+    while (!getOrCreateClientState(name).closed) await new Promise((resolve) => setTimeout(resolve, 1))
+  })
 
 function addServer(mcp: MCPNS.Interface, name: string) {
   lastCreatedClientName = name
@@ -1383,8 +1386,7 @@ test(
       const before = published(yield* mcp.tools())
 
       yield* mcp.suspend("idle")
-      yield* settle
-      expect(getOrCreateClientState("idle").closed).toBe(true)
+      yield* closed("idle")
       expect((yield* mcp.clients())["idle"]).toBeUndefined()
       const created = clientCreateCount
 
@@ -1440,11 +1442,9 @@ test(
 
       connectShouldHang = true
       const waiting = yield* mcp.tools().pipe(Effect.forkChild({ startImmediately: true }))
-      const started = Date.now()
-      // The attempt is in flight: nothing below may queue behind it.
+      // The attempt is in flight and never finishes: anything queued behind it would hang this test.
       const tools = yield* mcp.tools()
       expect((yield* mcp.clients())["quick"]).toBeDefined()
-      expect(Date.now() - started).toBeLessThan(2_000)
       expect(published(tools)).toBe(before)
       expect(yield* run(tools, "quick_act")).toBe("ok")
       yield* Fiber.interrupt(waiting)
@@ -1465,8 +1465,7 @@ test(
       expect(yield* run(tools, "busy_act")).toBe("ok")
 
       yield* releaseTurnClients(context)
-      yield* settle
-      expect(getOrCreateClientState("busy").closed).toBe(true)
+      yield* closed("busy")
     }),
   ),
 )
