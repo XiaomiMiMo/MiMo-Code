@@ -7502,6 +7502,7 @@ export type McpDisconnectData = {
   query?: {
     directory?: string
     workspace?: string
+    suspend?: "true" | "false"
   }
   url: "/mcp/{name}/disconnect"
 }
