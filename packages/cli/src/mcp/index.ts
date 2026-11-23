@@ -42,6 +42,8 @@ const log = Log.create({ service: "mcp" })
 const DEFAULT_TIMEOUT = 30_000
 /** How long `MCP.tools()` waits for startup connections before returning what is ready. */
 const FIRST_TURN_WAIT = 3_000
+/** How long a dormant server may take to restart before its tools are published as restart-on-call. */
+const REVIVE_WAIT = 15_000
 
 /**
  * Host entries fully replace the user record for that name. When the host omits
@@ -365,7 +367,13 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCP.Info {
 const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_")
 
 // Convert MCP tool definition to AI SDK Tool type
-export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, context?: TurnContext): Tool {
+/** `source` is a thunk for a dormant server: the call restarts it first, the schema stays as published. */
+export function convertMcpTool(
+  mcpTool: MCPToolDef,
+  source: MCPClient | (() => Promise<MCPClient>),
+  timeout?: number,
+  context?: TurnContext,
+): Tool {
   const inputSchema = mcpTool.inputSchema
 
   // Spread first, then override type to ensure it's always "object"
@@ -380,6 +388,7 @@ export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?:
     description: mcpTool.description ?? "",
     inputSchema: jsonSchema(schema),
     execute: async (args: unknown, options) => {
+      const client = typeof source === "function" ? await source() : source
       const metadata =
         context && supportsTurnLifecycle(client) ? { _meta: { [TURN_LIFECYCLE_CAPABILITY]: context } } : {}
       // Recorded before the call so a `sampling/createMessage` arriving WHILE
@@ -452,6 +461,8 @@ interface CreateResult {
   mcpClient?: MCPClient
   status: Status
   defs?: MCPToolDef[]
+  /** Full environment the local process was started with. */
+  env?: Record<string, string>
 }
 
 type AuthResult =
@@ -475,6 +486,11 @@ interface State {
   status: Record<string, Status>
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
+  /**
+   * What each live server was started with. A dormant server restarts from this, so its
+   * command and environment are identical to the first connection.
+   */
+  launch: Record<string, { mcp: ConfigMCP.Info; env?: Record<string, string>; hostOwned: boolean }>
   /** Completes once every startup connection attempt has finished (success or not). */
   settled: Deferred.Deferred<void>
 }
@@ -498,7 +514,7 @@ export interface Interface {
   readonly resources: () => Effect.Effect<Record<string, ResourceInfo & { client: string }>>
   readonly add: (name: string, mcp: ConfigMCP.Info) => Effect.Effect<{ status: Record<string, Status> | Status }>
   readonly connect: (name: string) => Effect.Effect<void>
-  readonly disconnect: (name: string) => Effect.Effect<void>
+  readonly disconnect: (name: string, opts?: { suspend?: boolean }) => Effect.Effect<void>
   readonly getPrompt: (
     clientName: string,
     name: string,
@@ -673,8 +689,14 @@ export const layer = Layer.effect(
     const connectLocal = Effect.fn("MCP.connectLocal")(function* (
       key: string,
       mcp: ConfigMCP.Info & { type: "local" },
+      pinned?: Record<string, string>,
     ) {
       const [cmd, ...args] = mcp.command
+      const env = pinned ?? {
+        ...childProcessEnv(),
+        ...(cmd === "opencode" ? { BUN_BE_BUN: "1" } : {}),
+        ...mcp.environment,
+      }
       const cwd = yield* InstanceState.directory
       // Own the child through the public child_process API. SDK StdioClientTransport
       // clears its private `_process` in close() before callers can read exitCode, and
@@ -687,11 +709,7 @@ export const layer = Layer.effect(
         // Note for `opencode` configured as its own MCP server: that nested engine no longer
         // inherits the host's credentials or config content, and falls back to reading auth.json
         // and the config file from disk — which is what a plain CLI invocation does anyway.
-        env: {
-          ...childProcessEnv(),
-          ...(cmd === "opencode" ? { BUN_BE_BUN: "1" } : {}),
-          ...mcp.environment,
-        },
+        env,
       })
       transport.onerror = (error) => {
         log.info(`mcp transport error: ${error.message}`, { key })
@@ -702,11 +720,12 @@ export const layer = Layer.effect(
 
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       return yield* connectTransport(transport, connectTimeout).pipe(
-        Effect.map((client): { client: MCPClient | undefined; status: Status } => ({
+        Effect.map((client): { client: MCPClient | undefined; status: Status; env?: typeof env } => ({
           client,
           status: { status: "connected" },
+          env,
         })),
-        Effect.catch((error): Effect.Effect<{ client: MCPClient | undefined; status: Status }> => {
+        Effect.catch((error): Effect.Effect<{ client: MCPClient | undefined; status: Status; env?: typeof env }> => {
           const msg = error instanceof Error ? error.message : String(error)
           const exit = transport.exitSnapshot()
           const stderrTail = transport.stderrSnapshot().trim()
@@ -740,6 +759,7 @@ export const layer = Layer.effect(
       key: string,
       mcp: ConfigMCP.Info,
       identity?: { hostRevision?: string; fromHost: boolean },
+      pinned?: Record<string, string>,
     ) {
       if (mcp.enabled === false) {
         log.info("mcp server disabled", { key })
@@ -748,10 +768,14 @@ export const layer = Layer.effect(
 
       log.info("found", { key, type: mcp.type })
 
-      const { client: mcpClient, status } =
+      const {
+        client: mcpClient,
+        status,
+        env,
+      }: { client: MCPClient | undefined; status: Status; env?: Record<string, string> } =
         mcp.type === "remote"
           ? yield* connectRemote(key, mcp as ConfigMCP.Info & { type: "remote" }, identity)
-          : yield* connectLocal(key, mcp as ConfigMCP.Info & { type: "local" })
+          : yield* connectLocal(key, mcp as ConfigMCP.Info & { type: "local" }, pinned)
 
       if (!mcpClient) {
         return { status } satisfies CreateResult
@@ -771,7 +795,7 @@ export const layer = Layer.effect(
       }
 
       log.info("create() successfully created client", { key, toolCount: listed.length })
-      return { mcpClient, status, defs: listed } satisfies CreateResult
+      return { mcpClient, status, defs: listed, env } satisfies CreateResult
     })
     const cfgSvc = yield* Config.Service
 
@@ -807,6 +831,12 @@ export const layer = Layer.effect(
       timeout?: number,
       sampling?: ConfigMCP.Info["sampling"],
     ) {
+      // A server that exits on its own goes dormant instead of staying bound to a dead client.
+      client.onclose = () => {
+        if (s.clients[name] !== client) return
+        log.info("mcp connection closed; restarting on next use", { server: name })
+        delete s.clients[name]
+      }
       client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
         log.info("tools list changed notification received", { server: name })
         if (s.clients[name] !== client || s.status[name]?.status !== "connected") return
@@ -842,6 +872,7 @@ export const layer = Layer.effect(
           status: {},
           clients: {},
           defs: {},
+          launch: {},
           settled: yield* Deferred.make<void>(),
         }
 
@@ -912,7 +943,7 @@ export const layer = Layer.effect(
                     result.defs!,
                     mcp.timeout,
                     hostEffectiveSampling(mcp, fromHost),
-                    { fromHost, hostRevision },
+                    { fromHost, hostRevision, launch: { mcp, env: result.env, hostOwned: fromHost } },
                   ),
                 )
                 return
@@ -1008,6 +1039,7 @@ export const layer = Layer.effect(
             }
             delete s.clients[name]
             delete s.defs[name]
+            delete s.launch[name]
             s.status[name] = result.status
             if (revision == null) delete s.host[name]
             else s.host[name] = revision
@@ -1016,6 +1048,7 @@ export const layer = Layer.effect(
             if (result.mcpClient) {
               s.clients[name] = result.mcpClient
               s.defs[name] = result.defs!
+              s.launch[name] = { mcp: mcp!, env: result.env, hostOwned: name in host }
               watch(s, name, result.mcpClient, bridge, mcp?.timeout, hostEffectiveSampling(mcp, name in host))
             }
           }
@@ -1037,7 +1070,7 @@ export const layer = Layer.effect(
       listed: MCPToolDef[],
       timeout?: number,
       sampling?: ConfigMCP.Info["sampling"],
-      opts?: { fromHost?: boolean; hostRevision?: string },
+      opts?: { fromHost?: boolean; hostRevision?: string; launch?: State["launch"][string] },
     ) {
       const admit = () => {
         const hostNow = HostMcp.get()[name]
@@ -1072,6 +1105,7 @@ export const layer = Layer.effect(
       s.status[name] = { status: "connected" }
       s.clients[name] = client
       s.defs[name] = listed
+      if (opts?.launch) s.launch[name] = opts.launch
       delete s.hostRetryAt[name]
       watch(s, name, client, bridge, timeout, sampling)
       if (previous && previous !== client) {
@@ -1149,6 +1183,7 @@ export const layer = Layer.effect(
       return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout, sampling ?? mcp.sampling, {
         ...opts,
         hostRevision,
+        launch: { mcp, env: result.env, hostOwned: opts?.fromHost === true },
       })
     })
 
@@ -1167,6 +1202,9 @@ export const layer = Layer.effect(
     })
 
     const connect = Effect.fn("MCP.connect")(function* (name: string) {
+      const s = yield* getState()
+      // Restarting a dormant server must not drop its tools when the restart fails.
+      if (s.defs[name] && !s.clients[name] && s.status[name]?.status === "connected") return yield* revive(s, name)
       const resolved = yield* getMcpConfig(name)
       if (!resolved) {
         log.error("MCP config not found or invalid", { name })
@@ -1187,12 +1225,65 @@ export const layer = Layer.effect(
       )
     })
 
-    const disconnect = Effect.fn("MCP.disconnect")(function* (name: string) {
+    // A dormant server keeps status "connected" and its last tool schema but has no
+    // client: its process was released by an idle suspend or exited on its own. Neither
+    // may change the model-facing tool list, so it restarts before the next request is
+    // built instead of being reported as disabled.
+    const revive = Effect.fnUntraced(function* (s: State, name: string) {
+      yield* s.refresh.withPermits(1)(
+        Effect.gen(function* () {
+          if (s.clients[name] || s.status[name]?.status !== "connected") return
+          const launch = s.launch[name]
+          const current = yield* getMcpConfig(name)
+          const mcp = launch?.mcp ?? current?.mcp
+          const hostOwned = launch?.hostOwned ?? current?.hostOwned ?? false
+          // Removed or switched off while dormant: the one case that drops its tools.
+          if (!mcp || current?.mcp.enabled === false || (hostOwned && !current?.hostOwned)) {
+            delete s.defs[name]
+            delete s.launch[name]
+            s.status[name] = { status: "disabled" }
+            return
+          }
+          // The host republished this server while it was dormant: refreshHost owns that rebuild.
+          if (hostOwned && s.host[name] !== JSON.stringify(HostMcp.get()[name])) return
+          const identity = { fromHost: hostOwned, hostRevision: hostOwned ? HostMcp.revisionOf(name) : undefined }
+          const result = yield* create(name, mcp, identity, launch?.env).pipe(
+            Effect.timeoutOption(REVIVE_WAIT),
+            Effect.map(Option.getOrUndefined),
+            Effect.catch(() => Effect.succeed(undefined)),
+          )
+          if (!result?.mcpClient) {
+            log.warn("dormant mcp server did not restart; keeping its tool list", { name, status: result?.status })
+            return
+          }
+          yield* storeClient(
+            s,
+            name,
+            result.mcpClient,
+            result.defs!,
+            mcp.timeout,
+            hostEffectiveSampling(mcp, hostOwned),
+            identity,
+          )
+        }),
+      )
+    })
+
+    const disconnect = Effect.fn("MCP.disconnect")(function* (name: string, opts?: { suspend?: boolean }) {
       const s = yield* getState()
+      if (opts?.suspend) {
+        // Release the process only; status and defs stay so the server reads as dormant.
+        const client = s.clients[name]
+        if (!client || s.status[name]?.status !== "connected") return
+        delete s.clients[name]
+        yield* releaseMcpClient(client)
+        return
+      }
       yield* closeClient(s, name)
       delete s.clients[name]
       // Explicit disconnect supersedes any host-refresh cooldown; do not auto-revive.
       delete s.hostRetryAt[name]
+      delete s.launch[name]
       s.status[name] = { status: "disabled" }
     })
 
@@ -1219,22 +1310,31 @@ export const layer = Layer.effect(
       const config = { ...cfg.mcp, ...HostMcp.get() }
       const defaultTimeout = cfg.experimental?.mcp_timeout
 
-      const connectedClients = Object.entries(s.clients).filter(
-        ([clientName]) => s.status[clientName]?.status === "connected",
+      const connected = Object.entries(s.defs).filter(([name]) => s.status[name]?.status === "connected")
+      yield* Effect.forEach(
+        connected.filter(([name]) => !s.clients[name]),
+        ([name]) => revive(s, name),
+        { concurrency: "unbounded", discard: true },
       )
+      const bridge = yield* EffectBridge.make()
 
       // Capture bindings synchronously: refresh must not retire a client between
       // selecting it and retaining the tool closures returned to a turn.
-      for (const [clientName, client] of connectedClients) {
+      for (const [clientName, listed] of connected) {
+        if (s.status[clientName]?.status !== "connected") continue
         const mcpConfig = config[clientName]
         const entry = mcpConfig && isMcpConfigured(mcpConfig) ? mcpConfig : undefined
-        const listed = s.defs[clientName]
-        if (!listed) {
-          log.warn("missing cached tools for connected server", { clientName })
-          continue
-        }
+        // Still dormant after the bounded restart: publish the same schema, restart on call.
+        const client =
+          s.clients[clientName] ??
+          (async () => {
+            await bridge.promise(revive(s, clientName))
+            const live = s.clients[clientName]
+            if (!live) throw new Error(`MCP server "${clientName}" is not running and could not be restarted`)
+            return live
+          })
 
-        if (context && listed.length) {
+        if (context && listed.length && typeof client !== "function") {
           const retained = turnClients.get(context) ?? new Map<MCPClient, { name: string; release: () => void }>()
           if (!retained.has(client)) retained.set(client, { name: clientName, release: client.retain() })
           turnClients.set(context, retained)

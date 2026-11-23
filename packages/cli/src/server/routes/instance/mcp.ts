@@ -249,11 +249,13 @@ export const McpRoutes = lazy(() =>
         },
       }),
       validator("param", z.object({ name: z.string() })),
+      // suspend: release the process but keep the server's tools listed; it restarts on next use.
+      validator("query", z.object({ suspend: z.enum(["true", "false"]).optional() })),
       async (c) =>
         jsonRequest("McpRoutes.disconnect", c, function* () {
           const { name } = c.req.valid("param")
           const mcp = yield* MCP.Service
-          yield* mcp.disconnect(name)
+          yield* mcp.disconnect(name, { suspend: c.req.valid("query").suspend === "true" })
           return true
         }),
     ),

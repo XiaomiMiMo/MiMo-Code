@@ -75,13 +75,15 @@ function getOrCreateClientState(name?: string): MockClientState {
 }
 
 // Mock transport that succeeds or fails based on connectShouldFail / connectShouldHang
+const stdioLaunches: Array<{ command: string; args: string[]; env: Record<string, string> }> = []
 class MockStdioTransport {
   stderr: null = null
   pid = 12345
   onerror?: unknown
   onStderr?: unknown
-  // oxlint-disable-next-line no-useless-constructor
-  constructor(_opts: any) {}
+  constructor(opts: any) {
+    stdioLaunches.push({ command: opts.command, args: opts.args, env: { ...opts.env } })
+  }
   async start() {
     if (connectShouldHang) return new Promise<void>(() => {}) // never resolves
     if (connectShouldFail) throw new Error(connectError)
@@ -256,6 +258,7 @@ beforeEach(() => {
   clientCreateCount = 0
   clientOptions.length = 0
   transportCloseCount = 0
+  stdioLaunches.length = 0
 })
 
 // Import after mocks
@@ -1332,6 +1335,133 @@ test(
       expect(serverStatus.status).toBe("failed")
       // Both StreamableHTTP and SSE transports should be closed
       expect(transportCloseCount).toBeGreaterThanOrEqual(2)
+    }),
+  ),
+)
+
+// ========================================================================
+// Dormant servers: an idle suspend or a server exit releases the process, but
+// the model-facing tool list (names, schema) must stay exactly as published.
+// ========================================================================
+
+const { HostMcp } = await import("../../src/mcp/host")
+const local = { type: "local" as const, command: ["echo", "test"] }
+const call = { toolCallId: "call_1", messages: [], abortSignal: new AbortController().signal }
+const published = (tools: Record<string, any>) =>
+  JSON.stringify(
+    Object.entries(tools)
+      .toSorted(([a], [b]) => a.localeCompare(b))
+      .map(([name, tool]) => [name, tool.description, tool.inputSchema.jsonSchema]),
+  )
+
+function addServer(mcp: MCPNS.Interface, name: string) {
+  lastCreatedClientName = name
+  getOrCreateClientState(name).tools = [
+    { name: "act", description: "acts", inputSchema: { type: "object", properties: { x: { type: "string" } } } },
+    { name: "look", description: "looks", inputSchema: { type: "object", properties: {} } },
+  ]
+  return mcp.add(name, local)
+}
+
+test(
+  "suspend releases the process and the next tools() restarts it with an identical tool list",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      yield* addServer(mcp, "idle")
+      const before = published(yield* mcp.tools())
+
+      yield* mcp.disconnect("idle", { suspend: true })
+      expect(getOrCreateClientState("idle").closed).toBe(true)
+      expect((yield* mcp.status())["idle"]).toBeUndefined() // add()ed servers are not in config
+      expect((yield* mcp.clients())["idle"]).toBeUndefined()
+      const created = clientCreateCount
+
+      // The process environment drifting while dormant must not reach the restarted server.
+      process.env.MCP_DORMANT_DRIFT = "1"
+      const tools = yield* mcp.tools().pipe(Effect.ensuring(Effect.sync(() => delete process.env.MCP_DORMANT_DRIFT)))
+      expect(published(tools)).toBe(before)
+      expect(clientCreateCount).toBe(created + 1)
+      expect(stdioLaunches.at(-1)).toEqual(stdioLaunches.at(-2)!)
+      yield* Effect.promise(() => tools["idle_act"]!.execute!({ x: "1" }, call) as Promise<unknown>)
+      expect(getOrCreateClientState("idle").toolCalls).toHaveLength(1)
+    }),
+  ),
+)
+
+test(
+  "a dormant server that cannot restart keeps its tools; calls fail readably and recover later",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      yield* addServer(mcp, "flaky")
+      const before = published(yield* mcp.tools())
+      yield* mcp.disconnect("flaky", { suspend: true })
+
+      connectShouldFail = true
+      yield* mcp.connect("flaky")
+      const tools = yield* mcp.tools()
+      expect(published(tools)).toBe(before)
+      const failed = yield* Effect.promise(() =>
+        (tools["flaky_act"]!.execute!({}, call) as Promise<unknown>).then(
+          () => undefined,
+          (error: Error) => error.message,
+        ),
+      )
+      expect(failed).toContain("could not be restarted")
+
+      connectShouldFail = false
+      yield* Effect.promise(() => tools["flaky_act"]!.execute!({}, call) as Promise<unknown>)
+      expect(getOrCreateClientState("flaky").toolCalls).toHaveLength(1)
+      expect(published(yield* mcp.tools())).toBe(before)
+    }),
+  ),
+)
+
+test(
+  "a server that exits on its own stays listed and restarts on the next tools()",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      yield* addServer(mcp, "crashy")
+      const before = published(yield* mcp.tools())
+      const created = clientCreateCount
+
+      ;((yield* mcp.clients())["crashy"] as any).onclose()
+      expect((yield* mcp.clients())["crashy"]).toBeUndefined()
+
+      expect(published(yield* mcp.tools())).toBe(before)
+      expect(clientCreateCount).toBe(created + 1)
+    }),
+  ),
+)
+
+test(
+  "only an explicit disconnect or a closed host gate removes a server's tools",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      yield* addServer(mcp, "manual")
+      yield* mcp.disconnect("manual")
+      expect(Object.keys(yield* mcp.tools())).toEqual([])
+      // A later suspend of a disabled server must not resurrect it.
+      yield* mcp.disconnect("manual", { suspend: true })
+      expect(Object.keys(yield* mcp.tools())).toEqual([])
+
+      lastCreatedClientName = "hosted"
+      HostMcp.set({ hosted: local })
+      try {
+        const before = published(yield* mcp.tools())
+        expect(before).toContain("hosted_test_tool")
+        yield* mcp.disconnect("hosted", { suspend: true })
+        expect((yield* mcp.status())["hosted"]).toEqual({ status: "connected" })
+        yield* mcp.connect("hosted")
+        expect((yield* mcp.clients())["hosted"]).toBeDefined()
+        expect(published(yield* mcp.tools())).toBe(before)
+
+        yield* mcp.disconnect("hosted", { suspend: true })
+        HostMcp.set({ hosted: { ...local, enabled: false } })
+        expect(Object.keys(yield* mcp.tools())).toEqual([])
+        expect((yield* mcp.status())["hosted"]).toEqual({ status: "disabled" })
+      } finally {
+        HostMcp.set({})
+      }
     }),
   ),
 )
