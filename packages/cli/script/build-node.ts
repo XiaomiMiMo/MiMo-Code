@@ -60,4 +60,14 @@ await Bun.build({
   },
 })
 
+// Desktop data migration loads this standalone entry in a worker thread: it must stay free of
+// engine globals (paths, logging, the Database singleton) and of any external package.
+await Bun.build({
+  target: "node",
+  entrypoints: ["./src/migration-node.ts"],
+  outdir: "./dist/node",
+  format: "esm",
+  sourcemap: "linked",
+})
+
 console.log("Build complete")
