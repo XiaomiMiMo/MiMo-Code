@@ -605,6 +605,20 @@ function alwaysDirectProviderCfg(url: string) {
   }
 }
 
+/** A server whose every tool is config-declared always-direct. */
+function directOnlyProviderCfg(url: string) {
+  return {
+    ...providerCfg(url),
+    mcp: {
+      kernel: {
+        type: "local" as const,
+        command: ["fake-kernel"],
+        alwaysDirectTools: ["run", "reset"],
+      },
+    },
+  }
+}
+
 function mediaProviderCfg(url: string) {
   const config = providerCfg(url)
   return {
@@ -3764,6 +3778,8 @@ alwaysDirectMcpIt.live(
         const firstUserText = JSON.stringify(firstUser?.content)
         expect(firstUserText).toContain("- mcp_ordinary: An ordinary deferred MCP tool")
         expect(firstUserText).not.toContain("- sandbox_run:")
+        expect(firstUserText).toContain("Directly available tools:")
+        expect(firstUserText).not.toContain("No tools are available")
 
         const parts = (yield* MessageV2.filterCompactedEffect(session.id)).flatMap((message) => message.parts)
         const direct = parts.find(
@@ -3781,8 +3797,112 @@ alwaysDirectMcpIt.live(
             part.type === "tool" && part.tool === "mcp_tool_use" && part.state.status === "error",
         )
         expect(dispatched?.state.error).toContain("not an available deferred MCP tool")
+        expect(dispatched?.state.error).toContain("It is directly available: call the top-level tool")
       }),
       { git: true, config: alwaysDirectProviderCfg },
+    ),
+  30_000,
+)
+
+// Every tool of this server is always-direct, so the deferred catalog is empty
+// while both tools are still exposed top-level for the request.
+const directOnlyMcpIt = testEffect(
+  makeHttp(
+    mcpLayer(
+      () => ({
+        kernel_run: dynamicTool({
+          description: "Run a script in the kernel",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: { code: { type: "string" } },
+            additionalProperties: false,
+          }),
+          execute: async () => ({ content: [{ type: "text", text: "cell ok" }] }),
+        }),
+        kernel_reset: dynamicTool({
+          description: "Reset the kernel",
+          inputSchema: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
+          execute: async () => ({ content: [{ type: "text", text: "reset ok" }] }),
+        }),
+      }),
+      () => ({}),
+      () => ({
+        configured: true,
+        servers: [
+          {
+            name: "kernel",
+            status: "connected" as const,
+            toolCount: 2,
+            tools: [
+              { name: "kernel_reset", description: "Reset the kernel" },
+              { name: "kernel_run", description: "Run a script in the kernel" },
+            ],
+          },
+        ],
+      }),
+    ),
+  ),
+)
+
+directOnlyMcpIt.live(
+  "reports a server whose tools are all always-direct as having direct tools, not none",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({
+          title: "Always-direct only server",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+
+        yield* llm.tool("mcp_tool_search", { query: "kernel run" })
+        yield* llm.tool("mcp_tool_use", { name: "kernel_run", arguments: { code: "1" } })
+        yield* llm.text("done")
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          model: ref,
+          parts: [{ type: "text", text: "run a kernel script" }],
+        })
+        yield* llm.text("second turn")
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          model: ref,
+          parts: [{ type: "text", text: "and again" }],
+        })
+
+        const requests = yield* llm.inputs
+        const names = (requests[0].tools as Array<Record<string, unknown>>).map(wireToolName)
+        expect(names).toContain("kernel_run")
+        expect(names).toContain("kernel_reset")
+
+        const first = lastUserText(requests[0])
+        expect(first).toContain("MCP server kernel connected.")
+        expect(first).toContain(
+          "Directly available tools: kernel_reset, kernel_run. Call these exact top-level names directly",
+        )
+        expect(first).not.toContain("No tools are available")
+        // Unchanged state is not announced again on the next turn.
+        expect(lastUserText(requests[requests.length - 1])).not.toContain("MCP server kernel")
+
+        const parts = (yield* MessageV2.filterCompactedEffect(session.id)).flatMap((message) => message.parts)
+        const search = parts.find(
+          (part): part is CompletedToolPart =>
+            part.type === "tool" && part.tool === "mcp_tool_search" && part.state.status === "completed",
+        )
+        expect(search?.state.output).toContain("No deferred MCP tools are currently visible.")
+        expect(search?.state.output).toContain("Directly available tools: kernel_reset, kernel_run.")
+        expect(search?.state.output).toContain("kernel connected (2 tools, 2 direct)")
+        expect(search?.state.output).not.toContain("(0 tools)")
+        const dispatched = parts.find(
+          (part): part is ErrorToolPart =>
+            part.type === "tool" && part.tool === "mcp_tool_use" && part.state.status === "error",
+        )
+        expect(dispatched?.state.error).toContain('It is directly available: call the top-level tool "kernel_run"')
+      }),
+      { git: true, config: directOnlyProviderCfg },
     ),
   30_000,
 )

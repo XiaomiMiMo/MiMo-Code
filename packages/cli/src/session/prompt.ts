@@ -2291,7 +2291,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
       // Connection state comes from MCP; advertised capabilities must match the
       // same request-authorized view that search and dispatch actually expose.
+      // Always-direct tools are outside the deferred catalog but still exposed
+      // top-level for this request, so they count toward the server and are
+      // reported separately; otherwise a server whose tools are all direct
+      // would be announced as having no tools.
       const visibleMcpTools = new Map(mcpSearchEntries.map((entry) => [entry.name, entry]))
+      const directMcpTools = new Map(
+        [...alwaysDirectTools].flatMap((name) => (tools[name] ? [[name, tools[name].description ?? ""] as const] : [])),
+      )
       const mcpReadiness: McpReadiness = {
         ...readiness,
         servers: readiness.servers.map((server) => {
@@ -2301,7 +2308,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const entry = visibleMcpTools.get(name)
             return entry ? [{ name, description: entry.description }] : []
           })
-          return { ...server, tools, toolCount: tools.length }
+          const directTools = [...names].flatMap((name) => {
+            const description = directMcpTools.get(name)
+            return description === undefined ? [] : [{ name, description }]
+          })
+          return {
+            ...server,
+            tools,
+            ...(directTools.length > 0 ? { directTools } : {}),
+            toolCount: tools.length + directTools.length,
+          }
         }),
       }
       mcpCatalog.current = createMcpToolSearchCatalog(
@@ -2348,7 +2364,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 options.toolCallId,
                 Effect.fail(
                   new RecoverableError(
-                    `"${args.name}" is not an available deferred MCP tool for this request. Use ${MCP_TOOL_SEARCH_ID} to find the exact tool name.`,
+                    directMcpTools.has(args.name)
+                      ? `"${args.name}" is not an available deferred MCP tool for this request. It is directly available: call the top-level tool "${args.name}" instead.`
+                      : `"${args.name}" is not an available deferred MCP tool for this request. Use ${MCP_TOOL_SEARCH_ID} to find the exact tool name.`,
                   ),
                 ),
                 { signal: options.abortSignal },
@@ -2491,11 +2509,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // Initial pending is covered by entry; initially disabled servers add no noise.
         if (!previous && (server.status === "pending" || server.status === "disabled")) return []
         const toolNames = server.tools?.map((tool) => tool.name).toSorted()
+        const directToolNames = server.directTools?.map((tool) => tool.name).toSorted()
         const meta: McpReminderMeta = {
           kind: "server",
           server: server.name,
           status: server.status,
           ...(toolNames ? { toolNames } : {}),
+          ...(directToolNames?.length ? { directToolNames } : {}),
           ...(server.error ? { error: server.error } : {}),
         }
         if (previous && mcpReminderMarker(previous) === mcpReminderMarker(meta)) return []

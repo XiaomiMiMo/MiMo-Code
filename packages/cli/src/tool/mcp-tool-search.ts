@@ -46,12 +46,17 @@ export type McpToolSearchEntry = {
 export type McpServerReadiness = {
   name: string
   status: "pending" | "connected" | "failed" | "needs_auth" | "needs_client_registration" | "disabled"
-  /** Present when connected. */
+  /** Present when connected: deferred catalog tools plus direct tools. */
   toolCount?: number
   /** Present when failed or needs_client_registration. */
   error?: string
   /** Model-visible tool names + short descriptions, for server-outcome reminders. */
   tools?: Array<{ name: string; description: string }>
+  /**
+   * Always-direct tools exposed as top-level tools for this request. They are
+   * not in the deferred catalog, so `tools` alone would undercount the server.
+   */
+  directTools?: Array<{ name: string; description: string }>
 }
 
 export type McpServerReminder = Omit<McpServerReadiness, "status"> & {
@@ -140,12 +145,24 @@ export const MCP_REMINDER_METADATA_KEY = "mcpReminder"
 
 export type McpReminderMeta =
   | { kind: "entry"; servers: string[] }
-  | { kind: "server"; server: string; status: string; toolNames?: string[]; error?: string }
+  | {
+      kind: "server"
+      server: string
+      status: string
+      toolNames?: string[]
+      directToolNames?: string[]
+      error?: string
+    }
 
 /** Semantic state fingerprint; volatile error text must not cause repeated reminders. */
 export function mcpReminderMarker(meta: McpReminderMeta): string {
+  // Direct tools join the fingerprint only when present, so markers of servers
+  // without direct tools stay identical to the ones already announced.
+  const direct = meta.kind === "server" && meta.directToolNames?.length ? [meta.directToolNames.toSorted()] : []
   const state =
-    meta.kind === "entry" ? [meta.servers.toSorted()] : [meta.server, meta.status, (meta.toolNames ?? []).toSorted()]
+    meta.kind === "entry"
+      ? [meta.servers.toSorted()]
+      : [meta.server, meta.status, (meta.toolNames ?? []).toSorted(), ...direct]
   return `mcp:${meta.kind}:${createHash("sha256").update(JSON.stringify(state)).digest("hex")}`
 }
 
@@ -202,6 +219,22 @@ function boundedReminder(lines: string[], budget: number, fallback: string[] = [
   return ""
 }
 
+/** Model-facing line for always-direct tools; empty when there are none. */
+export function directToolsLine(names: string[]) {
+  if (names.length === 0) return []
+  return [
+    `Directly available tools: ${names.map(normalizeMetadata).join(", ")}. Call these exact top-level names directly; they are not in ${MCP_TOOL_SEARCH_ID} or ${MCP_TOOL_USE_ID}.`,
+  ]
+}
+
+/** Always-direct tools of connected servers, optionally narrowed to one exact name. */
+export function mcpDirectToolNames(readiness: McpReadiness | undefined, name?: string) {
+  const names = (readiness?.servers ?? [])
+    .filter((server) => server.status === "connected")
+    .flatMap((server) => (server.directTools ?? []).map((tool) => tool.name))
+  return name === undefined ? names : names.filter((tool) => tool === name)
+}
+
 /**
  * First injection when ≥1 MCP server is configured: names, possible pending work,
  * and how to discover/call. Not gated on the tool catalog.
@@ -227,12 +260,12 @@ export function renderMcpEntryReminder(serverNames: string[], budget = Infinity)
 export function renderMcpServerReminder(
   server: McpServerReminder,
   budget: number,
-  previous?: { status: string; toolNames?: string[] },
+  previous?: { status: string; toolNames?: string[]; directToolNames?: string[] },
 ) {
   const name = normalizeMetadata(server.name)
   const limit = Math.max(0, Math.floor(budget))
-  const previousTools = previous?.toolNames ?? []
-  const currentTools = new Set((server.tools ?? []).map((tool) => tool.name))
+  const previousTools = [...(previous?.toolNames ?? []), ...(previous?.directToolNames ?? [])]
+  const currentTools = new Set([...(server.tools ?? []), ...(server.directTools ?? [])].map((tool) => tool.name))
   const dropped = previousTools.filter((tool) => !currentTools.has(tool))
   const replacement = `Tool list for ${name} changed; re-check with ${MCP_TOOL_SEARCH_ID}.`
   const removed = `No longer available from ${name}: ${dropped.map(normalizeMetadata).join(", ")}.`
@@ -274,11 +307,19 @@ export function renderMcpServerReminder(
     )
 
   const tools = server.tools ?? []
-  const heading = `MCP server ${name} connected.${tools.length === 0 ? " No tools are available for this request." : ""}`
-  const compact = [heading, ...supersede, `Fetch or re-check tools with ${MCP_TOOL_SEARCH_ID}.`]
+  const direct = directToolsLine((server.directTools ?? []).map((tool) => tool.name))
+  // "No tools" only when neither the deferred catalog nor the top-level tool
+  // list carries anything from this server.
+  const heading = `MCP server ${name} connected.${tools.length === 0 && direct.length === 0 ? " No tools are available for this request." : ""}`
+  const compact = [
+    heading,
+    ...supersede,
+    ...direct,
+    ...(tools.length > 0 || direct.length === 0 ? [`Fetch or re-check tools with ${MCP_TOOL_SEARCH_ID}.`] : []),
+  ]
   if (tools.length === 0) return boundedReminder(compact, limit)
   const tail = [`Schemas: ${MCP_TOOL_SEARCH_ID}. Call tools through ${MCP_TOOL_USE_ID}.`]
-  const head = [heading, ...supersede, "Current tools:"]
+  const head = [heading, ...supersede, ...direct, "Current tools:"]
   const listBudget = limit - Token.estimate(reminderBody([...head, ...tail])) - 1
   const detailed = tools.map((tool) => {
     const description = preview(tool.description)
@@ -456,11 +497,13 @@ export function renderMcpReadiness(readiness: McpReadiness | undefined): string 
   if (disabled.length > 0) parts.push(`disabled ${names(disabled)}`)
   if (connected.length > 0) {
     const toolTotal = connected.reduce((sum, server) => sum + (server.toolCount ?? 0), 0)
-    const count = (total: number) => `${total} tool${total === 1 ? "" : "s"}`
+    const directTotal = connected.reduce((sum, server) => sum + (server.directTools?.length ?? 0), 0)
+    const count = (total: number, direct: number) =>
+      `${total} tool${total === 1 ? "" : "s"}${direct > 0 ? `, ${direct} direct` : ""}`
     parts.push(
       connected.length === 1 && connected[0]!.toolCount !== undefined
-        ? `${connected[0]!.name} connected (${count(connected[0]!.toolCount)})`
-        : `${connected.length} connected (${count(toolTotal)})`,
+        ? `${connected[0]!.name} connected (${count(connected[0]!.toolCount, directTotal)})`
+        : `${connected.length} connected (${count(toolTotal, directTotal)})`,
     )
   }
   if (parts.length === 0) parts.push("no servers ready")
@@ -480,7 +523,12 @@ export function mcpSearchMissOutput(catalogSize: number, readiness: McpReadiness
     catalogSize === 0
       ? "No deferred MCP tools are currently visible."
       : `No matching deferred tools found (catalog has ${catalogSize} tool${catalogSize === 1 ? "" : "s"}).`
-  return [primary, renderMcpReadiness(readiness), mcpSearchActionHint(readiness)].join("\n\n")
+  return [
+    primary,
+    ...directToolsLine(mcpDirectToolNames(readiness)),
+    renderMcpReadiness(readiness),
+    mcpSearchActionHint(readiness),
+  ].join("\n\n")
 }
 
 function result(entry: McpToolSearchEntry, score: number): SearchResult {
