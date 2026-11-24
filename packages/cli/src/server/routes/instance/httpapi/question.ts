@@ -91,6 +91,9 @@ export const questionHandlers = Layer.unwrap(
       yield* svc.reply({
         requestID: ctx.params.requestID,
         answers: ctx.payload.answers,
+        ...(ctx.payload.source !== undefined ? { source: ctx.payload.source } : {}),
+        ...(ctx.payload.reason !== undefined ? { reason: ctx.payload.reason } : {}),
+        ...(ctx.payload.elicitation !== undefined ? { elicitation: ctx.payload.elicitation } : {}),
       })
       return true
     })

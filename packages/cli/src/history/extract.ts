@@ -162,6 +162,7 @@ function extractRaw(part: MessageV2.Part, messageRole: "user" | "assistant", opt
     case "checkpoint":
     case "step-start":
     case "step-finish":
+    case "elicitation":
       return null
     default:
       part satisfies never

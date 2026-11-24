@@ -64,6 +64,26 @@ export class Tool extends Schema.Class<Tool>("QuestionTool")({
   static readonly zod = zod(this)
 }
 
+/**
+ * The MCP `elicitation/create` request a question was raised for, exactly as
+ * the server sent it. Clients may render the form from `requestedSchema`
+ * themselves and answer with a structured reply.
+ */
+export class Elicitation extends Schema.Class<Elicitation>("QuestionElicitation")({
+  server: Schema.String.annotate({ description: "MCP server that sent the request" }),
+  requestID: Schema.Union([Schema.String, Schema.Number]).annotate({
+    description: "JSON-RPC id of the elicitation request",
+  }),
+  mode: Schema.Literal("form"),
+  message: Schema.String,
+  requestedSchema: Schema.Record(Schema.String, Schema.Unknown),
+  meta: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
+    description: "The request's `_meta`, as sent by the server",
+  }),
+}) {
+  static readonly zod = zod(this)
+}
+
 export class Request extends Schema.Class<Request>("QuestionRequest")({
   id: QuestionID,
   sessionID: SessionID,
@@ -71,6 +91,7 @@ export class Request extends Schema.Class<Request>("QuestionRequest")({
     description: "Questions to ask",
   }),
   tool: Schema.optional(Tool),
+  elicitation: Schema.optional(Elicitation),
 }) {
   static readonly zod = zod(this)
 }
@@ -80,15 +101,33 @@ export const Answer = Schema.Array(Schema.String)
   .pipe(withStatics((s) => ({ zod: zod(s) })))
 export type Answer = Schema.Schema.Type<typeof Answer>
 
+const ElicitationValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Array(Schema.String)])
+
+export class ElicitationReply extends Schema.Class<ElicitationReply>("QuestionElicitationReply")({
+  action: Schema.Literals(["accept", "decline", "cancel"]),
+  content: Schema.optional(Schema.Record(Schema.String, ElicitationValue)),
+}) {
+  static readonly zod = zod(this)
+}
+
 export class Reply extends Schema.Class<Reply>("QuestionReply")({
   answers: Schema.Array(Answer).annotate({
     description: "User answers in order of questions (each answer is an array of selected labels)",
+  }),
+  source: Schema.optional(Schema.String.check(Schema.isMaxLength(64))).annotate({
+    description: "Who answered (for example \"user\"); recorded as given",
+  }),
+  reason: Schema.optional(Schema.String.check(Schema.isMaxLength(500))).annotate({
+    description: "Why the answer was given; recorded as given",
+  }),
+  elicitation: Schema.optional(ElicitationReply).annotate({
+    description: "Structured answer for a question raised by an MCP elicitation; validated against its requestedSchema",
   }),
 }) {
   static readonly zod = zod(this)
 }
 
-class Replied extends Schema.Class<Replied>("QuestionReplied")({
+class RepliedEvent extends Schema.Class<RepliedEvent>("QuestionReplied")({
   sessionID: SessionID,
   requestID: QuestionID,
   answers: Schema.Array(Answer),
@@ -101,7 +140,7 @@ class Rejected extends Schema.Class<Rejected>("QuestionRejected")({
 
 export const Event = {
   Asked: BusEvent.define("question.asked", Request.zod),
-  Replied: BusEvent.define("question.replied", zod(Replied)),
+  Replied: BusEvent.define("question.replied", zod(RepliedEvent)),
   Rejected: BusEvent.define("question.rejected", zod(Rejected)),
 }
 
@@ -111,9 +150,17 @@ export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("Que
   }
 }
 
+/** Everything a reply carried, for callers that need more than the answers. */
+export interface Replied {
+  readonly answers: ReadonlyArray<Answer>
+  readonly source?: string
+  readonly reason?: string
+  readonly elicitation?: ElicitationReply
+}
+
 interface PendingEntry {
   info: Request
-  deferred: Deferred.Deferred<ReadonlyArray<Answer>, RejectedError>
+  deferred: Deferred.Deferred<Replied, RejectedError>
 }
 
 interface State {
@@ -133,7 +180,21 @@ export interface Interface {
     tool?: Tool
     abortSignal?: AbortSignal
   }) => Effect.Effect<ReadonlyArray<Answer>, RejectedError>
-  readonly reply: (input: { requestID: QuestionID; answers: ReadonlyArray<Answer> }) => Effect.Effect<void>
+  /** Like `ask`, for an MCP elicitation; resolves with the whole reply. */
+  readonly askElicitation: (input: {
+    sessionID: SessionID
+    questions: ReadonlyArray<Info>
+    elicitation: Elicitation
+    tool?: Tool
+    abortSignal?: AbortSignal
+  }) => Effect.Effect<Replied, RejectedError>
+  readonly reply: (input: {
+    requestID: QuestionID
+    answers: ReadonlyArray<Answer>
+    source?: string
+    reason?: string
+    elicitation?: ElicitationReply
+  }) => Effect.Effect<void>
   readonly reject: (requestID: QuestionID) => Effect.Effect<void>
   readonly list: () => Effect.Effect<ReadonlyArray<Request>>
   readonly neverAsk: () => Effect.Effect<boolean>
@@ -166,10 +227,11 @@ export const layer = Layer.effect(
       }),
     )
 
-    const ask = Effect.fn("Question.ask")(function* (input: {
+    const raise = Effect.fn("Question.raise")(function* (input: {
       sessionID: SessionID
       questions: ReadonlyArray<Info>
       tool?: Tool
+      elicitation?: Elicitation
       abortSignal?: AbortSignal
     }) {
       const pending = (yield* InstanceState.get(state)).pending
@@ -177,19 +239,20 @@ export const layer = Layer.effect(
       const id = QuestionID.ascending()
       log.info("asking", { id, questions: input.questions.length })
 
-      const deferred = yield* Deferred.make<ReadonlyArray<Answer>, RejectedError>()
+      const deferred = yield* Deferred.make<Replied, RejectedError>()
       const info = Schema.decodeUnknownSync(Request)({
         id,
         sessionID: input.sessionID,
         questions: input.questions,
         tool: input.tool,
+        ...(input.elicitation ? { elicitation: input.elicitation } : {}),
       })
       pending.set(id, { info, deferred })
       const signal = input.abortSignal
       const awaiting = signal
         ? Effect.raceFirst(
             Deferred.await(deferred),
-            Effect.callback<ReadonlyArray<Answer>, RejectedError>((resume) => {
+            Effect.callback<Replied, RejectedError>((resume) => {
               // Reuse request ownership: a reply already in flight must win over a late abort.
               const onAbort = () => resume(reject(id).pipe(Effect.andThen(Deferred.await(deferred))))
               if (signal.aborted) {
@@ -211,9 +274,15 @@ export const layer = Layer.effect(
       )
     })
 
+    const ask: Interface["ask"] = (input) => raise(input).pipe(Effect.map((replied) => replied.answers))
+    const askElicitation: Interface["askElicitation"] = (input) => raise(input)
+
     const reply = Effect.fn("Question.reply")(function* (input: {
       requestID: QuestionID
       answers: ReadonlyArray<Answer>
+      source?: string
+      reason?: string
+      elicitation?: ElicitationReply
     }) {
       const pending = (yield* InstanceState.get(state)).pending
       const existing = pending.get(input.requestID)
@@ -228,7 +297,12 @@ export const layer = Layer.effect(
         requestID: existing.info.id,
         answers: input.answers,
       })
-      yield* Deferred.succeed(existing.deferred, input.answers)
+      yield* Deferred.succeed(existing.deferred, {
+        answers: input.answers,
+        ...(input.source !== undefined ? { source: input.source } : {}),
+        ...(input.reason !== undefined ? { reason: input.reason } : {}),
+        ...(input.elicitation !== undefined ? { elicitation: input.elicitation } : {}),
+      })
     })
 
     const reject = Effect.fn("Question.reject")(function* (requestID: QuestionID) {
@@ -262,7 +336,7 @@ export const layer = Layer.effect(
       log.info("never-ask", { enabled })
     })
 
-    return Service.of({ ask, reply, reject, list, neverAsk, setNeverAsk })
+    return Service.of({ ask, askElicitation, reply, reject, list, neverAsk, setNeverAsk })
   }),
 )
 

@@ -12,6 +12,11 @@ const Reply = z.object({
   answers: Question.Answer.zod
     .array()
     .describe("User answers in order of questions (each answer is an array of selected labels)"),
+  source: z.string().max(64).optional().describe('Who answered (for example "user"); recorded as given'),
+  reason: z.string().max(500).optional().describe("Why the answer was given; recorded as given"),
+  elicitation: Question.ElicitationReply.zod
+    .optional()
+    .describe("Structured answer for a question raised by an MCP elicitation; validated against its requestedSchema"),
 })
 
 export const QuestionRoutes = lazy(() =>
@@ -123,6 +128,9 @@ export const QuestionRoutes = lazy(() =>
           yield* svc.reply({
             requestID: params.requestID,
             answers: json.answers,
+            ...(json.source !== undefined ? { source: json.source } : {}),
+            ...(json.reason !== undefined ? { reason: json.reason } : {}),
+            ...(json.elicitation !== undefined ? { elicitation: json.elicitation } : {}),
           })
           return true
         }),

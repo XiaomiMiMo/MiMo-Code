@@ -806,6 +806,28 @@ export type QuestionTool = {
   callID: string
 }
 
+export type QuestionElicitation = {
+  /**
+   * MCP server that sent the request
+   */
+  server: string
+  /**
+   * JSON-RPC id of the elicitation request
+   */
+  requestID: string | number
+  mode: "form"
+  message: string
+  requestedSchema: {
+    [key: string]: unknown
+  }
+  /**
+   * The request's `_meta`, as sent by the server
+   */
+  meta?: {
+    [key: string]: unknown
+  }
+}
+
 export type QuestionRequest = {
   id: string
   sessionID: string
@@ -814,6 +836,7 @@ export type QuestionRequest = {
    */
   questions: Array<QuestionInfo>
   tool?: QuestionTool
+  elicitation?: QuestionElicitation
 }
 
 export type EventQuestionAsked = {
@@ -1552,6 +1575,35 @@ export type CompactionPart = {
   }
 }
 
+export type ElicitationPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "elicitation"
+  server: string
+  callID?: string
+  requestID: string | number
+  mode: "form"
+  message: string
+  requestedSchema: {
+    [key: string]: unknown
+  }
+  meta?: {
+    [key: string]: unknown
+  }
+  action?: "accept" | "decline" | "cancel"
+  content?: {
+    [key: string]: string | number | boolean | Array<string>
+  }
+  source?: string
+  reason?: string
+  error?: string
+  time: {
+    created: number
+    completed?: number
+  }
+}
+
 export type Part =
   | TextPart
   | SubtaskPart
@@ -1566,6 +1618,7 @@ export type Part =
   | RetryPart
   | CheckpointPart
   | CompactionPart
+  | ElicitationPart
 
 export type EventMessagePartUpdated = {
   type: "message.part.updated"
@@ -3395,6 +3448,16 @@ export type SubtaskPartInput = {
     modelID: string
   }
   command?: string
+}
+
+/**
+ * Structured answer for a question raised by an MCP elicitation; validated against its requestedSchema
+ */
+export type QuestionElicitationReply = {
+  action: "accept" | "decline" | "cancel"
+  content?: {
+    [key: string]: string | number | boolean | Array<string>
+  }
 }
 
 export type ProviderAuthMethod = {
@@ -6705,6 +6768,15 @@ export type QuestionReplyData = {
      * User answers in order of questions (each answer is an array of selected labels)
      */
     answers: Array<QuestionAnswer>
+    /**
+     * Who answered (for example "user"); recorded as given
+     */
+    source?: string
+    /**
+     * Why the answer was given; recorded as given
+     */
+    reason?: string
+    elicitation?: QuestionElicitationReply
   }
   path: {
     requestID: string
