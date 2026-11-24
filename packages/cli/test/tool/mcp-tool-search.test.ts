@@ -5,6 +5,7 @@ import {
   alwaysDirectMcpToolKeys,
   checkMcpToolArguments,
   mcpCatalogToolName,
+  mcpDirectToolNames,
   MCP_TOOL_USE_ID,
   createMcpToolSearchCatalog,
   mcpReminderMarker,
@@ -534,5 +535,113 @@ describe("MCP readiness hint", () => {
     expect(miss).toContain("MCP status: playwright connected (3 tools).")
     expect(miss).not.toContain("Retry later")
     expect(miss).toContain("select:")
+  })
+})
+
+describe("always-direct MCP tools in status and reminders", () => {
+  const directOnly = {
+    name: "kernel",
+    status: "connected" as const,
+    toolCount: 2,
+    tools: [],
+    directTools: [
+      { name: "kernel_reset", description: "Reset the kernel" },
+      { name: "kernel_run", description: "Run a script" },
+    ],
+  }
+  const mixed = {
+    name: "kernel",
+    status: "connected" as const,
+    toolCount: 2,
+    tools: [{ name: "kernel_lookup", description: "Look up a record" }],
+    directTools: [{ name: "kernel_run", description: "Run a script" }],
+  }
+  const empty = { name: "kernel", status: "connected" as const, toolCount: 0, tools: [] }
+
+  test("a server with only direct tools names them instead of reporting no tools", () => {
+    const text = renderMcpServerReminder(directOnly, 1_000)
+    expect(text).toContain("MCP server kernel connected.")
+    expect(text).not.toContain("No tools are available")
+    expect(text).toContain(
+      "Directly available tools: kernel_reset, kernel_run. Call these exact top-level names directly; they are not in mcp_tool_search or mcp_tool_use.",
+    )
+    expect(text).not.toContain("Current tools:")
+    expect(text).not.toContain("Fetch or re-check tools")
+
+    expect(renderMcpReadiness({ configured: true, servers: [directOnly] })).toBe(
+      "MCP status: kernel connected (2 tools, 2 direct).",
+    )
+    const miss = mcpSearchMissOutput(0, { configured: true, servers: [directOnly] })
+    expect(miss).toContain("Directly available tools: kernel_reset, kernel_run.")
+    expect(miss).toContain("MCP status: kernel connected (2 tools, 2 direct).")
+    expect(miss).not.toContain("(0 tools)")
+  })
+
+  test("a mixed server lists deferred tools for search and direct tools separately", () => {
+    const text = renderMcpServerReminder(mixed, 1_000)
+    expect(text).not.toContain("No tools are available")
+    expect(text).toContain("Directly available tools: kernel_run.")
+    expect(text).toContain("Current tools:\n- kernel_lookup: Look up a record")
+    expect(text).not.toContain("- kernel_run")
+    expect(text).toContain(`Call tools through ${MCP_TOOL_USE_ID}.`)
+    expect(renderMcpReadiness({ configured: true, servers: [mixed] })).toBe(
+      "MCP status: kernel connected (2 tools, 1 direct).",
+    )
+    expect(
+      renderMcpReadiness({
+        configured: true,
+        servers: [mixed, { name: "other", status: "connected", toolCount: 3 }],
+      }),
+    ).toBe("MCP status: 2 connected (5 tools, 1 direct).")
+  })
+
+  test("a server with neither deferred nor direct tools still reports none", () => {
+    const text = renderMcpServerReminder(empty, 1_000)
+    expect(text).toContain("No tools are available for this request")
+    expect(text).not.toContain("Directly available tools")
+    expect(renderMcpReadiness({ configured: true, servers: [empty] })).toBe("MCP status: kernel connected (0 tools).")
+    const miss = mcpSearchMissOutput(0, { configured: true, servers: [empty] })
+    expect(miss).not.toContain("Directly available tools")
+  })
+
+  test("direct names come only from connected servers and can be matched exactly", () => {
+    const readiness = {
+      configured: true,
+      servers: [
+        mixed,
+        { name: "later", status: "pending" as const, directTools: [{ name: "later_x", description: "" }] },
+      ],
+    }
+    expect(mcpDirectToolNames(readiness)).toEqual(["kernel_run"])
+    expect(mcpDirectToolNames(readiness, "kernel_run")).toEqual(["kernel_run"])
+    expect(mcpDirectToolNames(readiness, "kernel")).toEqual([])
+    expect(mcpDirectToolNames(undefined)).toEqual([])
+  })
+
+  test("direct tools change the reminder fingerprint only when present", () => {
+    const base = { kind: "server" as const, server: "kernel", status: "connected", toolNames: [] }
+    expect(mcpReminderMarker({ ...base, directToolNames: [] })).toBe(mcpReminderMarker(base))
+    const direct = { ...base, directToolNames: ["kernel_run", "kernel_reset"] }
+    expect(mcpReminderMarker(direct)).not.toBe(mcpReminderMarker(base))
+    expect(mcpReminderMarker(direct)).toBe(
+      mcpReminderMarker({ ...base, directToolNames: ["kernel_reset", "kernel_run"] }),
+    )
+  })
+
+  test("moving a tool between the catalog and direct exposure is not reported as removed", () => {
+    const text = renderMcpServerReminder(directOnly, 1_000, {
+      status: "connected",
+      toolNames: ["kernel_run"],
+      directToolNames: ["kernel_reset"],
+    })
+    expect(text).not.toContain("No longer available")
+    expect(text).toContain("Directly available tools: kernel_reset, kernel_run.")
+
+    const dropped = renderMcpServerReminder(empty, 1_000, {
+      status: "connected",
+      directToolNames: ["kernel_run"],
+    })
+    expect(dropped).toContain("No longer available from kernel: kernel_run.")
+    expect(dropped).toContain("No tools are available for this request")
   })
 })
