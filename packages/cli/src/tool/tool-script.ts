@@ -862,6 +862,10 @@ export const ToolScriptTool = Tool.define(
                       messages: [],
                       abortSignal: abort,
                       experimental_context: {
+                        messageID: subCtx.messageID,
+                        ...(typeof ctx.extra?.onMcpElicitation === "function"
+                          ? { onMcpElicitation: ctx.extra.onMcpElicitation }
+                          : {}),
                         onMcpToolProgress: (meta: Record<string, unknown>) =>
                           bridge.promise(
                             subCtx.metadata({

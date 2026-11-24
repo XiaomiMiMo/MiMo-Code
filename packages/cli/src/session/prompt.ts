@@ -125,6 +125,7 @@ import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
 import { HostMcp } from "../mcp/host"
 import { normalizeToolResult } from "../mcp/tool-result"
+import type { McpElicitationRecord } from "../mcp/tool-context"
 import { LSP } from "../lsp"
 import { Flag } from "../flag/flag"
 import { ulid } from "ulid"
@@ -1796,6 +1797,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       let searchExposed = false
       const run = yield* runner()
       const promptOps = yield* ops()
+      // MCP elicitations raised during a call are kept as history next to the call.
+      const recordMcpElicitation = (record: McpElicitationRecord) =>
+        run.promise(
+          sessions.updatePart({
+            ...record,
+            id: PartID.make(record.id),
+            type: "elicitation" as const,
+            sessionID: input.session.id,
+            messageID: input.processor.message.id,
+          }),
+        )
 
       // Per-tool runtime whitelist: when the LLM call is being made on behalf
       // of a registered actor (subagent or peer), look up the actor row and,
@@ -1860,6 +1872,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           ...(whitelist ? { toolWhitelist: [...whitelist] } : {}),
           mcpToolSearch: mcpCatalog.current,
           execMcp,
+          onMcpElicitation: recordMcpElicitation,
         },
         agent: input.agent.name,
         actorID: input.agentID,
@@ -2196,6 +2209,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ...opts,
                   abortSignal: opts.abortSignal ? AbortSignal.any([opts.abortSignal, signal]) : signal,
                   experimental_context: {
+                    messageID: input.processor.message.id,
+                    onMcpElicitation: recordMcpElicitation,
                     onMcpToolProgress: (meta: Record<string, unknown>) => run.promise(
                       input.processor.updateToolCall(opts.toolCallId, (part) => {
                         if (part.state.status !== "running") return part

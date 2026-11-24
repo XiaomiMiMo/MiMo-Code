@@ -413,12 +413,12 @@ test(
         {
           name: "test_tool",
           arguments: { index: 1 },
-          _meta: { "com.xiaomi.mimo/turn-lifecycle": context },
+          _meta: { "com.xiaomi.mimo/turn-lifecycle": { ...context, callId: "call_1" } },
         },
         {
           name: "test_tool",
           arguments: { index: 2 },
-          _meta: { "com.xiaomi.mimo/turn-lifecycle": context },
+          _meta: { "com.xiaomi.mimo/turn-lifecycle": { ...context, callId: "call_2" } },
         },
       ])
     }),
