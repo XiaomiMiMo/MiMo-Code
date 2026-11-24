@@ -1057,7 +1057,8 @@ export const layer: Layer.Layer<
             // that order by events discard the retried content for good.
             const resetStep = Effect.fnUntraced(function* (parts: MessageV2.Part[]) {
               for (const part of parts) {
-                if (part.type === "retry") continue
+                // Elicitation records are evidence of what was agreed to; keep them.
+                if (part.type === "retry" || part.type === "elicitation") continue
                 yield* session.removePart({
                   sessionID: ctx.sessionID,
                   messageID: ctx.assistantMessage.id,

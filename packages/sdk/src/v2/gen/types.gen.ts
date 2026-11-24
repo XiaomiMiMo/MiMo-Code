@@ -1552,6 +1552,35 @@ export type CompactionPart = {
   }
 }
 
+export type ElicitationPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "elicitation"
+  server: string
+  callID?: string
+  requestID: string | number
+  mode: "form"
+  message: string
+  requestedSchema: {
+    [key: string]: unknown
+  }
+  meta?: {
+    [key: string]: unknown
+  }
+  action?: "accept" | "decline" | "cancel"
+  content?: {
+    [key: string]: string | number | boolean | Array<string>
+  }
+  source?: string
+  reason?: string
+  error?: string
+  time: {
+    created: number
+    completed?: number
+  }
+}
+
 export type Part =
   | TextPart
   | SubtaskPart
@@ -1566,6 +1595,7 @@ export type Part =
   | RetryPart
   | CheckpointPart
   | CompactionPart
+  | ElicitationPart
 
 export type EventMessagePartUpdated = {
   type: "message.part.updated"

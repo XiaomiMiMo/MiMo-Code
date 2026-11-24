@@ -111,4 +111,19 @@ export const partExamples: { data: Record<string, unknown> & { type: string }; q
     },
     detail: "finishneedle",
   },
+  {
+    data: {
+      type: "elicitation",
+      server: "recorder",
+      callID: "call_1",
+      requestID: 0,
+      mode: "form",
+      message: "elicitationneedle",
+      requestedSchema: { type: "object", properties: {} },
+      action: "accept",
+      content: {},
+      time: { created: 1, completed: 2 },
+    },
+    detail: "elicitation",
+  },
 ]

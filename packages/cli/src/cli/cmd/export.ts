@@ -167,6 +167,14 @@ function part(part: MessageV2.Part): MessageV2.Part {
         ...part,
         snapshot: part.snapshot === undefined ? undefined : redact("snapshot", part.id, part.snapshot),
       }
+    case "elicitation":
+      return {
+        ...part,
+        message: redact("elicitation-message", part.id, part.message),
+        meta: data("elicitation-meta", part.id, part.meta),
+        content: data("elicitation-content", part.id, part.content) as typeof part.content,
+        reason: part.reason === undefined ? undefined : redact("elicitation-reason", part.id, part.reason),
+      }
     case "agent":
       return {
         ...part,

@@ -1996,3 +1996,26 @@ describe("session.message-v2.fromError", () => {
     expect(result.name).toBe("UnknownError")
   })
 })
+
+describe("elicitation parts", () => {
+  test("are kept in history but never sent to the model", async () => {
+    const userID = MessageID.make("elicitation-user")
+    const assistantID = MessageID.make("elicitation-assistant")
+    const base = { sessionID, messageID: assistantID }
+    const record: MessageV2.ElicitationPart = {
+      ...base, id: PartID.make("elicitation"), type: "elicitation", server: "recorder", callID: "call-a",
+      requestID: 3, mode: "form", message: "elicitation-message-not-for-model",
+      requestedSchema: { type: "object", properties: {} }, action: "accept", content: {}, source: "user",
+      time: { created: 1, completed: 2 },
+    }
+    const input: MessageV2.WithParts[] = [
+      { info: userInfo(userID), parts: [{ ...base, id: PartID.make("user-text"), messageID: userID, type: "text", text: "Do it" }] },
+      { info: assistantInfo(assistantID, userID), parts: [{ ...base, id: PartID.make("answer"), type: "text", text: "Done" }, record] },
+    ]
+    const converted = await MessageV2.toModelMessages(input, model)
+    expect(JSON.stringify(converted)).not.toContain("elicitation-message-not-for-model")
+    expect(converted.map((message) => message.role)).toEqual(["user", "assistant"])
+    const only: MessageV2.WithParts[] = [input[0]!, { info: assistantInfo(assistantID, userID), parts: [record] }]
+    expect((await MessageV2.toModelMessages(only, model)).map((message) => message.role)).toEqual(["user"])
+  })
+})
