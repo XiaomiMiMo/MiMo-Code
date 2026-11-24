@@ -305,6 +305,7 @@ export const SessionRoutes = lazy(() =>
         operationId: "session.create",
         responses: {
           ...errors(400),
+          409: { description: "Session id already exists", content: { "application/json": { schema: resolver(Session.IdConflict) } } },
           200: {
             description: "Successfully created session",
             content: {

@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Effect } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
+import { Server } from "../../src/server/server"
 import { Identifier } from "../../src/id/id"
 import { SessionID } from "../../src/session/schema"
 import { AppRuntime } from "../../src/effect/app-runtime"
@@ -44,17 +45,37 @@ describe("client-supplied session id", () => {
         const supplied = SessionID.descending()
         await run(Session.Service.use((svc) => svc.create({ id: supplied })))
 
-        // The create is rejected as a defect (a plain thrown Error), so surface its message.
         const failure = await run(
           Session.Service.use((svc) => svc.create({ id: supplied })).pipe(
-            Effect.catchCause((cause) => Effect.succeed(String(Cause.squash(cause)))),
+            Effect.catchCause((cause) => Effect.succeed(Cause.squash(cause))),
           ),
         )
-        expect(failure).toContain(supplied)
-        expect(failure).toContain("already exists")
+        expect(failure).toBeInstanceOf(Session.IdConflictError)
+        expect((failure as Session.IdConflictError).sessionID).toBe(supplied)
 
         // The first session is untouched and still the only one under that id.
         expect((await run(Session.Service.use((svc) => svc.get(supplied)))).id).toBe(supplied)
+      },
+    })
+  })
+
+  test("POST /session answers a taken id with 409 and the conflicting id", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const supplied = SessionID.descending()
+        const app = Server.Default().app
+        const create = () =>
+          app.request("/session", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: supplied }),
+          })
+        expect((await create()).status).toBe(200)
+        const conflict = await create()
+        expect(conflict.status).toBe(409)
+        expect(await conflict.json()).toEqual({ name: "SessionIdConflictError", data: { sessionID: supplied } })
       },
     })
   })
