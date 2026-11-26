@@ -2,7 +2,7 @@
 feature: user-image-attachment-reminder
 status: delivered
 updated: 2026-11-26
-source: fix/user-image-attachment-reminder
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2867
 ---
 
 # User Image Attachment Reminder
