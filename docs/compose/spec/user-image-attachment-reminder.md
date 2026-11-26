@@ -1,6 +1,6 @@
 ---
 feature: user-image-attachment-reminder
-status: in-progress
+status: delivered
 updated: 2026-11-26
 source: fix/user-image-attachment-reminder
 ---
@@ -8,7 +8,15 @@ source: fix/user-image-attachment-reminder
 # User Image Attachment Reminder
 
 ## Report
-[Not finalized yet]
+
+**What was built** — `userImageAttachmentEnvelope` in `packages/cli/src/session/prompt.ts` now formats user-provided image attachment provenance as a closed `<system-reminder>` block listing each image in order (`- <filename> (<mime>): <path | no local file>`), escaping any case-insensitive `</system-reminder>` in filenames or paths. The `[Image: filename]` marker line is appended only when non-synthetic, non-ignored user text actually contains `[Image: ...]`. The `# Files mentioned by the user` header, `## My request:` fake user divider, boilerplate paragraphs, and `isEnvelopeAnchorPart` splice logic were removed; `createUserMessage` appends the reminder directly so persisted `PartTable.id` ordering matches in-memory ordering. Updated `packages/cli/test/session/prompt.test.ts` (including persisted `MessageV2.get` read-back assertions) and `docs/compose/spec/compaction-replay-keep-media.md`.
+
+**Verification** — From `packages/cli`:
+- `bun test test/session/prompt.test.ts --timeout 30000`: PASS (68 pass, 0 fail, 256 assertions)
+- `bun run typecheck`: PASS (`tsgo --noEmit`)
+- `bun test test/session/prompt-effect.test.ts test/session/message-v2.test.ts --timeout 30000`: PASS (213 pass, 3 skip, 0 fail)
+- `git diff --check origin/main..HEAD`: PASS
+- Independent read-only review: approved with no critical or major issues (minor escaping and fallback polish applied and re-verified).
 
 ## [S1] Problem
 
@@ -59,8 +67,8 @@ Remove `isEnvelopeAnchorPart` and the `parts.splice(...)` placement in `createUs
 
 ## Tasks
 
-- [ ] T1: Update `userImageAttachmentEnvelope` and remove `isEnvelopeAnchorPart` splice in `packages/cli/src/session/prompt.ts`, plus update `docs/compose/spec/compaction-replay-keep-media.md` — acceptance: `userImageAttachmentEnvelope` outputs the closed `<system-reminder>` format (with `</system-reminder>` escaping and optional `[Image: ...]` marker line only when present), and `createUserMessage` appends the part without `splice` or `## My request:` (covers: S2.1, S2.2)
-- [ ] T2: Update and expand `packages/cli/test/session/prompt.test.ts` — acceptance: unit and persisted `MessageV2.get` read-back assertions cover closed `<system-reminder>` framing, local path vs `no local file`, multi-image order, conditional `[Image: ...]` marker line (present vs absent), `</system-reminder>` escaping, and absence of `## My request:` / `# Files mentioned by the user` (covers: S2.3; depends: T1)
+- [x] T1: Update `userImageAttachmentEnvelope` and remove `isEnvelopeAnchorPart` splice in `packages/cli/src/session/prompt.ts`, plus update `docs/compose/spec/compaction-replay-keep-media.md` — acceptance: `userImageAttachmentEnvelope` outputs the closed `<system-reminder>` format (with `</system-reminder>` escaping and optional `[Image: ...]` marker line only when present), and `createUserMessage` appends the part without `splice` or `## My request:` (covers: S2.1, S2.2)
+- [x] T2: Update and expand `packages/cli/test/session/prompt.test.ts` — acceptance: unit and persisted `MessageV2.get` read-back assertions cover closed `<system-reminder>` framing, local path vs `no local file`, multi-image order, conditional `[Image: ...]` marker line (present vs absent), `</system-reminder>` escaping, and absence of `## My request:` / `# Files mentioned by the user` (covers: S2.3; depends: T1)
 
 ## Journey log
 None
