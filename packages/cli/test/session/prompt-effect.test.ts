@@ -1999,7 +1999,8 @@ it.live("uses the frozen system and appends the compaction prompt to the existin
       })
       const snapshot = yield* sessions.messages({ sessionID: chat.id })
       const boundary = snapshot.at(-1)!
-      yield* llm.text("summary")
+      const summary = "The first three queries have been answered."
+      yield* llm.text(summary)
       expect(
         yield* compaction.process({
           parentID: boundary.info.id,
@@ -2021,7 +2022,11 @@ it.live("uses the frozen system and appends the compaction prompt to the existin
       expect(compactionRequest.tool_choice).toBe(beforeRequest.tool_choice)
       expect(JSON.stringify(compactionRequest)).toContain(marker)
       expect(JSON.stringify(compactionRequest)).toContain("third answer kept verbatim")
-      expect(JSON.stringify(compactionRequest)).toContain("1. Task Overview")
+      const summaryRequest = JSON.stringify(compactionRequest.messages.at(-1))
+      expect(summaryRequest).toContain("1. Task Overview")
+      expect(summaryRequest).toContain("do not call any tools")
+      expect(summaryRequest).toContain("directly in your reply")
+      expect(summaryRequest).not.toContain("<summary>")
       expect(JSON.stringify(compactionRequest)).not.toContain("When constructing the summary")
 
       yield* prompt.prompt({
@@ -2037,7 +2042,7 @@ it.live("uses the frozen system and appends the compaction prompt to the existin
       const request = (yield* llm.inputs)[4]
       const serialized = JSON.stringify(request)
       expect(serialized).toContain(marker)
-      expect(serialized).toContain("summary")
+      expect(serialized).toContain(summary)
       expect(serialized).not.toContain("first query")
       expect(serialized).not.toContain("second query kept verbatim")
       expect(serialized).not.toContain("third query kept verbatim")
