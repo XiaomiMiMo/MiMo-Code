@@ -47,7 +47,7 @@ The user attached these images to this message, in order:
 - When the message carries inline image paste markers (`hasImageMarkers: true`, detected from non-synthetic, non-ignored text parts matching `/\[Image:\s*[^\]]+\]/`), append one line after the list:
   `Markers like [Image: filename] in the message text refer to the matching image above.`
   When no such markers are present, omit this line.
-- Escape any literal `</system-reminder>` in the body to `<\/system-reminder>` before wrapping, so an unusual filename or path cannot prematurely close the reminder block.
+- Match closing `</system-reminder>` tags case-insensitively and escape only the slash. Restoring the slash must recover the exact filename or path, including its original case.
 - Remove `# Files mentioned by the user`, `## My request:`, and the boilerplate instructional paragraphs.
 
 ### [S2.2] Position-independent append

@@ -510,7 +510,7 @@ export function userImageAttachmentEnvelope(
   if (options?.hasImageMarkers) {
     lines.push("Markers like [Image: filename] in the message text refer to the matching image above.")
   }
-  const body = lines.join("\n").replace(SYSTEM_REMINDER_CLOSE_RE, "<\\/system-reminder>")
+  const body = lines.join("\n").replace(SYSTEM_REMINDER_CLOSE_RE, (tag) => "<\\" + tag.slice(1))
   return `<system-reminder>\n${body}\n</system-reminder>`
 }
 
