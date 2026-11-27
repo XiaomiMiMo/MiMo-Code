@@ -17,7 +17,6 @@ import { SyncEvent } from "../sync"
 import { Database, NotFoundError, and, desc, eq, inArray, lt, or, sql } from "@/storage"
 import { MessageTable, PartTable, SessionTable } from "./session.sql"
 import { ProviderError } from "@/provider"
-import { compatibleToolCallMetadata } from "@/provider/compatible-tool-signature"
 import { errorMessage } from "@/util/error"
 import { HostErrorRegistry } from "@/error/host-registry"
 import { isMedia } from "@/util/media"
@@ -1200,7 +1199,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     }
 
     if (msg.info.role === "assistant") {
-      const differentModel = model.providerID !== msg.info.providerID || model.id !== msg.info.modelID
+      const differentModel = `${model.providerID}/${model.id}` !== `${msg.info.providerID}/${msg.info.modelID}`
       const syntheticGroups: Array<{
         tool: string
         callID: string
@@ -1284,16 +1283,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         }
         if (part.type === "tool") {
           toolNames.add(part.tool)
-          // The legacy SDK namespace could itself be named `providerExecuted`.
-          // Only the processor's boolean flag denotes a provider-executed tool.
-          const callMetadata = {
-            ...(part.metadata?.providerExecuted === true ? { providerExecuted: true } : {}),
-            ...(differentModel ? {} : {
-              callProviderMetadata: providerMeta(
-                compatibleToolCallMetadata(part.metadata, model, options?.languageProvider),
-              ),
-            }),
-          }
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
             const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
@@ -1321,7 +1310,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               toolCallId: part.callID,
               input: part.state.input,
               output,
-              ...callMetadata,
+              ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
+              ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
               ...(differentModel ? {} : { resultProviderMetadata: providerMeta(part.state.providerMetadata) }),
             })
           }
@@ -1350,7 +1340,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                         attachments: finalAttachments,
                       }
                     : output,
-                ...callMetadata,
+                ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
+                ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
               })
             } else {
               assistantMessage.parts.push({
@@ -1359,7 +1350,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 toolCallId: part.callID,
                 input: part.state.input,
                 errorText: part.state.error,
-                ...callMetadata,
+                ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
+                ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
               })
             }
           }
@@ -1372,7 +1364,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               toolCallId: part.callID,
               input: part.state.input,
               errorText: "[Tool execution was interrupted]",
-              ...callMetadata,
+              ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
+              ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
             })
         }
         if (part.type === "reasoning") {

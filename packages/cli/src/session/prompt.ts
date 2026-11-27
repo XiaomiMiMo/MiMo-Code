@@ -1402,11 +1402,8 @@ export const layer = Layer.effect(
       // (chat.params, chat.headers, system.transform, memory instructions,
       // x-session-affinity). Still publishes Metrics.ModelCall so the
       // prediction cost shows up in analytics.
+      const msgs = yield* MessageV2.toModelMessagesEffect(context.messages, mdl, { stripMedia: true })
       const language = yield* provider.getLanguage(mdl)
-      const msgs = yield* MessageV2.toModelMessagesEffect(context.messages, mdl, {
-        stripMedia: true,
-        languageProvider: language.provider,
-      })
       const wrapped = wrapLanguageModel({
         model: language,
         middleware: [
@@ -5970,10 +5967,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   })
                   const prebuiltSystem = forkCtx.system
                   lastSystemPrompt = prebuiltSystem
-                  const inherited = forkCtx.model.providerID === model.providerID && forkCtx.model.modelID === model.id
-                    ? forkCtx.inheritedMessages
-                    : ProviderTransform.withoutChatSignatures(forkCtx.inheritedMessages)
-                  const modelMsgs: ModelMessage[] = [...inherited, ...ownNewModelMsgs]
+                  const modelMsgs: ModelMessage[] = [...forkCtx.inheritedMessages, ...ownNewModelMsgs]
                   // additions is empty for fork agents: system is taken verbatim from
                   // forkCtx.system. Passed as `system` to handle.process for logging/replay.
                   const additions: string[] = []

@@ -1011,24 +1011,6 @@ function mapProviderOptions(
   })
 }
 
-// A frozen fork prefix has already passed the history origin check. Keep the
-// snapshot intact if the fork switches models, so it can switch back later.
-export function withoutChatSignatures(msgs: ModelMessage[]): ModelMessage[] {
-  return mapProviderOptions(msgs, (options) => {
-    if (!options?.openaiCompatible?.reasoning_opaque && !options?.google?.thoughtSignature) return options
-    const next = { ...options }
-    if (next.openaiCompatible?.reasoning_opaque) {
-      const { reasoning_opaque: _, ...rest } = next.openaiCompatible
-      next.openaiCompatible = rest
-    }
-    if (next.google?.thoughtSignature) {
-      const { thoughtSignature: _, ...rest } = next.google
-      next.google = rest
-    }
-    return next
-  })
-}
-
 export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
   // Guard against genuinely-invalid content (object/undefined/null) that would
   // blow up downstream .map() calls. Strings are valid and left untouched.

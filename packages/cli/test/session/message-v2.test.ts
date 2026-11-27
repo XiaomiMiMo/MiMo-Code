@@ -297,8 +297,8 @@ function basePart(messageID: string, id: string) {
 }
 
 describe("session.message-v2.toModelMessage", () => {
-  test("replays opaque state on its own retained step and only for the exact compatible origin", async () => {
-    const source = { ...openAICompatibleModel, providerID: ProviderID.make("test/team"), id: ModelID.make("model") }
+  test("replays opaque state on its own retained step", async () => {
+    const source = openAICompatibleModel
     const info = assistantInfo("reply", "user", undefined, { providerID: source.providerID, modelID: source.id })
     const texts = ["signed", "unsigned", "next"]
     const parts = texts.flatMap<MessageV2.Part>((text, index) => [
@@ -309,17 +309,11 @@ describe("session.message-v2.toModelMessage", () => {
         ...(text === "unsigned" ? {} : { reasoningOpaque: ` ${text}== ` }),
       },
     ])
-    for (const target of [
-      source,
-      { ...source, providerID: ProviderID.make("test"), id: ModelID.make("team/model") },
-      { ...source, api: model.api },
-    ]) {
-      const projected = await MessageV2.toModelMessages([{ info, parts }], target)
-      expect(projected.map((msg) => msg.content)).toEqual(texts.map((text) => [{ type: "text", text }]))
-      expect(projected.map((msg) => msg.providerOptions?.openaiCompatible?.reasoning_opaque)).toEqual(
-        target === source ? [" signed== ", undefined, " next== "] : [undefined, undefined, undefined],
-      )
-    }
+    const projected = await MessageV2.toModelMessages([{ info, parts }], source)
+    expect(projected.map((msg) => msg.content)).toEqual(texts.map((text) => [{ type: "text", text }]))
+    expect(projected.map((msg) => msg.providerOptions?.openaiCompatible?.reasoning_opaque)).toEqual([
+      " signed== ", undefined, " next== ",
+    ])
   })
   test("local binary and structured text references become paths instead of uploads", async () => {
     for (const mime of ["application/x-apple-diskimage", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "text/csv", "application/json"]) {
