@@ -157,6 +157,27 @@ for (const permission of ["computer", "bash_delete"]) {
   })
 }
 
+test("PermissionPrompt answers once for repeated input and closes without events", async () => {
+  const { app, replies } = await mountPermission("bash_delete")
+  try {
+    // The permission.replied event is never delivered here (subscribe is a
+    // no-op in this harness), so the prompt must close on its own after the
+    // first answer, and later keys must not re-POST the same requestID.
+    await app.mockInput.pressKeys(["RETURN", "RETURN", "ESCAPE"])
+    await app.renderOnce()
+    await waitFor(() => replies.length > 0)
+    await Bun.sleep(50)
+    expect(replies).toEqual([{
+      method: "POST",
+      path: "/permission/per_bash_delete/reply",
+      body: { reply: "once" },
+    }])
+    expect(app.captureCharFrame()).not.toContain("Permission required")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
 for (const permission of ["bash", "edit"]) {
   test(`${permission} PermissionPrompt preserves always confirmation and reply`, async () => {
     const { app, replies } = await mountPermission(permission)
