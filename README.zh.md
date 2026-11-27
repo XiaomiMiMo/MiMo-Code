@@ -399,6 +399,8 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 - **`/dream`** — 扫描近期会话轨迹，提取持久知识到项目记忆，清理过时条目
 - **`/distill`** — 发现近期工作中重复的手动工作流，将高置信度候选打包成可复用的 skill、subagent 或 command
 
+新会话启动时的自动触发**默认关闭**。可随时手动执行 `/dream`、`/distill`，或在 `mimocode.jsonc` 中显式开启自动运行（`dream.auto: true`，默认 `interval_days: 7`；`distill.auto: true`，默认 `interval_days: 30`）。
+
 ---
 
 ## 配置
