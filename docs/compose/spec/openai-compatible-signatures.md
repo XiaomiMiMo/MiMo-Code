@@ -25,7 +25,7 @@ On the bundled `@ai-sdk/openai-compatible` Chat Completions route, use the SDK's
 
 ### S2.2 Replay the state on the originating assistant message
 
-Retain just that opaque value as optional `reasoningOpaque` on the existing persisted step-finish part. One stored assistant can contain several steps: each step-start opens a new assistant block, and its finish metadata belongs only to that block. This also lets trimming a discarded step discard its state. There is no process-local map or tool argument. When projecting retained history for the same configured provider ID **and** model ID on the compatible route, give the SDK `openaiCompatible.reasoning_opaque` on the corresponding assistant **message**, alongside (not inside) its `tool_calls`. Do not send the value on tool results, user messages, adjacent assistant steps, or to another provider/model. History without the field is valid and does not gain one. Ordinary readable reasoning and interleaved field handling remain independent.
+Retain just that opaque value as optional `reasoningOpaque` on the existing persisted step-finish part. One stored assistant can contain several steps: each step-start opens a new assistant block, and its finish metadata belongs only to that block. This also lets trimming a discarded step discard its state. There is no process-local map or tool argument. When projecting retained history for the same configured provider ID **and** model ID on the compatible route, give the SDK `openaiCompatible.reasoning_opaque` on the corresponding assistant **message**, alongside (not inside) its `tool_calls`. Do not send the value on tool results, user messages, adjacent assistant steps, or to another provider/model. History without the field is valid and does not gain one. Ordinary readable reasoning and interleaved field handling remain independent. A running fork has a frozen prefix already projected for its capture origin: a different destination receives a copy without either signature; switching back still uses the original prefix.
 
 ### S2.3 Replay a Gemini signature on exactly its own tool call
 
@@ -47,4 +47,5 @@ Changing provider routing, switching to the Copilot fork or native Gemini API, a
 
 ## Journey log
 
-None
+- Ordinary session restoration and a running fork use different histories: the latter reuses a prefix already projected for its capture model. Rechecking the fork's capture origin before sending prevents both signatures crossing a model switch without mutating the saved prefix.
+- The compatible SDK's configurable name is not the configured provider ID. Capture tool signatures before a namespace rename or a collision with the internal `providerExecuted` flag can detach a signature from its call.
