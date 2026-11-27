@@ -31,6 +31,23 @@ describe("control-plane/sse", () => {
     ])
   })
 
+  test("propagates onEvent errors without emitting a phantom sse.message event", async () => {
+    const events: unknown[] = []
+    const stop = new AbortController()
+    let calls = 0
+
+    const result = parseSSE(stream(['data: {"type":"one"}\n\n']), stop.signal, (event) => {
+      events.push(event)
+      calls += 1
+      if (calls === 1) throw new Error("consumer failed")
+    })
+
+    // The consumer's throw must not be misclassified as a JSON.parse
+    // failure: it must propagate, and no fallback event may be emitted.
+    await expect(result).rejects.toThrow("consumer failed")
+    expect(events).toEqual([{ type: "one" }])
+  })
+
   test("falls back to sse.message for non-json payload", async () => {
     const events: unknown[] = []
     const stop = new AbortController()
