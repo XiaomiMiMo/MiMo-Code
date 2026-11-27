@@ -11,7 +11,12 @@ import { Migration } from "../../src/migration-node"
 
 const dirs: string[] = []
 afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+  // Windows releases SQLite file handles lazily; a leftover temp dir must not fail the test.
+  for (const d of dirs.splice(0)) {
+    try {
+      rmSync(d, { recursive: true, force: true, maxRetries: 3 })
+    } catch {}
+  }
 })
 
 function schemaSql(): string[] {
@@ -91,8 +96,9 @@ test("merge: imports new sessions with descendants, overwrites only chosen ones,
   incoming.close()
 
   local.exec(`ATTACH DATABASE '${incomingPath}' AS incoming`)
-  expect(Migration.sharedProjects(local, "incoming")).toBe(1)
-  const res = Migration.merge(local, { overwrite: ["ses_over"], rewrite: { from: "/old/ws", to: "/new/ws" } })
+  const rewrite = (s: string) => s.replaceAll("/old/ws", "/new/ws")
+  expect(Migration.projectConflicts(local, "incoming", rewrite).map((c) => c.id)).toEqual(["p1"])
+  const res = Migration.merge(local, { overwrite: ["ses_over"], rewrite })
   expect(res).toEqual({ imported: 1, overwritten: 1, skipped: 1 })
 
   // Local-only session survives the in-place project update (no cascade).
@@ -115,6 +121,53 @@ test("merge: imports new sessions with descendants, overwrites only chosen ones,
   // Re-running is idempotent: everything is now present locally.
   const again = Migration.merge(local, { overwrite: [] })
   expect(again.imported).toBe(0)
+  local.close()
+})
+
+// [TP-R14d-01][TP-R14d-02][TP-R29-05]
+test("projects: identical ones are not conflicts; kept projects stay local; only written rows are rewritten", () => {
+  const { local, incoming, incomingPath } = setup()
+  project(local, "p_same", "/new/ws/same", "Same")
+  project(incoming, "p_same", "/old/ws/same", "Same")
+  project(local, "p_keep", "/new/ws/keep", "Local keep")
+  project(incoming, "p_keep", "/old/ws/keep", "Incoming keep")
+  project(incoming, "p_new", "/old/ws/fresh", "Fresh")
+  session(local, "ses_kept", { project: "p_keep", messages: 1, dir: "/old/ws/keep" })
+  session(incoming, "ses_kept", { project: "p_keep", messages: 2, dir: "/old/ws/keep" })
+  session(incoming, "ses_a", { project: "p_same" })
+  session(incoming, "ses_b", { project: "p_keep" })
+  session(incoming, "ses_c", { project: "p_new" })
+  incoming.close()
+  local.exec(`ATTACH DATABASE '${incomingPath}' AS incoming`)
+  const rewrite = (s: string) => s.replaceAll("/old/ws", "/new/ws")
+  const conflicts = Migration.projectConflicts(local, "incoming", rewrite)
+  expect(conflicts.map((c) => c.id)).toEqual(["p_keep"])
+  expect(conflicts[0]).toMatchObject({ localName: "Local keep", incomingName: "Incoming keep", localWorktree: "/new/ws/keep", incomingWorktree: "/new/ws/keep" })
+
+  Migration.merge(local, { overwrite: [], keepProjects: ["p_keep"], rewrite })
+  const one = <T>(sql: string) => local.prepare(sql).get() as T
+  expect(one<{ name: string }>("SELECT name FROM project WHERE id = 'p_keep'").name).toBe("Local keep")
+  expect(one<{ worktree: string }>("SELECT worktree FROM project WHERE id = 'p_new'").worktree).toBe("/new/ws/fresh")
+  // Imported session joins the kept project, with rewritten paths.
+  expect(one<{ project_id: string; directory: string }>("SELECT project_id, directory FROM session WHERE id = 'ses_b'")).toEqual({ project_id: "p_keep", directory: "/new/ws/app" })
+  // The kept (not overwritten) local session is not rewritten.
+  expect(one<{ directory: string }>("SELECT directory FROM session WHERE id = 'ses_kept'").directory).toBe("/old/ws/keep")
+  expect(one<{ data: string }>("SELECT data FROM part WHERE session_id = 'ses_kept' LIMIT 1").data).toContain("/old/ws/app/a.ts")
+  local.close()
+})
+
+// [TP-R29-01]
+test("scanText visits every path-bearing text column", () => {
+  const { local, incoming } = setup()
+  incoming.close()
+  project(local, "p1", "/repo/a", "A")
+  session(local, "ses_1", { dir: "/repo/a/sub" })
+  const seen: string[] = []
+  Migration.scanText(local, "main", (t) => seen.push(t))
+  expect(seen).toContain("/repo/a")
+  expect(seen).toContain("/repo/a/sub")
+  expect(seen.some((t) => t.includes("/old/ws/app/a.ts"))).toBe(true)
+  expect(seen.some((t) => t.includes('"cwd"'))).toBe(true)
   local.close()
 })
 

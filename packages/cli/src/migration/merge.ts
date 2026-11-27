@@ -8,8 +8,11 @@
 // Rules (see Desktop docs/specs/10-settings/data-migration/design.md D5 / D8):
 // - Copy only columns present in both databases (tolerates additive schema drift); refuse when
 //   the incoming database was migrated by a newer engine than this one.
-// - Projects with the same id are updated in place (ON CONFLICT DO UPDATE). Never INSERT OR
-//   REPLACE: REPLACE deletes first and the session foreign key cascades away local sessions.
+// - Projects referenced by incoming sessions are inserted, or updated in place (ON CONFLICT DO
+//   UPDATE) unless the user kept the local version. Never INSERT OR REPLACE: REPLACE deletes first
+//   and the session foreign key cascades away local sessions.
+// - Paths are rewritten by a caller-provided function, only in rows this merge writes, so local and
+//   kept rows never change. The caller owns the path forms (raw, JSON-escaped, file:// URLs).
 // - task_event ids are autoincrement and are not copied. history_fts has no foreign key, so
 //   rows of overwritten sessions are deleted explicitly. session_prefix_snapshot (a cache) and
 //   external_import (machine paths) are not migrated.
@@ -145,19 +148,127 @@ export function sessionConflicts(local: Map<string, SessionInfo>, incoming: Map<
   return out
 }
 
-/** Projects present on both devices (shown as "the source version is used"). */
-export function sharedProjects(db: SqlHandle, incomingSchema: string): number {
-  const row = db
-    .prepare(`SELECT count(*) AS n FROM ${incomingSchema}.project i JOIN main.project l ON l.id = i.id`)
-    .get() as { n: number }
-  return Number(row.n)
+/** Projects present on both devices whose user-visible info differs (the incoming worktree compared after rewrite). */
+export interface ProjectConflict {
+  id: string
+  name: string
+  localName: string
+  incomingName: string
+  localWorktree: string
+  incomingWorktree: string
+  localUpdatedAt: number
+  incomingUpdatedAt: number
+}
+
+type ProjectRow = {
+  id: string
+  worktree: string
+  name: string | null
+  icon_url: string | null
+  icon_color: string | null
+  commands: string | null
+  time_updated: number
+}
+
+function projectRows(db: SqlHandle, schema: string): Map<string, ProjectRow> {
+  if (!hasTable(db, schema, "project")) return new Map()
+  const have = columns(db, schema, "project")
+  const col = (c: string) => (have.includes(c) ? quote(c) : `NULL AS ${quote(c)}`)
+  const rows = db
+    .prepare(`SELECT id, worktree, ${col("name")}, ${col("icon_url")}, ${col("icon_color")}, ${col("commands")}, time_updated FROM ${schema}.project`)
+    .all() as ProjectRow[]
+  return new Map(rows.map((r) => [r.id, r]))
+}
+
+/**
+ * Projects referenced by incoming sessions that also exist locally with different name, icon,
+ * commands or worktree. Identical ones (and projects only on one device) are not listed.
+ */
+export function projectConflicts(db: SqlHandle, incomingSchema: string, rewrite?: (text: string) => string): ProjectConflict[] {
+  const local = projectRows(db, "main")
+  const incoming = projectRows(db, incomingSchema)
+  const used = new Set(
+    (db.prepare(`SELECT DISTINCT project_id AS id FROM ${incomingSchema}.session`).all() as { id: string }[]).map((r) => r.id),
+  )
+  const out: ProjectConflict[] = []
+  for (const [id, inc] of incoming) {
+    const mine = local.get(id)
+    if (!mine || !used.has(id)) continue
+    const incWorktree = rewrite ? rewrite(inc.worktree) : inc.worktree
+    const same =
+      (mine.name ?? "") === (inc.name ?? "") &&
+      (mine.icon_url ?? "") === (inc.icon_url ?? "") &&
+      (mine.icon_color ?? "") === (inc.icon_color ?? "") &&
+      (mine.commands ?? "") === (inc.commands ?? "") &&
+      mine.worktree === incWorktree
+    if (same) continue
+    out.push({
+      id,
+      name: inc.name || mine.name || incWorktree,
+      localName: mine.name ?? "",
+      incomingName: inc.name ?? "",
+      localWorktree: mine.worktree,
+      incomingWorktree: incWorktree,
+      localUpdatedAt: Number(mine.time_updated),
+      incomingUpdatedAt: Number(inc.time_updated),
+    })
+  }
+  return out
+}
+
+/** Text columns that may hold local file paths: scanned on export, rewritten for imported rows. */
+export const PATH_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  session: ["directory"],
+  message: ["data"],
+  part: ["data"],
+  project: ["worktree", "sandboxes"],
+  workspace: ["directory"],
+}
+
+/** Distinct session directories and project roots (folders conversations run in). */
+export function folderPaths(db: SqlHandle, schema = "main"): string[] {
+  const out = new Set<string>()
+  if (hasTable(db, schema, "session"))
+    for (const r of db.prepare(`SELECT DISTINCT directory AS p FROM ${schema}.session`).all() as { p: string | null }[]) if (r.p) out.add(r.p)
+  if (hasTable(db, schema, "project"))
+    for (const r of db.prepare(`SELECT worktree AS p FROM ${schema}.project`).all() as { p: string | null }[]) if (r.p && r.p !== "/") out.add(r.p)
+  return [...out]
+}
+
+const PAGE = 500
+
+/** Visit every non-empty value of PATH_COLUMNS in `schema`, a page at a time (bounded memory). */
+export function scanText(db: SqlHandle, schema: string, fn: (text: string, table: string, column: string) => void): void {
+  for (const [table, cols] of Object.entries(PATH_COLUMNS)) {
+    if (!hasTable(db, schema, table)) continue
+    const have = columns(db, schema, table)
+    const present = cols.filter((c) => have.includes(c))
+    if (present.length === 0) continue
+    const page = db.prepare(
+      `SELECT rowid AS r, ${present.map(quote).join(", ")} FROM ${schema}.${quote(table)} WHERE rowid > ? ORDER BY rowid LIMIT ${PAGE}`,
+    )
+    let after = 0
+    for (;;) {
+      const rows = page.all(after) as Array<Record<string, unknown>>
+      if (rows.length === 0) break
+      for (const row of rows) {
+        for (const c of present) {
+          const v = row[c]
+          if (typeof v === "string" && v) fn(v, table, c)
+        }
+      }
+      after = Number(rows[rows.length - 1]!.r)
+    }
+  }
 }
 
 export interface MergePlan {
   /** Top-level session ids whose incoming version replaces the local one. */
   overwrite: readonly string[]
-  /** Absolute path prefix rewrites applied to directories and JSON message / part data. */
-  rewrite?: { from: string; to: string }
+  /** Shared project ids whose local version is kept (incoming project row is not written). */
+  keepProjects?: readonly string[]
+  /** Rewrites local file paths inside the text of every row this merge writes. */
+  rewrite?: (text: string) => string
 }
 
 export interface MergeResult {
@@ -183,22 +294,52 @@ function withDescendants(db: SqlHandle, schema: string, roots: string[]): string
   return rows.map((r) => r.id)
 }
 
-function rewriteExpr(column: string, rewrite?: { from: string; to: string }): string {
-  if (!rewrite || rewrite.from === rewrite.to) return column
-  // JSON text escapes backslashes (Windows paths), so rewrite both the raw and the escaped form.
-  const esc = (s: string) => s.replaceAll("\\", "\\\\")
-  const lit = (s: string) => `'${s.replaceAll("'", "''")}'`
-  let expr = `replace(${column}, ${lit(rewrite.from)}, ${lit(rewrite.to)})`
-  if (esc(rewrite.from) !== rewrite.from) expr = `replace(${expr}, ${lit(esc(rewrite.from))}, ${lit(esc(rewrite.to))})`
-  return expr
+function tempIds(db: SqlHandle, table: string, ids: Iterable<string>): void {
+  db.exec(`CREATE TEMP TABLE IF NOT EXISTS ${table} (id text PRIMARY KEY)`)
+  db.exec(`DELETE FROM ${table}`)
+  const ins = db.prepare(`INSERT OR IGNORE INTO ${table} (id) VALUES (?)`)
+  for (const id of ids) ins.run(id)
 }
 
-const REWRITE_COLUMNS: Record<string, readonly string[]> = {
-  session: ["directory"],
-  message: ["data"],
-  part: ["data"],
-  project: ["worktree", "sandboxes"],
-  workspace: ["directory"],
+/** Which rows of each PATH_COLUMNS table this merge wrote (and so may rewrite). */
+const WRITTEN_ROWS: Record<string, string> = {
+  session: `id IN (SELECT id FROM mig_ids)`,
+  message: `session_id IN (SELECT id FROM mig_ids)`,
+  part: `session_id IN (SELECT id FROM mig_ids)`,
+  project: `id IN (SELECT id FROM mig_projects)`,
+  workspace: `project_id IN (SELECT id FROM mig_projects)`,
+}
+
+/** Rewrite path text of the rows written by this merge, a page at a time, only updating changed rows. */
+function rewriteWritten(db: SqlHandle, rewrite: (text: string) => string): void {
+  for (const [table, cols] of Object.entries(PATH_COLUMNS)) {
+    if (!hasTable(db, "main", table)) continue
+    const have = columns(db, "main", table)
+    const present = cols.filter((c) => have.includes(c))
+    if (present.length === 0) continue
+    const page = db.prepare(
+      `SELECT rowid AS r, ${present.map(quote).join(", ")} FROM main.${quote(table)}
+       WHERE rowid > ? AND ${WRITTEN_ROWS[table]} ORDER BY rowid LIMIT ${PAGE}`,
+    )
+    const update = db.prepare(`UPDATE main.${quote(table)} SET ${present.map((c) => `${quote(c)} = ?`).join(", ")} WHERE rowid = ?`)
+    let after = 0
+    for (;;) {
+      const rows = page.all(after) as Array<Record<string, unknown>>
+      if (rows.length === 0) break
+      for (const row of rows) {
+        let changed = false
+        const values = present.map((c) => {
+          const v = row[c]
+          if (typeof v !== "string" || !v) return v
+          const next = rewrite(v)
+          if (next !== v) changed = true
+          return next
+        })
+        if (changed) update.run(...values, row.r)
+      }
+      after = Number(rows[rows.length - 1]!.r)
+    }
+  }
 }
 
 /**
@@ -220,10 +361,7 @@ export function merge(db: SqlHandle, plan: MergePlan, incoming = "incoming"): Me
     // 1. Remove overwritten sessions (with descendants) from main.
     const doomed = withDescendants(db, "main", [...overwrite])
     if (doomed.length > 0) {
-      db.exec(`CREATE TEMP TABLE IF NOT EXISTS mig_doomed (id text PRIMARY KEY)`)
-      db.exec(`DELETE FROM mig_doomed`)
-      const ins = db.prepare(`INSERT OR IGNORE INTO mig_doomed (id) VALUES (?)`)
-      for (const id of doomed) ins.run(id)
+      tempIds(db, "mig_doomed", doomed)
       for (const table of UNCASCADED) {
         if (!hasTable(db, "main", table)) continue
         const column = table === "inbox" ? "receiver_session_id" : "session_id"
@@ -233,25 +371,23 @@ export function merge(db: SqlHandle, plan: MergePlan, incoming = "incoming"): Me
     }
 
     // 2. Sessions to import: incoming roots not kept locally, plus their descendants.
-    const ids = withDescendants(db, incoming, roots)
-    db.exec(`CREATE TEMP TABLE IF NOT EXISTS mig_ids (id text PRIMARY KEY)`)
-    db.exec(`DELETE FROM mig_ids`)
-    const insId = db.prepare(`INSERT OR IGNORE INTO mig_ids (id) VALUES (?)`)
-    for (const id of ids) insId.run(id)
+    tempIds(db, "mig_ids", withDescendants(db, incoming, roots))
 
-    // 3. Projects and workspaces referenced by imported sessions; same id → incoming wins, in place.
+    // 3. Projects (and their workspaces) referenced by incoming sessions: new ones are inserted, shared
+    //    ones are updated in place unless the user kept the local version.
+    const keep = new Set(plan.keepProjects ?? [])
+    const referenced = hasTable(db, incoming, "project")
+      ? (db.prepare(`SELECT id FROM ${incoming}.project WHERE id IN (SELECT project_id FROM ${incoming}.session)`).all() as { id: string }[]).map((r) => r.id)
+      : []
+    tempIds(db, "mig_projects", referenced.filter((id) => !keep.has(id)))
     for (const table of ["project", "workspace"]) {
       if (!hasTable(db, "main", table) || !hasTable(db, incoming, table)) continue
       const shared = columns(db, incoming, table).filter((c) => columns(db, "main", table).includes(c))
-      const select = shared.map((c) => (REWRITE_COLUMNS[table]?.includes(c) ? rewriteExpr(quote(c), plan.rewrite) : quote(c)))
-      const filter =
-        table === "project"
-          ? `id IN (SELECT project_id FROM ${incoming}.session WHERE id IN (SELECT id FROM mig_ids))`
-          : `project_id IN (SELECT project_id FROM ${incoming}.session WHERE id IN (SELECT id FROM mig_ids))`
+      const filter = table === "project" ? `id IN (SELECT id FROM mig_projects)` : `project_id IN (SELECT id FROM mig_projects)`
       const updates = shared.filter((c) => c !== "id").map((c) => `${quote(c)} = excluded.${quote(c)}`)
       db.exec(
         `INSERT INTO main.${quote(table)} (${shared.map(quote).join(", ")})
-         SELECT ${select.join(", ")} FROM ${incoming}.${quote(table)} WHERE ${filter}
+         SELECT ${shared.map(quote).join(", ")} FROM ${incoming}.${quote(table)} WHERE ${filter}
          ON CONFLICT(id) DO UPDATE SET ${updates.join(", ")}`,
       )
     }
@@ -261,12 +397,14 @@ export function merge(db: SqlHandle, plan: MergePlan, incoming = "incoming"): Me
       if (!hasTable(db, "main", table) || !hasTable(db, incoming, table)) continue
       const mine = columns(db, "main", table)
       const shared = columns(db, incoming, table).filter((c) => mine.includes(c) && !skip?.includes(c))
-      const select = shared.map((c) => (REWRITE_COLUMNS[table]?.includes(c) ? rewriteExpr(quote(c), plan.rewrite) : quote(c)))
       db.exec(
         `INSERT OR IGNORE INTO main.${quote(table)} (${shared.map(quote).join(", ")})
-         SELECT ${select.join(", ")} FROM ${incoming}.${quote(table)} WHERE ${quote(column)} IN (SELECT id FROM mig_ids)`,
+         SELECT ${shared.map(quote).join(", ")} FROM ${incoming}.${quote(table)} WHERE ${quote(column)} IN (SELECT id FROM mig_ids)`,
       )
     }
+
+    // 5. Point paths of the written rows at this device (local and kept rows are untouched).
+    if (plan.rewrite) rewriteWritten(db, plan.rewrite)
     db.exec("COMMIT")
   } catch (err) {
     db.exec("ROLLBACK")
