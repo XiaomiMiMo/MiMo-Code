@@ -31,6 +31,12 @@ describe("parseReturnHeader", () => {
     expect(parseReturnHeader("**Status**: done").status).toBeUndefined()
   })
 
+  it("does not capture a mid-line **Summary**: mention", () => {
+    const r = parseReturnHeader("Refer to the **Summary**: field above\n**Status**: success")
+    expect(r.status).toBe("success")
+    expect(r.summary).toBeUndefined()
+  })
+
   it("ignores a Status that is not on the first content line only if absent", () => {
     // Status anywhere with `m` flag still matches; documents current behavior.
     const r = parseReturnHeader("intro\n**Status**: success\n**Summary**: ok")

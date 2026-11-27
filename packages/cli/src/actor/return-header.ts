@@ -7,7 +7,7 @@ export interface ParsedReturnHeader {
 }
 
 const STATUS_RE = /^\s*\*\*Status\*\*:\s*(success|partial|failed|blocked)\b/im
-const SUMMARY_RE = /\*\*Summary\*\*:\s*(.+)$/im
+const SUMMARY_RE = /^\s*\*\*Summary\*\*:\s*(.+)$/im
 
 // Parse the **Status**/**Summary** header a subagent is asked to emit
 // (see RETURN_FORMAT_INSTRUCTION in spawn.ts). Missing/malformed → {}.
