@@ -1,6 +1,6 @@
 ---
 feature: openai-responses-reasoning-group
-status: in-progress
+status: delivered
 updated: 2026-11-27
 source: fix/openai-responses-reasoning-group
 ---
@@ -8,7 +8,16 @@ source: fix/openai-responses-reasoning-group
 # Preserve OpenAI Responses Reasoning Block Grouping When Stateless
 
 ## Report
-[Not finalized yet]
+
+**What was built** — Patched `@ai-sdk/openai@3.0.113` and `@ai-sdk/openai@3.0.48` (the nested copy resolved by `@ai-sdk/azure@3.0.49`) across all four runtime entry files (`dist/index.{mjs,js}` and `dist/internal/index.{mjs,js}`) so stateless (`store: false`) Responses serialization keeps grouping multi-summary `reasoning` parts by `itemId` without emitting wire `id`, and coalesces no-`itemId` parts sharing identical `reasoningEncryptedContent` per assistant message. Updated `ProviderTransform.message()` to retain `itemId` on `reasoning` parts as the local grouping key while continuing to strip `itemId` from non-`reasoning` parts (`text`, `tool-call`, etc.) and message-level options when `store !== true`.
+
+**Verification** — From the worktree root:
+- `bun ci` -> PASS
+- `bun run typecheck` (all workspaces + `tsconfig.scripts.json`) -> PASS
+- `git diff --check` -> PASS
+- `bunx oxlint packages/cli/test/provider/openai-responses-reasoning-group.test.ts` -> PASS (0 errors, 4 warnings)
+- `bun test --cwd packages/cli --only-failures test/provider/openai-responses-reasoning-group.test.ts test/provider/transform.test.ts test/provider/provider.test.ts test/provider/openai-responses-exec-custom.test.ts test/session/message-v2.test.ts` -> PASS (396 pass, 0 fail, 1712 assertions)
+- Independent review (`41f7f90c..cdd6c2eb`) -> PASS (spec compliance, correctness, and codebase consistency passed with no critical issues).
 
 ## [S1] Problem
 When a stateless (`store: false`) OpenAI Responses model returns a single `reasoning` output item containing multiple `summary` entries and one `encrypted_content` ciphertext, `@ai-sdk/openai` emits each summary entry as a separate AI SDK `reasoning` part sharing the same `providerMetadata.<ns>.itemId` (`rs_...`).
@@ -50,9 +59,9 @@ Add tests exercising both `ProviderTransform.message()` and the real installed `
 - Changing `store: true` stateful Responses behavior or signed request bodies in fetch wrappers.
 
 ## Tasks
-- [ ] T1: Create `@ai-sdk/openai@3.0.113` patch and register it in `package.json` and `bun.lock` — acceptance: `bun ci` succeeds with the patch applied across `dist/index.{mjs,js}` and `dist/internal/index.{mjs,js}` (covers: S2.1)
-- [ ] T2: Update `ProviderTransform.message()` to keep `itemId` on `reasoning` parts while still stripping it from non-`reasoning` parts when `store !== true` — acceptance: unit tests verify `reasoning` keeps `itemId` and `text`/`tool-call` drop `itemId` (covers: S2.2)
-- [ ] T3: Add wire-level regression tests for `@ai-sdk/openai` and `@ai-sdk/azure` stateless multi-summary reasoning replay — acceptance: all S2.3 scenarios pass against the real installed SDKs and `typecheck` passes (covers: S2.3, depends: T1, T2)
+- [x] T1: Create `@ai-sdk/openai@3.0.113` patch and register it in `package.json` and `bun.lock` — acceptance: `bun ci` succeeds with the patch applied across `dist/index.{mjs,js}` and `dist/internal/index.{mjs,js}` (covers: S2.1)
+- [x] T2: Update `ProviderTransform.message()` to keep `itemId` on `reasoning` parts while still stripping it from non-`reasoning` parts when `store !== true` — acceptance: unit tests verify `reasoning` keeps `itemId` and `text`/`tool-call` drop `itemId` (covers: S2.2)
+- [x] T3: Add wire-level regression tests for `@ai-sdk/openai` and `@ai-sdk/azure` stateless multi-summary reasoning replay — acceptance: all S2.3 scenarios pass against the real installed SDKs and `typecheck` passes (covers: S2.3, depends: T1, T2)
 
 ## Journey log
 - Live verification against `@ai-sdk/azure@3.0.49` showed that `bun.lock` resolves a nested `@ai-sdk/openai@3.0.48` copy under `@ai-sdk/azure` rather than the top-level `3.0.113`. Applying the identical patch to `@ai-sdk/openai@3.0.48` closed that gap.
