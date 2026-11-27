@@ -2,7 +2,7 @@
 feature: openai-compatible-signatures
 status: delivered
 updated: 2026-11-27
-source: feat/openai-compatible-signatures
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2873
 ---
 
 # Replay signed state on OpenAI-compatible tool turns
