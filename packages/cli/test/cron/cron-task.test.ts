@@ -17,7 +17,9 @@ import {
 const run = <A, E>(e: Effect.Effect<A, E>) => Effect.runPromise(e as Effect.Effect<A, E, never>)
 
 test("getCronFilePath joins .mimocode/scheduled_tasks.json", () => {
-  expect(getCronFilePath("/tmp/x").endsWith("/.mimocode/scheduled_tasks.json")).toBe(true)
+  // getCronFilePath uses node:path join(), so the expected suffix must be
+  // derived the same way — a forward-slash literal fails on Windows.
+  expect(getCronFilePath("/tmp/x").endsWith(join(".mimocode", "scheduled_tasks.json"))).toBe(true)
 })
 
 test("readCronTasks returns [] on missing file", async () => {
