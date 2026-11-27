@@ -1516,7 +1516,7 @@ export function parts(message_id: MessageID) {
   )
 }
 
-export function get(input: { sessionID: SessionID; messageID: MessageID }): WithParts {
+export function find(input: { sessionID: SessionID; messageID: MessageID }): WithParts | undefined {
   const row = Database.use((db) =>
     db
       .select()
@@ -1524,11 +1524,17 @@ export function get(input: { sessionID: SessionID; messageID: MessageID }): With
       .where(and(eq(MessageTable.id, input.messageID), eq(MessageTable.session_id, input.sessionID)))
       .get(),
   )
-  if (!row) throw new NotFoundError({ message: `Message not found: ${input.messageID}` })
+  if (!row) return undefined
   return {
     info: info(row),
     parts: parts(input.messageID),
   }
+}
+
+export function get(input: { sessionID: SessionID; messageID: MessageID }): WithParts {
+  const found = find(input)
+  if (!found) throw new NotFoundError({ message: `Message not found: ${input.messageID}` })
+  return found
 }
 
 export function filterCompacted(msgs: Iterable<WithParts>) {
@@ -1559,8 +1565,9 @@ export function renderedOrder(
   sessionID: SessionID,
   owned: Set<string>,
   // Reads a consumed input that lies outside `msgs` (e.g. before the compacted
-  // window) so it can still be placed in front of its delivery message.
-  load: (messageID: MessageID) => WithParts,
+  // window) so it can still be placed in front of its delivery message. Returns
+  // undefined when that input no longer exists.
+  load: (messageID: MessageID) => WithParts | undefined,
 ): WithParts[] {
   const hidden = new Set<MessageID>()
   for (const receipt of receipts) {
@@ -1591,7 +1598,9 @@ export function renderedOrder(
   for (const [responseID, ids] of deliveries) {
     const at = ordered.findIndex((msg) => msg.info.id === responseID)
     if (at < 0) continue
-    const inputs = ids.map((messageID) => ordered.find((msg) => msg.info.id === messageID) ?? load(messageID))
+    const inputs = ids
+      .map((messageID) => ordered.find((msg) => msg.info.id === messageID) ?? load(messageID))
+      .filter((msg): msg is WithParts => msg !== undefined)
     ordered = ordered.filter((msg) => !ids.includes(msg.info.id))
     ordered.splice(ordered.findIndex((msg) => msg.info.id === responseID), 0, ...inputs)
   }

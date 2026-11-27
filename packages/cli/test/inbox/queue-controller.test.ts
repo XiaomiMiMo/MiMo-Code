@@ -6,6 +6,7 @@ import { MessageID, PartID } from "../../src/session/schema"
 import { MessageV2 } from "../../src/session/message-v2"
 import { claimRunKey, InboxController, inboxControllerRef, liveClaimRuns, schedulerRef, type Receipt } from "../../src/inbox"
 import { InboxTable, InboxLaneStateTable, InboxSessionEpochTable } from "../../src/inbox/inbox.sql"
+import { MessageTable } from "../../src/session/session.sql"
 import { Database, eq, and } from "../../src/storage"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
@@ -394,6 +395,52 @@ describe("Inbox controller", () => {
         const r = yield* tq.getReceipt(receipt.id)
         expect(r.state).toBe("cancelled")
         expect(r.outcome).toBe("never_ran")
+      }),
+    ),
+  )
+
+  it.live(
+    "reconcileOnBoot cancels accepted receipts whose input was removed and keeps valid and terminal receipts",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionNs.Service
+        const tq = yield* InboxController.Service
+        const session = yield* sessions.create({ title: "reconcile-missing-input" })
+        const lane = { sessionID: session.id, agentID: "main" }
+        const legacy = yield* tq.accept({ lane, ...userMessage(session.id, "legacy missing input"), type: "prompt" })
+        const valid = yield* tq.accept({ lane, ...userMessage(session.id, "valid accepted"), type: "prompt" })
+        const terminal = yield* tq.accept({ lane, ...userMessage(session.id, "terminal missing input"), type: "prompt" })
+
+        Database.use((db) => db.update(InboxTable)
+          .set({
+            state: "settled",
+            outcome: "success",
+            consumed: true,
+            delivery_message_id: MessageID.ascending(),
+            time_updated: 123,
+          })
+          .where(eq(InboxTable.id, terminal.id))
+          .run())
+        for (const messageID of [legacy.inputMessageID, terminal.inputMessageID]) {
+          Database.use((db) => db.delete(MessageTable).where(eq(MessageTable.id, messageID)).run())
+        }
+        const terminalBefore = Database.use((db) =>
+          db.select().from(InboxTable).where(eq(InboxTable.id, terminal.id)).get(),
+        )
+
+        yield* tq.reconcileOnBoot(session.id)
+
+        const cancelled = yield* tq.getReceipt(legacy.id)
+        expect(cancelled.state).toBe("cancelled")
+        expect(cancelled.outcome).toBe("never_ran")
+        expect(cancelled.inputMessageID).toBe(legacy.inputMessageID)
+        expect((yield* tq.getReceipt(valid.id)).state).toBe("accepted")
+        const terminalAfter = Database.use((db) =>
+          db.select().from(InboxTable).where(eq(InboxTable.id, terminal.id)).get(),
+        )
+        expect(terminalAfter).toEqual(terminalBefore)
+        const batch = yield* tq.claimNext(lane, 1)
+        expect(batch?.receipts.map((receipt) => receipt.id)).toEqual([valid.id])
       }),
     ),
   )

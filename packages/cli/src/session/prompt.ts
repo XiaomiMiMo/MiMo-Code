@@ -5251,7 +5251,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             )).all()))
             const owned = new Set(claimOwner.receipts.map((receipt) => receipt.id))
             msgs = yield* Effect.sync(() => MessageV2.renderedOrder(msgs, receipts, sessionID, owned,
-              (messageID) => MessageV2.get({ sessionID, messageID })))
+              (messageID) => MessageV2.find({ sessionID, messageID })))
             const pending = claimOwner.receipts.flatMap((receipt) =>
               !deliveredPrompts.has(receipt.inputMessageID)
                 ? [receipt.inputMessageID] : [],
