@@ -1478,6 +1478,7 @@ export type StepFinishPart = {
   messageID: string
   type: "step-finish"
   reason: string
+  reasoningOpaque?: string
   snapshot?: string
   cost: number
   tokens: {

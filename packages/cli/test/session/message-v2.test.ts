@@ -297,6 +297,24 @@ function basePart(messageID: string, id: string) {
 }
 
 describe("session.message-v2.toModelMessage", () => {
+  test("replays opaque state on its own retained step", async () => {
+    const source = openAICompatibleModel
+    const info = assistantInfo("reply", "user", undefined, { providerID: source.providerID, modelID: source.id })
+    const texts = ["signed", "unsigned", "next"]
+    const parts = texts.flatMap<MessageV2.Part>((text, index) => [
+      { ...basePart("reply", `${index}-start`), type: "step-start" },
+      { ...basePart("reply", `${index}-text`), type: "text", text },
+      {
+        ...basePart("reply", `${index}-end`), type: "step-finish", reason: "stop", cost: 0, tokens: info.tokens,
+        ...(text === "unsigned" ? {} : { reasoningOpaque: ` ${text}== ` }),
+      },
+    ])
+    const projected = await MessageV2.toModelMessages([{ info, parts }], source)
+    expect(projected.map((msg) => msg.content)).toEqual(texts.map((text) => [{ type: "text", text }]))
+    expect(projected.map((msg) => msg.providerOptions?.openaiCompatible?.reasoning_opaque)).toEqual([
+      " signed== ", undefined, " next== ",
+    ])
+  })
   test("local binary and structured text references become paths instead of uploads", async () => {
     for (const mime of ["application/x-apple-diskimage", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "text/csv", "application/json"]) {
       const messages = await MessageV2.toModelMessages([{ info: userInfo("local-file"), parts: [{ ...basePart("local-file", "binary"), type: "file", filename: "fixture file", mime, url: "file:///fixture/local%20file" }] }], model)

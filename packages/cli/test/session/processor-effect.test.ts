@@ -1,5 +1,7 @@
 import { NodeFileSystem } from "@effect/platform-node"
 import { beforeEach, expect } from "bun:test"
+import { tool } from "ai"
+import z from "zod"
 import { Cause, Effect, Exit, Fiber, Layer } from "effect"
 import { appendFile, readFile } from "node:fs/promises"
 import { EffectBridge } from "../../src/effect"
@@ -413,6 +415,62 @@ it.live("external part writes and sync replay cannot create unexecuted proof or 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+it.live("stores only the last valid reasoning_opaque on its completed tool-only step", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "lookup")
+        const model = yield* provider.getModel(ref.providerID, ref.modelID)
+        for (const scenario of ["signed", "unsigned", "incomplete"] as const) {
+          const chunks = (scenario === "unsigned" ? [] : ["first", " last ", "", null, 42]).map((opaque) => ({
+            choices: [{ delta: { reasoning_opaque: opaque } }],
+          }))
+          yield* llm.push(
+            raw({
+              chunks: [
+                ...chunks,
+                {
+                  choices: [
+                    {
+                      delta: {
+                        content: null,
+                        tool_calls: [{ index: 0, id: "call_1", function: { name: "lookup", arguments: "{}" } }],
+                      },
+                      message: { reasoning_opaque: "not a stream delta" },
+                      ...(scenario === "incomplete" ? {} : { finish_reason: "tool_calls" }),
+                    },
+                    { delta: { reasoning_opaque: "another choice" } },
+                  ],
+                },
+              ],
+            }),
+          )
+          const msg = yield* assistant(chat.id, parent.id, dir)
+          const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model })
+          yield* handle.process({
+            user: parent,
+            sessionID: chat.id,
+            model,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "lookup" }],
+            tools: { lookup: tool({ inputSchema: z.object({}), execute: async () => "ok" }) },
+          })
+          const parts = MessageV2.parts(msg.id)
+          const finish = parts.find((part) => part.type === "step-finish")
+          expect(finish).toBeDefined()
+          expect(parts.find((part) => part.type === "tool")?.state.status).toBe("completed")
+          expect(parts.filter((part) => part.type === "reasoning" || part.type === "text")).toEqual([])
+          if (scenario === "signed") expect(finish).toHaveProperty("reasoningOpaque", " last ")
+          else expect(finish).not.toHaveProperty("reasoningOpaque")
+        }
+      }),
+    { git: true, config: providerCfg },
+  ),
+)
 
 it.live("session.processor effect tests capture llm input cleanly", () =>
   provideTmpdirServer(

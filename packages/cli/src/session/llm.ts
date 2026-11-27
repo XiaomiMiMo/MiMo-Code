@@ -3,6 +3,7 @@ import { bindHostError, inheritHostError } from "@/error/host-registry"
 import path from "path"
 import { Provider, ProviderError } from "@/provider"
 import { openCodeGoSessionHeaders } from "@/provider/opencode-go"
+import { captureCompatibleToolSignature } from "@/provider/compatible-tool-signature"
 import { Log } from "@/util"
 import { errorMessage } from "@/util/error"
 import { Context, Duration, Effect, Layer, Record, Cause } from "effect"
@@ -819,6 +820,13 @@ const live: Layer.Layer<
                             : bindHostError(next.value.error, { providerID: input.model.providerID })
                           controller.enqueue({ ...next.value, error })
                           return
+                        }
+                        if (next.value.type === "tool-call" && next.value.providerMetadata) {
+                          const metadata = captureCompatibleToolSignature(next.value.providerMetadata, input.model, language.provider)
+                          if (metadata !== next.value.providerMetadata) {
+                            controller.enqueue({ ...next.value, providerMetadata: metadata })
+                            return
+                          }
                         }
                         controller.enqueue(next.value)
                         return
