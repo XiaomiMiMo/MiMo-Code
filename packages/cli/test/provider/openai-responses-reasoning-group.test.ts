@@ -6,6 +6,10 @@ import type * as Provider from "../../src/provider/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import * as ProviderTransform from "../../src/provider/transform"
 
+function makeFetch(handler: (url: RequestInfo | URL, init?: RequestInit) => Promise<Response>): typeof fetch {
+  return Object.assign(handler, { preconnect: fetch.preconnect })
+}
+
 function sse(events: unknown[]) {
   return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n", {
     headers: { "content-type": "text/event-stream" },
@@ -89,13 +93,14 @@ async function captureOpenAIWireBody(input: {
   const bodies: Array<{ input: Array<Record<string, unknown>> }> = []
   const store = input.store ?? false
   const model = input.model ?? makeModel()
+  const mockFetch = makeFetch(async (_url, init) => {
+    bodies.push(parseBody(init))
+    return minimalTextStream()
+  })
   const openai = createOpenAI({
     apiKey: "test-key",
     baseURL: "https://example.invalid/v1",
-    fetch: (async (_url, init) => {
-      bodies.push(parseBody(init))
-      return minimalTextStream()
-    }) as typeof fetch,
+    fetch: mockFetch,
   })
   const options = { store }
   const wrapped = wrapLanguageModel({
@@ -125,7 +130,7 @@ async function captureOpenAIWireBody(input: {
 }
 
 describe("OpenAI Responses stateless reasoning grouping", () => {
-  test("re-groups multi-summary reasoning carrying duplicate encrypted_content into one block without wire id", async () => {
+  test("re-groups multi-summary reasoning carrying duplicate encrypted_content into one block with preserved id", async () => {
     const encrypted = "gAAAAAB_example_ciphertext_payload"
     const body = await captureOpenAIWireBody({
       messages: [
@@ -163,7 +168,9 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
         },
         {
           role: "tool",
-          content: [{ type: "tool-result", toolCallId: "call_1", toolName: "task", output: { type: "text", value: "ok" } }],
+          content: [
+            { type: "tool-result", toolCallId: "call_1", toolName: "task", output: { type: "text", value: "ok" } },
+          ],
         },
       ],
     })
@@ -172,13 +179,13 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     expect(reasoningItems).toHaveLength(1)
     expect(reasoningItems[0]).toEqual({
       type: "reasoning",
+      id: "rs_turn1",
       encrypted_content: encrypted,
       summary: [
         { type: "summary_text", text: "**Clarifying task binding instructions**\nFirst summary body." },
         { type: "summary_text", text: "**Verifying output paths**\nSecond summary body." },
       ],
     })
-    expect("id" in reasoningItems[0]).toBe(false)
 
     const assistantText = body.input.find((item) => item.role === "assistant")
     expect(assistantText?.id).toBeUndefined()
@@ -217,51 +224,13 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     expect(reasoningItems).toHaveLength(1)
     expect(reasoningItems[0]).toEqual({
       type: "reasoning",
+      id: "rs_sse1",
       encrypted_content: encrypted,
       summary: [
         { type: "summary_text", text: "**Clarifying task binding instructions**" },
         { type: "summary_text", text: "**Verifying output paths**" },
       ],
     })
-    expect("id" in reasoningItems[0]).toBe(false)
-  })
-
-  test("coalesces multi-summary reasoning without itemId when sharing identical encrypted_content", async () => {
-    const encrypted = "gAAAAAB_no_itemid_ciphertext"
-    const body = await captureOpenAIWireBody({
-      messages: [
-        { role: "user", content: "Check" },
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "reasoning",
-              text: "Summary A",
-              providerOptions: { openai: { reasoningEncryptedContent: encrypted } },
-            },
-            {
-              type: "reasoning",
-              text: "Summary B",
-              providerOptions: { openai: { reasoningEncryptedContent: encrypted } },
-            },
-            { type: "text", text: "Answer" },
-          ],
-        },
-        { role: "user", content: "Next" },
-      ],
-    })
-
-    const reasoningItems = body.input.filter((item) => item.type === "reasoning")
-    expect(reasoningItems).toHaveLength(1)
-    expect(reasoningItems[0]).toEqual({
-      type: "reasoning",
-      encrypted_content: encrypted,
-      summary: [
-        { type: "summary_text", text: "Summary A" },
-        { type: "summary_text", text: "Summary B" },
-      ],
-    })
-    expect("id" in reasoningItems[0]).toBe(false)
   })
 
   test("keeps distinct reasoning items separate and preserves store=true item_reference", async () => {
@@ -298,6 +267,7 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     expect(reasoningItems).toEqual([
       {
         type: "reasoning",
+        id: "rs_a",
         encrypted_content: "enc_a",
         summary: [
           { type: "summary_text", text: "Block 1 part 1" },
@@ -306,6 +276,7 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
       },
       {
         type: "reasoning",
+        id: "rs_b",
         encrypted_content: "enc_b",
         summary: [{ type: "summary_text", text: "Block 2 part 1" }],
       },
@@ -341,7 +312,7 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     ])
   })
 
-  test("applies the same stateless grouping via @ai-sdk/azure (@ai-sdk/openai/internal)", async () => {
+  test("applies the same stateless grouping via stock @ai-sdk/azure (@ai-sdk/openai/internal)", async () => {
     const encrypted = "gAAAAAB_azure_ciphertext"
     const bodies: Array<{ input: Array<Record<string, unknown>> }> = []
     const azureModel = makeModel({
@@ -352,13 +323,14 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
         npm: "@ai-sdk/azure",
       },
     })
+    const mockFetch = makeFetch(async (_url, init) => {
+      bodies.push(parseBody(init))
+      return minimalTextStream()
+    })
     const azure = createAzure({
       apiKey: "test-key",
       baseURL: "https://example.invalid/openai",
-      fetch: (async (_url, init) => {
-        bodies.push(parseBody(init))
-        return minimalTextStream()
-      }) as typeof fetch,
+      fetch: mockFetch,
     })
     const options = { store: false }
     const wrapped = wrapLanguageModel({
@@ -408,13 +380,13 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     expect(reasoningItems).toHaveLength(1)
     expect(reasoningItems[0]).toEqual({
       type: "reasoning",
+      id: "rs_az1",
       encrypted_content: encrypted,
       summary: [
         { type: "summary_text", text: "Azure summary 1" },
         { type: "summary_text", text: "Azure summary 2" },
       ],
     })
-    expect("id" in reasoningItems[0]).toBe(false)
     expect(bodies[0].input.find((item) => item.role === "assistant")?.id).toBeUndefined()
   })
 
@@ -423,94 +395,100 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     const bodies: Array<{ input: Array<Record<string, unknown>> }> = []
     let turn = 0
     const model = makeModel()
+    const mockFetch = makeFetch(async (_url, init) => {
+      bodies.push(parseBody(init))
+      turn += 1
+      if (turn === 1) {
+        return sse([
+          {
+            type: "response.created",
+            response: { id: "resp_1", created_at: 1_755_000_000, model: "test/model" },
+          },
+          {
+            type: "response.output_item.added",
+            output_index: 0,
+            item: { type: "reasoning", id: "rs_live", encrypted_content: null },
+          },
+          {
+            type: "response.reasoning_summary_part.added",
+            item_id: "rs_live",
+            output_index: 0,
+            summary_index: 0,
+            part: { type: "summary_text", text: "" },
+          },
+          {
+            type: "response.reasoning_summary_text.delta",
+            item_id: "rs_live",
+            output_index: 0,
+            summary_index: 0,
+            delta: "**Clarifying task binding instructions**",
+          },
+          {
+            type: "response.reasoning_summary_part.added",
+            item_id: "rs_live",
+            output_index: 0,
+            summary_index: 1,
+            part: { type: "summary_text", text: "" },
+          },
+          {
+            type: "response.reasoning_summary_text.delta",
+            item_id: "rs_live",
+            output_index: 0,
+            summary_index: 1,
+            delta: "**Verifying output paths**",
+          },
+          {
+            type: "response.output_item.done",
+            output_index: 0,
+            item: {
+              type: "reasoning",
+              id: "rs_live",
+              encrypted_content: encrypted,
+              summary: [
+                { type: "summary_text", text: "**Clarifying task binding instructions**" },
+                { type: "summary_text", text: "**Verifying output paths**" },
+              ],
+            },
+          },
+          {
+            type: "response.output_item.added",
+            output_index: 1,
+            item: { type: "message", id: "msg_live", role: "assistant", content: [] },
+          },
+          {
+            type: "response.output_text.delta",
+            item_id: "msg_live",
+            output_index: 1,
+            content_index: 0,
+            delta: "Step 1 done.",
+            logprobs: [],
+          },
+          {
+            type: "response.output_item.done",
+            output_index: 1,
+            item: {
+              type: "message",
+              id: "msg_live",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Step 1 done." }],
+            },
+          },
+          {
+            type: "response.completed",
+            response: {
+              id: "resp_1",
+              incomplete_details: null,
+              usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+            },
+          },
+        ])
+      }
+      return minimalTextStream("Step 2 done.")
+    })
     const openai = createOpenAI({
       apiKey: "test-key",
       baseURL: "https://example.invalid/v1",
-      fetch: (async (_url, init) => {
-        bodies.push(parseBody(init))
-        turn += 1
-        if (turn === 1) {
-          return sse([
-            {
-              type: "response.created",
-              response: { id: "resp_1", created_at: 1_755_000_000, model: "test/model" },
-            },
-            {
-              type: "response.output_item.added",
-              output_index: 0,
-              item: { type: "reasoning", id: "rs_live", encrypted_content: null },
-            },
-            {
-              type: "response.reasoning_summary_part.added",
-              item_id: "rs_live",
-              output_index: 0,
-              summary_index: 0,
-              part: { type: "summary_text", text: "" },
-            },
-            {
-              type: "response.reasoning_summary_text.delta",
-              item_id: "rs_live",
-              output_index: 0,
-              summary_index: 0,
-              delta: "**Clarifying task binding instructions**",
-            },
-            {
-              type: "response.reasoning_summary_part.added",
-              item_id: "rs_live",
-              output_index: 0,
-              summary_index: 1,
-              part: { type: "summary_text", text: "" },
-            },
-            {
-              type: "response.reasoning_summary_text.delta",
-              item_id: "rs_live",
-              output_index: 0,
-              summary_index: 1,
-              delta: "**Verifying output paths**",
-            },
-            {
-              type: "response.output_item.done",
-              output_index: 0,
-              item: {
-                type: "reasoning",
-                id: "rs_live",
-                encrypted_content: encrypted,
-                summary: [
-                  { type: "summary_text", text: "**Clarifying task binding instructions**" },
-                  { type: "summary_text", text: "**Verifying output paths**" },
-                ],
-              },
-            },
-            {
-              type: "response.output_item.added",
-              output_index: 1,
-              item: { type: "message", id: "msg_live", role: "assistant", content: [] },
-            },
-            {
-              type: "response.output_text.delta",
-              item_id: "msg_live",
-              output_index: 1,
-              content_index: 0,
-              delta: "Step 1 done.",
-              logprobs: [],
-            },
-            {
-              type: "response.output_item.done",
-              output_index: 1,
-              item: { type: "message", id: "msg_live", role: "assistant", content: [{ type: "output_text", text: "Step 1 done." }] },
-            },
-            {
-              type: "response.completed",
-              response: {
-                id: "resp_1",
-                incomplete_details: null,
-                usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
-              },
-            },
-          ])
-        }
-        return minimalTextStream("Step 2 done.")
-      }) as typeof fetch,
+      fetch: mockFetch,
     })
 
     const options = { store: false }
@@ -539,7 +517,11 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
 
     const turn2 = streamText({
       model: wrapped,
-      messages: [{ role: "user", content: "Do step 1" }, ...turn1Response.messages, { role: "user", content: "Do step 2" }],
+      messages: [
+        { role: "user", content: "Do step 1" },
+        ...turn1Response.messages,
+        { role: "user", content: "Do step 2" },
+      ],
       providerOptions: ProviderTransform.providerOptions(model, options),
     })
     await turn2.text
@@ -549,13 +531,14 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     expect(reasoningItems).toHaveLength(1)
     expect(reasoningItems[0]).toEqual({
       type: "reasoning",
+      id: "rs_live",
       encrypted_content: encrypted,
       summary: [
         { type: "summary_text", text: "**Clarifying task binding instructions**" },
         { type: "summary_text", text: "**Verifying output paths**" },
       ],
     })
-    expect("id" in reasoningItems[0]).toBe(false)
+    expect(bodies[1].input.find((item) => item.role === "assistant")?.id).toBeUndefined()
   })
 
   test("round-trips standard SSE (with reasoning_summary_part.done) without dropping earlier summaries", async () => {
@@ -563,108 +546,114 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     const bodies: Array<{ input: Array<Record<string, unknown>> }> = []
     let turn = 0
     const model = makeModel({ providerID: ProviderID.make("custom-openai-proxy") })
+    const mockFetch = makeFetch(async (_url, init) => {
+      bodies.push(parseBody(init))
+      turn += 1
+      if (turn === 1) {
+        return sse([
+          {
+            type: "response.created",
+            response: { id: "resp_sse1", created_at: 1_755_000_000, model: "test/model" },
+          },
+          {
+            type: "response.output_item.added",
+            output_index: 0,
+            item: { type: "reasoning", id: "rs_std", encrypted_content: null },
+          },
+          {
+            type: "response.reasoning_summary_part.added",
+            item_id: "rs_std",
+            output_index: 0,
+            summary_index: 0,
+            part: { type: "summary_text", text: "" },
+          },
+          {
+            type: "response.reasoning_summary_text.delta",
+            item_id: "rs_std",
+            output_index: 0,
+            summary_index: 0,
+            delta: "**First summary**",
+          },
+          {
+            type: "response.reasoning_summary_part.done",
+            item_id: "rs_std",
+            output_index: 0,
+            summary_index: 0,
+            part: { type: "summary_text", text: "**First summary**" },
+          },
+          {
+            type: "response.reasoning_summary_part.added",
+            item_id: "rs_std",
+            output_index: 0,
+            summary_index: 1,
+            part: { type: "summary_text", text: "" },
+          },
+          {
+            type: "response.reasoning_summary_text.delta",
+            item_id: "rs_std",
+            output_index: 0,
+            summary_index: 1,
+            delta: "**Second summary**",
+          },
+          {
+            type: "response.reasoning_summary_part.done",
+            item_id: "rs_std",
+            output_index: 0,
+            summary_index: 1,
+            part: { type: "summary_text", text: "**Second summary**" },
+          },
+          {
+            type: "response.output_item.done",
+            output_index: 0,
+            item: {
+              type: "reasoning",
+              id: "rs_std",
+              encrypted_content: encrypted,
+              summary: [
+                { type: "summary_text", text: "**First summary**" },
+                { type: "summary_text", text: "**Second summary**" },
+              ],
+            },
+          },
+          {
+            type: "response.output_item.added",
+            output_index: 1,
+            item: { type: "message", id: "msg_std", role: "assistant", content: [] },
+          },
+          {
+            type: "response.output_text.delta",
+            item_id: "msg_std",
+            output_index: 1,
+            content_index: 0,
+            delta: "Done.",
+            logprobs: [],
+          },
+          {
+            type: "response.output_item.done",
+            output_index: 1,
+            item: {
+              type: "message",
+              id: "msg_std",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Done." }],
+            },
+          },
+          {
+            type: "response.completed",
+            response: {
+              id: "resp_sse1",
+              incomplete_details: null,
+              usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+            },
+          },
+        ])
+      }
+      return minimalTextStream("Follow-up done.")
+    })
     const openai = createOpenAI({
       apiKey: "test-key",
       baseURL: "https://example.invalid/v1",
-      fetch: (async (_url, init) => {
-        bodies.push(parseBody(init))
-        turn += 1
-        if (turn === 1) {
-          return sse([
-            {
-              type: "response.created",
-              response: { id: "resp_sse1", created_at: 1_755_000_000, model: "test/model" },
-            },
-            {
-              type: "response.output_item.added",
-              output_index: 0,
-              item: { type: "reasoning", id: "rs_std", encrypted_content: null },
-            },
-            {
-              type: "response.reasoning_summary_part.added",
-              item_id: "rs_std",
-              output_index: 0,
-              summary_index: 0,
-              part: { type: "summary_text", text: "" },
-            },
-            {
-              type: "response.reasoning_summary_text.delta",
-              item_id: "rs_std",
-              output_index: 0,
-              summary_index: 0,
-              delta: "**First summary**",
-            },
-            {
-              type: "response.reasoning_summary_part.done",
-              item_id: "rs_std",
-              output_index: 0,
-              summary_index: 0,
-              part: { type: "summary_text", text: "**First summary**" },
-            },
-            {
-              type: "response.reasoning_summary_part.added",
-              item_id: "rs_std",
-              output_index: 0,
-              summary_index: 1,
-              part: { type: "summary_text", text: "" },
-            },
-            {
-              type: "response.reasoning_summary_text.delta",
-              item_id: "rs_std",
-              output_index: 0,
-              summary_index: 1,
-              delta: "**Second summary**",
-            },
-            {
-              type: "response.reasoning_summary_part.done",
-              item_id: "rs_std",
-              output_index: 0,
-              summary_index: 1,
-              part: { type: "summary_text", text: "**Second summary**" },
-            },
-            {
-              type: "response.output_item.done",
-              output_index: 0,
-              item: {
-                type: "reasoning",
-                id: "rs_std",
-                encrypted_content: encrypted,
-                summary: [
-                  { type: "summary_text", text: "**First summary**" },
-                  { type: "summary_text", text: "**Second summary**" },
-                ],
-              },
-            },
-            {
-              type: "response.output_item.added",
-              output_index: 1,
-              item: { type: "message", id: "msg_std", role: "assistant", content: [] },
-            },
-            {
-              type: "response.output_text.delta",
-              item_id: "msg_std",
-              output_index: 1,
-              content_index: 0,
-              delta: "Done.",
-              logprobs: [],
-            },
-            {
-              type: "response.output_item.done",
-              output_index: 1,
-              item: { type: "message", id: "msg_std", role: "assistant", content: [{ type: "output_text", text: "Done." }] },
-            },
-            {
-              type: "response.completed",
-              response: {
-                id: "resp_sse1",
-                incomplete_details: null,
-                usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
-              },
-            },
-          ])
-        }
-        return minimalTextStream("Follow-up done.")
-      }) as typeof fetch,
+      fetch: mockFetch,
     })
 
     const options = { store: false }
@@ -693,7 +682,11 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
 
     const turn2 = streamText({
       model: wrapped,
-      messages: [{ role: "user", content: "Start" }, ...turn1Response.messages, { role: "user", content: "Continue" }],
+      messages: [
+        { role: "user", content: "Start" },
+        ...turn1Response.messages,
+        { role: "user", content: "Continue" },
+      ],
       providerOptions: ProviderTransform.providerOptions(model, options),
     })
     await turn2.text
@@ -703,13 +696,13 @@ describe("OpenAI Responses stateless reasoning grouping", () => {
     expect(reasoningItems).toHaveLength(1)
     expect(reasoningItems[0]).toEqual({
       type: "reasoning",
+      id: "rs_std",
       encrypted_content: encrypted,
       summary: [
         { type: "summary_text", text: "**First summary**" },
         { type: "summary_text", text: "**Second summary**" },
       ],
     })
-    expect("id" in reasoningItems[0]).toBe(false)
     expect(bodies[1].input.find((item) => item.role === "assistant")?.id).toBeUndefined()
   })
 })
