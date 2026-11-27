@@ -1,6 +1,7 @@
 import { useRenderer } from "@opentui/solid"
 import { createSimpleContext } from "./helper"
 import { FormatError, FormatUnknownError } from "@/cli/error"
+import { clearProgramStatus } from "../util/program-status"
 import { win32FlushInputBuffer } from "../win32"
 type Exit = ((reason?: unknown) => Promise<void>) & {
   message: {
@@ -36,6 +37,8 @@ export const { use: useExit, provider: ExitProvider } = createSimpleContext({
           await input.onBeforeExit?.()
           // Reset window title before destroying renderer
           renderer.setTerminalTitle("")
+          // Drop OSC 7501 records so the tab indicator does not stick on "working"
+          clearProgramStatus()
           renderer.destroy()
           // SGR reset + show cursor + OSC 110/111/112 reset terminal fg/bg/cursor color.
           // Without the OSC resets, whatever fg/bg the active mimocode theme pushed

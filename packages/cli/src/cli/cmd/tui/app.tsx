@@ -1,5 +1,6 @@
 import { render, TimeToFirstDraw, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import * as Clipboard from "@tui/util/clipboard"
+import * as ProgramStatus from "@tui/util/program-status"
 import * as Selection from "@tui/util/selection"
 import { createCliRenderer, MouseButton, type CliRendererConfig } from "@opentui/core"
 import { RouteProvider, useRoute } from "@tui/context/route"
@@ -361,6 +362,52 @@ export function App(props: { onSnapshot?: () => Promise<string[]> }) {
     if (route.data.type === "plugin") {
       renderer.setTerminalTitle(`OC | ${route.data.id}`)
     }
+  })
+
+  // Mirror session state into OSC 7501 so the terminal can draw a working/idle
+  // indicator on the tab. The root record summarises the session in view; child
+  // records are omitted because MiMo shows one session at a time.
+  createEffect(() => {
+    if (Flag.MIMOCODE_DISABLE_TERMINAL_TITLE) return
+
+    const sessionID = route.data.type === "session" ? route.data.sessionID : undefined
+    const session = sessionID ? sync.session.get(sessionID) : undefined
+    const title = session && !SessionApi.isDefaultTitle(session.title) ? session.title : undefined
+
+    if (!sessionID) {
+      ProgramStatus.reportProgramStatus({ state: "idle", app: "mimo" })
+      return
+    }
+
+    const permission = sync.data.permission[sessionID]?.length ?? 0
+    const question = sync.data.question[sessionID]?.length ?? 0
+    if (permission > 0) {
+      ProgramStatus.reportProgramStatus({
+        state: "blocked",
+        kind: "permission",
+        app: "mimo",
+        title,
+        message: permission === 1 ? "Permission needs input" : `${permission} permissions need input`,
+      })
+      return
+    }
+    if (question > 0) {
+      ProgramStatus.reportProgramStatus({
+        state: "blocked",
+        kind: "question",
+        app: "mimo",
+        title,
+        message: question === 1 ? "Input needs response" : `${question} inputs need response`,
+      })
+      return
+    }
+
+    const status = sync.session.status(sessionID)
+    ProgramStatus.reportProgramStatus({
+      state: status === "idle" ? "idle" : "working",
+      app: "mimo",
+      title,
+    })
   })
 
   const args = useArgs()
