@@ -59,8 +59,8 @@ export interface AgentBackend {
 }
 
 /**
- * System-protected secret storage (keychain, Secret Service, DPAPI). No
- * plaintext fallback: an unavailable store keeps the connector disabled.
+ * Secret storage: system-protected storage (keychain, Secret Service, DPAPI), or
+ * user-only files where none is reachable (see `protectedOrFileStore`).
  */
 export interface SecretStore {
   available(): Promise<boolean>

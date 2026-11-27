@@ -4,7 +4,8 @@
 //
 // Secrets never appear in a command line: they are passed on stdin. Values are
 // stored base64url-encoded so no quoting rules apply. A platform without a
-// reachable store reports unavailable; there is no plaintext fallback.
+// reachable store reports unavailable; `protectedOrFileStore` then falls back to
+// files only the current user can read.
 
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -225,4 +226,62 @@ export const spawnRunner: Runner = async (command, stdin) => {
     child.exited,
   ])
   return { code, stdout, stderr }
+}
+
+/**
+ * Files only the current user can read (0600 in a 0700 directory), for a computer
+ * without reachable protected storage (cli-connector R9). Weaker than protected
+ * storage; whoever uses it tells the user once.
+ */
+export function fileSecretStore(directory: string): SecretStore {
+  const file = (name: string) => path.join(directory, `${checkName(name)}.secret`)
+  return {
+    available: async () => true,
+    async get(name) {
+      try {
+        return decode(await readFile(file(name), "utf8"))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+        throw error
+      }
+    },
+    async set(name, value) {
+      await mkdir(directory, { recursive: true, mode: 0o700 })
+      const target = file(name)
+      const temp = `${target}.${process.pid}.tmp`
+      await writeFile(temp, encode(value), { mode: 0o600, flush: true })
+      await rename(temp, target).catch(async (error) => {
+        await rm(temp, { force: true })
+        throw error
+      })
+    },
+    async delete(name) {
+      await rm(file(name), { force: true })
+    },
+  }
+}
+
+export type SecretStoreKind = "protected" | "file"
+
+/** A secret store that also tells which kind of storage it ended up using. */
+export type ResolvedSecretStore = SecretStore & { kind(): Promise<SecretStoreKind> }
+
+/**
+ * Protected storage when it is reachable, otherwise the file store. Decided once
+ * per process, so one run never splits its secrets across two stores.
+ */
+export function protectedOrFileStore(primary: SecretStore, fallback: SecretStore): ResolvedSecretStore {
+  let decided: Promise<{ store: SecretStore; kind: SecretStoreKind }> | undefined
+  const decide = () =>
+    (decided ??= primary
+      .available()
+      .catch(() => false)
+      .then((ok) => (ok ? { store: primary, kind: "protected" as const } : { store: fallback, kind: "file" as const })))
+  return {
+    kind: async () => (await decide()).kind,
+    available: async () => (await decide()).store.available(),
+    get: async (name) => (await decide()).store.get(name),
+    set: async (name, value) => (await decide()).store.set(name, value),
+    delete: async (name) => (await decide()).store.delete(name),
+  }
 }

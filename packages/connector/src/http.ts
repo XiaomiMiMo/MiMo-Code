@@ -75,7 +75,8 @@ export type HttpRequest = {
 
 export type HttpOptions = {
   account: () => AccountSession
-  key: DeviceKey
+  /** Device key for proofs; account calls without a proof need none. */
+  key?: DeviceKey
   deviceId: () => string | undefined
   client: ClientInfo
   fetch?: typeof fetch
@@ -157,11 +158,13 @@ export class ConnectHttp {
     if (SEMVER.test(this.options.client.version)) headers.set("X-Client-Version", this.options.client.version)
     if (input.profile) headers.set(PROFILE_HEADER, PROFILE)
     if (!input.proof) return headers
-    const challenge = await this.challenge(account, input.method, input.path)
+    const key = this.options.key
+    if (!key) throw new Error("a device proof needs the device key")
+    const challenge = await this.challenge(account, key, input.method, input.path)
     headers.set(
       "X-Device-Proof",
       await deviceProof({
-        key: this.options.key,
+        key,
         origin: account.origin,
         loginInstanceId: challenge.loginInstanceId,
         environment: account.environment,
@@ -183,11 +186,11 @@ export class ConnectHttp {
    * issued at the service time the challenge carries: the local clock never stands
    * in for the service clock, which accepts a proof at most 1 s ahead of its own.
    */
-  private async challenge(account: AccountSession, method: string, path: string) {
+  private async challenge(account: AccountSession, key: DeviceKey, method: string, path: string) {
     const data = await this.request({
       method: "POST",
       path: "/api/connect/device-challenges",
-      body: { method, path, keyThumbprint: await keyThumbprint(this.options.key.jwk) },
+      body: { method, path, keyThumbprint: await keyThumbprint(key.jwk) },
       profile: false,
       proof: false,
     })
