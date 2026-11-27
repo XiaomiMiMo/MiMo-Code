@@ -10,7 +10,7 @@ source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2873
 ## Report
 **What was built** — The default compatible adapter records the opaque state returned by each completed assistant step and normalizes each Gemini tool-call signature for the SDK's existing serializer. Both fields are optional. No configuration or routing changes are required.
 
-**Verification** — From `packages/cli`, `bun test --only-failures test/session/openai-compatible-signatures.test.ts test/provider/openai-compatible-metadata.test.ts test/session/message-v2.test.ts test/session/processor-effect.test.ts` passed (87 passed, 2 skipped, 0 failed). The standalone HTTP conversation test passed all 50 assertions. CLI and SDK `bun run typecheck`, `./packages/sdk/script/build.ts`, and `git diff --check` passed. Independent review found no in-scope issues. Verification used a local endpoint, not live provider accounts.
+**Verification** — From `packages/cli`, `bun test --only-failures test/provider/compatible-tool-signature.test.ts test/session/openai-compatible-signatures.test.ts test/provider/openai-compatible-metadata.test.ts test/session/message-v2.test.ts test/session/processor-effect.test.ts` passed (90 passed, 2 skipped, 0 failed). CLI and SDK `bun run typecheck`, `./packages/sdk/script/build.ts`, and `git diff --check` passed. Independent review found no in-scope issues. Verification used a local endpoint, not live provider accounts.
 
 ## [S1] Problem
 A compatible gateway can return a tool call that runs successfully, then reject the next request because the client omitted state attached to the preceding assistant reply. The two formats corrected in mimo-harness (`78f74cb99`, `202798552`) use different positions in the Chat Completions payload.

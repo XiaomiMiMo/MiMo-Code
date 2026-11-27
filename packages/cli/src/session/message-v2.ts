@@ -1410,7 +1410,13 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       })
       for (const message of messages) {
         if (block.reasoningOpaque && message.role === "assistant") {
-          message.providerOptions = { openaiCompatible: { reasoning_opaque: block.reasoningOpaque } }
+          message.providerOptions = {
+            ...message.providerOptions,
+            openaiCompatible: {
+              ...message.providerOptions?.openaiCompatible,
+              reasoning_opaque: block.reasoningOpaque,
+            },
+          }
         }
         projected.push(message)
       }
