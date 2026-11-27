@@ -179,7 +179,31 @@ const makeImpl = (): Interface => {
 
         if (!rt.nextFireAt.has(task.id)) {
           const anchor = task.lastFiredAt ?? task.createdAt
-          rt.nextFireAt.set(task.id, computeNextFireFor(task, anchor, rt.cfg))
+          // armLoop pins nextFireAt to the requested instant, but the pin
+          // lives in this runtime's Map: stop()→start() rebuilds it empty
+          // while the session loop task and LoopState survive. Recomputing
+          // here via oneShotJitteredNextCronRunMs pulls :00/:30 targets up to
+          // oneShotMaxMs early, so a scheduler restart could still fire the
+          // loop sooner than delay_seconds. Re-pin the loop from
+          // LoopState.lastScheduledFor — the same instant armLoop reported —
+          // and only fall back to the computed schedule when no state exists
+          // (e.g. a loop-kind task added directly via `add`).
+          const pinned =
+            task.kind === "loop"
+              ? LoopState.getLoopState(task.prompt)?.lastScheduledFor
+              : undefined
+          const computed = computeNextFireFor(task, anchor, rt.cfg)
+          // Math.max keeps the later of the two instants: a stale pin never
+          // fires the task earlier than its cron schedule either. An infinite
+          // computed value means "no next run" — keep the finite pin.
+          rt.nextFireAt.set(
+            task.id,
+            pinned === undefined
+              ? computed
+              : Number.isFinite(computed)
+                ? Math.max(pinned, computed)
+                : pinned,
+          )
         }
 
         const due = rt.nextFireAt.get(task.id) ?? Number.POSITIVE_INFINITY
@@ -427,9 +451,17 @@ const makeImpl = (): Interface => {
       const clamped = Math.max(60, Math.min(3600, input.delay_seconds))
       const wasClamped = clamped !== input.delay_seconds
 
-      const target = new Date(now + clamped * 1000)
+      // Round the target UP to a minute boundary — never DOWN. Truncating
+      // with setUTCSeconds(0, 0) rewinds the target toward `now`, so an arm
+      // issued mid-minute (worst case: second 59) pinned nextFireAt as little
+      // as ~1s out for a 60–3600s delay and the loop fired early. Comparing
+      // against `now + clamped * 1000` (not `now`) covers the old
+      // `target <= now` past-truncation bump as well, and keeps target aligned
+      // with the `m h * * *` cron expression stored below.
+      const requested = now + clamped * 1000
+      const target = new Date(requested)
       target.setUTCSeconds(0, 0)
-      if (target.getTime() <= now) target.setUTCMinutes(target.getUTCMinutes() + 1)
+      if (target.getTime() < requested) target.setUTCMinutes(target.getUTCMinutes() + 1)
 
       const prior = getSessionCronTasks().filter(
         (t) => t.kind === "loop" && t.prompt === input.prompt,
