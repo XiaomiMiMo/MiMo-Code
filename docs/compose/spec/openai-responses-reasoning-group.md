@@ -1,6 +1,6 @@
 ---
 feature: openai-responses-reasoning-group
-status: in-progress
+status: delivered
 updated: 2026-11-27
 source: fix/openai-responses-keep-reasoning-id
 ---
@@ -8,7 +8,16 @@ source: fix/openai-responses-keep-reasoning-id
 # Preserve OpenAI Responses Reasoning Block Grouping When Stateless
 
 ## Report
-[Not finalized yet]
+
+**What was built** — Removed both `@ai-sdk/openai` patches (`3.0.113` and nested `3.0.48` used by `@ai-sdk/azure`) from `patches/`, `package.json`, and `bun.lock`. Kept `ProviderTransform.message()` preserving `providerOptions[key].itemId` on `reasoning` parts while stripping `itemId` from non-`reasoning` parts (`text`, `tool-call`, etc.) and message-level options when `store !== true`, letting stock `@ai-sdk/openai` group multi-summary reasoning parts into a single `{ type: "reasoning", id, encrypted_content, summary }` wire item — aligned with current `openai/codex` (PRs `#32312`, `#60771`, `#60977`) and Azure OpenAI v1 / `@ai-sdk/openai` (`vercel/ai#12687`, `#14983`). Updated wire-level regression tests to verify stock `@ai-sdk/openai` and `@ai-sdk/azure` replay behavior.
+
+**Verification** — From the worktree root:
+- `bun ci` -> PASS (verified stock unpatched `@ai-sdk/openai@3.0.113` and `3.0.48` installed)
+- `bun run typecheck` (all workspaces + `tsconfig.scripts.json`) -> PASS
+- `git diff --check` -> PASS
+- `bunx oxlint packages/cli/test/provider/openai-responses-reasoning-group.test.ts` -> PASS (0 warnings, 0 errors)
+- `bun test --cwd packages/cli --only-failures test/provider/openai-responses-reasoning-group.test.ts test/provider/transform.test.ts test/provider/provider.test.ts test/provider/openai-responses-exec-custom.test.ts test/session/message-v2.test.ts` -> PASS (394 pass, 0 fail, 1702 assertions)
+- Independent review (`177f87b3..83b8e3b5`) -> PASS (spec compliance, correctness, and codebase consistency passed with no critical issues).
 
 ## [S1] Problem
 When a stateless (`store: false`) OpenAI Responses model returns a single `reasoning` output item containing multiple `summary` entries and one `encrypted_content` ciphertext, `@ai-sdk/openai` emits each summary entry as a separate AI SDK `reasoning` part sharing the same `providerMetadata.<ns>.itemId` (`rs_...`).
@@ -53,9 +62,9 @@ Verify both `ProviderTransform.message()` and stock (unpatched) `@ai-sdk/openai`
 - Coalescing synthetic/malformed reasoning parts that lack `itemId` entirely (real Responses output items always carry `itemId`).
 
 ## Tasks
-- [ ] T4: Remove `@ai-sdk/openai@3.0.113` and `@ai-sdk/openai@3.0.48` patches from `patches/`, `package.json`, and `bun.lock` — acceptance: `bun ci` succeeds with no `@ai-sdk/openai` entries in `patchedDependencies` (covers: S2.1)
-- [ ] T5: Update `ProviderTransform.message()` comment with upstream `openai/codex` and `vercel/ai` references — acceptance: comment accurately explains stock `@ai-sdk/openai` grouping and wire `id` preservation without referencing SDK patches (covers: S2.2)
-- [ ] T6: Update wire-level regression tests for stock `@ai-sdk/openai` and `@ai-sdk/azure` stateless multi-summary reasoning replay (asserting preserved `id`, single block, ordered `summary`, single `encrypted_content`) — acceptance: all S2.3 scenarios pass and `typecheck` / `oxlint` pass (covers: S2.3, depends: T4, T5)
+- [x] T4: Remove `@ai-sdk/openai@3.0.113` and `@ai-sdk/openai@3.0.48` patches from `patches/`, `package.json`, and `bun.lock` — acceptance: `bun ci` succeeds with no `@ai-sdk/openai` entries in `patchedDependencies` (covers: S2.1)
+- [x] T5: Update `ProviderTransform.message()` comment with upstream `openai/codex` and `vercel/ai` references — acceptance: comment accurately explains stock `@ai-sdk/openai` grouping and wire `id` preservation without referencing SDK patches (covers: S2.2)
+- [x] T6: Update wire-level regression tests for stock `@ai-sdk/openai` and `@ai-sdk/azure` stateless multi-summary reasoning replay (asserting preserved `id`, single block, ordered `summary`, single `encrypted_content`) — acceptance: all S2.3 scenarios pass and `typecheck` / `oxlint` pass (covers: S2.3, depends: T4, T5)
 
 ## Journey log
 - Live verification against `@ai-sdk/azure@3.0.49` showed that `bun.lock` resolves a nested `@ai-sdk/openai@3.0.48` copy under `@ai-sdk/azure` rather than the top-level `3.0.113`. Applying the identical patch to `@ai-sdk/openai@3.0.48` closed that gap in PR #2875.
