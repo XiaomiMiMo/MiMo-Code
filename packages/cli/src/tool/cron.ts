@@ -1,7 +1,7 @@
 import * as Tool from "./tool"
 import DESCRIPTION from "./cron.txt"
 import z from "zod"
-import { Effect } from "effect"
+import { Effect, Result } from "effect"
 import { Scheduler } from "@/cron/scheduler"
 import { computeNextCronRun } from "@/cron/cron-expr"
 import type { SessionID } from "../session/schema"
@@ -92,13 +92,21 @@ export const CronTool = Tool.define<typeof parameters, Metadata, Scheduler>(
       const sessionID = (op.session_id || ctx.sessionID) as SessionID
 
       if (op.action === "schedule") {
-        const t = yield* scheduler.add({
+        const scheduled = yield* scheduler.add({
           session_id: sessionID,
           cron: op.cron,
           prompt: op.prompt,
           recurring: !op.one_shot,
           durable: op.durable ?? false,
-        })
+        }).pipe(Effect.result)
+        if (Result.isFailure(scheduled)) {
+          return {
+            title: "Could not schedule job",
+            output: `Could not save the durable job. ${scheduled.failure.message}`,
+            metadata: {} as Metadata,
+          }
+        }
+        const t = scheduled.success
         // Sanity-check the cron: warn on two shapes the user is unlikely to
         // want, both of which the parser/scheduler will otherwise accept
         // silently.
