@@ -2,7 +2,7 @@
 feature: openai-responses-reasoning-group
 status: delivered
 updated: 2026-11-27
-source: fix/openai-responses-reasoning-group
+source: https://github.com/XiaomiMiMo/MiMo-Code/pull/2875
 ---
 
 # Preserve OpenAI Responses Reasoning Block Grouping When Stateless
