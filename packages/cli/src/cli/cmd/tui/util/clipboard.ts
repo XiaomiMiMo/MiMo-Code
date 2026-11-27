@@ -5,6 +5,7 @@ import path from "path"
 import fs from "fs/promises"
 import * as Filesystem from "../../../../util/filesystem"
 import * as Process from "../../../../util/process"
+import { WindowsPowerShell } from "../../../../util/windows-powershell"
 
 // Lazy load which and clipboardy to avoid expensive execa/which/isexe chain at startup
 const getWhich = lazy(async () => {
@@ -153,9 +154,10 @@ export async function read(): Promise<Content | undefined> {
   if (os === "win32" || release().includes("WSL")) {
     const script =
       "Add-Type -AssemblyName System.Windows.Forms; $img = [System.Windows.Forms.Clipboard]::GetImage(); if ($img) { $ms = New-Object System.IO.MemoryStream; $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); [System.Convert]::ToBase64String($ms.ToArray()) }"
-    const base64 = await Process.text(["powershell.exe", "-NonInteractive", "-NoProfile", "-command", script], {
-      nothrow: true,
-    })
+    const base64 = await Process.text(
+      [WindowsPowerShell.executable(), "-STA", "-NonInteractive", "-NoProfile", "-command", script],
+      { nothrow: true, env: WindowsPowerShell.env() },
+    )
     if (base64.text) {
       const imageBuffer = Buffer.from(base64.text.trim(), "base64")
       if (imageBuffer.length > 0) {
@@ -243,7 +245,8 @@ const getCopyMethod = lazy(async () => {
       // Pipe via stdin to avoid PowerShell string interpolation ($env:FOO, $(), etc.)
       const proc = Process.spawn(
         [
-          "powershell.exe",
+          WindowsPowerShell.executable(),
+          "-STA",
           "-NonInteractive",
           "-NoProfile",
           "-Command",
@@ -253,6 +256,7 @@ const getCopyMethod = lazy(async () => {
           stdin: "pipe",
           stdout: "ignore",
           stderr: "ignore",
+          env: WindowsPowerShell.env(),
         },
       )
 
