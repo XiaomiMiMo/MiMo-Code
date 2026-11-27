@@ -93,8 +93,14 @@ export const layer = Layer.effect(
         const now = Date.now()
 
         for (const loop of listLoopStates()) {
+          // LoopState is keyed per (prompt, owner session): a shared prompt
+          // can have one entry per session. Skip entries owned by other
+          // sessions — their own bridge sweep maintains them — and pass the
+          // owner through so strikes and teardown only touch this entry.
+          if (loop.createdBySessionId && loop.createdBySessionId !== handle.sessionID) continue
+          const owner = loop.createdBySessionId
           if (armedSnapshot.has(loop.prompt)) {
-            resetStrikes(loop.prompt)
+            resetStrikes(loop.prompt, owner)
             continue
           }
           // PR #1479 finding #2: skip loops whose scheduled fire is still in
@@ -106,22 +112,26 @@ export const layer = Layer.effect(
           // model didn't re-arm this turn — that's the actual "model forgot
           // its fire" signal the keepalive was designed to catch.
           if (loop.lastScheduledFor > now) continue
-          const strikes = getStrikes(loop.prompt)
+          const strikes = getStrikes(loop.prompt, owner)
           if (strikes >= budget) {
-            yield* scheduler.endLoop(loop.prompt, "model_stopped", { via_keepalive: true })
+            yield* scheduler.endLoop(loop.prompt, "model_stopped", {
+              via_keepalive: true,
+              session_id: owner,
+            })
             continue
           }
-          incrementStrikes(loop.prompt)
+          incrementStrikes(loop.prompt, owner)
           const arm = yield* scheduler.armLoop({
             prompt: loop.prompt,
             delay_seconds: delaySeconds,
             reason_length: 0,
             viaKeepalive: true,
+            session_id: owner,
           })
           if (arm === null) {
             // Scheduler refused to arm (killed / aged out). Drop loop state
             // so the next sweep doesn't keep churning on a zombie row.
-            deleteLoopState(loop.prompt)
+            deleteLoopState(loop.prompt, owner)
             continue
           }
           log.info("loop_keepalive_fired", {
