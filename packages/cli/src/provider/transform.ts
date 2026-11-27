@@ -995,7 +995,7 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
 
 function mapProviderOptions(
   msgs: ModelMessage[],
-  transform: (options: Record<string, any> | undefined) => Record<string, any> | undefined,
+  transform: (options: Record<string, any> | undefined, partType?: string) => Record<string, any> | undefined,
 ): ModelMessage[] {
   return msgs.map((msg) => {
     if (!Array.isArray(msg.content)) return { ...msg, providerOptions: transform(msg.providerOptions) }
@@ -1005,7 +1005,7 @@ function mapProviderOptions(
       content: msg.content.map((part) =>
         part.type === "tool-approval-request" || part.type === "tool-approval-response"
           ? part
-          : { ...part, providerOptions: transform(part.providerOptions) },
+          : { ...part, providerOptions: transform(part.providerOptions, part.type) },
       ),
     } as typeof msg
   })
@@ -1045,13 +1045,15 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
     })
   }
 
-  // Strip Responses item IDs before serialization, following Codex and keeping
-  // signed request bodies immutable. Removing `itemId` here (rather than mutating
-  // the already-serialized fetch body) lets the SDK build a clean request that
-  // works against proxies which validate reasoning `rs_` references. Only applies
-  // to stateless (store !== true) OpenAI Responses-family providers.
+  // Strip Responses item IDs from non-reasoning parts before serialization so
+  // signed request bodies stay immutable and stateless proxies never see server
+  // item references (`msg_`, `fc_`). Reasoning parts keep `itemId` as a local
+  // grouping key so the patched `@ai-sdk/openai` serializer can recombine
+  // multi-summary parts into one reasoning item without emitting wire `id` when
+  // `store !== true`.
   if (options.store !== true && key && ["@ai-sdk/openai", "@ai-sdk/azure"].includes(model.api.npm)) {
-    msgs = mapProviderOptions(msgs, (opts) => {
+    msgs = mapProviderOptions(msgs, (opts, partType) => {
+      if (partType === "reasoning") return opts
       if (!opts?.[key] || !("itemId" in opts[key])) return opts
       const metadata = { ...opts[key] }
       delete metadata.itemId

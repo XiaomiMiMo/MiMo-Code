@@ -1,0 +1,204 @@
+diff --git a/dist/index.js b/dist/index.js
+index f7969b7aa4847d2fdb466bdd318aea642b139438..5a8915764467db72ac3a8215e8464b98474bdba0 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -3447,6 +3447,7 @@ async function convertToOpenAIResponsesInput({
+       }
+       case "assistant": {
+         const reasoningMessages = {};
++        const reasoningByEncryptedContent = /* @__PURE__ */ new Map();
+         for (const part of content) {
+           switch (part.type) {
+             case "text": {
+@@ -3719,7 +3720,6 @@ async function convertToOpenAIResponsesInput({
+                   if (reasoningMessage === void 0) {
+                     reasoningMessages[reasoningId] = {
+                       type: "reasoning",
+-                      id: reasoningId,
+                       encrypted_content: providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent,
+                       summary: summaryParts
+                     };
+@@ -3734,6 +3734,7 @@ async function convertToOpenAIResponsesInput({
+               } else {
+                 const encryptedContent = providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent;
+                 if (encryptedContent != null) {
++                  const existingReasoning = reasoningByEncryptedContent.get(encryptedContent);
+                   const summaryParts = [];
+                   if (part.text.length > 0) {
+                     summaryParts.push({
+@@ -3741,11 +3742,17 @@ async function convertToOpenAIResponsesInput({
+                       text: part.text
+                     });
+                   }
+-                  input.push({
+-                    type: "reasoning",
+-                    encrypted_content: encryptedContent,
+-                    summary: summaryParts
+-                  });
++                  if (existingReasoning === void 0) {
++                    const reasoningItem = {
++                      type: "reasoning",
++                      encrypted_content: encryptedContent,
++                      summary: summaryParts
++                    };
++                    reasoningByEncryptedContent.set(encryptedContent, reasoningItem);
++                    input.push(reasoningItem);
++                  } else {
++                    existingReasoning.summary.push(...summaryParts);
++                  }
+                 } else {
+                   warnings.push({
+                     type: "other",
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 416b1eb8d8e3e00b3375e131aeb03fb6d6a1d6a7..9e9125c84c0c465d6368efced4e281aec6658119 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -3545,6 +3545,7 @@ async function convertToOpenAIResponsesInput({
+       }
+       case "assistant": {
+         const reasoningMessages = {};
++        const reasoningByEncryptedContent = /* @__PURE__ */ new Map();
+         for (const part of content) {
+           switch (part.type) {
+             case "text": {
+@@ -3817,7 +3818,6 @@ async function convertToOpenAIResponsesInput({
+                   if (reasoningMessage === void 0) {
+                     reasoningMessages[reasoningId] = {
+                       type: "reasoning",
+-                      id: reasoningId,
+                       encrypted_content: providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent,
+                       summary: summaryParts
+                     };
+@@ -3832,6 +3832,7 @@ async function convertToOpenAIResponsesInput({
+               } else {
+                 const encryptedContent = providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent;
+                 if (encryptedContent != null) {
++                  const existingReasoning = reasoningByEncryptedContent.get(encryptedContent);
+                   const summaryParts = [];
+                   if (part.text.length > 0) {
+                     summaryParts.push({
+@@ -3839,11 +3840,17 @@ async function convertToOpenAIResponsesInput({
+                       text: part.text
+                     });
+                   }
+-                  input.push({
+-                    type: "reasoning",
+-                    encrypted_content: encryptedContent,
+-                    summary: summaryParts
+-                  });
++                  if (existingReasoning === void 0) {
++                    const reasoningItem = {
++                      type: "reasoning",
++                      encrypted_content: encryptedContent,
++                      summary: summaryParts
++                    };
++                    reasoningByEncryptedContent.set(encryptedContent, reasoningItem);
++                    input.push(reasoningItem);
++                  } else {
++                    existingReasoning.summary.push(...summaryParts);
++                  }
+                 } else {
+                   warnings.push({
+                     type: "other",
+diff --git a/dist/internal/index.js b/dist/internal/index.js
+index a9d5c4ac8c1258f11dfc48ffdf15fd5a331f8359..f5c915136662b9bea3b4e06ccae2bb6d6d21d841 100644
+--- a/dist/internal/index.js
++++ b/dist/internal/index.js
+@@ -3389,6 +3389,7 @@ async function convertToOpenAIResponsesInput({
+       }
+       case "assistant": {
+         const reasoningMessages = {};
++        const reasoningByEncryptedContent = /* @__PURE__ */ new Map();
+         for (const part of content) {
+           switch (part.type) {
+             case "text": {
+@@ -3661,7 +3662,6 @@ async function convertToOpenAIResponsesInput({
+                   if (reasoningMessage === void 0) {
+                     reasoningMessages[reasoningId] = {
+                       type: "reasoning",
+-                      id: reasoningId,
+                       encrypted_content: providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent,
+                       summary: summaryParts
+                     };
+@@ -3676,6 +3676,7 @@ async function convertToOpenAIResponsesInput({
+               } else {
+                 const encryptedContent = providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent;
+                 if (encryptedContent != null) {
++                  const existingReasoning = reasoningByEncryptedContent.get(encryptedContent);
+                   const summaryParts = [];
+                   if (part.text.length > 0) {
+                     summaryParts.push({
+@@ -3683,11 +3684,17 @@ async function convertToOpenAIResponsesInput({
+                       text: part.text
+                     });
+                   }
+-                  input.push({
+-                    type: "reasoning",
+-                    encrypted_content: encryptedContent,
+-                    summary: summaryParts
+-                  });
++                  if (existingReasoning === void 0) {
++                    const reasoningItem = {
++                      type: "reasoning",
++                      encrypted_content: encryptedContent,
++                      summary: summaryParts
++                    };
++                    reasoningByEncryptedContent.set(encryptedContent, reasoningItem);
++                    input.push(reasoningItem);
++                  } else {
++                    existingReasoning.summary.push(...summaryParts);
++                  }
+                 } else {
+                   warnings.push({
+                     type: "other",
+diff --git a/dist/internal/index.mjs b/dist/internal/index.mjs
+index 2e4b94717a7d9bea52eb622e0cddd98da342690a..6d0c733023ba7c84969fac384410c40e4f8afadf 100644
+--- a/dist/internal/index.mjs
++++ b/dist/internal/index.mjs
+@@ -3434,6 +3434,7 @@ async function convertToOpenAIResponsesInput({
+       }
+       case "assistant": {
+         const reasoningMessages = {};
++        const reasoningByEncryptedContent = /* @__PURE__ */ new Map();
+         for (const part of content) {
+           switch (part.type) {
+             case "text": {
+@@ -3706,7 +3707,6 @@ async function convertToOpenAIResponsesInput({
+                   if (reasoningMessage === void 0) {
+                     reasoningMessages[reasoningId] = {
+                       type: "reasoning",
+-                      id: reasoningId,
+                       encrypted_content: providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent,
+                       summary: summaryParts
+                     };
+@@ -3721,6 +3721,7 @@ async function convertToOpenAIResponsesInput({
+               } else {
+                 const encryptedContent = providerOptions2 == null ? void 0 : providerOptions2.reasoningEncryptedContent;
+                 if (encryptedContent != null) {
++                  const existingReasoning = reasoningByEncryptedContent.get(encryptedContent);
+                   const summaryParts = [];
+                   if (part.text.length > 0) {
+                     summaryParts.push({
+@@ -3728,11 +3729,17 @@ async function convertToOpenAIResponsesInput({
+                       text: part.text
+                     });
+                   }
+-                  input.push({
+-                    type: "reasoning",
+-                    encrypted_content: encryptedContent,
+-                    summary: summaryParts
+-                  });
++                  if (existingReasoning === void 0) {
++                    const reasoningItem = {
++                      type: "reasoning",
++                      encrypted_content: encryptedContent,
++                      summary: summaryParts
++                    };
++                    reasoningByEncryptedContent.set(encryptedContent, reasoningItem);
++                    input.push(reasoningItem);
++                  } else {
++                    existingReasoning.summary.push(...summaryParts);
++                  }
+                 } else {
+                   warnings.push({
+                     type: "other",
