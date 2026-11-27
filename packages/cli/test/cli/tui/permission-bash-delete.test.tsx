@@ -44,7 +44,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>) {
   }
 }
 
-async function mountPermission(permission: string) {
+async function mountPermission(permission: string, opts?: { parentID?: string }) {
   const replies: { method: string; path: string; body: unknown }[] = []
   const [current, setRequest] = createSignal(request(permission))
   const fetcher = (async (input: Request) => {
@@ -57,7 +57,11 @@ async function mountPermission(permission: string) {
     if (url.pathname === "/project/current") return Response.json({ id: "permission-project" })
     if (url.pathname === "/config/providers") return Response.json({ providers: [], default: {} })
     if (url.pathname === "/provider") return Response.json({ all: [], default: {}, connected: [], authenticated: [] })
-    if (["/session", "/agent", "/command", "/experimental/workspace", "/experimental/workspace/status", "/lsp", "/formatter"].includes(url.pathname)) {
+    // a parentID is what routes Reject through the reject-reason stage
+    if (url.pathname === "/session") {
+      return Response.json(opts?.parentID ? [{ id: "ses_permission", parentID: opts.parentID }] : [])
+    }
+    if (["/agent", "/command", "/experimental/workspace", "/experimental/workspace/status", "/lsp", "/formatter"].includes(url.pathname)) {
       return Response.json([])
     }
     return Response.json({})
@@ -210,6 +214,87 @@ for (const stage of ["selected", "confirmation"]) {
     })
   }
 }
+
+// #2565: the dialog is torn down only after the server's `permission.replied`
+// event lands, so a held or repeatedly mashed key used to re-POST the same
+// reply for as long as the dialog stayed up. One answer per mount.
+test("PermissionPrompt answers a held RETURN once", async () => {
+  const { app, replies } = await mountPermission("bash_delete")
+  try {
+    await app.mockInput.pressKeys(["RETURN", "RETURN", "RETURN"])
+    await app.renderOnce()
+    await waitFor(() => replies.length > 0)
+    // give any stray extra reply a chance to land before asserting
+    await Bun.sleep(50)
+    expect(replies).toEqual([{
+      method: "POST",
+      path: "/permission/per_bash_delete/reply",
+      body: { reply: "once" },
+    }])
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("PermissionPrompt answers a held ESCAPE once", async () => {
+  const { app, replies } = await mountPermission("bash_delete")
+  try {
+    await app.mockInput.pressKeys(["ESCAPE", "ESCAPE"])
+    await app.renderOnce()
+    await waitFor(() => replies.length > 0)
+    await Bun.sleep(50)
+    expect(replies).toEqual([{
+      method: "POST",
+      path: "/permission/per_bash_delete/reply",
+      body: { reply: "reject" },
+    }])
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("always confirmation answers a held RETURN once", async () => {
+  const { app, replies } = await mountPermission("bash")
+  try {
+    await app.mockInput.pressKeys(["ARROW_RIGHT", "RETURN"])
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("until MiMoCode is restarted")
+    expect(replies).toEqual([])
+    await app.mockInput.pressKeys(["RETURN", "RETURN"])
+    await app.renderOnce()
+    await waitFor(() => replies.length > 0)
+    await Bun.sleep(50)
+    expect(replies).toEqual([{
+      method: "POST",
+      path: "/permission/per_bash/reply",
+      body: { reply: "always" },
+    }])
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+// the reject stage reaches its own prompt through RejectPrompt, which has its
+// own confirm handler and needs the same one-shot guard
+test("reject stage answers a held RETURN once", async () => {
+  const { app, replies } = await mountPermission("bash", { parentID: "ses_parent" })
+  try {
+    await app.mockInput.pressKeys(["ARROW_RIGHT", "ARROW_RIGHT", "RETURN"])
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("Reject permission")
+    await app.mockInput.pressKeys(["RETURN", "RETURN"])
+    await app.renderOnce()
+    await waitFor(() => replies.length > 0)
+    await Bun.sleep(50)
+    expect(replies).toEqual([{
+      method: "POST",
+      path: "/permission/per_bash/reply",
+      body: { reply: "reject" },
+    }])
+  } finally {
+    app.renderer.destroy()
+  }
+})
 
 const WARNING = RGBA.fromHex("#e0af68")
 
