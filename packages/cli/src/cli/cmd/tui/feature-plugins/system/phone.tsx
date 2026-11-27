@@ -7,10 +7,12 @@ import {
   type PairingOutcome,
   type PhoneStatus,
 } from "@mimo-ai/connector"
-import { createSignal, onCleanup } from "solid-js"
+import { createSignal, onCleanup, Show } from "solid-js"
+import { useTerminalDimensions } from "@opentui/solid"
 import open from "open"
 import { useLanguage } from "@tui/context/language"
 import * as Clipboard from "@tui/util/clipboard"
+import { DialogSelect } from "@tui/ui/dialog-select"
 import { platformUserIds } from "@/phone/identity"
 import { qrBlocks } from "@/phone/qr"
 import { createPhoneConnector, type PhoneConnector } from "@/phone/runtime"
@@ -87,6 +89,8 @@ const tui: TuiPlugin = async (api) => {
     try {
       attempt = await passport.signIn()
     } catch {
+      // A toast under an open dialog is drawn beneath it: close the menu first.
+      api.ui.dialog.clear()
       api.ui.toast({ message: t("tui.phone.login.start_failed"), variant: "error" })
       return
     }
@@ -149,7 +153,8 @@ const tui: TuiPlugin = async (api) => {
     ))
   }
 
-  async function showStatus() {
+  /** `note` is the outcome of the last action on this page, shown with the details. */
+  async function showStatus(note?: string) {
     const credential = await passport.credential().catch(() => undefined)
     if (!credential) {
       void menu()
@@ -168,17 +173,15 @@ const tui: TuiPlugin = async (api) => {
       t(`tui.phone.status.connect.${eligibility.kind}`),
       t(`tui.phone.status.storage.${storage}`),
       ...(platform.length && !platform.includes(current.userId) ? [t("tui.phone.login.other_account")] : []),
+      ...(note ? ["", note] : []),
     ]
+    // The details go in the hint: disabled options are not shown by the select at all.
     api.ui.dialog.replace(() => (
-      <api.ui.DialogSelect
+      <DialogSelect
         title={t("tui.phone.status.title")}
+        hint={lines.join("\n")}
+        skipFilter
         options={[
-          ...lines.map((line, index) => ({
-            title: line,
-            value: `info-${index}`,
-            disabled: true,
-            category: t("tui.phone.account"),
-          })),
           { title: t("tui.phone.status.renew"), value: "renew", description: t("tui.phone.status.renew.description") },
           { title: t("tui.phone.status.back"), value: "back" },
         ]}
@@ -187,14 +190,17 @@ const tui: TuiPlugin = async (api) => {
             void menu()
             return
           }
-          if (option.value !== "renew") return
+          // The outcome is shown in this dialog: a toast under an open dialog is drawn beneath it.
           const outcome = await passport.renew()
-          api.ui.toast({
-            message: t(`tui.phone.status.renewed.${outcome}`),
-            variant: outcome === "renewed" ? "success" : "warning",
-          })
-          if (outcome === "signed_out") account = undefined
-          void showStatus()
+          const result = t(`tui.phone.status.renewed.${outcome}`)
+          if (outcome === "signed_out") {
+            account = undefined
+            api.ui.dialog.replace(() => (
+              <api.ui.DialogAlert title={t("tui.phone.status.title")} message={result} onConfirm={() => void menu()} />
+            ))
+            return
+          }
+          void showStatus(`${result} (${new Date().toLocaleTimeString()})`)
         }}
       />
     ))
@@ -426,6 +432,9 @@ function LoginDialog(props: { api: TuiPluginApi; attempt: LoginAttempt }) {
   const timer = setInterval(() => setNow(Date.now()), 1000)
   onCleanup(() => clearInterval(timer))
   const qr = qrBlocks(props.attempt.loginUrl)
+  const dimensions = useTerminalDimensions()
+  /** A cut-off QR code does not scan: draw it only when the terminal is tall enough for all of it. */
+  const qrFits = () => dimensions().height >= qr.split("\n").length + QR_SURROUNDING_ROWS
   const left = () => {
     const seconds = Math.max(0, Math.round((props.attempt.expiresAt - now()) / 1000))
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
@@ -448,16 +457,21 @@ function LoginDialog(props: { api: TuiPluginApi; attempt: LoginAttempt }) {
             {props.attempt.loginUrl}
           </text>
           <text>{copied() ? t("tui.phone.login.copied") : t("tui.phone.login.copy_hint")}</text>
-          <text fg="#000000" bg="#ffffff">
-            {qr}
-          </text>
           <text>{t("tui.phone.login.waiting", { left: left() })}</text>
+          <Show when={qrFits()} fallback={<text>{t("tui.phone.login.qr_too_small")}</text>}>
+            <text fg="#000000" bg="#ffffff">
+              {qr}
+            </text>
+          </Show>
         </box>
       )}
       onConfirm={() => {}}
     />
   )
 }
+
+/** Rows the login dialog needs besides the QR code (dialog offset, texts, input). */
+const QR_SURROUNDING_ROWS = 22
 
 /** A graphical session where opening a browser lands in front of the user. */
 function canOpenBrowser(): boolean {

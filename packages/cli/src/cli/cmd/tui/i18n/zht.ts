@@ -587,6 +587,7 @@ export const dict = {
   "tui.phone.login.copy_hint": "點擊網址即可複製",
   "tui.phone.login.copied": "已複製",
   "tui.phone.login.waiting": "等待確認…… 剩餘 {{left}}（按 Esc 取消）",
+  "tui.phone.login.qr_too_small": "終端視窗太矮，QR 碼顯示不全：放大終端視窗即可掃碼，或直接開啟上方網址。",
   "tui.phone.login.placeholder": "在瀏覽器或手機上確認後會自動繼續",
   "tui.phone.login.start_failed": "無法開始登入：連不上小米帳號服務，請檢查網路後重試。",
   "tui.phone.login.done": "已登入小米帳號：{{name}}",

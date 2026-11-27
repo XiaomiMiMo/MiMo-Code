@@ -637,6 +637,7 @@ export const dict: Record<string, string> = {
   "tui.phone.login.copy_hint": "Click the address to copy it",
   "tui.phone.login.copied": "Copied",
   "tui.phone.login.waiting": "Waiting for confirmation… {{left}} left (Esc cancels)",
+  "tui.phone.login.qr_too_small": "The terminal is too short for the whole QR code: enlarge the window to scan it, or open the address above.",
   "tui.phone.login.placeholder": "Continues on its own once confirmed in the browser or on the phone",
   "tui.phone.login.start_failed": "Cannot start the sign-in: the Xiaomi account service is unreachable. Check the network and try again.",
   "tui.phone.login.done": "Signed in with Xiaomi account: {{name}}",

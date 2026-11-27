@@ -641,6 +641,7 @@ export const dict = {
   "tui.phone.login.copy_hint": "点击网址即可复制",
   "tui.phone.login.copied": "已复制",
   "tui.phone.login.waiting": "等待确认…… 剩余 {{left}}（按 Esc 取消）",
+  "tui.phone.login.qr_too_small": "终端窗口太矮，二维码显示不全：放大终端窗口即可扫码，或直接打开上面的网址。",
   "tui.phone.login.placeholder": "在浏览器或手机上确认后会自动继续",
   "tui.phone.login.start_failed": "无法开始登录：连不上小米账号服务，请检查网络后重试。",
   "tui.phone.login.done": "已登录小米账号：{{name}}",
