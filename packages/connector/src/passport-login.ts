@@ -177,7 +177,7 @@ export class PassportClient {
   }
 
   private async complete(lp: string, deviceId: string, expiresAt: number, signal?: AbortSignal): Promise<PassportTokens> {
-    let confirmed: { json: Record<string, unknown>; text: string } | undefined
+    let confirmed: { json: Record<string, unknown>; text: string; passToken: string } | undefined
     while (!confirmed) {
       if (signal?.aborted) throw new PassportLoginError("cancelled")
       const left = expiresAt - this.now()
@@ -188,8 +188,9 @@ export class PassportClient {
           return undefined
         },
       )
-      if (answer?.json?.code === 0 && typeof answer.json.passToken === "string" && answer.json.passToken) {
-        confirmed = { json: answer.json, text: answer.text }
+      const passToken = answer?.json?.code === 0 ? answer.json.passToken : undefined
+      if (answer?.json && typeof passToken === "string" && passToken) {
+        confirmed = { json: answer.json, text: answer.text, passToken }
         break
       }
       // Pending, a timed-out long poll or a passing network failure: ask again.
@@ -198,7 +199,7 @@ export class PassportClient {
     const data = confirmed.json
     const userId = stringId(data.userId)
     if (!userId) throw new PassportLoginError("rejected", "the login carried no user id")
-    const login = { passToken: data.passToken as string, userId, cUserId: stringId(data.cUserId) }
+    const login = { passToken: confirmed.passToken, userId, cUserId: stringId(data.cUserId) }
     const nonce = exactInteger(confirmed.text, "nonce")
     if (typeof data.location === "string" && typeof data.ssecurity === "string" && nonce) {
       const exchanged = await this.exchange(data.location, nonce, data.ssecurity)

@@ -1,19 +1,17 @@
-// The account the phone connector signs in with.
-//
-// MiMo Code has no Xiaomi account sign-in of its own yet. Until it has, the
-// connector takes one of two explicitly named files, never searched for:
-//  - MIMOCODE_PHONE_PASSPORT_CREDENTIAL: the Passport login credential of the
-//    MiMo service (serviceToken and plain userId, the pair a signed-in Desktop
-//    holds). It is imported once into protected storage and used from there.
-//  - MIMOCODE_PHONE_DEBUG_IDENTITY: an isolated debug identity issued by a
-//    non-production Connect service (`IdentityBootstrap issue`, file `cli.json`).
+// Identities of the phone connector besides its own Xiaomi account sign-in
+// (runtime.ts): an isolated debug identity for non-production Connect services,
+// taken only from an explicitly named file (MIMOCODE_PHONE_DEBUG_IDENTITY,
+// `IdentityBootstrap issue`, file `cli.json`), and the account of the MiMo
+// platform sign-in, read only to tell the user when the two differ.
 
-import { PassportCredential, type ConnectorAccount } from "@mimo-ai/connector"
+import type { ConnectorAccount } from "@mimo-ai/connector"
 import { readFile } from "node:fs/promises"
+import path from "node:path"
 import z from "zod"
+import { Global } from "@/global"
+import { XIAOMI_API_PROVIDER_ID, XIAOMI_CREDENTIAL_PROVIDER_IDS } from "@/provider/xiaomi-family"
 
 export const DEBUG_IDENTITY_ENV = "MIMOCODE_PHONE_DEBUG_IDENTITY"
-export const PASSPORT_CREDENTIAL_ENV = "MIMOCODE_PHONE_PASSPORT_CREDENTIAL"
 
 const DebugIdentity = z.object({
   version: z.literal(1),
@@ -53,22 +51,24 @@ export async function loadDebugIdentity(
   }
 }
 
-const CredentialFile = z.strictObject({
-  connectOrigin: z.string().url(),
-  environment: z.string(),
-  userId: z.string(),
-  serviceToken: z.string(),
-})
-
-/** Read a Passport credential file; the origin must be a plain HTTPS origin. */
-export async function readPassportCredential(file: string | undefined): Promise<PassportCredential | IdentityProblem> {
-  const parsed = await readJson(file, CredentialFile)
-  if (typeof parsed === "string") return parsed
-  const url = new URL(parsed.connectOrigin)
-  if (url.protocol !== "https:" || url.origin !== parsed.connectOrigin.replace(/\/$/, "")) return "invalid"
-  // The connector's own schema checks the values (header-safe, known environment).
-  const credential = PassportCredential.safeParse({ version: 1, ...parsed, connectOrigin: url.origin })
-  return credential.success ? credential.data : "invalid"
+/**
+ * Xiaomi user ids of the MiMo platform sign-ins (model credentials), when any.
+ * Read only to warn when the phone connection signs in with another account.
+ */
+export async function platformUserIds(file = path.join(Global.Path.data, "auth.json")): Promise<string[]> {
+  let data: unknown
+  try {
+    data = JSON.parse(await readFile(file, "utf8"))
+  } catch {
+    return []
+  }
+  if (!data || typeof data !== "object") return []
+  const ids = new Set<string>()
+  for (const key of [XIAOMI_API_PROVIDER_ID, ...XIAOMI_CREDENTIAL_PROVIDER_IDS]) {
+    const uid = (data as Record<string, { metadata?: { uid?: unknown } }>)[key]?.metadata?.uid
+    if (typeof uid === "string" && uid) ids.add(uid)
+  }
+  return [...ids]
 }
 
 async function readJson<T>(file: string | undefined, schema: z.ZodType<T>): Promise<T | IdentityProblem> {

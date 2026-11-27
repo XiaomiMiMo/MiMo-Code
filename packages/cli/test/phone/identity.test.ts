@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { loadDebugIdentity, readPassportCredential } from "../../src/phone/identity"
+import { loadDebugIdentity, platformUserIds } from "../../src/phone/identity"
 
 const NOW = 1_800_000_000_000
 const valid = {
@@ -69,36 +69,20 @@ describe("debug identity", () => {
   })
 })
 
-describe("Passport credential file", () => {
-  const file = {
-    connectOrigin: "https://connect.example.test/",
-    environment: "china-production",
-    userId: "2469486853",
-    serviceToken: "V1:opaque/token+value=",
-  }
-
-  test("becomes the credential kept for the connector, on the bare origin", async () => {
-    await withFile(file, async (path) => {
-      expect(await readPassportCredential(path)).toEqual({
-        version: 1,
-        connectOrigin: "https://connect.example.test",
-        environment: "china-production",
-        userId: "2469486853",
-        serviceToken: "V1:opaque/token+value=",
-      })
-    })
+describe("MiMo platform sign-in", () => {
+  test("user ids of the Xiaomi model credentials are read; other providers are ignored", async () => {
+    await withFile(
+      {
+        xiaomi: { type: "api", key: "sk-1", metadata: { uid: "2469486853", base_url: "https://api.example" } },
+        "xiaomi-token-plan-cn": { type: "api", key: "sk-2", metadata: { uid: "2469486853" } },
+        anthropic: { type: "api", key: "sk-3", metadata: { uid: "999" } },
+      },
+      async (file) => expect(await platformUserIds(file)).toEqual(["2469486853"]),
+    )
   })
 
-  test("a missing, non-HTTPS, header-unsafe or unknown-environment file is refused", async () => {
-    expect(await readPassportCredential(undefined)).toBe("missing")
-    for (const change of [
-      { connectOrigin: "http://connect.example.test" },
-      { connectOrigin: "https://connect.example.test/api" },
-      { serviceToken: "two words" },
-      { environment: "debug-test" },
-      { extra: true },
-    ]) {
-      await withFile({ ...file, ...change }, async (path) => expect(await readPassportCredential(path)).toBe("invalid"))
-    }
+  test("no credentials file or an unreadable one means no platform sign-in", async () => {
+    expect(await platformUserIds("/nonexistent/auth.json")).toEqual([])
+    await withFile("{not json", async (file) => expect(await platformUserIds(file)).toEqual([]))
   })
 })
