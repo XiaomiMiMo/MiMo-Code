@@ -2,7 +2,7 @@ import type { MetadataExtractor } from "@ai-sdk/openai-compatible"
 import { isRecord } from "@/util/record"
 
 function opaque(body: unknown, field: "message" | "delta") {
-  if (!isRecord(body) || !Array.isArray(body.choices)) return
+  if (!isRecord(body) || !Array.isArray(body.choices)) return undefined
   const choice: unknown = body.choices[0]
   const message = isRecord(choice) ? choice[field] : undefined
   const value = isRecord(message) ? message.reasoning_opaque : undefined
