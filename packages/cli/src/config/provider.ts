@@ -97,16 +97,16 @@ export class Info extends Schema.Class<Info>("ProviderConfig")({
         timeout: Schema.optional(
           Schema.Union([PositiveInt, Schema.Literal(false)]).annotate({
             description:
-              "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
+              "Timeout in milliseconds for the entire request, including streaming. No default (unset means unbounded); header and chunk timeouts still apply.",
           }),
         ).annotate({
           description:
-            "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
+            "Timeout in milliseconds for the entire request, including streaming. No default (unset means unbounded); header and chunk timeouts still apply.",
         }),
         headerTimeout: Schema.optional(
           Schema.Union([PositiveInt, Schema.Literal(false)]).annotate({
             description:
-              "Timeout in milliseconds while waiting for response headers. OpenAI defaults to 300000 (5 minutes). Set to false to disable.",
+              "Timeout in milliseconds while waiting for response headers. Defaults to 300000 (5 minutes) for all providers. Set to false to disable.",
           }),
         ),
         chunkTimeout: Schema.optional(PositiveInt).annotate({
