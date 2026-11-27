@@ -1,6 +1,6 @@
 ---
 feature: openai-compatible-signatures
-status: in-progress
+status: delivered
 updated: 2026-11-27
 source: feat/openai-compatible-signatures
 ---
@@ -8,7 +8,9 @@ source: feat/openai-compatible-signatures
 # Replay signed state on OpenAI-compatible tool turns
 
 ## Report
-[Not finalized yet]
+**What was built** — The default compatible adapter records the opaque state returned by each completed assistant step and normalizes each Gemini tool-call signature for the SDK's existing serializer. Both fields are optional. No configuration or routing changes are required.
+
+**Verification** — From `packages/cli`, `bun test --only-failures test/session/openai-compatible-signatures.test.ts test/provider/openai-compatible-metadata.test.ts test/session/message-v2.test.ts test/session/processor-effect.test.ts` passed (87 passed, 2 skipped, 0 failed). The standalone HTTP conversation test passed all 50 assertions. CLI and SDK `bun run typecheck`, `./packages/sdk/script/build.ts`, and `git diff --check` passed. Independent review found no in-scope issues. Verification used a local endpoint, not live provider accounts.
 
 ## [S1] Problem
 A compatible gateway can return a tool call that runs successfully, then reject the next request because the client omitted state attached to the preceding assistant reply. The two formats corrected in mimo-harness (`78f74cb99`, `202798552`) use different positions in the Chat Completions payload.
@@ -31,9 +33,9 @@ Use the installed SDK and a local HTTP endpoint, with a custom provider using th
 No support guarantees for changing providers, models, SDK names or adapters mid-conversation. Stripped signatures or service rejection in that case are expected. No special handling for forks, checkpoints or native providers; no new settings, authentication, arbitrary field passthrough or support for Copilot's readable `reasoning_text` dialect.
 
 ## Tasks
-- [ ] T1: Capture opaque state — acceptance: JSON and tool-only SSE preserve the exact valid string, not invalid values or visible text (covers: S2.1).
-- [ ] T2: Replay opaque state on the originating assistant message — acceptance: a multi-step history preserves the unsigned gap and each signed message's own value (covers: S2.2).
-- [ ] T3: Replay each signed tool call — acceptance: the next request after tool execution preserves signatures, result IDs and the independent message-level state (covers: S2.3, S2.4).
+- [x] T1: Capture opaque state — acceptance: JSON and tool-only SSE preserve the exact valid string, not invalid values or visible text (covers: S2.1).
+- [x] T2: Replay opaque state on the originating assistant message — acceptance: a multi-step history preserves the unsigned gap and each signed message's own value (covers: S2.2).
+- [x] T3: Replay each signed tool call — acceptance: the next request after tool execution preserves signatures, result IDs and the independent message-level state (covers: S2.3, S2.4).
 
 ## Journey log
 - Scope was narrowed back to continuous use of the same provider. Provider switching and frozen-prefix handling are not delivery criteria.
