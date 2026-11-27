@@ -4,6 +4,7 @@ import { Effect, Layer } from "effect"
 import { z } from "zod"
 import type { Config } from "../../src/config"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
+import { Provider } from "../../src/provider"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
 import { provideTmpdirServer } from "../fixture/fixture"
@@ -11,21 +12,27 @@ import { testEffect } from "../lib/effect"
 import { raw, TestLLMServer } from "../lib/llm-server"
 
 const it = testEffect(
-  Layer.mergeAll(Session.defaultLayer, SessionPrompt.defaultLayer, CrossSpawnSpawner.defaultLayer, TestLLMServer.layer),
+  Layer.mergeAll(
+    Provider.defaultLayer,
+    Session.defaultLayer,
+    SessionPrompt.defaultLayer,
+    CrossSpawnSpawner.defaultLayer,
+    TestLLMServer.layer,
+  ),
 )
 const opaque = " first message state \t"
 const signatures = [" first call signature \t", " second call signature \t"]
 const readable = "This is ordinary readable reasoning."
 const unknown = "unrecognized_fixture_extension"
 
-function config(url: string): Partial<Config.Info> {
+function config(url: string, name?: string): Partial<Config.Info> {
   const model = {
     reasoning: true,
     interleaved: { field: "reasoning_content" as const },
     limit: { context: 64_000, output: 4_000 },
   }
   // Leave npm unset: an unrecognized provider ID must select the bundled compatible adapter by default.
-  const provider = { options: { apiKey: "test-key", baseURL: url }, models: { model, alternate: model } }
+  const provider = { options: { apiKey: "test-key", baseURL: url, name }, models: { model, alternate: model } }
   return {
     model: "test/model",
     enabled_providers: ["test", "other"],
@@ -174,3 +181,59 @@ it.live(
     ),
   30_000,
 )
+
+for (const name of ["initial-alias", "openaiCompatible", "providerExecuted"]) {
+  it.live(
+    `replays a stored tool signature after changing SDK name from ${name}`,
+    () =>
+      provideTmpdirServer(
+        ({ dir, llm }) =>
+          Effect.gen(function* () {
+            yield* Effect.promise(() => Bun.write(path.join(dir, "example.txt"), "example result"))
+            const sessions = yield* Session.Service
+            const prompt = yield* SessionPrompt.Service
+            const provider = yield* Provider.Service
+            const session = yield* sessions.create({ title: "Renamed SDK" })
+            const ask = (text: string) =>
+              prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                harness: "default",
+                modelRef: "test/model",
+                parts: [{ type: "text", text }],
+              })
+            yield* llm.push(
+              raw({
+                chunks: [chunk({ tool_calls: [readCall(0, "example", signatures[0])] }), chunk({}, "tool_calls")],
+              }),
+            )
+            yield* llm.text("Done.")
+            yield* ask("Read example.txt")
+            const commit = yield* provider.prepareRefresh(config(llm.url, "renamed-alias"))
+            commit()
+            expect((yield* provider.getLanguage(yield* provider.resolveModelRef("test/model"))).provider).toBe(
+              "renamed-alias.chat",
+            )
+            yield* llm.text("Done.")
+            yield* ask("Continue.")
+            const body = (yield* llm.inputs).at(-1)!
+            const history = messages(body)
+            expect(history.filter((m) => m.tool_calls?.length)).toMatchObject([
+              {
+                tool_calls: [
+                  {
+                    id: "example",
+                    extra_content: { google: { thought_signature: signatures[0] } },
+                  },
+                ],
+              },
+            ])
+            expect(history.filter((m) => m.role === "tool").map((m) => m.tool_call_id)).toEqual(["example"])
+            expect(JSON.stringify(body).split(JSON.stringify(signatures[0]))).toHaveLength(2)
+            expect(JSON.stringify(body)).not.toContain("thoughtSignature")
+          }),
+        { git: true, config: (url) => config(url, name) },
+      ),
+    30_000,
+  )
+}

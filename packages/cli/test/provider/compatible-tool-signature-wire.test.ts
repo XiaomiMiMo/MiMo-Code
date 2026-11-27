@@ -3,7 +3,10 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { convertReadableStreamToArray } from "@ai-sdk/provider-utils/test"
 import { streamText } from "ai"
 import { ProviderTransform, type Provider } from "../../src/provider"
-import { compatibleToolCallMetadata } from "../../src/provider/compatible-tool-signature"
+import {
+  captureCompatibleToolSignature,
+  compatibleToolCallMetadata,
+} from "../../src/provider/compatible-tool-signature"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -74,6 +77,12 @@ test("does not project absent or unrelated fields or change other SDKs", () => {
   for (const npm of ["@ai-sdk/openai", "@ai-sdk/google", "@ai-sdk/github-copilot"]) {
     expect(compatibleToolCallMetadata(metadata, { ...model, api: { ...model.api, npm } })).toBe(metadata)
   }
+  const native = { ...model, api: { ...model.api, npm: "@ai-sdk/google" } }
+  const captured = captureCompatibleToolSignature({ test: { thoughtSignature: "one-call" } }, model, "test.chat")
+  expect(compatibleToolCallMetadata(captured, model, "alternate.chat")).toEqual({
+    google: { thoughtSignature: "one-call" },
+  })
+  expect(compatibleToolCallMetadata(captured, native, "google.chat")).toBeUndefined()
   expect(compatibleToolCallMetadata(metadata, model, "another.chat")).toBe(metadata)
   expect(compatibleToolCallMetadata(undefined, model)).toBeUndefined()
   for (const signature of ["", null, 42]) {
@@ -96,7 +105,9 @@ test.each([
   { name: "openai-compatible", key: "openaiCompatible" },
   { name: "openaiCompatible", key: "openaiCompatible" },
   { name: "google", key: "google" },
-])("reconstructs signed tool calls for $name (metadata key $key)", async ({ name, key }) => {
+  { name: "providerExecuted", key: "providerExecuted" },
+  { name: "openaiCompatible", key: "openaiCompatible", replayAs: "new-alias" },
+])("reconstructs signed tool calls for $name (metadata key $key, case %#)", async ({ name, key, replayAs }) => {
   const first = " first \t"
   const second = " second \t"
   const cache = { cache_control: { type: "ephemeral" } }
@@ -148,13 +159,16 @@ test.each([
         ),
       )
     }
-    const messages = await MessageV2.toModelMessages(history, model, { languageProvider: language.provider })
+    const replay = replayAs
+      ? createOpenAICompatible({ name: replayAs, baseURL: server.origin })(model.api.id)
+      : language
+    const messages = await MessageV2.toModelMessages(history, model, { languageProvider: replay.provider })
     const parts = messages.flatMap((message) =>
       message.role === "assistant" && Array.isArray(message.content) ? message.content : [],
     )
     const signed = parts.find((part) => part.type === "tool-call" && part.toolCallId === "signed")
     const request = streamText({
-      model: language,
+      model: replay,
       messages: ProviderTransform.message(messages, model, {}),
       maxRetries: 0,
     })

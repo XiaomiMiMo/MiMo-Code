@@ -1284,9 +1284,16 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         }
         if (part.type === "tool") {
           toolNames.add(part.tool)
-          const callMetadata = differentModel
-            ? {}
-            : { callProviderMetadata: compatibleToolCallMetadata(providerMeta(part.metadata), model, options?.languageProvider) }
+          // The legacy SDK namespace could itself be named `providerExecuted`.
+          // Only the processor's boolean flag denotes a provider-executed tool.
+          const callMetadata = {
+            ...(part.metadata?.providerExecuted === true ? { providerExecuted: true } : {}),
+            ...(differentModel ? {} : {
+              callProviderMetadata: providerMeta(
+                compatibleToolCallMetadata(part.metadata, model, options?.languageProvider),
+              ),
+            }),
+          }
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
             const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
@@ -1314,7 +1321,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               toolCallId: part.callID,
               input: part.state.input,
               output,
-              ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
               ...callMetadata,
               ...(differentModel ? {} : { resultProviderMetadata: providerMeta(part.state.providerMetadata) }),
             })
@@ -1344,7 +1350,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                         attachments: finalAttachments,
                       }
                     : output,
-                ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
                 ...callMetadata,
               })
             } else {
@@ -1354,7 +1359,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 toolCallId: part.callID,
                 input: part.state.input,
                 errorText: part.state.error,
-                ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
                 ...callMetadata,
               })
             }
@@ -1368,7 +1372,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               toolCallId: part.callID,
               input: part.state.input,
               errorText: "[Tool execution was interrupted]",
-              ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
               ...callMetadata,
             })
         }
