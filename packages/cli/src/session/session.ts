@@ -279,6 +279,12 @@ export class TitleConflictError extends Error {
   constructor(readonly current: TitleSnapshot) { super("Title changed by another writer") }
   toObject() { return { name: this.name, data: { current: this.current } } }
 }
+export const IdConflict = z.object({ name: z.literal("SessionIdConflictError"), data: z.object({ sessionID: SessionID.zod }) })
+export class IdConflictError extends Error {
+  override readonly name = "SessionIdConflictError"
+  constructor(readonly sessionID: SessionID) { super(`Session ${sessionID} already exists`) }
+  toObject() { return { name: this.name, data: { sessionID: this.sessionID } } }
+}
 export const SetTitleInput = z.object({ sessionID: SessionID.zod, title: ManualTitle, expectedRevision: Info.shape.titleRevision }).strict()
 export type SetTitleInput = z.infer<typeof SetTitleInput>
 export type AutoTitleInput = SetTitleInput & { source?: "fallback" | "generated" }
@@ -602,7 +608,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       // raw primary-key error from the projection.
       if (input.id) {
         const taken = yield* db((d) => d.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, input.id!)).get())
-        if (taken) throw new Error(`Session ${input.id} already exists`)
+        if (taken) throw new IdConflictError(input.id)
       }
       const result: Info = {
         id: SessionID.descending(input.id),

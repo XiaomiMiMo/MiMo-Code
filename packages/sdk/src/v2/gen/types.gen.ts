@@ -5037,6 +5037,15 @@ export type SessionCreateErrors = {
    * Bad request
    */
   400: BadRequestError
+  /**
+   * Session id already exists
+   */
+  409: {
+    name: "SessionIdConflictError"
+    data: {
+      sessionID: string
+    }
+  }
 }
 
 export type SessionCreateError = SessionCreateErrors[keyof SessionCreateErrors]
