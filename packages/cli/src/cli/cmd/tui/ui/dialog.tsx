@@ -3,7 +3,7 @@ import { batch, createContext, Show, useContext, type JSX, type ParentProps } fr
 import { useTheme } from "@tui/context/theme"
 import { MouseButton, Renderable, RGBA } from "@opentui/core"
 import { createStore } from "solid-js/store"
-import { useToast } from "./toast"
+import { Toast, useToast } from "./toast"
 import { Flag } from "@/flag/flag"
 import * as Selection from "@tui/util/selection"
 import * as Clipboard from "@tui/util/clipboard"
@@ -194,6 +194,8 @@ export function DialogProvider(props: ParentProps) {
           </Dialog>
         </Show>
       </box>
+      {/* After the dialog layer, so a toast raised while a dialog is open is drawn above it. */}
+      <Toast />
     </ctx.Provider>
   )
 }

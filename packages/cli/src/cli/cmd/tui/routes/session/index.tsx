@@ -88,7 +88,7 @@ import { UserMessageBubble } from "./user-message-bubble"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
 import * as Clipboard from "../../util/clipboard"
-import { Toast, useToast } from "../../ui/toast"
+import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv.tsx"
 import * as Editor from "../../util/editor"
 import stripAnsi from "strip-ansi"
@@ -1461,7 +1461,6 @@ export function Session() {
             </box>
           </Show>
           </Show>
-          <Toast />
         </box>
         <Show when={sidebarAllowed() && wide()}>
           <SidebarToggleButton visible={sidebarVisible()} onToggle={toggleSidebar} />
