@@ -17,6 +17,7 @@ import { SyncEvent } from "../sync"
 import { Database, NotFoundError, and, desc, eq, inArray, lt, or, sql } from "@/storage"
 import { MessageTable, PartTable, SessionTable } from "./session.sql"
 import { ProviderError } from "@/provider"
+import { compatibleToolCallMetadata } from "@/provider/compatible-tool-signature"
 import { errorMessage } from "@/util/error"
 import { HostErrorRegistry } from "@/error/host-registry"
 import { isMedia } from "@/util/media"
@@ -432,6 +433,8 @@ export type StepStartPart = z.infer<typeof StepStartPart>
 export const StepFinishPart = PartBase.extend({
   type: z.literal("step-finish"),
   reason: z.string(),
+  /** Opaque state returned by the OpenAI-compatible adapter for this response. */
+  reasoningOpaque: z.string().optional(),
   snapshot: z.string().optional(),
   cost: z.number(),
   tokens: z.object({
@@ -1055,7 +1058,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
    */
   options?: { stripMedia?: boolean; collapseCheckpointTail?: boolean; languageProvider?: string },
 ) {
-  const result: UIMessage[] = []
+  type HistoryBlock = UIMessage & { reasoningOpaque?: string }
+  const result: HistoryBlock[] = []
   const toolNames = new Set<string>()
   const source = compactionProjection(options?.collapseCheckpointTail ? collapseCheckpointTail(input) : input)
   const projection = source
@@ -1196,7 +1200,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     }
 
     if (msg.info.role === "assistant") {
-      const differentModel = `${model.providerID}/${model.id}` !== `${msg.info.providerID}/${msg.info.modelID}`
+      const differentModel = model.providerID !== msg.info.providerID || model.id !== msg.info.modelID
       const syntheticGroups: Array<{
         tool: string
         callID: string
@@ -1257,11 +1261,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       ) {
         continue
       }
-      const assistantMessage: UIMessage = {
-        id: msg.info.id,
-        role: "assistant",
-        parts: [],
+      // One stored assistant may contain several steps. Convert each block separately so
+      // message-level state cannot drift onto a neighboring assistant or its tool results.
+      const startBlock = (): HistoryBlock => {
+        const block: HistoryBlock = { id: msg.info.id, role: "assistant", parts: [] }
+        result.push(block)
+        return block
       }
+      let assistantMessage = startBlock()
       for (const part of msg.parts) {
         if (part.type === "text")
           assistantMessage.parts.push({
@@ -1269,12 +1276,17 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             text: part.text,
             ...(differentModel ? {} : { providerMetadata: part.metadata }),
           })
-        if (part.type === "step-start")
-          assistantMessage.parts.push({
-            type: "step-start",
-          })
+        if (part.type === "step-start" && (assistantMessage.parts.length || assistantMessage.reasoningOpaque)) {
+          assistantMessage = startBlock()
+        }
+        if (part.type === "step-finish" && !differentModel && model.api.npm === "@ai-sdk/openai-compatible") {
+          if (typeof part.reasoningOpaque === "string") assistantMessage.reasoningOpaque = part.reasoningOpaque
+        }
         if (part.type === "tool") {
           toolNames.add(part.tool)
+          const callMetadata = differentModel
+            ? {}
+            : { callProviderMetadata: compatibleToolCallMetadata(providerMeta(part.metadata), model, options?.languageProvider) }
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
             const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
@@ -1303,7 +1315,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               input: part.state.input,
               output,
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-              ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+              ...callMetadata,
               ...(differentModel ? {} : { resultProviderMetadata: providerMeta(part.state.providerMetadata) }),
             })
           }
@@ -1333,7 +1345,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                       }
                     : output,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-                ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+                ...callMetadata,
               })
             } else {
               assistantMessage.parts.push({
@@ -1343,7 +1355,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 input: part.state.input,
                 errorText: part.state.error,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-                ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+                ...callMetadata,
               })
             }
           }
@@ -1357,7 +1369,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               input: part.state.input,
               errorText: "[Tool execution was interrupted]",
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-              ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+              ...callMetadata,
             })
         }
         if (part.type === "reasoning") {
@@ -1368,42 +1380,47 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         }
       }
-      if (assistantMessage.parts.length > 0) {
-        result.push(assistantMessage)
-        if (syntheticGroups.length > 0) {
-          result.push({
-            id: MessageID.ascending(),
-            role: "user",
-            parts: [
+      if (syntheticGroups.length > 0) {
+        result.push({
+          id: MessageID.ascending(),
+          role: "user",
+          parts: [
+            {
+              type: "text" as const,
+              text: SYNTHETIC_ATTACHMENT_PROMPT,
+            },
+            ...syntheticGroups.flatMap((group) => [
               {
                 type: "text" as const,
-                text: SYNTHETIC_ATTACHMENT_PROMPT,
+                text: `Tool "${group.tool}" call ${group.callID} ${group.status === "error" ? "failed" : "completed"}:`,
               },
-              ...syntheticGroups.flatMap((group) => [
-                {
-                  type: "text" as const,
-                  text: `Tool "${group.tool}" call ${group.callID} ${group.status === "error" ? "failed" : "completed"}:`,
-                },
-                ...group.parts,
-              ]),
-            ],
-          })
-        }
+              ...group.parts,
+            ]),
+          ],
+        })
       }
     }
   }
 
   const tools = Object.fromEntries(Array.from(toolNames).map((toolName) => [toolName, { toModelOutput }]))
 
-  return yield* Effect.promise(() =>
-    convertToModelMessages(
-      result.filter((msg) => msg.parts.some((part) => part.type !== "step-start")),
-      {
+  return yield* Effect.promise(async () => {
+    const projected: ModelMessage[] = []
+    for (const block of result) {
+      if (!block.parts.length) continue
+      const messages = await convertToModelMessages([block], {
         //@ts-expect-error (convertToModelMessages expects a ToolSet but only actually needs tools[name]?.toModelOutput)
         tools,
-      },
-    ),
-  )
+      })
+      for (const message of messages) {
+        if (block.reasoningOpaque && message.role === "assistant") {
+          message.providerOptions = { openaiCompatible: { reasoning_opaque: block.reasoningOpaque } }
+        }
+        projected.push(message)
+      }
+    }
+    return projected
+  })
 })
 
 export function toModelMessages(

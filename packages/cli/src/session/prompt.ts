@@ -1402,8 +1402,11 @@ export const layer = Layer.effect(
       // (chat.params, chat.headers, system.transform, memory instructions,
       // x-session-affinity). Still publishes Metrics.ModelCall so the
       // prediction cost shows up in analytics.
-      const msgs = yield* MessageV2.toModelMessagesEffect(context.messages, mdl, { stripMedia: true })
       const language = yield* provider.getLanguage(mdl)
+      const msgs = yield* MessageV2.toModelMessagesEffect(context.messages, mdl, {
+        stripMedia: true,
+        languageProvider: language.provider,
+      })
       const wrapped = wrapLanguageModel({
         model: language,
         middleware: [
