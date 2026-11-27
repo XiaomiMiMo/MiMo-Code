@@ -5210,7 +5210,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const controller = inboxControllerRef.current
             const lane = { sessionID, agentID: resolvedAgentID }
             const extended = claimOwner.receipts.length === 0
-              ? yield* controller.claimNext(lane, claimOwner.runId)
+              ? yield* controller.claimNext(lane, claimOwner.runId, undefined, step > 0)
               : yield* controller.extendClaim(lane, claimOwner.runId, claimOwner.receipts[0]?.epoch,
                 step === 0 ? MAX_CLAIM_PER_STEP - claimOwner.receipts.length : MAX_CLAIM_PER_STEP)
             // A run keeps its claims until it settles them. If none is still claimed, a
@@ -7824,6 +7824,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             const prompt = requestedPrompt ?? receiptPrompts.get(accepted[0].id)
             const source = prompt ? prompt.source ?? "user"
+              : accepted[0].type === "mcp_event" ? "hook"
               : accepted[0].type === "spawn" || accepted[0].type === "hook" ? accepted[0].type : "user"
             yield* executeLoop({
               sessionID: lane.sessionID,

@@ -203,7 +203,7 @@ export function evaluate(permission: string, pattern: string, ...rulesets: Rules
 // a broad blanket rule. Explicit deny still wins; the tool-side delete exemption
 // (dedicated or enabled by dangerous startup mode) is the only bypass.
 // computer is interactive UI control — never auto-allow via inherit/approved/skip-all.
-const FORCED_ASK = new Set(["bash_delete", "computer"])
+const FORCED_ASK = new Set(["bash_delete", "computer", "mcp_events"])
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
 
