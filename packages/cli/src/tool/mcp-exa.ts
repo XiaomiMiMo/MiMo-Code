@@ -1,9 +1,14 @@
 import { Duration, Effect, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 
+// The hosted MCP `tools` parameter replaces the server's default set instead
+// of appending to it, so both tools the engine calls must be listed or the
+// other one comes back as "Unknown tool".
+const BASE_URL = "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa"
+
 const URL = process.env.EXA_API_KEY
-  ? `https://mcp.exa.ai/mcp?exaApiKey=${encodeURIComponent(process.env.EXA_API_KEY)}`
-  : "https://mcp.exa.ai/mcp"
+  ? `${BASE_URL}&exaApiKey=${encodeURIComponent(process.env.EXA_API_KEY)}`
+  : BASE_URL
 
 const McpResult = Schema.Struct({
   result: Schema.Struct({
@@ -18,11 +23,38 @@ const McpResult = Schema.Struct({
 
 const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(McpResult))
 
-const parseSse = Effect.fn("McpExa.parseSse")(function* (body: string) {
+// JSON-RPC failures such as "Unknown tool" arrive as bare JSON, or as SSE data
+// lines carrying an `error` member instead of `result`. Surfacing them as text
+// keeps a provider-side tool removal from looking like "no results".
+const jsonRpcError = (raw: string): string | undefined => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined
+  const error = (parsed as { error?: { code?: unknown; message?: unknown } }).error
+  if (typeof error?.message !== "string") return undefined
+  const code = typeof error.code === "number" ? ` (code ${error.code})` : ""
+  return `Exa request failed: ${error.message}${code}`
+}
+
+export const parseSse = Effect.fn("McpExa.parseSse")(function* (body: string) {
+  const data: string[] = []
   for (const line of body.split("\n")) {
-    if (!line.startsWith("data: ")) continue
-    const data = yield* decode(line.substring(6))
-    if (data.result.content[0]?.text) return data.result.content[0].text
+    if (line.startsWith("data: ")) data.push(line.substring(6))
+  }
+  if (data.length === 0) {
+    // JSON-RPC failures arrive as bare JSON without SSE framing; anything else
+    // is not a tool result.
+    return jsonRpcError(body)
+  }
+  for (const raw of data) {
+    const failure = jsonRpcError(raw)
+    if (failure) return failure
+    const decoded = yield* decode(raw)
+    if (decoded.result.content[0]?.text) return decoded.result.content[0].text
   }
   return undefined
 })
