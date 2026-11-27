@@ -8,7 +8,10 @@ import {
   type PhoneStatus,
 } from "@mimo-ai/connector"
 import { createSignal, onCleanup, Show } from "solid-js"
-import { useTerminalDimensions } from "@opentui/solid"
+import { TextAttributes } from "@opentui/core"
+import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { useTheme } from "@tui/context/theme"
+import { useDialog } from "@tui/ui/dialog"
 import open from "open"
 import { useLanguage } from "@tui/context/language"
 import * as Clipboard from "@tui/util/clipboard"
@@ -96,13 +99,15 @@ const tui: TuiPlugin = async (api) => {
     }
     const controller = new AbortController()
     let finished = false
+    // Where a browser opens, the address is the quick way in; the QR code is for a phone and starts folded.
+    const browser = canOpenBrowser()
     api.ui.dialog.replace(
-      () => <LoginDialog api={api} attempt={attempt} />,
+      () => <LoginDialog attempt={attempt} showQr={!browser} />,
       () => {
         if (!finished) controller.abort()
       },
     )
-    if (canOpenBrowser()) void open(attempt.loginUrl).catch(() => {})
+    if (browser) void open(attempt.loginUrl).catch(() => {})
     try {
       const tokens = await attempt.wait(controller.signal)
       finished = true
@@ -424,17 +429,29 @@ function Menu(props: {
   )
 }
 
-/** The login URL, its QR code and the time left; closing it cancels the login. */
-function LoginDialog(props: { api: TuiPluginApi; attempt: LoginAttempt }) {
+/**
+ * The login URL, the time left and, folded or not, its QR code: Enter toggles it.
+ * There is nothing to type, so this is not a prompt; closing it cancels the login.
+ */
+function LoginDialog(props: { attempt: LoginAttempt; showQr: boolean }) {
   const t = useLanguage().t
+  const dialog = useDialog()
+  const { theme } = useTheme()
+  const dimensions = useTerminalDimensions()
   const [now, setNow] = createSignal(Date.now())
   const [copied, setCopied] = createSignal(false)
+  const [showQr, setShowQr] = createSignal(props.showQr)
   const timer = setInterval(() => setNow(Date.now()), 1000)
   onCleanup(() => clearInterval(timer))
   const qr = qrBlocks(props.attempt.loginUrl)
-  const dimensions = useTerminalDimensions()
   /** A cut-off QR code does not scan: draw it only when the terminal is tall enough for all of it. */
   const qrFits = () => dimensions().height >= qr.split("\n").length + QR_SURROUNDING_ROWS
+  useKeyboard((evt) => {
+    if (evt.name !== "return") return
+    evt.preventDefault()
+    evt.stopPropagation()
+    setShowQr(!showQr())
+  })
   const left = () => {
     const seconds = Math.max(0, Math.round((props.attempt.expiresAt - now()) / 1000))
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
@@ -447,31 +464,37 @@ function LoginDialog(props: { api: TuiPluginApi; attempt: LoginAttempt }) {
       })
       .catch(() => {})
   return (
-    <props.api.ui.DialogPrompt
-      title={t("tui.phone.login.title")}
-      placeholder={t("tui.phone.login.placeholder")}
-      description={() => (
-        <box gap={1}>
-          <text>{t("tui.phone.login.hint")}</text>
-          <text fg="#3b82f6" onMouseUp={copy}>
-            {props.attempt.loginUrl}
+    <box paddingLeft={2} paddingRight={2} paddingBottom={1} gap={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <text attributes={TextAttributes.BOLD} fg={theme.text}>
+          {t("tui.phone.login.title")}
+        </text>
+        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+          {t("tui.dialog.close_hint")}
+        </text>
+      </box>
+      <text fg={theme.text}>{t("tui.phone.login.hint")}</text>
+      <text fg={theme.primary} onMouseUp={copy}>
+        {props.attempt.loginUrl}
+      </text>
+      <text fg={theme.textMuted}>{copied() ? t("tui.phone.login.copied") : t("tui.phone.login.copy_hint")}</text>
+      <text fg={theme.text}>{t("tui.phone.login.waiting", { left: left() })}</text>
+      <text fg={theme.textMuted} onMouseUp={() => setShowQr(!showQr())}>
+        {t(showQr() ? "tui.phone.login.qr_hide" : "tui.phone.login.qr_show")}
+      </text>
+      <Show when={showQr()}>
+        <Show when={qrFits()} fallback={<text fg={theme.textMuted}>{t("tui.phone.login.qr_too_small")}</text>}>
+          <text fg="#000000" bg="#ffffff">
+            {qr}
           </text>
-          <text>{copied() ? t("tui.phone.login.copied") : t("tui.phone.login.copy_hint")}</text>
-          <text>{t("tui.phone.login.waiting", { left: left() })}</text>
-          <Show when={qrFits()} fallback={<text>{t("tui.phone.login.qr_too_small")}</text>}>
-            <text fg="#000000" bg="#ffffff">
-              {qr}
-            </text>
-          </Show>
-        </box>
-      )}
-      onConfirm={() => {}}
-    />
+        </Show>
+      </Show>
+    </box>
   )
 }
 
-/** Rows the login dialog needs besides the QR code (dialog offset, texts, input). */
-const QR_SURROUNDING_ROWS = 22
+/** Rows the login dialog needs besides the QR code (dialog offset and texts). */
+const QR_SURROUNDING_ROWS = 20
 
 /** A graphical session where opening a browser lands in front of the user. */
 function canOpenBrowser(): boolean {
