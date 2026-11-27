@@ -410,6 +410,8 @@ Custom providers must register at least one model in their `models` field to be 
 - **`/dream`** — scans recent session traces, extracts persistent knowledge into project memory, and removes outdated entries
 - **`/distill`** — discovers repeated manual workflows in recent work and packages high-confidence candidates into reusable skills, subagents, or commands
 
+Automatic runs on new session start are **off by default**. Invoke `/dream` or `/distill` manually, or opt in via `mimocode.jsonc` (`dream.auto: true`, default `interval_days: 7`; `distill.auto: true`, default `interval_days: 30`).
+
 ---
 
 ## Configuration
