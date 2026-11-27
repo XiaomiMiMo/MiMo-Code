@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect } from "bun:test"
 import { Deferred, Effect, Fiber, Layer } from "effect"
 import { Bus } from "../../src/bus"
 import { Session as SessionNs } from "../../src/session"
@@ -16,7 +16,15 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 
 void Log.init({ print: false })
 
+let previousScheduler: typeof schedulerRef.current
+
+beforeEach(() => {
+  previousScheduler = schedulerRef.current
+  schedulerRef.current = undefined
+})
+
 afterEach(async () => {
+  schedulerRef.current = previousScheduler
   await Instance.disposeAll()
 })
 
