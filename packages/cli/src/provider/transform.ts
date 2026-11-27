@@ -1045,12 +1045,17 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
     })
   }
 
-  // Strip Responses item IDs from non-reasoning parts before serialization so
-  // signed request bodies stay immutable and stateless proxies never see server
-  // item references (`msg_`, `fc_`). Reasoning parts keep `itemId` as a local
-  // grouping key so the patched `@ai-sdk/openai` serializer can recombine
-  // multi-summary parts into one reasoning item without emitting wire `id` when
-  // `store !== true`.
+  // Strip Responses item IDs from non-reasoning parts (`text`, `tool-call`, etc.)
+  // before serialization so signed request bodies stay immutable. Reasoning parts
+  // intentionally keep `itemId`: `@ai-sdk/openai` uses `itemId` to recombine
+  // multi-summary reasoning parts into one `{ type: "reasoning", id, encrypted_content, summary }`
+  // item when `store !== true` (stripping it causes the SDK's no-`itemId` fallback
+  // to split summaries into separate blocks with duplicated `encrypted_content` or
+  // drop earlier summaries). Keeping prefixed `reasoning.id` alongside
+  // `encrypted_content` in stateless mode matches current `openai/codex`
+  // (`codex-rs/protocol/src/models.rs` `ResponseItem::Reasoning.id`, PRs #32312,
+  // #60771, #60977) and stock `@ai-sdk/openai` / Azure OpenAI v1 expectations
+  // (`vercel/ai#12687`, `#14983`).
   if (options.store !== true && key && ["@ai-sdk/openai", "@ai-sdk/azure"].includes(model.api.npm)) {
     msgs = mapProviderOptions(msgs, (opts, partType) => {
       if (partType === "reasoning") return opts
