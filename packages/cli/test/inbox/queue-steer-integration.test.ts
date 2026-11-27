@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect } from "bun:test"
 import { Deferred, Effect, Fiber, Layer } from "effect"
 import { Bus } from "../../src/bus"
 import { Session as SessionNs } from "../../src/session"
@@ -7,7 +7,7 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 import { ActorRegistry } from "../../src/actor/registry"
 import { ActorWaiter } from "../../src/actor/waiter"
 import { ActorExecution } from "../../src/actor/execution"
-import { InboxController, inboxControllerRef } from "../../src/inbox"
+import { InboxController, inboxControllerRef, schedulerRef } from "../../src/inbox"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -16,7 +16,15 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 
 void Log.init({ print: false })
 
+let previousScheduler: typeof schedulerRef.current
+
+beforeEach(() => {
+  previousScheduler = schedulerRef.current
+  schedulerRef.current = undefined
+})
+
 afterEach(async () => {
+  schedulerRef.current = previousScheduler
   await Instance.disposeAll()
 })
 

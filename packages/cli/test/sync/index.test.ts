@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, afterAll, spyOn } from "bun:test"
+import { describe, test, expect, beforeEach, afterAll, spyOn } from "bun:test"
 import { tmpdir } from "../fixture/fixture"
 import z from "zod"
 import { Bus } from "../../src/bus"
@@ -21,12 +21,6 @@ const original = Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES
 
 beforeEach(() => {
   Database.close()
-
-  Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES = true
-})
-
-afterEach(() => {
-  Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES = original
 })
 
 function withInstance(fn: () => void | Promise<void>) {
@@ -36,7 +30,12 @@ function withInstance(fn: () => void | Promise<void>) {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        await fn()
+        Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES = true
+        try {
+          await fn()
+        } finally {
+          Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES = original
+        }
       },
     })
   }
