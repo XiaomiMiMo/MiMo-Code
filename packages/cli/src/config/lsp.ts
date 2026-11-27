@@ -33,7 +33,7 @@ export const requiresExtensionsForCustomServers = Schema.makeFilter<
   const ok = Object.entries(data).every(([id, config]) => {
     if ("disabled" in config && config.disabled) return true
     if (serverIds.has(id)) return true
-    return "extensions" in config && Boolean(config.extensions)
+    return "extensions" in config && Array.isArray(config.extensions) && config.extensions.length > 0
   })
   return ok ? undefined : "For custom LSP servers, 'extensions' array is required."
 })

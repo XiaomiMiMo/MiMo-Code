@@ -66,13 +66,15 @@ describe("ConfigLSP.Info refinement", () => {
       expect(result.error!.issues.some((i) => i.message === expectedMessage)).toBe(true)
     })
 
-    test("custom server with empty extensions array fails (extensions must be non-empty-truthy)", () => {
-      // Boolean(['']) is true, so a non-empty array of strings is fine.
-      // Boolean([]) is also true in JS, so empty arrays are accepted by the
-      // refinement. This test documents current behavior.
+    test("custom server with empty extensions array fails", () => {
+      // An empty extensions array leaves the server with no files to attach
+      // to — the same misconfiguration as a missing key — so it must be
+      // rejected with the same error on both decode paths.
       const input = { "my-lsp": { command: ["my-lsp-bin"], extensions: [] } }
-      expect(decodeEffect(input)).toEqual(input)
-      expect(ConfigLSP.Info.zod.parse(input)).toEqual(input)
+      expect(() => decodeEffect(input)).toThrow(expectedMessage)
+      const result = ConfigLSP.Info.zod.safeParse(input)
+      expect(result.success).toBe(false)
+      expect(result.error!.issues.some((i) => i.message === expectedMessage)).toBe(true)
     })
 
     test("custom server without extensions mixed with a valid builtin still fails", () => {
