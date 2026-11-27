@@ -755,16 +755,9 @@ export const layer: Layer.Layer<
             ctx.assistantMessage.rawFinish = value.rawFinishReason
             ctx.assistantMessage.cost += usage.cost
             ctx.assistantMessage.tokens = usage.tokens
-            const opaque =
-              ctx.model.api.npm === "@ai-sdk/openai-compatible" &&
-              value.finishReason !== "error" &&
-              !isStreamIncomplete(ctx.assistantMessage)
-                ? value.providerMetadata?.openaiCompatible?.reasoning_opaque
-                : undefined
             yield* session.updatePart({
               id: PartID.ascending(),
               reason: value.finishReason,
-              ...(typeof opaque === "string" && opaque ? { reasoningOpaque: opaque } : {}),
               snapshot: yield* snapshot.track(),
               messageID: ctx.assistantMessage.id,
               sessionID: ctx.assistantMessage.sessionID,

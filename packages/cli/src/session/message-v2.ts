@@ -432,8 +432,6 @@ export type StepStartPart = z.infer<typeof StepStartPart>
 export const StepFinishPart = PartBase.extend({
   type: z.literal("step-finish"),
   reason: z.string(),
-  /** Opaque state returned by the OpenAI-compatible adapter for this response. */
-  reasoningOpaque: z.string().optional(),
   snapshot: z.string().optional(),
   cost: z.number(),
   tokens: z.object({
@@ -1057,8 +1055,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
    */
   options?: { stripMedia?: boolean; collapseCheckpointTail?: boolean; languageProvider?: string },
 ) {
-  type HistoryBlock = UIMessage & { reasoningOpaque?: string }
-  const result: HistoryBlock[] = []
+  const result: UIMessage[] = []
   const toolNames = new Set<string>()
   const source = compactionProjection(options?.collapseCheckpointTail ? collapseCheckpointTail(input) : input)
   const projection = source
@@ -1260,14 +1257,11 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       ) {
         continue
       }
-      // One stored assistant may contain several steps. Convert each block separately so
-      // message-level state cannot drift onto a neighboring assistant or its tool results.
-      const startBlock = (): HistoryBlock => {
-        const block: HistoryBlock = { id: msg.info.id, role: "assistant", parts: [] }
-        result.push(block)
-        return block
+      const assistantMessage: UIMessage = {
+        id: msg.info.id,
+        role: "assistant",
+        parts: [],
       }
-      let assistantMessage = startBlock()
       for (const part of msg.parts) {
         if (part.type === "text")
           assistantMessage.parts.push({
@@ -1275,12 +1269,10 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             text: part.text,
             ...(differentModel ? {} : { providerMetadata: part.metadata }),
           })
-        if (part.type === "step-start" && (assistantMessage.parts.length || assistantMessage.reasoningOpaque)) {
-          assistantMessage = startBlock()
-        }
-        if (part.type === "step-finish" && !differentModel && model.api.npm === "@ai-sdk/openai-compatible") {
-          if (typeof part.reasoningOpaque === "string") assistantMessage.reasoningOpaque = part.reasoningOpaque
-        }
+        if (part.type === "step-start")
+          assistantMessage.parts.push({
+            type: "step-start",
+          })
         if (part.type === "tool") {
           toolNames.add(part.tool)
           if (part.state.status === "completed") {
@@ -1376,53 +1368,42 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         }
       }
-      if (syntheticGroups.length > 0) {
-        result.push({
-          id: MessageID.ascending(),
-          role: "user",
-          parts: [
-            {
-              type: "text" as const,
-              text: SYNTHETIC_ATTACHMENT_PROMPT,
-            },
-            ...syntheticGroups.flatMap((group) => [
+      if (assistantMessage.parts.length > 0) {
+        result.push(assistantMessage)
+        if (syntheticGroups.length > 0) {
+          result.push({
+            id: MessageID.ascending(),
+            role: "user",
+            parts: [
               {
                 type: "text" as const,
-                text: `Tool "${group.tool}" call ${group.callID} ${group.status === "error" ? "failed" : "completed"}:`,
+                text: SYNTHETIC_ATTACHMENT_PROMPT,
               },
-              ...group.parts,
-            ]),
-          ],
-        })
+              ...syntheticGroups.flatMap((group) => [
+                {
+                  type: "text" as const,
+                  text: `Tool "${group.tool}" call ${group.callID} ${group.status === "error" ? "failed" : "completed"}:`,
+                },
+                ...group.parts,
+              ]),
+            ],
+          })
+        }
       }
     }
   }
 
   const tools = Object.fromEntries(Array.from(toolNames).map((toolName) => [toolName, { toModelOutput }]))
 
-  return yield* Effect.promise(async () => {
-    const projected: ModelMessage[] = []
-    for (const block of result) {
-      if (!block.parts.length) continue
-      const messages = await convertToModelMessages([block], {
+  return yield* Effect.promise(() =>
+    convertToModelMessages(
+      result.filter((msg) => msg.parts.some((part) => part.type !== "step-start")),
+      {
         //@ts-expect-error (convertToModelMessages expects a ToolSet but only actually needs tools[name]?.toModelOutput)
         tools,
-      })
-      for (const message of messages) {
-        if (block.reasoningOpaque && message.role === "assistant") {
-          message.providerOptions = {
-            ...message.providerOptions,
-            openaiCompatible: {
-              ...message.providerOptions?.openaiCompatible,
-              reasoning_opaque: block.reasoningOpaque,
-            },
-          }
-        }
-        projected.push(message)
-      }
-    }
-    return projected
-  })
+      },
+    ),
+  )
 })
 
 export function toModelMessages(
