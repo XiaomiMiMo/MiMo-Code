@@ -215,6 +215,22 @@ describe("cross-spawn spawner", () => {
 
   describe("process control", () => {
     fx.effect(
+      "killing one shell leaves a concurrent shell and its input stream alive",
+      Effect.gen(function* () {
+        const a = yield* js("setInterval(() => {}, 10_000)")
+        const b = yield* js('process.stdin.once("data", () => { process.stdout.write("survived"); process.exit(0) })')
+        expect(yield* a.isRunning).toBe(true)
+        expect(yield* b.isRunning).toBe(true)
+        yield* a.kill()
+        yield* a.exitCode
+        expect(yield* b.isRunning).toBe(true)
+        yield* Stream.run(Stream.make(Buffer.from("finish")), b.stdin)
+        expect(yield* decodeByteStream(b.stdout)).toBe("survived")
+        expect(Number(yield* b.exitCode)).toBe(0)
+      }),
+    )
+
+    fx.effect(
       "kills a running process",
       Effect.gen(function* () {
         const exit = yield* Effect.exit(
