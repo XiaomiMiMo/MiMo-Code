@@ -7,7 +7,6 @@ import { StarryBackground } from "../component/starry-background"
 import { BackgroundImage } from "../component/background-image"
 import { useProject } from "../context/project"
 import { useSync } from "../context/sync"
-import { Toast } from "../ui/toast"
 import { useArgs } from "../context/args"
 import { useRouteData } from "@tui/context/route"
 import { usePromptRef } from "../context/prompt"
@@ -160,7 +159,6 @@ export function Home() {
           <TuiPluginRuntime.Slot name="home_bottom" />
         </Show>
         <box flexGrow={1} minHeight={0} />
-        <Toast />
       </box>
       <Show when={!plainTerminal}>
         <box width="100%" flexShrink={0}>
