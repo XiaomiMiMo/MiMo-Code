@@ -16,5 +16,6 @@ test("SystemPrompt layer constructs without Instance context", async () => {
     }).pipe(Effect.provide(SystemPrompt.layer)),
   )
   expect(svc.environment).toBeDefined()
-  expect(svc.skills).toBeDefined()
+  expect(svc.skillCatalog).toBeDefined()
+  expect(svc.refreshSkills).toBeDefined()
 })

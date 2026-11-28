@@ -31,7 +31,7 @@ import {
   toolAttachmentFilename,
   toolAttachmentPlaceholder,
 } from "./tool-attachment"
-import { isSkillCatalogReminder } from "./skill-catalog"
+import { isLegacySkillCatalogPart } from "./skill-catalog"
 import { collapseCheckpointTail } from "./tail-digest"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
@@ -314,6 +314,39 @@ export const CheckpointPart = PartBase.extend({
   ref: "CheckpointPart",
 })
 export type CheckpointPart = z.infer<typeof CheckpointPart>
+
+/**
+ * An MCP `elicitation/create` request a server sent while a tool call was in
+ * flight, and how it was answered. Kept in the session history as a record of
+ * what the user (or an answering client) agreed to; never sent to the model.
+ */
+export const ElicitationPart = PartBase.extend({
+  type: z.literal("elicitation"),
+  /** MCP server that sent the request. */
+  server: z.string(),
+  /** Tool call the request belongs to, when it could be associated. */
+  callID: z.string().optional(),
+  /** JSON-RPC id of the elicitation request. */
+  requestID: z.union([z.string(), z.number()]),
+  mode: z.literal("form"),
+  message: z.string(),
+  requestedSchema: z.record(z.string(), z.unknown()),
+  /** The request's `_meta`, as sent by the server. */
+  meta: z.record(z.string(), z.unknown()).optional(),
+  /** Absent while the request is pending. */
+  action: z.enum(["accept", "decline", "cancel"]).optional(),
+  content: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])).optional(),
+  /** Who answered, as reported by the answering client (for example "user"). */
+  source: z.string().optional(),
+  /** Free-form reason reported by the answering client. */
+  reason: z.string().optional(),
+  /** Why the request ended without an answer (cancelled, invalid response, ...). */
+  error: z.string().optional(),
+  time: z.object({ created: z.number(), completed: z.number().optional() }),
+}).meta({
+  ref: "ElicitationPart",
+})
+export type ElicitationPart = z.infer<typeof ElicitationPart>
 
 export const SubtaskPart = PartBase.extend({
   type: z.literal("subtask"),
@@ -604,6 +637,7 @@ export const Part = z
     RetryPart,
     CheckpointPart,
     CompactionPart,
+    ElicitationPart,
   ])
   .meta({
     ref: "Part",
@@ -942,7 +976,7 @@ export function planResumeTrim(input: WithParts[], parentID: MessageID) {
         : part.type === "tool" ? true
         : part.type === "reasoning" && part.text.trim().length > 0)
     const onlyStructural = message.parts.every((part) =>
-      part.type === "step-start" || part.type === "step-finish" || part.type === "retry" ||
+      part.type === "step-start" || part.type === "step-finish" || part.type === "retry" || part.type === "elicitation" ||
       part.type === "text" && (part.ignored || !part.text.trim().length) ||
       part.type === "reasoning" && !part.text.trim().length)
     if (!useful && !onlyStructural && message.parts.length > 0 && info.structured === undefined && !info.summary) {
@@ -1085,7 +1119,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
   for (const msg of source) {
     if (msg.parts.length === 0) continue
     if (msg.info.role === "assistant" && msg.parts.every((part) =>
-      part.type === "step-start" || part.type === "step-finish" || part.type === "retry" ||
+      part.type === "step-start" || part.type === "step-finish" || part.type === "retry" || part.type === "elicitation" ||
       (part.type === "text" && (part.ignored || part.text.trim().length === 0)) ||
       (part.type === "reasoning" && part.text.trim().length === 0),
     )) continue
@@ -1111,9 +1145,10 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       result.push(userMessage)
       for (const part of msg.parts) {
         if (part.type === "text") {
-          // Skill catalogs moved to the system tail. Suppress snapshots persisted
-          // by older versions so resumed sessions do not receive a duplicate user-side catalog.
-          if (part.synthetic && isSkillCatalogReminder(part.text)) continue
+          // Older engines persisted user-side catalogs without reminder metadata.
+          // The current catalog is a metadata-tagged reminder; legacy copies would
+          // duplicate it.
+          if (isLegacySkillCatalogPart(part)) continue
           if (!part.ignored)
             userMessage.parts.push({
               type: "text",

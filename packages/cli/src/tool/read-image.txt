@@ -1,0 +1,7 @@
+Read a local image file and attach it so you can see and analyze its visual content.
+
+Usage:
+- The `file_path` parameter identifies the image file to read. Relative paths resolve against the session working directory.
+- Accepted formats: jpeg, png, webp, gif. Other formats are refused; convert them first (e.g. with ffmpeg).
+- An image over the attachment size limit is recompressed to fit it; an image too large to recompress is refused without being read.
+- Use the read tool for text files and directories.

@@ -24,8 +24,8 @@ MiMoCode (CLI binary `mimo`) is an agentic coding tool with a terminal UI, built
 | **Compose mode** | Structured spec→ship lifecycle; entry is the `compose-next` skill — clarify, spec, implement, verify, review, finish. Do not combine it with plan mode | `/compose-next` (see @reference/guide.md) |
 | **Visual modes** | `vivid` (default: star field, meteors, logo effects, animated activity) and `minimal` (quiet visuals, stable activity indicators); independent from the animation override | `/vivid` or the visual-mode option in `ctrl+p` |
 | **Voice input** | Streaming ASR (TenVAD + MiMo ASR); needs `sox` | `/voice` |
-| **Dream** | Consolidates recent traces into project memory | `/dream` |
-| **Distill** | Packages repeated manual workflows into skills/subagents/commands | `/distill` |
+| **Dream** | Consolidates recent traces into project memory | `/dream` (manual; opt-in auto-run via `dream.auto: true`, off by default) |
+| **Distill** | Packages repeated manual workflows into skills/subagents/commands | `/distill` (manual; opt-in auto-run via `distill.auto: true`, off by default) |
 | **Scheduled prompts** | Cron/loop: inject a prompt on a schedule or repeating loop (UTC, 5-field) | `cron` tool · `/loop` · `/loops` |
 | **Dynamic Workflow** | JS scripts that orchestrate many subagents deterministically (fan-out, pipelines, nesting); built-ins include `deep-research`, `fact-check`, and `research-experiment` | `.mimocode/workflows/*.js` + `workflow` tool |
 | **Custom skills** | Add reusable task instructions under `.mimocode/skills/` | see the `skill-creator` skill |

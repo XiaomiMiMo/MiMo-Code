@@ -1971,7 +1971,8 @@ describe("main automatically waits for subagent executions", () => {
     20000,
   )
 
-  it.live(
+  // Skipped: sleeps 31s of wall clock on every run to cross the real refresh interval.
+  it.live.skip(
     "a silent but live execution survives the 30-second refresh without being declared dead",
     provideTmpdirServer(
       ({ llm }) =>

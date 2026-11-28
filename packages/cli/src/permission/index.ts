@@ -612,7 +612,7 @@ export function merge(...rulesets: Ruleset[]): Ruleset {
 }
 
 const EDIT_TOOLS = ["edit", "write", "apply_patch", "multiedit"]
-const READ_TOOLS = ["read", "view_image"]
+const READ_TOOLS = ["read", "read_image", "read_audio", "read_video", "view_image"]
 
 export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
   const result = new Set<string>()

@@ -355,7 +355,32 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test("suppresses persisted skill snapshots after catalogs move to system", async () => {
+  // [skill-catalog-live S2.4] Current catalogs are metadata-tagged reminders and
+  // always reach the model, even if their text mentions the legacy marker.
+  test("delivers metadata-tagged skill catalog reminders", async () => {
+    const text = "<system-reminder>\nSkill catalog for this conversation.\nSkills available in this session:\n</system-reminder>"
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo("m-skill-reminder"),
+        parts: [
+          { ...basePart("m-skill-reminder", "p-user"), type: "text", text: "hello" },
+          {
+            ...basePart("m-skill-reminder", "p-catalog"),
+            type: "text",
+            text,
+            synthetic: true,
+            metadata: { skillReminder: { kind: "entry", skills: { demo: "0123456789abcdef" } } },
+          },
+        ],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      { role: "user", content: [{ type: "text", text: "hello" }, { type: "text", text }] },
+    ])
+  })
+
+  test("suppresses persisted legacy skill snapshots", async () => {
     const firstSnapshot = [
       "<system-reminder>",
       "Authoritative skills catalog snapshot v2:",
@@ -1969,5 +1994,28 @@ describe("session.message-v2.fromError", () => {
     ;(error as any).errors = undefined
     const result = MessageV2.fromError(error, { providerID })
     expect(result.name).toBe("UnknownError")
+  })
+})
+
+describe("elicitation parts", () => {
+  test("are kept in history but never sent to the model", async () => {
+    const userID = MessageID.make("elicitation-user")
+    const assistantID = MessageID.make("elicitation-assistant")
+    const base = { sessionID, messageID: assistantID }
+    const record: MessageV2.ElicitationPart = {
+      ...base, id: PartID.make("elicitation"), type: "elicitation", server: "recorder", callID: "call-a",
+      requestID: 3, mode: "form", message: "elicitation-message-not-for-model",
+      requestedSchema: { type: "object", properties: {} }, action: "accept", content: {}, source: "user",
+      time: { created: 1, completed: 2 },
+    }
+    const input: MessageV2.WithParts[] = [
+      { info: userInfo(userID), parts: [{ ...base, id: PartID.make("user-text"), messageID: userID, type: "text", text: "Do it" }] },
+      { info: assistantInfo(assistantID, userID), parts: [{ ...base, id: PartID.make("answer"), type: "text", text: "Done" }, record] },
+    ]
+    const converted = await MessageV2.toModelMessages(input, model)
+    expect(JSON.stringify(converted)).not.toContain("elicitation-message-not-for-model")
+    expect(converted.map((message) => message.role)).toEqual(["user", "assistant"])
+    const only: MessageV2.WithParts[] = [input[0]!, { info: assistantInfo(assistantID, userID), parts: [record] }]
+    expect((await MessageV2.toModelMessages(only, model)).map((message) => message.role)).toEqual(["user"])
   })
 })

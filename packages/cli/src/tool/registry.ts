@@ -8,7 +8,9 @@ import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
-import { ReadTool, describeMedia } from "./read"
+import { ReadTool } from "./read"
+import { ReadAudioTool, ReadImageTool, ReadVideoTool, supportsMedia } from "./read-media"
+import { mediaToolKind, type MediaKind } from "./media-kind"
 import { ViewImageTool } from "./view-image"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"
@@ -95,18 +97,22 @@ const reservedConflictWarned = new Set<string>()
 
 type ActorDef = Tool.InferDef<typeof ActorTool>
 type ReadDef = Tool.InferDef<typeof ReadTool>
+// read_image, read_audio and read_video share one parameter and metadata shape.
+type ReadMediaDef = Tool.InferDef<typeof ReadImageTool>
+type Named = { actor: ActorDef; read: ReadDef; media: Record<MediaKind, ReadMediaDef> }
 
 type State = {
   custom: Tool.Def[]
   builtin: Tool.Def[]
   actor: ActorDef
   read: ReadDef
+  media: Record<MediaKind, ReadMediaDef>
 }
 
 export interface Interface {
   readonly ids: () => Effect.Effect<string[]>
   readonly all: () => Effect.Effect<Tool.Def[]>
-  readonly named: () => Effect.Effect<{ actor: ActorDef; read: ReadDef }>
+  readonly named: () => Effect.Effect<Named>
   readonly tools: (model: {
     providerID: ProviderID
     modelID: ModelID
@@ -143,6 +149,9 @@ export const layer = Layer.effect(
     const invalid = yield* InvalidTool
     const actor = yield* ActorTool
     const read = yield* ReadTool
+    const readimage = yield* ReadImageTool
+    const readaudio = yield* ReadAudioTool
+    const readvideo = yield* ReadVideoTool
     const viewimage = yield* ViewImageTool
     const question = yield* QuestionTool
     const lsptool = yield* LspTool
@@ -228,6 +237,9 @@ export const layer = Layer.effect(
           invalid: Tool.init(invalid),
           bash: Tool.init(bash),
           read: Tool.init(read),
+          readimage: Tool.init(readimage),
+          readaudio: Tool.init(readaudio),
+          readvideo: Tool.init(readvideo),
           viewimage: Tool.init(viewimage),
           glob: Tool.init(globtool),
           grep: Tool.init(greptool),
@@ -260,6 +272,9 @@ export const layer = Layer.effect(
             ...(questionEnabled ? [tool.question] : []),
             tool.bash,
             tool.read,
+            tool.readimage,
+            tool.readaudio,
+            tool.readvideo,
             tool.viewimage,
             tool.glob,
             tool.grep,
@@ -285,6 +300,7 @@ export const layer = Layer.effect(
           ],
           actor: tool.actor,
           read: tool.read,
+          media: { image: tool.readimage, audio: tool.readaudio, video: tool.readvideo },
         }
       }),
     )
@@ -342,7 +358,16 @@ export const layer = Layer.effect(
       harness?: HarnessMode
     }) {
       const useGPTTools = usesCodexMode(input.harness)
+      // Media tools are offered only when the turn's model, through its
+      // adapter, accepts the media kind; an unresolvable model gets none.
+      // A plugin tool that replaces one of these ids is not gated.
+      const model = yield* provider
+        .getModel(input.providerID, input.modelID)
+        .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
+      const builtin = new Set((yield* InstanceState.get(state)).builtin)
       let filtered = (yield* all()).filter((tool) => {
+        const mediaKind = builtin.has(tool) ? mediaToolKind(tool.id) : undefined
+        if (mediaKind) return !useGPTTools && supportsMedia(model, mediaKind)
         if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) return Flag.MIMOCODE_ENABLE_EXA
 
@@ -402,17 +427,6 @@ export const layer = Layer.effect(
     toolScriptRegistry.current = (input) =>
       input ? available(input).pipe(Effect.map((result) => result.filtered)) : all()
 
-    // The read tool's media paragraph depends on the model the turn runs on.
-    const describeReadMedia = Effect.fn("ToolRegistry.describeReadMedia")(function* (input: {
-      providerID: ProviderID
-      modelID: ModelID
-    }) {
-      const model = yield* provider
-        .getModel(input.providerID, input.modelID)
-        .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
-      return describeMedia(model)
-    })
-
     const definitions = Effect.fn("ToolRegistry.definitions")(function* (
       input: {
         providerID: ProviderID
@@ -442,7 +456,6 @@ export const layer = Layer.effect(
             id: tool.id,
             description: [
               output.description,
-              tool.id === ReadTool.id ? yield* describeReadMedia(input) : undefined,
               tool.id === ActorTool.id ? yield* describeTask(input.agent) : undefined,
               tool.id === WorkflowTool.id ? yield* describeWorkflow() : undefined,
               tool.id === ToolScriptTool.id ? yield* describeToolScript(availableTools.filtered) : undefined,
@@ -468,7 +481,7 @@ export const layer = Layer.effect(
 
     const named: Interface["named"] = Effect.fn("ToolRegistry.named")(function* () {
       const s = yield* InstanceState.get(state)
-      return { actor: s.actor, read: s.read }
+      return { actor: s.actor, read: s.read, media: s.media }
     })
 
     const reload: Interface["reload"] = Effect.fn("ToolRegistry.reload")(function* () {

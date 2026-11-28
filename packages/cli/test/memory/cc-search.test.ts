@@ -1,20 +1,22 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import * as fs from "fs/promises"
 import os from "os"
 import path from "path"
-import { Database } from "../../src/storage"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { MemoryFtsTable } from "../../src/memory/fts.sql"
 import { Memory } from "../../src/memory"
 import { reconcileMemory } from "../../src/memory/reconcile"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
+import { resetMemory } from "../fixture/memory"
 import { testEffect } from "../lib/effect"
 
+// Memory state is process-global; see resetMemory.
+beforeEach(resetMemory)
+
 afterEach(async () => {
-  Database.use((db) => db.delete(MemoryFtsTable).run())
   await Instance.disposeAll()
+  await resetMemory()
 })
 
 const it = testEffect(Layer.mergeAll(Memory.defaultLayer, CrossSpawnSpawner.defaultLayer))
@@ -47,7 +49,6 @@ describe("memory.search with cc scope", () => {
         Effect.gen(function* () {
           const memory = yield* Memory.Service
           const mimoRoot = yield* memory.root()
-          yield* Effect.promise(() => fs.rm(mimoRoot, { recursive: true, force: true }))
           yield* Effect.promise(() => fs.mkdir(path.join(mimoRoot, "global"), { recursive: true }))
           yield* Effect.promise(() =>
             fs.writeFile(path.join(mimoRoot, "global", "m.md"), "distinctivetoken from mimo"),
@@ -84,7 +85,6 @@ distinctivetoken from CC`,
         Effect.gen(function* () {
           const memory = yield* Memory.Service
           const mimoRoot = yield* memory.root()
-          yield* Effect.promise(() => fs.rm(mimoRoot, { recursive: true, force: true }))
           yield* Effect.promise(() => fs.mkdir(path.join(mimoRoot, "global"), { recursive: true }))
           yield* Effect.promise(() => fs.writeFile(path.join(mimoRoot, "global", "m.md"), "tokenz"))
 
@@ -117,7 +117,6 @@ tokenz`),
         Effect.gen(function* () {
           const memory = yield* Memory.Service
           const mimoRoot = yield* memory.root()
-          yield* Effect.promise(() => fs.rm(mimoRoot, { recursive: true, force: true }))
 
           const ccBase = yield* Effect.promise(() => tmpCcBase())
           yield* Effect.promise(() =>

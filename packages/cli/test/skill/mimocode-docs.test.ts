@@ -64,6 +64,28 @@ describe("mimocode-docs provider guidance", () => {
     expect(config).toContain("| `checkpoint.fork` | Fork parent prefix into writer session for cache reuse (default true) |")
     expect(config).not.toContain("| `checkpoint.fork` | Fork parent prefix into writer session for cache reuse (default false) |")
   })
+
+  test("documents dream.auto and distill.auto as opt-in (default false)", async () => {
+    const skill = await Bun.file(path.join(root, "SKILL.md")).text()
+    const config = await Bun.file(path.join(root, "reference/config.md")).text()
+    const guide = await Bun.file(path.join(root, "reference/guide.md")).text()
+
+    expect(config).toContain(
+      "| `dream.auto` / `dream.interval_days` | Auto memory consolidation on new session start (default false / 7 days; set `auto: true` to enable) |",
+    )
+    expect(config).toContain(
+      "| `distill.auto` / `distill.interval_days` | Auto workflow packaging on new session start (default false / 30 days; set `auto: true` to enable) |",
+    )
+    expect(config).not.toContain("(default true / 7 days)")
+    expect(config).not.toContain("(default true / 30 days)")
+
+    expect(guide).not.toContain("Runs automatically per `dream.interval_days`")
+    expect(guide).toContain("`dream.auto: true`")
+    expect(guide).toContain("off by default")
+
+    expect(skill).toContain("`dream.auto: true`")
+    expect(skill).toContain("`distill.auto: true`")
+  })
 })
 
 describe("mimocode-docs TUI troubleshooting", () => {

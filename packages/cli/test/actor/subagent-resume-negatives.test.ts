@@ -729,7 +729,13 @@ describe("subagent resume recovery negatives", () => {
                 fakeCompleted,
                 fullFail,
                 fullErr,
-                providerCalls: server.captures.length,
+                // The failed-actor notification wakes main, which may legitimately
+                // reach the provider before this loop exits. Only a request
+                // carrying the child's own history ("full-seed") would mean the
+                // missing-fork actor ran a turn.
+                childProviderCalls: server.captures.filter((capture) =>
+                  JSON.stringify(capture.messages).includes("full-seed"),
+                ).length,
               }
             }).pipe(Effect.provide(Inbox.defaultLayer)),
           ),
@@ -740,7 +746,7 @@ describe("subagent resume recovery negatives", () => {
       expect(result.fakeCompleted).toBe(false)
       expect(result.fullFail).toBe(true)
       expect(result.fullErr).toContain("missing fork")
-      expect(result.providerCalls).toBe(0)
+      expect(result.childProviderCalls).toBe(0)
     } finally {
       await server.stop()
     }

@@ -80,9 +80,15 @@ export const layer = Layer.effect(
     const reify = (input: { dir: string; add?: string[] }) =>
       Effect.gen(function* () {
         yield* flock.acquire(`npm-install:${input.dir}`)
+        const failed = (cause: unknown) => new InstallFailedError({ cause, add: input.add, dir: input.dir })
+        // Arborist returns an empty tree (no edges, no children) when its root path
+        // runs through a symlink, even though it installed everything — e.g. a
+        // symlinked ~/.cache, or /tmp on macOS. Hand it the real path.
+        yield* fs.makeDirectory(input.dir, { recursive: true }).pipe(Effect.mapError(failed))
+        const root = yield* fs.realPath(input.dir).pipe(Effect.mapError(failed))
         const { Arborist } = yield* Effect.promise(() => import("@npmcli/arborist"))
         const arborist = new Arborist({
-          path: input.dir,
+          path: root,
           binLinks: true,
           progress: false,
           savePrefix: "",
@@ -95,12 +101,7 @@ export const layer = Layer.effect(
               save: true,
               saveType: "prod",
             }),
-          catch: (cause) =>
-            new InstallFailedError({
-              cause,
-              add: input?.add,
-              dir: input.dir,
-            }),
+          catch: failed,
         }) as Effect.Effect<ArboristTree, InstallFailedError>
       }).pipe(
         Effect.withSpan("Npm.reify", {

@@ -18,7 +18,7 @@ import {
   type ReceiptState,
 } from "./schema"
 import { InboxLaneStateTable, InboxSessionEpochTable, InboxTable } from "./inbox.sql"
-import { inboxControllerRef } from "./controller-ref"
+import { claimRunKey, inboxControllerRef, liveClaimRuns } from "./controller-ref"
 import { schedulerRef } from "./scheduler"
 import * as InboxSync from "./sync"
 import { ExecutionOwnership } from "@/session/execution-ownership"
@@ -398,6 +398,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             eq(InboxTable.epoch, epoch),
           )).returning().all()
           if (rows.length === 0) return undefined
+          // Registered inside the transaction so no reconciliation can run between the
+          // commit and the registration; a rollback leaves an entry that settling removes.
+          liveClaimRuns.add(claimRunKey(lane.sessionID, lane.agentID, runId))
           InboxSync.record({ sessionID: lane.sessionID, receipts: rows })
           return {
             receipts: rows.map(toReceipt).sort((a, b) => a.id.localeCompare(b.id)),
@@ -476,6 +479,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           InboxSync.record({ sessionID: lane.sessionID, receipts: rows, lanes })
           return rows
         }),
+      ).pipe(
+        // A run settles its claims once, when it ends; release it even if the ack fails.
+        Effect.ensuring(Effect.sync(() => {
+          if (expectedRunId != null) liveClaimRuns.delete(claimRunKey(lane.sessionID, lane.agentID, expectedRunId))
+        })),
       )
       for (const row of rows) yield* publish(toReceipt(row))
     })
@@ -590,11 +598,18 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             )
             .returning().all()
           receipts.push(...stale)
-          const crashed = db.update(InboxTable)
+          // Claims of a run still alive in this process are not crashed: the run
+          // outlived the Instance that admitted it and settles them when it ends.
+          const orphaned = db.select({ id: InboxTable.id, agent: InboxTable.receiver_actor_id, run: InboxTable.run_id })
+            .from(InboxTable)
+            .where(and(eq(InboxTable.receiver_session_id, sessionID), promptOnly, eq(InboxTable.state, "claimed")))
+            .all()
+            .filter((row) => row.run == null || !liveClaimRuns.has(claimRunKey(sessionID, row.agent, row.run)))
+            .map((row) => row.id)
+          const crashed = orphaned.length === 0 ? [] : db.update(InboxTable)
             .set({ state: "cancelled", outcome: "never_ran", time_updated: now })
             .where(and(
-              eq(InboxTable.receiver_session_id, sessionID),
-              promptOnly,
+              inArray(InboxTable.id, orphaned),
               eq(InboxTable.state, "claimed"),
             ))
             .returning().all()

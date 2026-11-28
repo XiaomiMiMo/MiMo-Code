@@ -995,7 +995,7 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
 
 function mapProviderOptions(
   msgs: ModelMessage[],
-  transform: (options: Record<string, any> | undefined) => Record<string, any> | undefined,
+  transform: (options: Record<string, any> | undefined, partType?: string) => Record<string, any> | undefined,
 ): ModelMessage[] {
   return msgs.map((msg) => {
     if (!Array.isArray(msg.content)) return { ...msg, providerOptions: transform(msg.providerOptions) }
@@ -1005,7 +1005,7 @@ function mapProviderOptions(
       content: msg.content.map((part) =>
         part.type === "tool-approval-request" || part.type === "tool-approval-response"
           ? part
-          : { ...part, providerOptions: transform(part.providerOptions) },
+          : { ...part, providerOptions: transform(part.providerOptions, part.type) },
       ),
     } as typeof msg
   })
@@ -1045,13 +1045,20 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
     })
   }
 
-  // Strip Responses item IDs before serialization, following Codex and keeping
-  // signed request bodies immutable. Removing `itemId` here (rather than mutating
-  // the already-serialized fetch body) lets the SDK build a clean request that
-  // works against proxies which validate reasoning `rs_` references. Only applies
-  // to stateless (store !== true) OpenAI Responses-family providers.
+  // Strip Responses item IDs from non-reasoning parts (`text`, `tool-call`, etc.)
+  // before serialization so signed request bodies stay immutable. Reasoning parts
+  // intentionally keep `itemId`: `@ai-sdk/openai` uses `itemId` to recombine
+  // multi-summary reasoning parts into one `{ type: "reasoning", id, encrypted_content, summary }`
+  // item when `store !== true` (stripping it causes the SDK's no-`itemId` fallback
+  // to split summaries into separate blocks with duplicated `encrypted_content` or
+  // drop earlier summaries). Keeping prefixed `reasoning.id` alongside
+  // `encrypted_content` in stateless mode matches current `openai/codex`
+  // (`codex-rs/protocol/src/models.rs` `ResponseItem::Reasoning.id`, PRs #32312,
+  // #60771, #60977) and stock `@ai-sdk/openai` / Azure OpenAI v1 expectations
+  // (`vercel/ai#12687`, `#14983`).
   if (options.store !== true && key && ["@ai-sdk/openai", "@ai-sdk/azure"].includes(model.api.npm)) {
-    msgs = mapProviderOptions(msgs, (opts) => {
+    msgs = mapProviderOptions(msgs, (opts, partType) => {
+      if (partType === "reasoning") return opts
       if (!opts?.[key] || !("itemId" in opts[key])) return opts
       const metadata = { ...opts[key] }
       delete metadata.itemId

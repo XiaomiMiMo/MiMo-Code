@@ -218,7 +218,7 @@ description: Anyone may start this one.
           // model-gated catalog. A mistyped name must not leak the gated skill.
           expect(tool.description).not.toContain("gated-skill")
           expect(tool.description).not.toContain("open-skill")
-          expect(tool.description).toContain("listed in the system prompt")
+          expect(tool.description).toContain("skill catalog reminders")
           const miss = yield* tool.execute(
             {
               code: `try {

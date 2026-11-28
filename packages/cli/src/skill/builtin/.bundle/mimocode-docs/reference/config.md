@@ -137,8 +137,8 @@ The trigger is the model's prompt capacity (`limit.input` when the provider publ
 ### Autonomous / self-improvement
 | Key | Purpose |
 |-----|---------|
-| `dream.auto` / `dream.interval_days` | Auto memory consolidation on session start (default true / 7 days) |
-| `distill.auto` / `distill.interval_days` | Auto workflow packaging (default true / 30 days) |
+| `dream.auto` / `dream.interval_days` | Auto memory consolidation on new session start (default false / 7 days; set `auto: true` to enable) |
+| `distill.auto` / `distill.interval_days` | Auto workflow packaging on new session start (default false / 30 days; set `auto: true` to enable) |
 | `voice.asr_model` | ASR model (default `xiaomi/mimo-v2.5-asr`) |
 | `voice.control_model` | Voice control model (default `xiaomi/mimo-v2.6-flash`) |
 | `workflow.maxConcurrentAgents` | Process-wide subagent concurrency ceiling (default min(16, 2×cores)) |
@@ -169,7 +169,7 @@ The trigger is the model's prompt capacity (`limit.input` when the provider publ
   "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
   "model": "anthropic/claude-opus-4-8",
   "model_groups": { "lite": "anthropic/claude-haiku" },
-  "dream": { "auto": true, "interval_days": 3 },
+  "dream": { "auto": true, "interval_days": 3 }, // opt-in: auto-dream is off by default
   "compaction": { "tail_turns": 3 },
   "permission": { "external_directory": { "/tmp/**": "allow" } },
   "mcp": {

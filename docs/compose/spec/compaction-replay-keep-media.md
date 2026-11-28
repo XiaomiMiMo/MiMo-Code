@@ -30,7 +30,7 @@ When the provider rejects a request as a context overflow, `SessionCompaction.pr
 While copying the parts of the replayed message, the engine replaces every media `file` part (`MessageV2.isMedia`: images, PDF) with a text part `[Attached <mime>: <filename>]`. The replacement is written to the database. The original image content — a `data:` URL in `url`, plus `source.path` pointing at the local attachment file — is no longer referenced by the replayed message. As a result:
 
 - The client renders the replayed message with the placeholder text instead of an image thumbnail, and the image cannot be previewed.
-- The model never sees the image again, while the copied provenance envelope (`# Files mentioned by the user …`) still tells it to look at the attached image.
+- The model never sees the image again, while the copied image attachment reminder (`<system-reminder>\nThe user attached these images to this message, in order: …`) still tells it about the attached image.
 
 ## [S2] Design
 

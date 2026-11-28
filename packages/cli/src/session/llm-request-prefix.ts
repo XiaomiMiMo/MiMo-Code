@@ -39,8 +39,8 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   languageProvider?: string
   msgs: MessageV2.WithParts[]
   /**
-   * Caller-built system-tail parts. Currently environment/format, skill reminder,
-   * then instruction files. Caller is responsible for the ordering and content.
+   * Caller-built system-tail parts. Currently environment/format, then
+   * instruction files. Caller is responsible for the ordering and content.
    */
   additions: string[]
   /** Frozen Session/Fork system; bypasses all system regeneration when present. */

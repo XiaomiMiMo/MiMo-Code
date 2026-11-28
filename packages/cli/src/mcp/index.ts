@@ -1,4 +1,5 @@
 import { toolPresentationProgress } from "./tool-progress"
+import { elicitationRecorder, toolMessageID } from "./tool-context"
 import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
 import { childProcessEnv } from "@/util/child-process-env"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
@@ -380,13 +381,23 @@ export function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?:
     description: mcpTool.description ?? "",
     inputSchema: jsonSchema(schema),
     execute: async (args: unknown, options) => {
+      // `callId` lets a server name this call when it sends a request back
+      // (elicitation) while the call is in flight.
       const metadata =
-        context && supportsTurnLifecycle(client) ? { _meta: { [TURN_LIFECYCLE_CAPABILITY]: context } } : {}
+        context && supportsTurnLifecycle(client)
+          ? { _meta: { [TURN_LIFECYCLE_CAPABILITY]: { ...context, callId: options.toolCallId } } }
+          : {}
       // Recorded before the call so a `sampling/createMessage` arriving WHILE
       // this call is in flight can address its approval prompt at this session.
       if (context) McpSampling.setActiveSession(client, SessionID.make(context.sessionId))
       const progress = toolPresentationProgress(options.experimental_context)
-      const finish = McpElicitation.beginCall(client, context?.sessionId, options.abortSignal)
+      const record = elicitationRecorder(options.experimental_context)
+      const finish = McpElicitation.beginCall(client, context?.sessionId, options.abortSignal, {
+        turnID: context?.turnId,
+        callID: options.toolCallId,
+        messageID: toolMessageID(options.experimental_context),
+        ...(record ? { record } : {}),
+      })
       try {
         return await client.callTool(
           {

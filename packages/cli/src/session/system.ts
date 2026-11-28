@@ -24,7 +24,10 @@ export function agent(agent: Agent.Info, model: Provider.Model, harness?: Harnes
 
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
-  readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
+  /** Model-visible skills for the catalog reminder; empty when the skill tool is disabled. */
+  readonly skillCatalog: (agent: Agent.Info) => Effect.Effect<Skill.Info[]>
+  /** Rescan skill roots for the current directory. */
+  readonly refreshSkills: () => Effect.Effect<void>
   readonly available: (agent?: Agent.Info) => Effect.Effect<Skill.Info[]>
   readonly all: () => Effect.Effect<Skill.Info[]>
 }
@@ -79,7 +82,7 @@ export const layer = Layer.effect(
             [
               `<vision-capability>`,
               `You CANNOT see or interpret image content — this model has no vision support.`,
-              `Never attempt to analyze an image's visual content yourself. If a task needs image understanding, dispatch a vision-capable subagent via the actor tool, passing the image file path so the subagent can \`read\` it.`,
+              `Never attempt to analyze an image's visual content yourself. If a task needs image understanding, dispatch a vision-capable subagent via the actor tool, passing the image file path so the subagent can \`read_image\` it.`,
               visionModels.length
                 ? `Vision-capable models you can pass to --model: ${visionModels.join(", ")}. Run \`actor models --vision\` to see all of them. Example: actor run <type> "<desc>" "analyze the image at <path>" --model ${preferredRef}.`
                 : `No vision-capable model is currently configured. Ask the user to configure a vision model, or use an OCR tool to extract text.`,
@@ -90,17 +93,13 @@ export const layer = Layer.effect(
         return base
       }),
 
-      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
-        if (Permission.disabled(["skill"], agent.permission).has("skill")) return
+      skillCatalog: Effect.fn("SystemPrompt.skillCatalog")(function* (agent: Agent.Info) {
+        if (Permission.disabled(["skill"], agent.permission).has("skill")) return []
+        return yield* skill.modelInvocable(agent)
+      }),
 
-        const list = yield* skill.modelInvocable(agent)
-
-        return [
-          "Skills available in this session:",
-          // the agents seem to ingest the information about skills a bit better if we present a more verbose
-          // version of them here and a less verbose version in tool description, rather than vice versa.
-          Skill.fmt(list, { verbose: true }),
-        ].join("\n")
+      refreshSkills: Effect.fn("SystemPrompt.refreshSkills")(function* () {
+        yield* skill.refresh()
       }),
 
       // The user surface: authorization-filtered but NOT model-reachability

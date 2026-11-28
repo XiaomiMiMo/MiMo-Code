@@ -32,9 +32,17 @@ export const SkillSearchTool = Tool.define(
       parameters: Parameters,
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const agent = yield* agents.get(ctx.agent)
-          const available = yield* skill.modelInvocable(agent)
-          const results = searchSkills(params.query, available)
+          // A miss may come from a skill created since this turn's rescan: rescan
+          // once before reporting no match.
+          let agent = yield* agents.get(ctx.agent)
+          let available = yield* skill.modelInvocable(agent)
+          let results = searchSkills(params.query, available)
+          if (results.length === 0) {
+            yield* skill.refresh()
+            agent = yield* agents.get(ctx.agent)
+            available = yield* skill.modelInvocable(agent)
+            results = searchSkills(params.query, available)
+          }
           if (results.length === 0) {
             return {
               title: "No matching skill",

@@ -4,17 +4,22 @@ import { EffectBridge } from "@/effect"
 import { Flag } from "@/flag/flag"
 import type { InstanceContext } from "@/project/instance"
 import { SessionID, MessageID } from "@/session/schema"
-import { Effect, Layer, Context } from "effect"
+import { Deferred, Effect, Layer, Context } from "effect"
 import z from "zod"
 import { Config } from "../config"
 import { MCP } from "../mcp"
 import { Skill } from "../skill"
+import { Log } from "../util"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_LOOPS from "./template/loops.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 
+const log = Log.create({ service: "command" })
+
 type State = {
   commands: Record<string, Info>
+  mcp: Record<string, Info>
+  mcpReady: Deferred.Deferred<void>
 }
 
 export const Event = {
@@ -232,35 +237,63 @@ export const layer = Layer.effect(
         }
       }
 
-      for (const [name, prompt] of Object.entries(yield* mcp.prompts())) {
-        commands[name] = {
-          name,
-          source: "mcp",
-          description: prompt.description,
-          get template() {
-            return bridge.promise(
-              mcp
-                .getPrompt(
-                  prompt.client,
-                  prompt.name,
-                  prompt.arguments
-                    ? Object.fromEntries(prompt.arguments.map((argument, i) => [argument.name, `$${i + 1}`]))
-                    : {},
+      // MCP prompts become commands once every server has settled. Collect them
+      // in the background so listing commands (slash completion) never waits
+      // for the slowest server.
+      const mcpCommands: Record<string, Info> = {}
+      const mcpReady = yield* Deferred.make<void>()
+      yield* mcp.prompts().pipe(
+        Effect.map((prompts) => {
+          for (const [name, prompt] of Object.entries(prompts)) {
+            mcpCommands[name] = {
+              name,
+              source: "mcp",
+              description: prompt.description,
+              get template() {
+                return bridge.promise(
+                  mcp
+                    .getPrompt(
+                      prompt.client,
+                      prompt.name,
+                      prompt.arguments
+                        ? Object.fromEntries(prompt.arguments.map((argument, i) => [argument.name, `$${i + 1}`]))
+                        : {},
+                    )
+                    .pipe(
+                      Effect.map(
+                        (template) =>
+                          template?.messages
+                            .map((message) => (message.content.type === "text" ? message.content.text : ""))
+                            .join("\n") || "",
+                      ),
+                    ),
                 )
-                .pipe(
-                  Effect.map(
-                    (template) =>
-                      template?.messages
-                        .map((message) => (message.content.type === "text" ? message.content.text : ""))
-                        .join("\n") || "",
-                  ),
-                ),
-            )
-          },
-          hints: prompt.arguments?.map((_, i) => `$${i + 1}`) ?? [],
-        }
-      }
+              },
+              hints: prompt.arguments?.map((_, i) => `$${i + 1}`) ?? [],
+            }
+          }
+        }),
+        Effect.catchCause((cause) => Effect.sync(() => log.warn("failed to collect MCP prompt commands", { cause }))),
+        Effect.ensuring(Deferred.succeed(mcpReady, undefined)),
+        Effect.forkScoped,
+      )
 
+      return {
+        commands,
+        mcp: mcpCommands,
+        mcpReady,
+      }
+    })
+
+    const state = yield* InstanceState.make<State>((ctx) => init(ctx))
+
+    // Skills are rescanned on every lookup so a skill added on disk is listed
+    // and runnable without a restart. MCP prompts override built-in and config
+    // commands of the same name; skills never override anything.
+    const current = Effect.fnUntraced(function* () {
+      const s = yield* InstanceState.get(state)
+      yield* skill.refresh()
+      const commands: Record<string, Info> = { ...s.commands, ...s.mcp }
       for (const item of yield* skill.all()) {
         if (commands[item.name]) continue
         commands[item.name] = {
@@ -274,22 +307,22 @@ export const layer = Layer.effect(
           hints: [],
         }
       }
-
-      return {
-        commands,
-      }
+      return commands
     })
 
-    const state = yield* InstanceState.make<State>((ctx) => init(ctx))
-
+    // Running a command by name may race MCP startup: on a miss, wait for the
+    // prompt collection and look again. Listing never waits.
     const get = Effect.fn("Command.get")(function* (name: string) {
+      const found = (yield* current())[name]
+      if (found) return found
       const s = yield* InstanceState.get(state)
-      return s.commands[name]
+      if (yield* Deferred.isDone(s.mcpReady)) return undefined
+      yield* Deferred.await(s.mcpReady)
+      return s.mcp[name]
     })
 
     const list = Effect.fn("Command.list")(function* () {
-      const s = yield* InstanceState.get(state)
-      return Object.values(s.commands)
+      return Object.values(yield* current())
     })
 
     return Service.of({ get, list })

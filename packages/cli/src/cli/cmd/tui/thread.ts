@@ -305,6 +305,7 @@ export const TuiThreadCommand = cmd({
             error: errorMessage(error),
           })
         })
+        client.dispose()
         worker.terminate()
       }
 

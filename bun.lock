@@ -26,7 +26,7 @@
     },
     "packages/cli": {
       "name": "@mimo-ai/cli",
-      "version": "0.1.17",
+      "version": "0.1.18",
       "bin": {
         "mimo": "./mimo.js",
       },
@@ -177,7 +177,7 @@
     },
     "packages/plugin": {
       "name": "@mimo-ai/plugin",
-      "version": "0.1.17",
+      "version": "0.1.18",
       "dependencies": {
         "@mimo-ai/sdk": "workspace:*",
         "effect": "catalog:",
@@ -202,7 +202,7 @@
     },
     "packages/sdk": {
       "name": "@mimo-ai/sdk",
-      "version": "0.1.17",
+      "version": "0.1.18",
       "dependencies": {
         "cross-spawn": "catalog:",
       },
@@ -217,7 +217,7 @@
     },
     "packages/shared": {
       "name": "@mimo-ai/shared",
-      "version": "0.1.17",
+      "version": "0.1.18",
       "bin": {
         "opencode": "./bin/opencode",
       },
@@ -251,6 +251,7 @@
     "solid-js@1.9.10": "patches/solid-js@1.9.10.patch",
     "@standard-community/standard-openapi@0.2.9": "patches/@standard-community%2Fstandard-openapi@0.2.9.patch",
     "@opentui/core@0.1.101": "patches/@opentui%2Fcore@0.1.101.patch",
+    "@npmcli/agent@4.0.2": "patches/@npmcli%2Fagent@4.0.2.patch",
     "@ai-sdk/openai-compatible@2.0.41": "patches/@ai-sdk%2Fopenai-compatible@2.0.41.patch",
   },
   "overrides": {

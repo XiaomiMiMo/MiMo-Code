@@ -1,27 +1,118 @@
+import { createHash } from "node:crypto"
+
+// Legacy catalog text: the system-tail block and older user-side snapshots both
+// start with this marker. New catalogs are user-turn reminders identified by
+// metadata, never by text.
 export const SKILL_CATALOG_REMINDER_MARKER = "Skills available in this session:"
-export const SKILL_CATALOG_SNAPSHOT_MARKER = "Authoritative skills catalog snapshot v2:"
-export const SKILL_CATALOG_METADATA_KEY = "skillCatalog"
+
+export const SKILL_REMINDER_KEY = "skills"
+export const SKILL_REMINDER_METADATA_KEY = "skillReminder"
+
+/** Latest announced catalog after this reminder: skill name -> fingerprint. */
+export type SkillReminderMeta = {
+  kind: "entry" | "delta"
+  skills: Record<string, string>
+}
+
+export type CatalogSkill = { name: string; description: string; location: string }
 
 export function isSkillCatalogReminder(text: string) {
   return text.includes(SKILL_CATALOG_REMINDER_MARKER)
 }
 
-export function canonicalSkillCatalog(text: string) {
-  // Skill.fmt already sorts entries and emits stable <name>, <description>, and <location> fields.
-  // Normalize only transport-level whitespace so the content hash does not drift across platforms.
-  return text.replace(/\r\n?/g, "\n").trim()
+/** A user-side catalog persisted by an older engine (no reminder metadata). */
+export function isLegacySkillCatalogPart(part: {
+  synthetic?: boolean
+  text: string
+  metadata?: Record<string, unknown>
+}) {
+  return !!part.synthetic && !part.metadata?.[SKILL_REMINDER_METADATA_KEY] && isSkillCatalogReminder(part.text)
 }
 
-export function isSkillCatalogSnapshot(text: string) {
-  return text.includes(SKILL_CATALOG_SNAPSHOT_MARKER)
+function sha256(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
 
-export function skillCatalogSnapshotVersion(metadata: Record<string, unknown> | undefined) {
-  const value = metadata?.[SKILL_CATALOG_METADATA_KEY]
-  if (!value || typeof value !== "object" || !("version" in value) || typeof value.version !== "string") return
-  return /^[a-f0-9]{64}$/.test(value.version) ? value.version : undefined
+// Only what the model sees in a catalog entry. Body edits are read at load
+// time, so they do not need a reminder.
+export function skillFingerprint(skill: CatalogSkill) {
+  return sha256([skill.name, skill.description, skill.location]).slice(0, 16)
 }
 
-export function isLegacySkillCatalogReminder(text: string) {
-  return isSkillCatalogReminder(text) && !isSkillCatalogSnapshot(text)
+export function catalogState(skills: readonly CatalogSkill[]): Record<string, string> {
+  return Object.fromEntries(
+    skills.map((skill) => [skill.name, skillFingerprint(skill)]).toSorted(([a], [b]) => a.localeCompare(b)),
+  )
+}
+
+export function skillReminderRev(meta: SkillReminderMeta) {
+  return `skills:${meta.kind}:${sha256(Object.entries(meta.skills).toSorted(([a], [b]) => a.localeCompare(b)))}`
+}
+
+export function readSkillReminderMeta(value: unknown): SkillReminderMeta | undefined {
+  if (!value || typeof value !== "object") return undefined
+  if (!("kind" in value) || (value.kind !== "entry" && value.kind !== "delta")) return undefined
+  if (!("skills" in value) || !value.skills || typeof value.skills !== "object") return undefined
+  const skills: Record<string, string> = {}
+  for (const [name, fingerprint] of Object.entries(value.skills)) {
+    if (typeof fingerprint !== "string") return undefined
+    skills[name] = fingerprint
+  }
+  return { kind: value.kind, skills }
+}
+
+export type SkillCatalogChange =
+  | { kind: "entry"; skills: CatalogSkill[]; meta: SkillReminderMeta }
+  | { kind: "delta"; changed: CatalogSkill[]; removed: string[]; meta: SkillReminderMeta }
+
+/**
+ * Compare the current catalog with the latest announced state. Without an
+ * announced state, a non-empty catalog needs an entry; with one, any added,
+ * changed, or removed skill needs a delta. Undefined means nothing to inject.
+ */
+export function diffSkillCatalog(input: {
+  announced: Record<string, string> | undefined
+  current: readonly CatalogSkill[]
+}): SkillCatalogChange | undefined {
+  const skills = input.current.toSorted((a, b) => a.name.localeCompare(b.name))
+  const state = catalogState(skills)
+  if (!input.announced) {
+    if (skills.length === 0) return undefined
+    return { kind: "entry", skills, meta: { kind: "entry", skills: state } }
+  }
+  const announced = input.announced
+  const changed = skills.filter((skill) => announced[skill.name] !== state[skill.name])
+  const removed = Object.keys(announced)
+    .filter((name) => !(name in state))
+    .toSorted()
+  if (changed.length === 0 && removed.length === 0) return undefined
+  return { kind: "delta", changed, removed, meta: { kind: "delta", skills: state } }
+}
+
+// The legacy system tail held one block: the marker line, then either the
+// verbose catalog or the empty-catalog sentence. buildSystemArray joins parts
+// with a blank line, so the separator goes with the block.
+const LEGACY_SYSTEM_CATALOG =
+  /(?:\n\n)?Skills available in this session:\n(?:<available_skills>[\s\S]*?<\/available_skills>|No skills are currently available\.)/g
+
+/**
+ * Remove legacy catalog blocks from a frozen system prompt. Blocks that the
+ * host-supplied system itself contains are host content: as many leading
+ * occurrences as the host has stay, and the engine's tail copies go.
+ */
+export function stripLegacySkillCatalog(system: readonly string[], hostSystem = ""): string[] {
+  const hostBlocks = new Map<string, number>()
+  for (const match of hostSystem.matchAll(LEGACY_SYSTEM_CATALOG)) {
+    const block = match[0].trimStart()
+    hostBlocks.set(block, (hostBlocks.get(block) ?? 0) + 1)
+  }
+  return system.map((part) =>
+    part.replace(LEGACY_SYSTEM_CATALOG, (match) => {
+      const block = match.trimStart()
+      const keep = hostBlocks.get(block) ?? 0
+      if (keep === 0) return ""
+      hostBlocks.set(block, keep - 1)
+      return match
+    }),
+  )
 }

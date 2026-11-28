@@ -38,7 +38,7 @@ mimo attach http://127.0.0.1:4096
 Memory persists across sessions and is auto-injected on resume, so the agent doesn't relearn project context.
 
 - **Project rules / architecture** — edit `MEMORY.md` (project memory). Durable rules go under `## Rules`, design decisions under `## Architecture decisions`. The agent may also write here at checkpoint time.
-- **`/dream`** — scans recent session traces, promotes durable knowledge into `MEMORY.md`, and prunes stale entries. Runs automatically per `dream.interval_days` (default 7).
+- **`/dream`** — scans recent session traces, promotes durable knowledge into `MEMORY.md`, and prunes stale entries. Automatic runs on new session start are off by default; set `dream.auto: true` to enable (default `dream.interval_days`: 7).
 - **Checkpoints** (`checkpoint.md`) are maintained *only* by the checkpoint-writer subagent — don't hand-edit them.
 - **Scratch notes** (`notes.md`) are the agent's free-form scratchpad.
 - To make a rule stick immediately without waiting for a checkpoint, just tell the agent — it can edit `MEMORY.md` directly.

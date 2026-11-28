@@ -402,6 +402,10 @@ export const ExperimentalRoutes = lazy(() =>
           search: z.string().optional().meta({ description: "Filter sessions by title (case-insensitive)" }),
           limit: z.coerce.number().optional().meta({ description: "Maximum number of sessions to return" }),
           archived: z.coerce.boolean().optional().meta({ description: "Include archived sessions (default false)" }),
+          view: z.enum(["full", "brief"]).optional().meta({
+            description:
+              "Response detail (default full). `brief` omits prompt, permission, revert and summary.diffs from every session",
+          }),
         }),
       ),
       async (c) => {
@@ -416,6 +420,7 @@ export const ExperimentalRoutes = lazy(() =>
           search: query.search,
           limit: limit + 1,
           archived: query.archived,
+          view: query.view,
         })) {
           sessions.push(session)
         }

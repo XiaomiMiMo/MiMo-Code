@@ -41,7 +41,10 @@ jobs:
       # runtime-worktree and stdio-exit-observe also keep their isolated runs.
       # Provider refresh checks process-wide idleness, so run those suites apart
       # from session fixtures that leave detached notification/wake work alive.
-      # Path-hash sharding keeps existing files in the same shard when files change.
+      # Files are split by recorded duration (test/shard-weights.json, refreshed
+      # with `bun script/test-shard.ts --update <junit.xml>...`); unknown files weigh 1s.
+      # The isolated steps below are spread across shards; --reserve tells the
+      # split how many seconds each shard already spends on them.
       - name: Run unit tests (shard ${{ matrix.shard }})
         timeout-minutes: 8
         working-directory: packages/cli
@@ -49,12 +52,7 @@ jobs:
           shard=${{ matrix.shard }}
           idx=${shard%/*}
           n=${shard#*/}
-          files=$(while IFS= read -r f; do
-            h=$(printf '%s' "$f" | cksum | awk '{print $1}')
-            if [ $((h % n)) -eq $((idx - 1)) ]; then
-              printf '%s\n' "$f"
-            fi
-          done < <(find test -name '*.test.ts' \
+          files=$(find test -name '*.test.ts' \
             ! -name 'runtime-worktree.test.ts' \
             ! -name 'stdio-exit-observe.test.ts' \
             ! -path 'test/mcp/lifecycle.test.ts' \
@@ -62,7 +60,8 @@ jobs:
             ! -path 'test/mcp/oauth-auto-connect.test.ts' \
             ! -path 'test/mcp/oauth-browser.test.ts' \
             ! -path 'test/provider/refresh.test.ts' \
-            ! -path 'test/provider/refresh-boundaries.test.ts' | sort))
+            ! -path 'test/provider/refresh-boundaries.test.ts' \
+            ! -path 'test/actor/subagent-resume-negatives.test.ts' | sort | bun script/test-shard.ts "$idx" "$n" --reserve 21,13,16,14)
           # Empty shard: `bun test` with no file args discovers everything,
           # including the excluded isolation files. Skip instead of running
           # the whole suite in this leg.
@@ -82,8 +81,10 @@ jobs:
           name: junit-shard-${{ strategy.job-index }}
           path: packages/cli/.artifacts/unit/junit.xml
 
+      # Isolated steps below are pinned to shards; keep `--reserve` above in
+      # step with their per-shard step time when moving or adding one.
       - name: Run provider refresh tests (isolated)
-        if: matrix.shard == '4/4'
+        if: matrix.shard == '2/4'
         timeout-minutes: 3
         working-directory: packages/cli
         run: |
@@ -92,7 +93,7 @@ jobs:
           done
 
       - name: Run MCP mock suites (isolated)
-        if: matrix.shard == '4/4'
+        if: matrix.shard == '1/4'
         timeout-minutes: 3
         working-directory: packages/cli
         run: |
@@ -104,22 +105,30 @@ jobs:
             bun test "$file" --timeout 120000
           done
 
-      # Run deadline worktree test in isolation (shard 4/4 only).
       - name: Run deadline worktree test (isolated)
-        if: matrix.shard == '4/4'
+        if: matrix.shard == '2/4'
         timeout-minutes: 3
         working-directory: packages/cli
         run: bun test test/workflow/runtime-worktree.test.ts -t 'deadline-fired' --timeout 120000
 
-      # Run stdio-exit-observe in isolation (shard 4/4 only): needs the real
-      # ObservingStdioTransport, which lifecycle.test.ts mock.module's away.
+      # stdio-exit-observe needs the real ObservingStdioTransport, which
+      # lifecycle.test.ts mock.module's away.
       - name: Run stdio-exit-observe test (isolated)
-        if: matrix.shard == '4/4'
+        if: matrix.shard == '3/4'
         timeout-minutes: 2
         working-directory: packages/cli
         run: bun test test/mcp/stdio-exit-observe.test.ts --timeout 120000
 
-      - name: Run release script tests
+      # subagent-resume-negatives leaves work running that, combined with other
+      # files in the same process, stalls the shared log queue on Linux and hangs
+      # unrelated suites (task/registry, mcp/admission-completion-boundaries).
+      - name: Run subagent resume negatives (isolated)
         if: matrix.shard == '4/4'
+        timeout-minutes: 3
+        working-directory: packages/cli
+        run: bun test test/actor/subagent-resume-negatives.test.ts --timeout 120000
+
+      - name: Run release script tests
+        if: matrix.shard == '3/4'
         timeout-minutes: 3
         run: bun test script/release.test.ts --timeout 120000

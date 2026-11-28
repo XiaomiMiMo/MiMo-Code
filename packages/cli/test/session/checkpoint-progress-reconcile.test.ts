@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
-import os from "os"
 import path from "path"
 import {
   parseWrittenAt,
@@ -9,21 +8,18 @@ import {
   renderProgressDiffBlock,
   buildProgressDiff,
 } from "../../src/session/checkpoint-progress-reconcile"
-import { checkpointPath, tasksDir, progressPath } from "../../src/session/checkpoint-paths"
+import { checkpointPath, metaDir, tasksDir, progressPath } from "../../src/session/checkpoint-paths"
 import { SessionID } from "../../src/session/schema"
 
-async function withTmpHome<T>(fn: (sid: SessionID) => Promise<T>): Promise<T> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "progress-reconcile-test-"))
-  const prevHome = process.env.MIMOCODE_HOME
-  process.env.MIMOCODE_HOME = dir
+// Checkpoint paths resolve from Global.Path.data, which is fixed at import, so
+// isolation comes from the session id: each test gets its own session folder.
+async function withSession<T>(fn: (sid: SessionID) => Promise<T>): Promise<T> {
+  const sid = SessionID.descending()
   try {
-    const sid = SessionID.make("ses_test_" + Date.now())
     await fs.mkdir(tasksDir(sid), { recursive: true })
     return await fn(sid)
   } finally {
-    if (prevHome === undefined) delete process.env.MIMOCODE_HOME
-    else process.env.MIMOCODE_HOME = prevHome
-    await fs.rm(dir, { recursive: true, force: true })
+    await fs.rm(metaDir(sid), { recursive: true, force: true })
   }
 }
 
@@ -102,14 +98,14 @@ describe("renderProgressDiffBlock", () => {
 
 describe("buildProgressDiffItems", () => {
   test("empty tasks dir → no items", async () => {
-    await withTmpHome(async (sid) => {
+    await withSession(async (sid) => {
       const items = await buildProgressDiffItems(sid)
       expect(items).toEqual([])
     })
   })
 
   test("single NEW (no §4 marker in main)", async () => {
-    await withTmpHome(async (sid) => {
+    await withSession(async (sid) => {
       await writeMain(sid, "## §4 Task tree\n(none)\n")
       await writeProgress(sid, "T4", "---\nwritten-at: 100\n---\n## §1\n")
       const items = await buildProgressDiffItems(sid)
@@ -118,7 +114,7 @@ describe("buildProgressDiffItems", () => {
   })
 
   test("CHANGED when written-at > prior", async () => {
-    await withTmpHome(async (sid) => {
+    await withSession(async (sid) => {
       await writeMain(
         sid,
         "🔵 T4 a (progress: tasks/T4/progress.md, last-reconciled-written-at: 100)\n",
@@ -130,7 +126,7 @@ describe("buildProgressDiffItems", () => {
   })
 
   test("UNCHANGED when written-at <= prior", async () => {
-    await withTmpHome(async (sid) => {
+    await withSession(async (sid) => {
       await writeMain(
         sid,
         "🔵 T4 a (progress: tasks/T4/progress.md, last-reconciled-written-at: 100)\n",
@@ -142,7 +138,7 @@ describe("buildProgressDiffItems", () => {
   })
 
   test("missing frontmatter (splitover-authored) is skipped", async () => {
-    await withTmpHome(async (sid) => {
+    await withSession(async (sid) => {
       await writeMain(sid, "## §4 Task tree\n(none)\n")
       await writeProgress(sid, "T4", "## §1 Task identity\nno frontmatter\n")
       const items = await buildProgressDiffItems(sid)
@@ -151,7 +147,7 @@ describe("buildProgressDiffItems", () => {
   })
 
   test("mixed NEW + CHANGED + UNCHANGED + skip", async () => {
-    await withTmpHome(async (sid) => {
+    await withSession(async (sid) => {
       await writeMain(
         sid,
         "🔵 T2 (progress: tasks/T2/progress.md, last-reconciled-written-at: 50)\n" +
@@ -173,13 +169,13 @@ describe("buildProgressDiffItems", () => {
 
 describe("buildProgressDiff (integration)", () => {
   test("empty when nothing to reconcile", async () => {
-    await withTmpHome(async (sid) => {
+    await withSession(async (sid) => {
       expect(await buildProgressDiff(sid)).toBe("")
     })
   })
 
   test("renders block when items exist", async () => {
-    await withTmpHome(async (sid) => {
+    await withSession(async (sid) => {
       await writeMain(sid, "## §4 Task tree\n(none)\n")
       await writeProgress(sid, "T4", "---\nwritten-at: 100\n---\nbody")
       const out = await buildProgressDiff(sid)

@@ -1,0 +1,7 @@
+Read a local audio file and attach it so you can listen to it yourself: describe, transcribe, summarize, or answer questions about its content without an external transcription service.
+
+Usage:
+- The `file_path` parameter identifies the audio file to read. Relative paths resolve against the session working directory.
+- Accepted formats: wav, mp3. Other formats are refused; convert them first (e.g. with ffmpeg).
+- The file is inlined when small enough (about 37 MB on disk, 50 MB once base64-encoded); otherwise it is refused without being read.
+- Read the file first, then analyze its content in the same turn.

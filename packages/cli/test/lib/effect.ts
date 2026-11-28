@@ -10,6 +10,12 @@ type Body<A, E, R> = Effect.Effect<A, E, R> | (() => Effect.Effect<A, E, R>)
 const body = <A, E, R>(value: Body<A, E, R>) => Effect.suspend(() => (typeof value === "function" ? value() : value))
 const running = new Map<Fiber.Fiber<unknown, unknown>, () => void>()
 
+// The log queue is process-wide: work leaked by earlier files can back it up for
+// minutes on slow CI disks. Flushing here is best-effort; tests that assert on
+// log contents call Log.flush() themselves.
+const FLUSH_BUDGET_MS = 1_000
+const flushLogs = () => Promise.race([Log.flush(), Bun.sleep(FLUSH_BUDGET_MS)])
+
 afterEach(async () => {
   await Promise.all(
     [...running].map(([fiber, cancel]) => {
@@ -17,7 +23,7 @@ afterEach(async () => {
       return Effect.runPromise(Fiber.interrupt(fiber))
     }),
   )
-  await Log.flush()
+  await flushLogs()
 })
 
 const run = <A, E, R, E2>(value: Body<A, E, R | Scope.Scope>, layer: Layer.Layer<R, E2>) => {
@@ -29,7 +35,7 @@ const run = <A, E, R, E2>(value: Body<A, E, R | Scope.Scope>, layer: Layer.Layer
       }
     }
     return yield* exit
-  }).pipe(Effect.ensuring(Effect.promise(() => Log.flush())), Effect.runFork)
+  }).pipe(Effect.ensuring(Effect.promise(flushLogs)), Effect.runFork)
   fiber.addObserver(() => running.delete(fiber))
   return new Promise<A>((resolve, reject) => {
     const cancel = fiber.addObserver((exit) => {
