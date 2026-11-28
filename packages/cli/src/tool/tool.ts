@@ -50,6 +50,12 @@ export interface Def<Parameters extends z.ZodType = z.ZodType, M extends Metadat
   parameters: Parameters
   execute(args: z.infer<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
   formatValidationError?(error: z.ZodError): string
+  // Structural repair applied to the raw arguments before validation, for
+  // tools whose models reliably emit an off-shape-but-unambiguous payload.
+  // It runs outside the zod schema on purpose: wrapping the schema would change
+  // the JSON Schema advertised to providers, and this must only add tolerance.
+  // Returns the input unchanged when nothing needs repairing.
+  coerceArgs?(value: unknown): unknown
 }
 export type DefWithoutID<Parameters extends z.ZodType = z.ZodType, M extends Metadata = Metadata> = Omit<
   Def<Parameters, M>,
@@ -99,6 +105,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
     Effect.gen(function* () {
       const toolInfo = typeof init === "function" ? { ...(yield* init()) } : { ...init }
       const execute = toolInfo.execute
+      const coerceArgs = toolInfo.coerceArgs
       toolInfo.execute = (args, ctx) => {
         const attrs = {
           "tool.name": id,
@@ -107,8 +114,12 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
           ...(ctx.callID ? { "tool.call_id": ctx.callID } : {}),
         }
         return Effect.gen(function* () {
+          // Repair before validating, and hand the repaired value to execute:
+          // validating the repair while executing the original would pass
+          // validation and then act on the malformed shape.
+          const input = (coerceArgs ? coerceArgs(args) : args) as z.infer<Parameters>
           yield* Effect.try({
-            try: () => toolInfo.parameters.parse(args),
+            try: () => toolInfo.parameters.parse(input),
             catch: (error) => {
               // Bad arguments are always agent-recoverable: the model sees the
               // message and rewrites the call next turn. Mark it so the TUI
@@ -119,7 +130,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
               return new RecoverableError(validationErrorMessage(id, error), { cause: error })
             },
           })
-          const result = yield* execute(args, ctx)
+          const result = yield* execute(input, ctx)
           if (result.metadata.truncated !== undefined) {
             return result
           }
