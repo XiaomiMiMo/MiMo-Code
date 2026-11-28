@@ -72,6 +72,7 @@ function client(directory: string) {
       signal,
     })
   return {
+    app,
     directory,
     request,
     post,
@@ -314,6 +315,46 @@ describe("HTTP Inbox admission", () => {
         expect(messages.map((message) => message.info.id)).toEqual([messageID])
         expect(messages[0].info.role).toBe("user")
         expect(await Effect.runPromise(llm.calls)).toBe(0)
+      }),
+    30_000,
+  )
+
+  test(
+    "a receipt is found read-only by the caller's messageID without submitting again",
+    () =>
+      fixture(async (http, llm) => {
+        const session = await http.session()
+        const other = await http.session()
+        const messageID = MessageID.ascending()
+        const byMessage = (sessionID: SessionID, id: string) =>
+          http.app.request(
+            `/session/${sessionID}/receipt?messageID=${id}&directory=${encodeURIComponent(http.directory)}`,
+          )
+        // Nothing admitted yet: the lookup reports absence and admits nothing.
+        const before = await byMessage(session.id, messageID)
+        expect(before.status).toBe(404)
+        expect(rows(session.id)).toHaveLength(0)
+        await Effect.runPromise(llm.text("lookup answer"))
+        const response = await http.post(`/session/${session.id}/prompt_async`, {
+          messageID,
+          model,
+          parts: [{ type: "text", text: "lookup prompt" }],
+        })
+        const receipt = await accepted(http, session.id, response, messageID)
+        const found = await byMessage(session.id, messageID)
+        expect(found.status).toBe(200)
+        const parsed = PublicReceipt.parse(await found.json())
+        expect(parsed.id).toBe(receipt.id)
+        expect(parsed.inputMessageID).toBe(messageID)
+        // Session-scoped, and a malformed id is rejected rather than matched.
+        expect((await byMessage(other.id, messageID)).status).toBe(404)
+        expect((await byMessage(session.id, "not-a-message-id")).status).toBe(400)
+        const done = await settled(http, session.id, receipt.id)
+        const after = PublicReceipt.parse(await (await byMessage(session.id, messageID)).json())
+        expect(after.outcome).toBe(done.outcome)
+        // Looking up never submits: still one receipt and one model call.
+        expect(rows(session.id)).toHaveLength(1)
+        expect(await Effect.runPromise(llm.calls)).toBe(1)
       }),
     30_000,
   )

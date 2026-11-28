@@ -173,6 +173,8 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionReceiptByMessageErrors,
+  SessionReceiptByMessageResponses,
   SessionReceiptErrors,
   SessionReceiptResponses,
   SessionRecoveryErrors,
@@ -2788,6 +2790,44 @@ export class Session2 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Find turn receipt by message
+   *
+   * Read-only lookup of the receipt for a prompt submitted with this messageID. Lets a caller that lost the prompt_async response learn the outcome without submitting again; 404 means no prompt with this messageID was admitted to the session.
+   */
+  public receiptByMessage<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      messageID: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "messageID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      SessionReceiptByMessageResponses,
+      SessionReceiptByMessageErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/receipt",
+      ...options,
+      ...params,
     })
   }
 

@@ -6019,6 +6019,57 @@ export type SessionPromptAsyncResponses = {
 
 export type SessionPromptAsyncResponse = SessionPromptAsyncResponses[keyof SessionPromptAsyncResponses]
 
+export type SessionReceiptByMessageData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query: {
+    directory?: string
+    workspace?: string
+    messageID: string
+  }
+  url: "/session/{sessionID}/receipt"
+}
+
+export type SessionReceiptByMessageErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionReceiptByMessageError = SessionReceiptByMessageErrors[keyof SessionReceiptByMessageErrors]
+
+export type SessionReceiptByMessageResponses = {
+  /**
+   * Receipt
+   */
+  200: {
+    id: string
+    lane: {
+      sessionID: string
+      agentID: string
+    }
+    state: "accepted" | "claimed" | "settled" | "cancelled" | "rejected"
+    type: string
+    senderSessionID?: string
+    senderActorID?: string
+    epoch: number
+    consumed: boolean
+    outcome?: "success" | "assistant_error" | "interrupted" | "never_ran"
+    inputMessageID: string
+    deliveryMessageID?: string
+    error?: string
+  }
+}
+
+export type SessionReceiptByMessageResponse = SessionReceiptByMessageResponses[keyof SessionReceiptByMessageResponses]
+
 export type SessionReceiptData = {
   body?: never
   path: {
