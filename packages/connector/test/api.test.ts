@@ -33,9 +33,10 @@ describe("Connect endpoints for the CLI role", () => {
     expect(pages).toHaveLength(3)
   })
 
-  test("grant publish is a CAS on expectedVersion and tokens are bound to group, lane and epoch", async () => {
+  test("grant publish is a CAS on expectedVersion and the bus registration is bound to group, grant and epoch", async () => {
     using h = await harness()
     await h.register()
+    h.service.epoch = 2
     const bindingId = crypto.randomUUID()
     h.service.bindings.set(bindingId, h.service.bindingView(bindingId))
     const meta = await h.api.upgradeMetadata(bindingId, 2)
@@ -49,14 +50,26 @@ describe("Connect endpoints for the CLI role", () => {
     expect(grant.grantVersion).toBe(1)
     expect(h.service.requests.at(-1)!.body).toMatchObject({ expectedVersion: 0, grantVersion: 1, targetKind: "cli" })
     const deviceGroupId = crypto.randomUUID()
-    const token = await h.api.channelToken(bindingId, {
+    const registration = await h.api.busRegistration(bindingId, { deviceGroupId, grantVersion: 1, connectionEpoch: 2 })
+    expect(registration).toEqual({
+      protocolVersion: 1,
+      bindingId,
       deviceGroupId,
-      lane: "state",
-      grantVersion: 1,
       connectionEpoch: 2,
+      grantVersion: 1,
+      expiresInMs: 75000,
     })
-    expect(token.lane).toBe("state")
-    expect(token.deviceGroupId).toBe(deviceGroupId)
+    // A CLI connector registers the group only: the body is the closed four-key set.
+    expect(Object.keys(h.service.requests.at(-1)!.body as object).sort()).toEqual([
+      "connectionEpoch",
+      "deviceGroupId",
+      "grantVersion",
+      "protocolVersion",
+    ])
+    expect(h.service.requests.at(-1)!.headers.get("Mimo-Connect-Profile")).toBe("cli-connector")
+    await expect(
+      h.api.busRegistration(bindingId, { deviceGroupId, grantVersion: 2, connectionEpoch: 2 }),
+    ).rejects.toMatchObject({ code: "grant_changed" })
   })
 
   test("unknown or missing fields in a response are rejected", async () => {

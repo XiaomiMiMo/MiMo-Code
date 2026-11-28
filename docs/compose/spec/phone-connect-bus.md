@@ -1,0 +1,12 @@
+# MiMo Code phone connection: Connect bus
+
+The existing Passport login supplies the Connect account. The connector registers its own device proof key and uses the `cli-connector` profile. Pairing still requires a local confirmation; approval alone does not grant session access.
+
+- Capability discovery precedes registration. An empty profile list means CLI access is not offered; a nonempty list without `cli-connector` means the version is incompatible. A failed request (including a 404) is not capability evidence. A correlated Connect 426 is also a version incompatibility: the terminal asks the user to update both MiMo Code and the phone app, without switching profiles or clearing saved bindings.
+- The control socket owns the connection epoch and online lease. A binding is exposed only while the current installation's protected consent matches the account, phone, binding and revocation version.
+- A new control epoch may write one fixed next grant version for the recorded scopes. A lost response is reconciled by reading that exact grant. Only a local preflight cooldown or an explicit `proof_expired` rejection permits another attempt with the same version and fresh proof. A bus-only failure never bumps the grant version.
+- A device group owns one bus socket: connect, subscribe to `cmd:{bindingId}`, then register the group without Desktop declarations. Renew the registration every 25 seconds. Group loss retires its observers and outstanding replies; recovery uses a fresh group ID, without replaying a business command.
+- On the current Connect contract, phone requests are forwarded with a dispatch ID and replies are published to `rep:{bindingId}:{requestId}`. The phone's HTTP delivery acknowledgement, the bus acknowledgement of a publication, and durable acceptance of a send are distinct. Publish text before state, and do not advance observation progress on a failed publish.
+- The CLI command set stays limited to listing, observing and reading sessions, ending an observation, and sending plain text or checking the original send where permitted. A local disconnect does not stop a task already accepted by MiMo Code. No old relay, Desktop-specific control, or attachment support is kept alongside the bus.
+
+The connector tests use a local Connect substitute. The CLI phone integration test adds the actual MiMo Code session engine and a local model substitute. Neither proves compatibility with a released Android build or a deployed Connect instance.

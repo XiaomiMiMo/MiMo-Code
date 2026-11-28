@@ -1,5 +1,5 @@
-// Durable connector state: bindings and local consent, the per-lane fence gate
-// and the phone-request -> message-ID map.
+// Durable connector state: bindings and local consent and the phone-request ->
+// message-ID map.
 //
 // The file is AES-GCM encrypted with a data key that lives only in the
 // SecretStore, so nothing readable lands on disk and no symmetric key is stored
@@ -13,6 +13,8 @@ import type { SecretStore } from "./ports"
 export type Consent = {
   bindingId: string
   phoneId: string
+  connectorId: string
+  revocationVersion: number
   phoneName: string
   /** Account the user confirmed under; a different account needs a new confirmation. */
   subject: string
@@ -21,21 +23,13 @@ export type Consent = {
   confirmedAt: number
 }
 
-export type GateEntry = {
-  fenceId: string
-  grantVersion: number
-  revocationVersion: number
-  connectionEpoch: number
-  active: boolean
-}
-
 export type Submission = { messageId: string; textSha256: string; createdAt: number }
 
 /** The registration of this installation's key for one account. */
 export type Installation = { origin: string; environment: string; subject: string; deviceId: string }
 
 /** A local confirmation recorded before approving, so a crash after approve still finds it. */
-export type PendingConsent = Omit<Consent, "bindingId" | "phoneId">
+export type PendingConsent = Omit<Consent, "bindingId" | "phoneId" | "revocationVersion">
 
 export type ConnectorState = {
   version: 1
@@ -43,8 +37,6 @@ export type ConnectorState = {
   consents: Record<string, Consent>
   /** pairing requestId -> the confirmation given for it, until the binding is known. */
   pending: Record<string, PendingConsent>
-  /** `${bindingId}:${lane}` -> last fence this installation made durable. */
-  gates: Record<string, GateEntry>
   /** `${bindingId}:${sessionId}:${requestId}` -> the message ID a phone request was submitted as. */
   submissions: Record<string, Submission>
 }
@@ -54,7 +46,7 @@ const DATA_KEY = "state-key"
 const SUBMISSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 export function emptyState(): ConnectorState {
-  return { version: 1, consents: {}, pending: {}, gates: {}, submissions: {} }
+  return { version: 1, consents: {}, pending: {}, submissions: {} }
 }
 
 export class StateFile {
@@ -124,7 +116,7 @@ export class StateFile {
   }
 
   private async key(create: boolean): Promise<CryptoKey | undefined> {
-    // Read once: every gate and submission write goes through here, and a store read can be a subprocess.
+    // Read once: every consent and submission write goes through here, and a store read can be a subprocess.
     if (this.dataKey) return this.dataKey
     const stored = await this.secrets.get(DATA_KEY)
     if (stored) {

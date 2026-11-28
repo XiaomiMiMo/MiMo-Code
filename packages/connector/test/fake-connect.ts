@@ -2,15 +2,16 @@
 // mistakes: it checks the Passport credential headers, verifies every device
 // proof (ES256 over the JWS, closed claims, nonce single use, body digest, login
 // instance), enforces the version / profile / request-id header rules, requires
-// the server-v1 heartbeat on every socket and answers with the real envelope.
-// Tests script business state on it.
+// the server-v1 heartbeat on the control socket, speaks the bus (Centrifuge JSON
+// subset) on /api/connect/bus and answers with the real envelope. Tests script
+// business state on it.
 
 import type { Server, ServerWebSocket } from "bun"
 import { base64url, canonical, fromBase64url, hex, sha256 } from "../src/json"
-import { CONTENT_PROTOCOL } from "../src/lane"
+import { BUS_PROTOCOL } from "../src/bus"
 import { CONTROL_PROTOCOL } from "../src/control"
 
-type Socket = ServerWebSocket<{ path: string; lane?: string }>
+type Socket = ServerWebSocket<{ path: string }>
 
 export type FakeOptions = {
   environment?: string
@@ -35,7 +36,7 @@ export class FakeConnect {
   loginInstanceId: string
   /** False: the account is not on the admission list (device challenges answer 403). */
   admitted = true
-  private server!: Server<{ path: string; lane?: string }>
+  private server!: Server<{ path: string }>
   private nonces = new Map<string, { method: string; path: string; thumbprint: string }>()
   /** Every HTTP request, for assertions. */
   readonly requests: { method: string; path: string; headers: Headers; body?: unknown }[] = []
@@ -45,22 +46,26 @@ export class FakeConnect {
   readonly tamper = new Map<string, (response: Response) => Response | Promise<Response>>()
   devices = new Map<string, { name: string; thumbprint: string }>()
   epoch = 0
-  discovery: "cli" | "empty" | "missing" = "cli"
+  discovery: "cli" | "empty" | "missing" | readonly string[] = "cli"
   challenges = new Map<
     string,
     { code: string; status: string; request: null | { requestId: string; phoneName: string } }
   >()
   decisions = new Map<string, { status: string; bindingId: string | null }>()
   grants = new Map<string, Record<string, unknown>>()
-  /** Last fence state sent per lane path: a revoked fence ends with fence-confirmed on ack. */
-  private fenceStates = new Map<string, "active" | "revoked">()
   bindings = new Map<string, Record<string, unknown>>()
   control: Socket | undefined
-  lanes = new Map<string, Socket>()
+  /** Current bus registration per binding (bus-channel §4.3). */
+  readonly registrations = new Map<string, { deviceGroupId: string; connectionEpoch: number; grantVersion: number }>()
+  /** Live bus subscriptions: channel -> socket. */
+  readonly subscriptions = new Map<string, Socket>()
+  /** Publications the connector made on reply channels, in order. */
+  readonly published: { channel: string; data: Record<string, unknown> }[] = []
   /** Frames received on WS, by path. */
   readonly frames: { path: string; frame: Record<string, unknown> }[] = []
-  /** When false, content lanes stop after fence (to test fence handling). */
-  sendTransportReady = true
+  /** Scripted refusal of the next publish: Centrifuge error code. */
+  refusePublish: number | undefined
+  private offset = 0
 
   constructor(options: FakeOptions = {}) {
     this.environment = options.environment ?? "china-test"
@@ -92,7 +97,7 @@ export class FakeConnect {
   }
 
   start(): this {
-    this.server = Bun.serve<{ path: string; lane?: string }>({
+    this.server = Bun.serve<{ path: string }>({
       port: 0,
       fetch: (request, server) => this.handle(request, server),
       websocket: {
@@ -101,6 +106,7 @@ export class FakeConnect {
         close: (ws) => {
           this.heartbeats.delete(ws)
           if (ws === this.control) this.control = undefined
+          for (const [channel, socket] of this.subscriptions) if (socket === ws) this.subscriptions.delete(channel)
         },
       },
     })
@@ -115,7 +121,7 @@ export class FakeConnect {
 
   private async handle(
     request: Request,
-    server: Server<{ path: string; lane?: string }>,
+    server: Server<{ path: string }>,
   ): Promise<Response | undefined> {
     const url = new URL(request.url)
     const path = url.pathname
@@ -127,7 +133,7 @@ export class FakeConnect {
     const scripted = this.failNext.get(path)
     if (scripted) {
       this.failNext.delete(path)
-      return this.error(id, scripted[0], scripted[1], "1.0", scripted[2])
+      return this.error(id, scripted[0], scripted[1], scripted[0] === 426 ? null : "1.0", scripted[2])
     }
     if (!this.authenticated(request.headers)) return this.error(id, 401, "unauthenticated", null)
     const version = request.headers.get("Mimo-Connect-Version")
@@ -148,8 +154,8 @@ export class FakeConnect {
       if (profile !== null) return this.error(id, 400, "invalid_request", version)
       if (this.discovery === "missing") return this.error(id, 404, "not_found", null)
       return respond({
-        contract: "connector-discovery-v1",
-        profiles: this.discovery === "cli" ? ["cli-connector-v1"] : [],
+        contract: "connector-discovery",
+        profiles: this.discovery === "cli" ? ["cli-connector"] : this.discovery === "empty" ? [] : this.discovery,
       })
     }
     if (path === "/api/connect/device-challenges") {
@@ -166,7 +172,7 @@ export class FakeConnect {
       })
     }
     // Everything below is a CLI actor endpoint: profile required, proof required.
-    if (profile !== "cli-connector-v1") return this.error(id, 426, "protocol_incompatible", null)
+    if (profile !== "cli-connector") return this.error(id, 426, "protocol_incompatible", null)
     const proof = await this.verifyProof(request.method, path, body, request.headers.get("X-Device-Proof"))
     if (!proof) return this.error(id, 401, "proof_rejected", version)
     if (path === "/api/connect/devices" && request.method === "POST") {
@@ -225,7 +231,7 @@ export class FakeConnect {
       const page = all.slice(start, start + 1)
       const next = start + 1 < all.length ? String(start + 1) : null
       return {
-        contract: "connector-bindings-v1",
+        contract: "connector-bindings",
         deviceId: list[1],
         bindings: page.map((binding) => ({ binding, phoneName: "Pixel" })),
         nextCursor: next,
@@ -246,6 +252,12 @@ export class FakeConnect {
     const grant = path.match(/^\/api\/connect\/bindings\/([^/]+)\/content-grant$/)
     if (grant && method === "GET") return this.grants.get(grant[1])
     if (grant && method === "PUT") {
+      const binding = this.bindings.get(grant[1])
+      if (binding?.state !== "active") throw new FakeError(403, "binding_revoked")
+      const current = this.grants.get(grant[1])?.grantVersion ?? 0
+      if (body.connectionEpoch !== this.epoch || body.expectedVersion !== current || body.grantVersion !== body.expectedVersion + 1) {
+        throw new FakeError(409, "conflict")
+      }
       const view = {
         protocolVersion: 1,
         targetKind: "cli",
@@ -261,23 +273,28 @@ export class FakeConnect {
       this.grants.set(grant[1], view)
       return view
     }
-    const token = path.match(/^\/api\/connect\/bindings\/([^/]+)\/content-channel-tokens\/cli$/)
-    if (token) {
+    const registration = path.match(/^\/api\/connect\/bindings\/([^/]+)\/bus-registration$/)
+    if (registration) {
+      const bindingId = registration[1]
+      if (Object.keys(body).sort().join(",") !== "connectionEpoch,deviceGroupId,grantVersion,protocolVersion")
+        throw new FakeError(400, "invalid_request")
+      if (this.bindings.get(bindingId)?.state !== "active") throw new FakeError(403, "binding_revoked")
+      const grant = this.grants.get(bindingId)
+      if (!grant || grant.state !== "active") throw new FakeError(409, "grant_unavailable")
+      if (body.connectionEpoch !== this.epoch || body.grantVersion !== grant.grantVersion)
+        throw new FakeError(409, "grant_changed")
+      this.registrations.set(bindingId, {
+        deviceGroupId: body.deviceGroupId,
+        connectionEpoch: body.connectionEpoch,
+        grantVersion: body.grantVersion,
+      })
       return {
         protocolVersion: 1,
-        targetKind: "cli",
-        bindingId: token[1],
-        connectorId: [...this.devices.keys()][0],
-        role: "cli",
-        lane: body.lane,
+        bindingId,
         deviceGroupId: body.deviceGroupId,
-        grantVersion: body.grantVersion,
         connectionEpoch: body.connectionEpoch,
-        revocationVersion: 0,
-        scopes: this.bindings.get(token[1])?.state === "revoked" ? [] : (this.grants.get(token[1])?.scopes ?? []),
-        token: base64url(crypto.getRandomValues(new Uint8Array(32))).slice(0, 43),
-        audience: `${this.origin}/api/connect/content-relay/${body.lane}`,
-        expiresAt: Date.now() + 3_600_000,
+        grantVersion: body.grantVersion,
+        expiresInMs: 75000,
       }
     }
     const binding = path.match(/^\/api\/connect\/bindings\/([^/]+)(\/revoke)?$/)
@@ -285,9 +302,8 @@ export class FakeConnect {
       const view = this.bindings.get(binding[1])!
       if (binding[2]) {
         view.state = "revoked"
-        view.relayFence = "pending"
         view.revocationVersion = (view.revocationVersion as number) + 1
-        setTimeout(() => this.revokeLive(binding[1]), 10)
+        setTimeout(() => this.withdraw(binding[1]), 10)
       }
       return view
     }
@@ -379,16 +395,19 @@ export class FakeConnect {
     const headers = new Headers({ "Content-Type": "application/json", "Mimo-Request-Id": id })
     if (version) headers.set("Mimo-Connect-Version", version)
     if (retryAfter) headers.set("Retry-After", retryAfter)
-    return new Response(JSON.stringify({ contractVersion: version, requestId: id, error: { code } }), {
-      status,
-      headers,
-    })
+    return new Response(JSON.stringify({
+      contractVersion: version,
+      requestId: id,
+      error: { code },
+      ...(status === 426 ? { supportedVersions: ["1.0"] } : {}),
+    }), { status, headers })
   }
 
   // ---- WebSocket ----------------------------------------------------------
 
-  private async upgrade(request: Request, server: Server<{ path: string; lane?: string }>, path: string) {
-    const expected = path === "/api/connect/control" ? CONTROL_PROTOCOL : CONTENT_PROTOCOL
+  private async upgrade(request: Request, server: Server<{ path: string }>, path: string) {
+    const bus = path === "/api/connect/bus"
+    const expected = bus ? BUS_PROTOCOL : CONTROL_PROTOCOL
     if (request.headers.get("Sec-WebSocket-Protocol") !== expected) return new Response(null, { status: 426 })
     if (request.headers.get("Mimo-Connect-Version") || request.headers.get("Mimo-Connect-Profile")) {
       return new Response(null, { status: 400 })
@@ -399,18 +418,18 @@ export class FakeConnect {
       return new Response(null, { status, headers: retryAfter ? { "Retry-After": retryAfter } : {} })
     }
     if (!this.authenticated(request.headers)) return new Response(null, { status: 401 })
-    // R60: every authenticated control / content socket negotiates the service heartbeat.
-    if (request.headers.get("Mimo-Heartbeat") !== "server-v1") return new Response(null, { status: 426 })
+    // R60: control negotiates the service heartbeat; the bus negotiates none (its own ping/pong).
+    const heartbeat = request.headers.get("Mimo-Heartbeat")
+    if (bus ? heartbeat !== null : heartbeat !== "server-v1") return new Response(null, { status: bus ? 400 : 426 })
     const thumbprint = await this.verifyProof("GET", path, undefined, request.headers.get("X-Device-Proof"))
     const deviceId = request.headers.get("X-Device-Id")
     if (!thumbprint || !deviceId || this.devices.get(deviceId)?.thumbprint !== thumbprint) {
       return new Response(null, { status: 401 })
     }
-    const lane = path.split("/").pop()
     const echo: Record<string, string> = { "Sec-WebSocket-Protocol": expected }
-    if (this.echoHeartbeat) echo["Mimo-Heartbeat"] = "server-v1"
+    if (!bus && this.echoHeartbeat) echo["Mimo-Heartbeat"] = "server-v1"
     echo["Mimo-Request-Id"] = request.headers.get("Mimo-Request-Id") ?? ""
-    server.upgrade(request, { data: { path, lane }, headers: echo })
+    server.upgrade(request, { data: { path }, headers: echo })
     return undefined
   }
 
@@ -505,107 +524,87 @@ export class FakeConnect {
   }
 
   private wsMessage(ws: Socket, message: string): void {
+    if (ws.data.path === "/api/connect/bus") {
+      for (const line of message.split("\n")) if (line.trim()) this.busCommand(ws, JSON.parse(line))
+      return
+    }
     const frame = JSON.parse(message) as Record<string, unknown>
     this.frames.push({ path: ws.data.path, frame })
     if (typeof frame.type === "string" && frame.type.startsWith("heartbeat-")) return this.heartbeatFrame(ws, frame)
-    // Anything else on control is not part of the contract (the retired client heartbeat included).
-    if (ws.data.path === "/api/connect/control") return ws.close(1008, "invalid_request")
-    if (frame.type === "attach") {
-      this.lanes.set(ws.data.lane!, ws)
-      const binding = this.bindings.get(frame.bindingId as string)
-      this.fence(ws.data.lane!, frame, binding?.state === "revoked" ? "revoked" : "active")
-      return
-    }
-    if (frame.type === "fence-ack" && this.fenceStates.get(ws.data.lane!) === "revoked") {
-      const attach = this.lastAttach(ws.data.path)
-      ws.send(
-        JSON.stringify({
-          protocolVersion: 1,
-          type: "fence-confirmed",
-          bindingId: attach.bindingId,
-          targetKind: "cli",
-          deviceGroupId: attach.deviceGroupId,
-          grantVersion: attach.grantVersion,
-          revocationVersion: 1,
-          connectionEpoch: attach.connectionEpoch,
-        }),
-      )
-      this.confirmedRevocations.add(attach.bindingId as string)
-      const view = this.bindings.get(attach.bindingId as string)
-      if (view) view.relayFence = "complete"
-      ws.close(1008, "binding_revoked")
-      return
-    }
-    if (frame.type === "fence-ack" && this.sendTransportReady) {
-      const attach = this.lastAttach(ws.data.path)
-      if (!this.heartbeats.has(ws)) this.heartbeatReady(ws)
-      ws.send(
-        JSON.stringify({
-          protocolVersion: 1,
-          type: "transport-ready",
-          channelId: crypto.randomUUID(),
-          bindingId: attach.bindingId,
-          targetKind: "cli",
-          deviceGroupId: attach.deviceGroupId,
-          lane: ws.data.lane,
-          grantVersion: attach.grantVersion,
-          revocationVersion: 0,
-          connectionEpoch: attach.connectionEpoch,
-        }),
-      )
-    }
+    // Anything else on control is not part of the contract (fence-ack from a CLI included).
+    return ws.close(1008, "scope_forbidden")
   }
 
-  private lastAttach(path: string): Record<string, unknown> {
-    return this.frames.findLast((f) => f.path === path && f.frame.type === "attach")!.frame
+  private busCommand(ws: Socket, command: Record<string, unknown>): void {
+    this.frames.push({ path: ws.data.path, frame: command })
+    const id = command.id
+    if (Object.keys(command).length === 0) return // pong
+    const reply = (body: Record<string, unknown>): void => void ws.send(JSON.stringify({ id, ...body }))
+    if ("connect" in command) return reply({ connect: { client: crypto.randomUUID(), version: "1", ping: 25, pong: true } })
+    if ("subscribe" in command) {
+      const channel = (command.subscribe as { channel: string }).channel
+      const bindingId = /^cmd:(.+)$/.exec(channel)?.[1]
+      if (!bindingId || this.bindings.get(bindingId)?.state !== "active" || this.grants.get(bindingId)?.state !== "active")
+        return reply({ error: { code: 103, message: "permission denied" } })
+      this.subscriptions.set(channel, ws)
+      return reply({ subscribe: { epoch: "e1", offset: 0 } })
+    }
+    if ("publish" in command) {
+      const { channel, data } = command.publish as { channel: string; data: Record<string, unknown> }
+      if (this.refusePublish !== undefined) {
+        const code = this.refusePublish
+        this.refusePublish = undefined
+        return reply({ error: { code, message: "refused" } })
+      }
+      const bindingId = /^rep:([^:]+):[^:]+$/.exec(channel)?.[1]
+      if (!bindingId || this.bindings.get(bindingId)?.state !== "active")
+        return reply({ error: { code: 103, message: "permission denied" } })
+      if (Object.keys(data).sort().join(",") !== "frame,lane") return reply({ error: { code: 107, message: "bad request" } })
+      this.published.push({ channel, data })
+      return reply({ publish: {} })
+    }
+    ws.close(1008, "invalid_request")
   }
 
-  /** Bindings whose revocation a connector confirmed on a lane. */
-  readonly confirmedRevocations = new Set<string>()
+  /** The phone submits a collection frame (bus-commands): forwarded on `cmd:{bindingId}` with the routing fields. */
+  phoneCommand(bindingId: string, frame: Record<string, unknown>): string {
+    const registration = this.registrations.get(bindingId)!
+    const dispatchId = crypto.randomUUID()
+    const forwarded = {
+      ...frame,
+      type: "request",
+      operation: frame.type,
+      bindingId,
+      connectionEpoch: registration.connectionEpoch,
+      deviceGroupId: registration.deviceGroupId,
+      grantVersion: registration.grantVersion,
+      dispatchId,
+    }
+    const ws = this.subscriptions.get(`cmd:${bindingId}`)!
+    this.offset += 1
+    ws.send(JSON.stringify({ push: { channel: `cmd:${bindingId}`, pub: { data: { lane: "command", frame: forwarded }, offset: this.offset } } }))
+    return dispatchId
+  }
 
-  /** The phone unbinds: the binding is revoked and the live lanes close without a revoked fence. */
+  /** The service ping on every bus socket. */
+  busPing(): void {
+    for (const ws of new Set(this.subscriptions.values())) ws.send("{}")
+  }
+
+  /** The phone unbinds: the binding is revoked and the cmd subscription withdrawn (2001). */
   phoneRevokes(bindingId: string): void {
     const view = this.bindings.get(bindingId)!
     view.state = "revoked"
-    view.relayFence = "pending"
     view.revocationVersion = (view.revocationVersion as number) + 1
-    for (const [lane, ws] of this.lanes) {
-      if (this.lastAttach(`/api/connect/content-relay/${lane}`).bindingId === bindingId)
-        ws.close(1008, "grant_unavailable")
-    }
+    this.withdraw(bindingId)
   }
 
-  /** Re-fence every live lane of a binding as revoked, like the service after a revoke. */
-  revokeLive(bindingId: string): void {
-    for (const [lane] of this.lanes) {
-      const attach = this.lastAttach(`/api/connect/content-relay/${lane}`)
-      if (attach.bindingId === bindingId) this.fence(lane, attach, "revoked")
-    }
-  }
-
-  /** Send a fence on a lane (initial after attach, or a re-fence from a test). */
-  fence(lane: string, attach: Record<string, unknown>, state: "active" | "revoked" = "active"): string {
-    const fenceId = crypto.randomUUID()
-    this.fenceStates.set(lane, state)
-    this.lanes.get(lane)!.send(
-      JSON.stringify({
-        protocolVersion: 1,
-        type: "fence",
-        bindingId: attach.bindingId,
-        targetKind: "cli",
-        deviceGroupId: attach.deviceGroupId,
-        grantVersion: attach.grantVersion,
-        revocationVersion: 0,
-        connectionEpoch: attach.connectionEpoch,
-        state,
-        grantState: state,
-        fenceId,
-      }),
-    )
-    return fenceId
-  }
-
-  sendOnLane(lane: string, frame: Record<string, unknown>): void {
-    this.lanes.get(lane)!.send(JSON.stringify(frame))
+  /** Withdraw the cmd subscription of a binding like the service after a revocation. */
+  withdraw(bindingId: string, code = 2001): void {
+    const channel = `cmd:${bindingId}`
+    const ws = this.subscriptions.get(channel)
+    if (!ws) return
+    this.subscriptions.delete(channel)
+    ws.send(JSON.stringify({ push: { channel, unsubscribe: { code, reason: "withdrawn" } } }))
   }
 }

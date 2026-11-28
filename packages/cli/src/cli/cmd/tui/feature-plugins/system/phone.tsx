@@ -42,6 +42,9 @@ const tui: TuiPlugin = async (api) => {
         const previous = status()
         setStatus(next)
         if (next.state === "unavailable" && previous.state !== "unavailable") void explainUnavailable(next.reason)
+        if (next.state === "reconnecting" && next.reason && previous.state !== "reconnecting") {
+          api.ui.toast({ title: t("tui.command.phone"), message: t(`tui.phone.reconnecting.${next.reason}`), variant: "warning" })
+        }
       },
       confirmPairing: (request) => {
         // The claim replaces the code dialog; closing it now must not cancel the pairing.
@@ -214,7 +217,7 @@ const tui: TuiPlugin = async (api) => {
   async function pair() {
     claimedBy = ""
     const outcome = phone.connector.pair()
-    const shown = await waitForCode()
+    const shown = await Promise.race([waitForCode(), outcome.then(() => undefined)])
     if (shown) {
       let open = true
       codeDialog = { close: () => (open = false) }
@@ -253,6 +256,9 @@ const tui: TuiPlugin = async (api) => {
   }
 
   function report(outcome: PairingOutcome) {
+    if (outcome === "protocol_incompatible") {
+      return void explainUnavailable(outcome)
+    }
     if (outcome === "approved") {
       api.ui.toast({ message: t("tui.phone.paired", { name: claimedBy }), variant: "success" })
       return

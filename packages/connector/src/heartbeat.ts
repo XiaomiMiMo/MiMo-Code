@@ -72,12 +72,13 @@ function integer(value: unknown, min: number, max: number): number {
   return value
 }
 
-function exact(frame: Record<string, unknown>, keys: string[]): void {
-  const actual = Object.keys(frame)
-  if (actual.length !== keys.length || keys.some((key) => !Object.hasOwn(frame, key))) {
+function hasRequired(frame: Record<string, unknown>, keys: string[]): void {
+  if (keys.some((key) => !Object.hasOwn(frame, key))) {
     throw new HeartbeatError("invalid heartbeat frame")
   }
 }
+
+const KNOWN_HEARTBEAT_TYPES = new Set(["heartbeat-ready", "heartbeat-ping", "heartbeat-confirmed"])
 
 export class HeartbeatRuntime {
   private readonly members = new Set<Member>()
@@ -148,7 +149,7 @@ export class HeartbeatRuntime {
   }
 
   private consume(member: Member, frame: Record<string, unknown>): boolean {
-    if (typeof frame.type !== "string" || !frame.type.startsWith("heartbeat-")) return false
+    if (typeof frame.type !== "string" || !KNOWN_HEARTBEAT_TYPES.has(frame.type)) return false
     if (!this.members.has(member)) return true
     try {
       if (new TextEncoder().encode(JSON.stringify(frame)).length > MAX_FRAME_BYTES) {
@@ -170,7 +171,7 @@ export class HeartbeatRuntime {
     if (frame.protocolVersion !== PROTOCOL_VERSION) throw new HeartbeatError("invalid heartbeat frame")
     const identity = ["protocolVersion", "type", "connectionId", "policyVersion"]
     if (frame.type === "heartbeat-ready") {
-      exact(frame, [...identity, "pingIntervalMs", "ackTimeoutMs", "watchdogTimeoutMs", "freezeGraceMs"])
+      hasRequired(frame, [...identity, "pingIntervalMs", "ackTimeoutMs", "watchdogTimeoutMs", "freezeGraceMs"])
       // Configured once per socket; a new policy takes a new connection.
       if (member.policy || typeof frame.connectionId !== "string" || !UUID.test(frame.connectionId)) {
         throw new HeartbeatError("invalid heartbeat-ready")
@@ -189,7 +190,7 @@ export class HeartbeatRuntime {
       member.checked = time
       return
     }
-    exact(frame, [...identity, "sequence"])
+    hasRequired(frame, [...identity, "sequence"])
     if (!member.policy || frame.connectionId !== member.connectionId || frame.policyVersion !== member.policyVersion) {
       throw new HeartbeatError("heartbeat for another connection")
     }
@@ -206,7 +207,6 @@ export class HeartbeatRuntime {
       member.confirmed?.(pongAt)
       return
     }
-    if (frame.type !== "heartbeat-ping") throw new HeartbeatError("unknown heartbeat frame")
     // An old probe does not prove liveness; the current one may be answered again.
     if (sequence < member.sequence) return
     if (sequence > member.sequence) {
@@ -215,7 +215,13 @@ export class HeartbeatRuntime {
       for (const key of member.answered.keys()) if (key < sequence - 1) member.answered.delete(key)
       this.alive(member, time)
     }
-    member.send({ ...frame, type: "heartbeat-pong" })
+    member.send({
+      protocolVersion: PROTOCOL_VERSION,
+      type: "heartbeat-pong",
+      connectionId: member.connectionId!,
+      policyVersion: member.policyVersion!,
+      sequence,
+    })
   }
 
   private alive(member: Member, time: number): void {

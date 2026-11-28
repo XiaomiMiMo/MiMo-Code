@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { ControlChannel } from "../src/control"
 import { HeartbeatRuntime } from "../src/heartbeat"
-import { ContentLane, type Fence } from "../src/lane"
-import { wsDial } from "../src/socket"
+import { BusSocket, BusCommandError } from "../src/bus"
+import { wsDial, type Dial } from "../src/socket"
 import { harness } from "./helpers"
 
 async function until(check: () => boolean, ms = 3000) {
@@ -100,90 +100,147 @@ describe("control channel heartbeat (R60)", () => {
   })
 })
 
-describe("content lane", () => {
-  async function laneFor(h: Awaited<ReturnType<typeof harness>>, onFence: (f: Fence) => Promise<void>) {
-    await h.register()
-    const control = new ControlChannel(h.http, () => h.service.origin, wsDial, new HeartbeatRuntime(), { onClosed: () => {} })
-    const epoch = await control.open()
+describe("bus socket", () => {
+  async function busFor(h: Awaited<ReturnType<typeof harness>>, now?: () => number, dial: Dial = wsDial) {
+    const events = {
+      publications: [] as { channel: string; data: Record<string, unknown> }[],
+      unsubscribed: [] as { channel: string; code: number }[],
+      closed: [] as string[],
+    }
+    const bus = await BusSocket.open(
+      h.http,
+      h.service.origin,
+      dial,
+      {
+        publication: (channel, data) => events.publications.push({ channel, data }),
+        unsubscribed: (channel, code) => events.unsubscribed.push({ channel, code }),
+        closed: (reason) => events.closed.push(reason),
+      },
+      now,
+    )
+    return { bus, events }
+  }
+
+  async function grantedBinding(h: Awaited<ReturnType<typeof harness>>) {
     const bindingId = crypto.randomUUID()
     h.service.bindings.set(bindingId, h.service.bindingView(bindingId))
     await h.api.publishGrant(bindingId, {
-      connectionEpoch: epoch,
+      connectionEpoch: 1,
       expectedVersion: 0,
       state: "active",
       scopes: ["sessions:list", "sessions:read"],
     })
-    const credential = await h.api.channelToken(bindingId, {
-      deviceGroupId: crypto.randomUUID(),
-      lane: "command",
-      grantVersion: 1,
-      connectionEpoch: epoch,
-    })
-    const events = { frames: [] as Record<string, unknown>[], closed: [] as string[], fences: [] as Fence[] }
-    const lane = new ContentLane("command", credential, h.http, () => h.service.origin, wsDial, new HeartbeatRuntime(), {
-      onFence: async (_, fence) => {
-        events.fences.push(fence)
-        await onFence(fence)
-      },
-      onFrame: (_, frame) => events.frames.push(frame),
-      onClosed: (_, reason) => events.closed.push(reason),
-    })
-    return { control, lane, credential, events }
+    return bindingId
   }
 
-  test("attach -> fence -> durable gate -> fence-ack -> transport-ready, then business frames flow", async () => {
+  test("connect, subscribe cmd, receive a pushed command and publish a reply", async () => {
     using h = await harness()
-    const order: string[] = []
-    const { lane, control, events } = await laneFor(h, async () => {
-      await Bun.sleep(20)
-      order.push("gate")
-    })
-    const opened = lane.open()
-    await opened
-    const sent = h.service.frames.filter((f) => f.path.endsWith("/command")).map((f) => f.frame.type)
-    expect(sent).toEqual(["attach", "fence-ack"])
-    order.push(lane.ready ? "ready" : "not-ready")
-    expect(order).toEqual(["gate", "ready"])
-    const ack = h.service.frames.find((f) => f.frame.type === "fence-ack")!.frame
-    expect(ack.fenceId).toBe(events.fences[0].fenceId)
-    h.service.sendOnLane("command", { protocolVersion: 1, type: "request", operation: "sessions-list" })
-    await until(() => events.frames.length === 1)
-    // The lane answers the service heartbeat like the control socket.
-    h.service.ping(h.service.lanes.get("command")!)
-    await until(() => h.service.frames.some((f) => f.path.endsWith("/command") && f.frame.type === "heartbeat-pong"))
-    lane.close()
-    control.close()
+    await h.register()
+    h.service.epoch = 1
+    const bindingId = await grantedBinding(h)
+    const { bus, events } = await busFor(h)
+    // The upgrade carries no service heartbeat header and the -cli subprotocol (the fake refuses otherwise).
+    await bus.subscribe(`cmd:${bindingId}`)
+    h.service.registrations.set(bindingId, { deviceGroupId: crypto.randomUUID(), connectionEpoch: 1, grantVersion: 1 })
+    const requestId = crypto.randomUUID()
+    h.service.phoneCommand(bindingId, { protocolVersion: 1, type: "sessions-list", requestId, grantVersion: 1 })
+    await until(() => events.publications.length === 1)
+    expect(events.publications[0]!.channel).toBe(`cmd:${bindingId}`)
+    expect(events.publications[0]!.data).toMatchObject({ lane: "command", frame: { type: "request", operation: "sessions-list" } })
+    await bus.publish(`rep:${bindingId}:${requestId}`, { lane: "command", frame: { type: "sessions-page" } })
+    expect(h.service.published).toEqual([
+      { channel: `rep:${bindingId}:${requestId}`, data: { lane: "command", frame: { type: "sessions-page" } } },
+    ])
+    bus.close()
+    expect(events.closed).toEqual(["closed_by_client"])
   })
 
-  test("a gate that fails is never acknowledged and the lane closes", async () => {
+  test("publishes only on a matching ACK with a publish result object", async () => {
     using h = await harness()
-    const { lane, control, events } = await laneFor(h, async () => {
-      throw new Error("disk full")
-    })
-    await expect(lane.open()).rejects.toThrow()
-    expect(h.service.frames.some((f) => f.frame.type === "fence-ack")).toBe(false)
-    expect(events.closed[0]).toBe("gate_failed")
-    control.close()
+    await h.register()
+    let id: unknown
+    let receive!: (frame: Record<string, unknown>) => void
+    const dial: Dial = async ({ protocol, handlers }) => {
+      receive = handlers.onFrame
+      return {
+        protocol,
+        send(frame) {
+          if ("connect" in frame) receive({ id: frame.id, connect: { client: "test", ping: 25, pong: true } })
+          if ("publish" in frame) id = frame.id
+        },
+        close() {},
+      }
+    }
+    const { bus } = await busFor(h, undefined, dial)
+    try {
+      const data = { lane: "command", frame: { type: "sessions-page" } }
+      for (const result of [{}, { subscribe: {} }, { publish: null }, { publish: [] }, { publish: true }]) {
+        const publish = bus.publish("rep:binding:request", data)
+        receive({ id, ...result })
+        await expect(publish).rejects.toThrow("invalid_publish")
+      }
+
+      let acknowledged = false
+      const publish = bus.publish("rep:binding:request", data).then(() => {
+        acknowledged = true
+      })
+      receive({ id: Number(id) - 1, publish: {} })
+      await Bun.sleep(0)
+      expect(acknowledged).toBe(false)
+      receive({ id, publish: { futureField: true } })
+      await publish
+      expect(acknowledged).toBe(true)
+    } finally {
+      bus.close()
+    }
   })
 
-  test("a re-fence stops business traffic until it is acknowledged again", async () => {
+  test("the service ping is answered with an empty command", async () => {
     using h = await harness()
-    let release!: () => void
-    let block = false
-    const { lane, control, events } = await laneFor(h, () =>
-      block ? new Promise<void>((resolve) => (release = resolve)) : Promise.resolve(),
-    )
-    await lane.open()
-    block = true
-    const attach = h.service.frames.find((f) => f.frame.type === "attach")!.frame
-    h.service.sendTransportReady = false
-    h.service.fence("command", attach)
-    await until(() => events.fences.length === 2)
-    expect(lane.ready).toBe(false)
-    expect(lane.send({ type: "sessions-page" })).toBe(false)
-    release()
-    await until(() => h.service.frames.filter((f) => f.frame.type === "fence-ack").length === 2)
-    lane.close()
-    control.close()
+    await h.register()
+    h.service.epoch = 1
+    const bindingId = await grantedBinding(h)
+    const { bus } = await busFor(h)
+    await bus.subscribe(`cmd:${bindingId}`)
+    h.service.busPing()
+    await until(() => h.service.frames.some((f) => f.path === "/api/connect/bus" && Object.keys(f.frame).length === 0))
+    bus.close()
+  })
+
+  test("a refused publish rejects with the service code and an unauthorized subscribe is refused", async () => {
+    using h = await harness()
+    await h.register()
+    h.service.epoch = 1
+    const bindingId = await grantedBinding(h)
+    const { bus } = await busFor(h)
+    await expect(bus.subscribe(`cmd:${crypto.randomUUID()}`)).rejects.toMatchObject({ code: 103 })
+    h.service.refusePublish = 106
+    const refused = bus.publish(`rep:${bindingId}:${crypto.randomUUID()}`, { lane: "text", frame: {} })
+    await expect(refused).rejects.toBeInstanceOf(BusCommandError)
+    await expect(bus.publish(`rep:${bindingId}:x`, { lane: "text", frame: { text: "x".repeat(270_000) } })).rejects.toMatchObject({ code: 106 })
+    bus.close()
+  })
+
+  test("a withdrawn subscription is reported with its code", async () => {
+    using h = await harness()
+    await h.register()
+    h.service.epoch = 1
+    const bindingId = await grantedBinding(h)
+    const { bus, events } = await busFor(h)
+    await bus.subscribe(`cmd:${bindingId}`)
+    h.service.phoneRevokes(bindingId)
+    await until(() => events.unsubscribed.length === 1)
+    expect(events.unsubscribed[0]).toEqual({ channel: `cmd:${bindingId}`, code: 2001 })
+    bus.close()
+  })
+
+  test("a bus silent for longer than ping + 20 s is closed", async () => {
+    using h = await harness()
+    await h.register()
+    let skew = 0
+    const { events } = await busFor(h, () => performance.now() + skew)
+    skew = 46_000
+    await until(() => events.closed.length === 1)
+    expect(events.closed).toEqual(["ping_timeout"])
   })
 })

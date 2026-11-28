@@ -7,11 +7,60 @@
 // Nothing here retries on its own: whether a failed write may be re-sent is the
 // caller's decision.
 
-import { canonical, parseObject, type Json } from "./json"
+import { canonical, decodeWireUtf8, parseObject, WireJsonTooDeep, type Json } from "./json"
 import { deviceProof, keyThumbprint, type DeviceKey } from "./proof"
 
-export const PROFILE = "cli-connector-v1"
+export const PROFILE = "cli-connector"
 const PROFILE_HEADER = "Mimo-Connect-Profile"
+/** Connect public HTTP envelope nesting ceiling (connect-protocol R63). */
+export const HTTP_MAX_DEPTH = 16
+
+const PROOF_EXPIRED = "proof_expired"
+
+/** Registered Connect HTTP error codes and statuses (connect-protocol R63). */
+const HTTP_ERROR_STATUS = new Map([
+  ["invalid_request", 400],
+  ["feedback_content_rejected", 400],
+  ["unauthenticated", 401],
+  ["proof_rejected", 401],
+  [PROOF_EXPIRED, 401],
+  ["credential_rejected", 401],
+  ["forbidden", 403],
+  ["scope_forbidden", 403],
+  ["grant_unavailable", 403],
+  ["allowlist_denied", 403],
+  ["binding_revoked", 403],
+  ["not_found", 404],
+  ["method_not_allowed", 405],
+  ["conflict", 409],
+  ["grant_changed", 409],
+  ["fence_pending", 409],
+  ["relay_busy", 409],
+  ["desktop_offline", 409],
+  ["unsupported", 409],
+  ["expired", 410],
+  ["message_too_large", 413],
+  ["protocol_incompatible", 426],
+  ["rate_limited", 429],
+  ["internal_error", 500],
+  ["route_unavailable", 503],
+  ["dependency_unavailable", 503],
+  ["outcome_unknown", 504],
+  // These are registered by Connect's service for the existing route/control endpoints.
+  ["credential_expired", 401],
+  ["route_cross_node", 503],
+  ["control_target_forbidden", 403],
+  ["control_context_changed", 409],
+  ["control_target_unavailable", 503],
+])
+
+/** Registered error codes that represent a terminal account / device auth rejection. */
+export const ACCOUNT_REJECTION_CODES = new Set([
+  "unauthenticated",
+  "forbidden",
+  "proof_rejected",
+  "scope_forbidden",
+])
 
 /**
  * The account the CLI is signed in as: a Xiaomi Passport credential (`serviceToken`
@@ -49,14 +98,23 @@ export class ConnectError extends Error {
     this.name = "ConnectError"
   }
 
+  /** Whether the service answered with an unregistered HTTP error code (connect-protocol R63). */
+  get unregistered(): boolean {
+    return this.status !== undefined && !HTTP_ERROR_STATUS.has(this.code) && this.code !== "protocol" && this.code !== "unavailable" && this.code !== "too_deep"
+  }
+
   /** Rejections that a later identical attempt may succeed on without a new user decision. */
   get transient(): boolean {
     return (
       this.code === "network" ||
       this.code === "cooldown" ||
+      this.code === "unavailable" ||
+      this.code === "too_deep" ||
+      this.code === PROOF_EXPIRED ||
       this.status === 429 ||
       this.status === 503 ||
-      this.code === "desktop_offline"
+      this.code === "desktop_offline" ||
+      this.unregistered
     )
   }
 }
@@ -67,7 +125,7 @@ export type HttpRequest = {
   body?: Json
   /** Only the bindings list takes a query; it is not part of the signed path. */
   query?: Record<string, string>
-  /** Send `Mimo-Connect-Profile: cli-connector-v1` and require its echo. */
+  /** Send `Mimo-Connect-Profile: cli-connector` and require its echo. */
   profile: boolean
   /** Attach a device proof (and X-Device-Id when the device is registered). */
   proof: boolean
@@ -93,6 +151,9 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/
 const MAX_CHALLENGE_MS = 61_000
 /** Connect envelopes are bounded; a larger body is not a Connect response. */
 const MAX_RESPONSE_BYTES = 65536
+const JSON_CONTENT_TYPE = /^application\/json(?:[ \t]*;[ \t]*charset=(?:utf-8|"utf-8"))?$/i
+const OUTER_GATEWAY_STATUSES = new Set([502, 503, 504])
+const REQUEST_TIMEOUT_MS = 10_000
 
 export class ConnectHttp {
   private cooldownUntil = 0
@@ -122,6 +183,7 @@ export class ConnectHttp {
       headers,
       body: input.body === undefined ? undefined : canonical(input.body),
       redirect: "manual",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
     return this.unwrap(response, input, headers.get("Mimo-Request-Id")!)
   }
@@ -139,12 +201,16 @@ export class ConnectHttp {
     return headers
   }
 
-  /** Record a Retry-After the service sent on a rejected WSS upgrade. */
-  noteRetryAfter(status: number, retryAfter: string | null): void {
-    if (status !== 429 && status !== 503) return
+  /** Record a Retry-After the service sent on a rate-limit, unavailable or unregistered-code refusal. */
+  noteRetryAfter(status: number, retryAfter: string | null, honorAlways = false): void {
     const seconds = Number(retryAfter)
-    const delay = Number.isInteger(seconds) && seconds > 0 && seconds <= 600 ? seconds * 1000 : 60_000
-    this.cooldownUntil = Math.max(this.cooldownUntil, this.clock() + delay)
+    const validSeconds = Number.isInteger(seconds) && seconds > 0 && seconds <= 600
+    if (status === 429 || status === 503) {
+      const delay = validSeconds ? seconds * 1000 : 60_000
+      this.cooldownUntil = Math.max(this.cooldownUntil, this.clock() + delay)
+    } else if (honorAlways && validSeconds) {
+      this.cooldownUntil = Math.max(this.cooldownUntil, this.clock() + seconds * 1000)
+    }
   }
 
   private async headers(account: AccountSession, input: HttpRequest): Promise<Headers> {
@@ -194,11 +260,9 @@ export class ConnectHttp {
       profile: false,
       proof: false,
     })
-    const keys = Object.keys(data).sort().join(",")
     const serverTime = typeof data.serverTime === "string" && ISO.test(data.serverTime) ? Date.parse(data.serverTime) : NaN
     const expiresAt = typeof data.expiresAt === "string" && ISO.test(data.expiresAt) ? Date.parse(data.expiresAt) : NaN
     if (
-      keys !== "environment,expiresAt,loginInstanceId,nonce,serverTime" ||
       typeof data.nonce !== "string" ||
       !UUID.test(data.nonce) ||
       typeof data.loginInstanceId !== "string" ||
@@ -225,26 +289,43 @@ export class ConnectHttp {
   private async unwrap(response: Response, input: HttpRequest, sentId: string): Promise<Record<string, unknown>> {
     if (response.status >= 300 && response.status < 400) throw new ConnectError("protocol", response.status)
     this.noteRetryAfter(response.status, response.headers.get("Retry-After"))
-    const text = await response.text()
-    if (new TextEncoder().encode(text).length > MAX_RESPONSE_BYTES) throw new ConnectError("protocol", response.status)
+    const headerId = response.headers.get("Mimo-Request-Id")
+    const outerGateway = OUTER_GATEWAY_STATUSES.has(response.status) && headerId === null
+    const noAnswer = () => new ConnectError("unavailable", response.status, this.cooldownRemainingMs())
+    const protocolError = () => new ConnectError("protocol", response.status)
+    if (!JSON_CONTENT_TYPE.test(response.headers.get("Content-Type") ?? "")) {
+      void response.body?.cancel().catch(() => {})
+      throw outerGateway ? noAnswer() : protocolError()
+    }
+    const bytes = await readBoundedBody(response)
     let envelope: Record<string, unknown>
     try {
-      envelope = parseObject(text)
-    } catch {
-      throw new ConnectError(response.ok ? "protocol" : "unavailable", response.status, this.cooldownRemainingMs())
+      envelope = parseObject(decodeWireUtf8(bytes), HTTP_MAX_DEPTH)
+    } catch (error) {
+      if (error instanceof WireJsonTooDeep) throw new ConnectError("too_deep", response.status)
+      throw outerGateway ? noAnswer() : protocolError()
     }
-    if (envelope.requestId !== sentId || response.headers.get("Mimo-Request-Id") !== sentId) {
-      throw new ConnectError("protocol", response.status)
-    }
+    if (outerGateway && !Object.hasOwn(envelope, "requestId") && !Object.hasOwn(envelope, "contractVersion")) throw noAnswer()
+    if (envelope.requestId !== sentId || headerId !== sentId) throw protocolError()
     if (!response.ok) {
-      const error = envelope.error as { code?: unknown } | undefined
-      const code = typeof error?.code === "string" ? error.code : "protocol"
-      const retry = response.status === 429 || response.status === 503 ? this.cooldownRemainingMs() : undefined
+      const error = envelope.error
+      if (typeof error !== "object" || error === null || Array.isArray(error)) throw protocolError()
+      const code = (error as Record<string, unknown>).code
+      if (typeof code !== "string") throw protocolError()
+      const expected = HTTP_ERROR_STATUS.get(code)
+      if (expected !== undefined && expected !== response.status) throw protocolError()
+      // Only a versioned Connect admission refusal is evidence that the grant write did not execute.
+      if (code === PROOF_EXPIRED && !selectedVersion(response, envelope)) throw protocolError()
+      if (code === "protocol_incompatible" && !incompatibleVersion(response, envelope)) throw protocolError()
+      const unregistered = expected === undefined
+      if (unregistered) this.noteRetryAfter(response.status, response.headers.get("Retry-After"), true)
+      const retry =
+        response.status === 429 || response.status === 503 || (unregistered && this.cooldownRemainingMs() > 0)
+          ? this.cooldownRemainingMs()
+          : undefined
       throw new ConnectError(code, response.status, retry, sentId)
     }
-    if (envelope.contractVersion !== CONTRACT_VERSION || response.headers.get("Mimo-Connect-Version") !== CONTRACT_VERSION) {
-      throw new ConnectError("protocol", response.status)
-    }
+    if (!selectedVersion(response, envelope)) throw protocolError()
     // A profile request is answered in the same profile; a plain request never is.
     const echoed = response.headers.get(PROFILE_HEADER)
     if ((input.profile ? PROFILE : null) !== echoed) throw new ConnectError("protocol", response.status)
@@ -253,5 +334,38 @@ export class ConnectHttp {
       throw new ConnectError("protocol", response.status)
     }
     return data as Record<string, unknown>
+  }
+}
+
+function selectedVersion(response: Response, envelope: Record<string, unknown>): boolean {
+  return envelope.contractVersion === CONTRACT_VERSION && response.headers.get("Mimo-Connect-Version") === CONTRACT_VERSION
+}
+
+function incompatibleVersion(response: Response, envelope: Record<string, unknown>): boolean {
+  const versions: unknown = envelope.supportedVersions
+  return envelope.contractVersion === null &&
+    response.headers.get("Mimo-Connect-Version") === null &&
+    Array.isArray(versions) && versions.length > 0 && new Set(versions).size === versions.length &&
+    versions.every((version) => typeof version === "string" && /^(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version))
+}
+
+async function readBoundedBody(response: Response): Promise<Uint8Array> {
+  const reader = response.body?.getReader()
+  if (!reader) return new Uint8Array()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const chunk = await reader.read().catch(() => { throw new ConnectError("network") })
+      if (chunk.done) return Buffer.concat(chunks, total)
+      total += chunk.value.byteLength
+      if (total > MAX_RESPONSE_BYTES) {
+        void reader.cancel().catch(() => {})
+        throw new ConnectError("protocol", response.status)
+      }
+      chunks.push(chunk.value)
+    }
+  } finally {
+    reader.releaseLock()
   }
 }

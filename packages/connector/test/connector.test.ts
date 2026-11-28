@@ -7,7 +7,13 @@ import { StateFile } from "../src/state"
 import { FakeBackend, MemorySecrets } from "./doubles"
 import { FakeConnect } from "./fake-connect"
 
-async function setup(options: { answer?: { canSend: boolean } | undefined; secrets?: MemorySecrets } = {}) {
+async function setup(
+  options: {
+    answer?: { canSend: boolean } | undefined
+    confirm?: () => Promise<{ canSend: boolean } | undefined>
+    secrets?: MemorySecrets
+  } = {},
+) {
   let signedIn = true
   const dir = await mkdtemp(path.join(tmpdir(), "connector-"))
   const service = new FakeConnect().start()
@@ -28,7 +34,7 @@ async function setup(options: { answer?: { canSend: boolean } | undefined; secre
       host: {
         confirmPairing: async (request) => {
           confirmations.push(request)
-          return answer
+          return options.confirm ? options.confirm() : answer
         },
         status: (status) => statuses.push(status),
       },
@@ -46,9 +52,9 @@ async function setup(options: { answer?: { canSend: boolean } | undefined; secre
     make,
     state: () => new StateFile(stateFile, secrets).read(),
     signOut: () => (signedIn = false),
-    async until(predicate: () => boolean, ms = 3000) {
+    async until(predicate: () => boolean | Promise<boolean>, ms = 3000) {
       const end = Date.now() + ms
-      while (!predicate()) {
+      while (!(await predicate())) {
         if (Date.now() > end) throw new Error("timed out waiting")
         await Bun.sleep(10)
       }
@@ -80,11 +86,63 @@ describe("connector", () => {
     expect(s.service.requests).toEqual([])
   })
 
-  test("a service without the CLI profile is reported, not retried", async () => {
+  // [TP-R61-04] An absent endpoint is not an empty profile list.
+  for (const [discovery, reason] of [
+    ["empty", "service_without_cli"],
+    ["missing", "discovery_failed"],
+    [["future-connector"], "protocol_incompatible"],
+  ] as const) {
+    test(`discovery ${discovery} reports ${reason} without registering a device`, async () => {
+      await using s = await setup()
+      s.service.discovery = discovery
+      await s.connector.start()
+      expect(s.connector.status).toEqual({ state: "unavailable", reason })
+      expect(s.service.requests.map((r) => r.path)).toEqual(["/api/connect/connector-capabilities"])
+    })
+  }
+
+  test("[TP-R61-04] device registration refusal 426 reports incompatible, not reconnecting", async () => {
     await using s = await setup()
-    s.service.discovery = "empty"
+    s.service.failNext.set("/api/connect/devices", [426, "protocol_incompatible"])
     await s.connector.start()
-    expect(s.connector.status).toEqual({ state: "unavailable", reason: "service_without_cli" })
+    expect(s.connector.status).toEqual({ state: "unavailable", reason: "protocol_incompatible" })
+    expect(s.service.devices.size).toBe(0)
+  })
+
+  test("[TP-R61-04] pairing refusal 426 does not produce a code or switch profiles", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const path = "/api/connect/pairing/challenges"
+    s.service.failNext.set(path, [426, "protocol_incompatible"])
+    expect(await s.connector.pair()).toBe("protocol_incompatible")
+    expect(s.service.challenges.size).toBe(0)
+    expect(s.service.requests.filter((r) => r.path === path).map((r) => r.headers.get("Mimo-Connect-Profile")))
+      .toEqual(["cli-connector"])
+  })
+
+  test("[TP-R61-04] bus registration refusal 426 preserves the binding and stops serving it", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const paired = s.connector.pair()
+    await s.until(() => [...s.service.challenges.values()].some((c) => c.status === "open"))
+    const requestId = s.claim()
+    expect(await paired).toBe("approved")
+    const bindingId = s.service.decisions.get(requestId)!.bindingId!
+    await s.until(() => s.service.registrations.has(bindingId))
+    await s.connector.stop()
+    const path = `/api/connect/bindings/${bindingId}/bus-registration`
+    const calls = () => s.service.requests.filter((r) => r.path === path).length
+    const before = calls()
+    s.service.failNext.set(path, [426, "protocol_incompatible"])
+    await s.connector.start()
+    await s.until(() => s.connector.status.state === "unavailable")
+    expect(s.connector.status).toEqual({ state: "unavailable", reason: "protocol_incompatible" })
+    expect(s.service.bindings.get(bindingId)!.state).toBe("active")
+    expect((await s.state()).consents[bindingId]).toBeDefined()
+    await s.until(() => !s.service.subscriptions.has(`cmd:${bindingId}`))
+    expect(calls()).toBe(before + 1)
   })
 
   test("an account outside the admission list is reported as such, not as a rejected sign-in", async () => {
@@ -138,28 +196,28 @@ describe("connector", () => {
       scopes: ["sessions:list", "sessions:read", "sessions:send"],
     })
     expect(state.pending).toEqual({})
-    expect(Object.keys(state.gates).sort()).toEqual([`${bindingId}:command`, `${bindingId}:state`, `${bindingId}:text`])
+    // The group registered on the bus for this epoch and grant, after subscribing its command channel.
+    const registration = s.service.registrations.get(bindingId)!
+    expect(registration).toMatchObject({ connectionEpoch: 1, grantVersion: 1 })
+    expect(s.service.subscriptions.has(`cmd:${bindingId}`)).toBe(true)
 
-    // A forwarded phone request is answered on the command lane.
-    const attach = s.service.frames.findLast((f) => f.path.endsWith("/command") && f.frame.type === "attach")!.frame
-    const request = {
+    // A phone request pushed on cmd is answered on that request's reply channel.
+    const listRequestId = crypto.randomUUID()
+    const dispatchId = s.service.phoneCommand(bindingId, {
       protocolVersion: 1,
-      type: "request",
-      operation: "sessions-list",
-      bindingId,
-      connectionEpoch: attach.connectionEpoch,
-      deviceGroupId: attach.deviceGroupId,
-      requestId: crypto.randomUUID(),
-      grantVersion: attach.grantVersion,
-      dispatchId: crypto.randomUUID(),
+      type: "sessions-list",
+      requestId: listRequestId,
+      grantVersion: registration.grantVersion,
       cursor: null,
       limit: 50,
-    }
-    s.service.sendOnLane("command", request)
-    await s.until(() => s.service.frames.some((f) => f.frame.type === "sessions-page"))
-    const page = s.service.frames.find((f) => f.frame.type === "sessions-page")!
-    expect(page.path).toBe("/api/connect/content-relay/command")
-    expect(page.frame).toMatchObject({ requestId: request.requestId, dispatchId: request.dispatchId })
+    })
+    await s.until(() => s.service.published.length > 0)
+    const page = s.service.published[0]!
+    expect(page.channel).toBe(`rep:${bindingId}:${listRequestId}`)
+    expect(page.data).toMatchObject({
+      lane: "command",
+      frame: { type: "sessions-page", requestId: listRequestId, dispatchId, deviceGroupId: registration.deviceGroupId },
+    })
   })
 
   test("a phone the user declines is rejected and never bound", async () => {
@@ -174,6 +232,24 @@ describe("connector", () => {
     expect(s.service.bindings.size).toBe(0)
     expect((await s.state()).consents).toEqual({})
   })
+
+  test("a confirmation from a retired control epoch cannot approve the pairing", async () => {
+    const confirmation = Promise.withResolvers<{ canSend: boolean }>()
+    await using s = await setup({ confirm: () => confirmation.promise })
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const outcome = s.connector.pair()
+    await s.until(() => [...s.service.challenges.values()].some((c) => c.status === "open"))
+    const requestId = s.claim()
+    await s.until(() => s.confirmations.length === 1)
+    const epoch = s.service.epoch
+    s.service.control!.close(1013, "lease_lost")
+    await s.until(() => s.service.epoch > epoch && online(s.connector.status), 8000)
+    confirmation.resolve({ canSend: true })
+    expect(await outcome).toBe("cancelled")
+    expect(s.service.requests.some(({ path }) => path.endsWith(`/${requestId}/approve`))).toBe(false)
+    expect((await s.state()).pending).toEqual({})
+  }, 20_000)
 
   test("a read-only consent publishes a grant without the send scope", async () => {
     await using s = await setup({ answer: { canSend: false } })
@@ -207,7 +283,7 @@ describe("connector", () => {
     expect(second.scopes).toEqual(first.scopes)
   })
 
-  test("unpairing revokes the binding, confirms it on the lanes and drops the consent", async () => {
+  test("unpairing revokes the binding, stops serving it and drops the consent", async () => {
     await using s = await setup()
     await s.connector.start()
     await s.until(() => online(s.connector.status))
@@ -218,19 +294,13 @@ describe("connector", () => {
     await s.until(() => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true)
     const bindingId = [...s.service.bindings.keys()][0]
     await s.connector.unpair(bindingId)
-    await s.until(() => s.service.confirmedRevocations.has(bindingId))
+    expect(s.service.bindings.get(bindingId)!.state).toBe("revoked")
     await s.until(() => (s.connector.status as { phones?: unknown[] }).phones?.length === 0)
-    let state = await s.state()
-    const end = Date.now() + 3000
-    while (Object.keys(state.gates).length > 0 && Date.now() < end) {
-      await Bun.sleep(10)
-      state = await s.state()
-    }
-    expect(state.consents).toEqual({})
-    expect(state.gates).toEqual({})
+    await s.until(() => !s.service.subscriptions.has(`cmd:${bindingId}`))
+    expect((await s.state()).consents).toEqual({})
   })
 
-  test("a binding revoked while offline is confirmed with recovery credentials on the next start", async () => {
+  test("a binding revoked while offline is dropped on the next start and never served", async () => {
     await using s = await setup()
     await s.connector.start()
     await s.until(() => online(s.connector.status))
@@ -241,14 +311,13 @@ describe("connector", () => {
     await s.until(() => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true)
     await s.connector.stop()
     const bindingId = [...s.service.bindings.keys()][0]
-    const view = s.service.bindings.get(bindingId)!
-    view.state = "revoked"
-    view.relayFence = "pending"
+    s.service.bindings.get(bindingId)!.state = "revoked"
+    const grants = s.service.requests.filter((r) => r.path.endsWith("/content-grant")).length
     const again = s.make()
     await again.start()
-    await s.until(() => s.service.confirmedRevocations.has(bindingId), 5000)
     await s.until(() => online(again.status) && (again.status as { phones: unknown[] }).phones.length === 0)
     expect((await s.state()).consents).toEqual({})
+    expect(s.service.requests.filter((r) => r.path.endsWith("/content-grant")).length).toBe(grants)
     await again.stop()
   })
 
@@ -309,6 +378,45 @@ describe("connector", () => {
     await s.until(() => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true)
   })
 
+  test("a lost grant answer is reconciled by reading the exact attempted grant", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const outcome = s.connector.pair()
+    await s.until(() => [...s.service.challenges.values()].some((c) => c.status === "open"))
+    const requestId = s.claim()
+    s.service.tamper.set(`/api/connect/pairing/requests/${requestId}/approve`, (response) => {
+      const bindingId = [...s.service.bindings.keys()][0]
+      s.service.tamper.set(`/api/connect/bindings/${bindingId}/content-grant`, () => new Response("", { status: 502 }))
+      return response
+    })
+    expect(await outcome).toBe("approved")
+    await s.until(() => s.connector.status.state === "online" && s.connector.status.phones[0]?.connected === true)
+    const requests = s.service.requests.filter((request) => request.path.endsWith("/content-grant"))
+    expect(requests.map(({ method }) => method)).toEqual(["PUT", "GET"])
+    expect([...s.service.registrations.values()][0]).toMatchObject({ grantVersion: 1 })
+  }, 20_000)
+
+  test("expired proof retries only the original grant version", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const outcome = s.connector.pair()
+    await s.until(() => [...s.service.challenges.values()].some((c) => c.status === "open"))
+    const requestId = s.claim()
+    s.service.tamper.set(`/api/connect/pairing/requests/${requestId}/approve`, (response) => {
+      const bindingId = [...s.service.bindings.keys()][0]
+      s.service.failNext.set(`/api/connect/bindings/${bindingId}/content-grant`, [401, "proof_expired"])
+      return response
+    })
+    expect(await outcome).toBe("approved")
+    await s.until(() => s.connector.status.state === "online" && s.connector.status.phones[0]?.connected === true)
+    const writes = s.service.requests.filter(({ method, path }) => method === "PUT" && path.endsWith("/content-grant"))
+    expect(writes).toHaveLength(2)
+    expect(writes[0].body).toMatchObject({ expectedVersion: 0, grantVersion: 1 })
+    expect(writes[1].body).toEqual(writes[0].body)
+  }, 20_000)
+
   test("an account that is gone on reconnect turns the connector unavailable instead of retrying", async () => {
     await using s = await setup()
     await s.connector.start()
@@ -319,7 +427,7 @@ describe("connector", () => {
     expect(s.connector.status).toEqual({ state: "unavailable", reason: "not_signed_in" })
   })
 
-  test("a revocation the lanes did not confirm is confirmed with recovery before local records go", async () => {
+  test("a binding the phone revokes while served is withdrawn on the bus and dropped locally", async () => {
     await using s = await setup()
     await s.connector.start()
     await s.until(() => online(s.connector.status))
@@ -330,15 +438,38 @@ describe("connector", () => {
     await s.until(() => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true)
     const bindingId = [...s.service.bindings.keys()][0]
     s.service.phoneRevokes(bindingId)
-    await s.until(() => s.service.confirmedRevocations.has(bindingId), 8000)
-    expect(s.service.bindings.get(bindingId)!.relayFence).toBe("complete")
-    let state = await s.state()
-    const end = Date.now() + 3000
-    while (Object.keys(state.gates).length > 0 && Date.now() < end) {
-      await Bun.sleep(20)
-      state = await s.state()
-    }
-    expect(state.consents).toEqual({})
-    expect(state.gates).toEqual({})
+    await s.until(async () => Object.keys((await s.state()).consents).length === 0, 8000)
+    await s.until(() => (s.connector.status as { phones?: unknown[] }).phones?.length === 0)
+  }, 20_000)
+
+  test("a refused reply ends the group and the binding is served again by a new group", async () => {
+    await using s = await setup()
+    await s.connector.start()
+    await s.until(() => online(s.connector.status))
+    const outcome = s.connector.pair()
+    await s.until(() => [...s.service.challenges.values()].some((c) => c.status === "open"))
+    s.claim()
+    await outcome
+    await s.until(() => (s.connector.status as { phones?: { connected: boolean }[] }).phones?.[0]?.connected === true)
+    const bindingId = [...s.service.bindings.keys()][0]
+    const first = s.service.registrations.get(bindingId)!
+    s.service.refusePublish = 106
+    s.service.phoneCommand(bindingId, {
+      protocolVersion: 1,
+      type: "sessions-list",
+      requestId: crypto.randomUUID(),
+      grantVersion: s.service.registrations.get(bindingId)!.grantVersion,
+      cursor: null,
+      limit: 50,
+    })
+    await s.until(() => s.service.registrations.get(bindingId)!.deviceGroupId !== first.deviceGroupId, 8000)
+    await s.until(() => s.service.subscriptions.has(`cmd:${bindingId}`), 8000)
+    expect(s.service.registrations.get(bindingId)).toMatchObject({
+      connectionEpoch: first.connectionEpoch,
+      grantVersion: first.grantVersion,
+    })
+    expect(
+      s.service.requests.filter(({ method, path }) => method === "PUT" && path.endsWith("/content-grant")),
+    ).toHaveLength(1)
   }, 20_000)
 })

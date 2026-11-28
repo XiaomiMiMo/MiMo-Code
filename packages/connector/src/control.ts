@@ -1,4 +1,4 @@
-// Control channel (`/api/connect/control`, mimo-connect-control-v1-cli-v1).
+// Control channel (`/api/connect/control`, mimo-connect-control-v1-cli).
 //
 // The control socket is the CLI's online lease. The service assigns a new
 // connectionEpoch on every attach; every mutating HTTP call, grant and channel
@@ -12,18 +12,25 @@
 
 import type { ConnectHttp } from "./http"
 import { HEARTBEAT_HEADER, HEARTBEAT_MODE, type HeartbeatMember, type HeartbeatRuntime } from "./heartbeat"
+import { withinDepth } from "./json"
 import { CLOSE_POLICY, HandshakeRejected, wssUrl, type Dial, type FrameSocket } from "./socket"
 
 export const CONTROL_PATH = "/api/connect/control"
-export const CONTROL_PROTOCOL = "mimo-connect-control-v1-cli-v1"
+export const CONTROL_PROTOCOL = "mimo-connect-control-v1-cli"
 const READY_TIMEOUT_MS = 10_000
 const LEASE_CHECK_MS = 1_000
 /** The service closes a control socket on any inbound frame above this. */
 export const CONTROL_MAX_FRAME = 1024
+/** Control frame nesting ceiling (connect-protocol R63). */
+export const CONTROL_MAX_DEPTH = 16
+
+export type ControlDiagnostic = "unknown_type" | "too_deep"
 
 export type ControlEvents = {
   /** The generation ended: socket closed, heartbeat or lease lost, or the service rejected a frame. */
   onClosed(reason: string): void
+  /** Fixed-category R63 diagnostic, reported at most once per category per connection. */
+  onIgnored?(category: ControlDiagnostic): void
 }
 
 export class ControlChannel {
@@ -34,6 +41,7 @@ export class ControlChannel {
   private leaseUntil = 0
   private leaseMs = 0
   private closed = false
+  private readonly ignored = new Set<ControlDiagnostic>()
   epoch = 0
 
   constructor(
@@ -111,13 +119,25 @@ export class ControlChannel {
     rejectReady: (error: Error) => void,
   ): void {
     const heartbeat = this.heartbeat!
+    if (!withinDepth(frame, CONTROL_MAX_DEPTH)) {
+      this.noteIgnored("too_deep")
+      return
+    }
     try {
       if (heartbeat.consume(frame)) return
     } catch {
       return this.fail("invalid_heartbeat", rejectReady)
     }
+    if (frame.type !== "ready") {
+      // Unregistered control frame type (R63): drop without counting as liveness.
+      if (typeof frame.type === "string" && frame.type.length > 0) {
+        this.noteIgnored("unknown_type")
+        return
+      }
+      return this.fail("unexpected_frame", rejectReady)
+    }
     heartbeat.inbound()
-    // The service configures the heartbeat before it publishes ready; nothing else ever follows.
+    // The service configures the heartbeat before it publishes ready; ready arrives once.
     if (this.epoch !== 0 || !heartbeat.configured) return this.fail("unexpected_frame", rejectReady)
     const ready = readyFrame(frame)
     if (!ready) return this.fail("invalid_ready", rejectReady)
@@ -126,6 +146,12 @@ export class ControlChannel {
     // The service granted the lease when it published ready.
     this.leaseUntil = this.now() + ready.leaseMs
     resolveReady(ready.epoch)
+  }
+
+  private noteIgnored(category: ControlDiagnostic): void {
+    if (this.ignored.has(category)) return
+    this.ignored.add(category)
+    this.events.onIgnored?.(category)
   }
 
   private fail(reason: string, reject?: (error: Error) => void): void {
@@ -146,8 +172,6 @@ export class ControlChannel {
 }
 
 function readyFrame(frame: Record<string, unknown>): { epoch: number; leaseMs: number } | undefined {
-  const keys = Object.keys(frame).sort().join(",")
-  if (keys !== "connectionEpoch,connectorLeaseMs,heartbeatMs,protocolVersion,type") return undefined
   if (frame.type !== "ready" || frame.protocolVersion !== 1) return undefined
   if (frame.heartbeatMs !== 25000 || frame.connectorLeaseMs !== 75000) return undefined
   const epoch = frame.connectionEpoch

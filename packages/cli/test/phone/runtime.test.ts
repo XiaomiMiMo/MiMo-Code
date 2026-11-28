@@ -16,6 +16,7 @@ describe("phone connection", () => {
   test("every state, reason and outcome the menu can show has its text in each shipped language", () => {
     const keys = [
       "tui.command.phone",
+      "tui.phone.reconnecting.service_unreachable",
       ...["off", "starting", "online", "reconnecting", "unavailable"].map((state) => `tui.phone.state.${state}`),
       ...[
         "secure_storage_unavailable",
@@ -23,6 +24,8 @@ describe("phone connection", () => {
         "account_rejected",
         "not_admitted",
         "service_without_cli",
+        "discovery_failed",
+        "protocol_incompatible",
         "state_unreadable",
         "registration_conflict",
         "in_use",

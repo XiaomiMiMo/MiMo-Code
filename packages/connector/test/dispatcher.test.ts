@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import type { Lane } from "../src/api"
-import { Dispatcher, type GroupScope } from "../src/dispatcher"
+import { Dispatcher, type GroupScope, type Outbox } from "../src/dispatcher"
 import type { Json } from "../src/json"
 import { StateFile } from "../src/state"
 import { Submissions } from "../src/submissions"
@@ -21,7 +21,7 @@ const { canSend: _canSend, ...wire } = scope
 
 type Sent = { lane: Lane; frame: Record<string, any> }
 
-async function setup(options: { canSend?: boolean } = {}) {
+async function setup(options: { canSend?: boolean; acknowledge?: Outbox } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), "dispatch-"))
   const backend = new FakeBackend()
   backend.snapshots.set("ses_1", {
@@ -37,10 +37,10 @@ async function setup(options: { canSend?: boolean } = {}) {
     { ...scope, canSend: options.canSend ?? true },
     backend,
     submissions,
-    (lane, frame) => {
+    async (lane, frame, signal) => {
       if (!open[lane]) return false
       sent.push({ lane, frame })
-      return true
+      return options.acknowledge ? options.acknowledge(lane, frame, signal) : true
     },
   )
   return {
@@ -159,6 +159,49 @@ describe("dispatcher", () => {
       })
     }
     expect(s.sent[0].frame.parts[0]).toMatchObject({ messageId: "msg_u1", role: "user", revision: 1 })
+  })
+
+  test("a reading waits for text ACK before state and for state ACK before its next refresh", async () => {
+    const textAck = Promise.withResolvers<boolean>()
+    const stateAck = Promise.withResolvers<boolean>()
+    await using s = await setup({
+      acknowledge: async (lane, frame) => {
+        if (frame.sequence !== 0) return true
+        if (lane === "text") return textAck.promise
+        return stateAck.promise
+      },
+    })
+    s.request("subscribe-session", { sessionId: "ses_1" })
+    await s.until(() => s.sent.length >= 1)
+    expect(s.sent.map(({ lane }) => lane)).toEqual(["text"])
+    textAck.resolve(true)
+    await s.until(() => s.sent.length >= 2)
+    expect(s.sent.map(({ lane }) => lane)).toEqual(["text", "state"])
+
+    const snapshot = s.backend.snapshots.get("ses_1")!
+    s.backend.snapshots.set("ses_1", { ...snapshot, parts: [] })
+    s.backend.changed("ses_1")
+    await Bun.sleep(260)
+    expect(s.sent).toHaveLength(2)
+    stateAck.resolve(true)
+    await s.until(() => s.sent.length >= 3)
+    expect(s.sent[2]).toMatchObject({ lane: "text", frame: { sequence: 1, contentRevision: 2 } })
+  })
+
+  test("a catalog watch with an unacknowledged first reply retires rather than publishing again", async () => {
+    const firstAck = Promise.withResolvers<boolean>()
+    await using s = await setup({ acknowledge: () => firstAck.promise })
+    s.request("sessions-watch")
+    await s.until(() => s.sent.length === 1)
+    s.backend.sessions = [...s.backend.sessions, { id: "ses_2", title: "Second", updatedAt: 1 }]
+    s.backend.changed()
+    await Bun.sleep(260)
+    expect(s.sent).toHaveLength(1)
+    firstAck.resolve(false)
+    s.backend.changed()
+    await Bun.sleep(260)
+    expect(s.sent).toHaveLength(1)
+    expect(s.sent[0].frame.type).toBe("sessions-changed")
   })
 
   test("updates are coalesced into the latest projection", async () => {

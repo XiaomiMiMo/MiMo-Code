@@ -80,7 +80,6 @@ describe("service heartbeat", () => {
   test("frames outside the contract fail the socket", () => {
     for (const frame of [
       { ...READY, pingIntervalMs: 4999 },
-      { ...READY, extra: 1 },
       { ...READY, connectionId: "not-a-uuid" },
       { ...READY, watchdogTimeoutMs: 20000 },
     ]) {
@@ -99,7 +98,6 @@ describe("service heartbeat", () => {
       { ...probe("heartbeat-ping", 1), connectionId: crypto.randomUUID() },
       { ...probe("heartbeat-ping", 1), policyVersion: 2 },
       { ...probe("heartbeat-ping", 1), protocolVersion: 4 },
-      probe("heartbeat-unknown", 1),
     ]) {
       const h = configured()
       expect(() => h.member.consume(frame)).toThrow()
@@ -108,6 +106,14 @@ describe("service heartbeat", () => {
     // A ping before the configuration is a protocol failure too.
     const early = setup()
     expect(() => early.member.consume(probe("heartbeat-ping", 1))).toThrow()
+    // R63: extra fields on registered frames are ignored and never echoed in pong;
+    // unregistered heartbeat-* types are not consumed (dropped by the channel).
+    const fwd = setup()
+    expect(fwd.member.consume({ ...READY, futureField: "ignored" })).toBe(true)
+    expect(fwd.member.consume({ ...probe("heartbeat-ping", 1), futureField: "ignored" })).toBe(true)
+    expect(fwd.sent).toEqual([probe("heartbeat-pong", 1)])
+    expect(fwd.member.consume(probe("heartbeat-unknown", 1))).toBe(false)
+    expect(fwd.expired).toEqual([])
   })
 
   test("business frames are not heartbeat frames", () => {

@@ -3,7 +3,7 @@
 // Lifecycle: sign-in material and a protected store are required up front;
 // the installation key is registered once per account; the control socket is
 // the online lease and every reconnect starts a new connection generation in
-// which each locally confirmed binding gets a fresh grant and device group.
+// which each locally confirmed binding gets a fresh grant and a bus device group.
 // Pairing always ends with an explicit local decision. Turning the connector
 // off only goes offline: bindings stay until the user unpairs.
 
@@ -13,7 +13,7 @@ import path from "node:path"
 import { ControlChannel } from "./control"
 import { DeviceGroup, type GroupContext } from "./group"
 import { HeartbeatRuntime } from "./heartbeat"
-import { ConnectError, ConnectHttp, type AccountSession, type ClientInfo } from "./http"
+import { ACCOUNT_REJECTION_CODES, ConnectError, ConnectHttp, type AccountSession, type ClientInfo } from "./http"
 import { InstanceLock } from "./lock"
 import { generateDeviceKey, importDeviceKey, type DeviceKey, type PrivateJwk } from "./proof"
 import type { AgentBackend, SecretStore } from "./ports"
@@ -45,6 +45,8 @@ export type UnavailableReason =
   /** The account is not on the service's admission list (internal testing). */
   | "not_admitted"
   | "service_without_cli"
+  | "discovery_failed"
+  | "protocol_incompatible"
   | "state_unreadable"
   | "registration_conflict"
   /** Another MiMo Code process on this computer is already connected. */
@@ -57,10 +59,10 @@ export type ConnectorStatus =
   | { state: "off" }
   | { state: "starting" }
   | { state: "unavailable"; reason: UnavailableReason }
-  | { state: "reconnecting"; retryInMs: number; phones: PhoneStatus[] }
+  | { state: "reconnecting"; retryInMs: number; phones: PhoneStatus[]; reason?: "service_unreachable" }
   | { state: "online"; phones: PhoneStatus[]; pairing?: PairingStatus }
 
-export type PairingOutcome = "approved" | "rejected" | "expired" | "cancelled" | "failed"
+export type PairingOutcome = "approved" | "rejected" | "expired" | "cancelled" | "failed" | "protocol_incompatible"
 
 export interface ConnectorHost {
   /** Ask the local user whether this phone may connect; undefined rejects it. */
@@ -83,11 +85,15 @@ export type ConnectorOptions = {
   pairingPollMs?: number
 }
 
+type GrantAttempt = { expectedVersion: number; scopes: Scopes; sent: boolean }
+
 type Generation = {
   control: ControlChannel
   epoch: number
   startedAt: number
   ended: boolean
+  grants: Map<string, GrantAttempt>
+  exposing: Set<string>
 }
 
 type Runtime = {
@@ -107,8 +113,6 @@ export class Connector {
   private runtime: Runtime | undefined
   private generation: Generation | undefined
   private readonly groups = new Map<string, DeviceGroup>()
-  /** Bindings whose grant is being published, so concurrent reconciles never race two grants. */
-  private readonly exposing = new Set<string>()
   private lastPhones: PhoneStatus[] = []
   private readonly retries = new Map<string, { attempts: number; timer?: ReturnType<typeof setTimeout> }>()
   private enabled = false
@@ -162,18 +166,29 @@ export class Connector {
       runtime = await this.prepare()
     } catch (error) {
       // Service or network trouble before connecting is retried like a lost connection.
-      if (session === this.session) this.lost(error)
+      if (session === this.session) {
+        const network = error instanceof ConnectError && error.code === "network"
+        this.lost(error, network ? "service_unreachable" : undefined)
+      }
       return
     }
     if (!this.enabled || session !== this.session) return
-    if (typeof runtime === "string") {
-      this.enabled = false
-      await this.lock.release()
-      return this.publish({ state: "unavailable", reason: runtime })
-    }
+    if (typeof runtime === "string") return this.disable(runtime)
     this.runtime = runtime
     this.watchAccount(runtime, session)
     await this.connect(session)
+  }
+
+  private async disable(reason: UnavailableReason): Promise<void> {
+    if (!this.enabled) return
+    const session = this.session
+    this.enabled = false
+    this.endGeneration()
+    clearInterval(this.accountTimer)
+    clearTimeout(this.reconnectTimer)
+    this.runtime = undefined
+    await this.lock.release()
+    if (session === this.session) this.publish({ state: "unavailable", reason })
   }
 
   /** Keep the runtime on the current credential; a changed or ended sign-in starts over. */
@@ -214,8 +229,14 @@ export class Connector {
     const runtime = this.runtime
     const generation = this.generation
     if (!runtime || !generation || !this.live(generation) || generation.epoch === 0 || this.pairing) return "failed"
-    const challenge = await runtime.api.createPairingCode(generation.epoch).catch(() => undefined)
-    if (!challenge) return "failed"
+    let challenge: Awaited<ReturnType<ConnectApi["createPairingCode"]>>
+    try {
+      challenge = await runtime.api.createPairingCode(generation.epoch)
+    } catch (error) {
+      if (!this.live(generation)) return "cancelled"
+      return error instanceof ConnectError && error.code === "protocol_incompatible" ? "protocol_incompatible" : "failed"
+    }
+    if (!this.live(generation) || this.pairing) return "failed"
     const pairing = (this.pairing = {
       challengeId: challenge.challengeId,
       status: { code: challenge.code, expiresAt: challenge.expiresAt },
@@ -223,7 +244,7 @@ export class Connector {
     })
     this.refresh()
     try {
-      return await this.awaitClaim(runtime, pairing)
+      return await this.awaitClaim(runtime, generation, pairing)
     } finally {
       if (this.pairing === pairing) this.pairing = undefined
       this.refresh()
@@ -245,12 +266,7 @@ export class Connector {
     const runtime = this.runtime
     if (!runtime) throw new ConnectError("offline")
     await runtime.api.revoke(bindingId)
-    // A live group receives the revoked fence and lets the service confirm it;
-    // otherwise the next reconnect confirms it with recovery credentials.
-    await this.state.update((state) => {
-      delete state.consents[bindingId]
-    })
-    this.refresh()
+    await this.forget(bindingId)
   }
 
   // ---- setup ----------------------------------------------------------------
@@ -301,8 +317,11 @@ export class Connector {
         })
       }
     } catch (error) {
-      if (error instanceof ConnectError && error.code === "allowlist_denied") return "not_admitted"
-      if (error instanceof ConnectError && (error.status === 401 || error.status === 403)) return "account_rejected"
+      if (error instanceof ConnectError) {
+        if (error.code === "discovery_failed" || error.code === "protocol_incompatible") return error.code
+        if (error.code === "allowlist_denied") return "not_admitted"
+      }
+      if (error instanceof ConnectError && ACCOUNT_REJECTION_CODES.has(error.code)) return "account_rejected"
       // This key is already registered for the account under another name.
       if (error instanceof ConnectError && error.code === "conflict") return "registration_conflict"
       throw error
@@ -341,7 +360,14 @@ export class Connector {
   private async connect(session: number): Promise<void> {
     const runtime = this.runtime
     if (!this.enabled || !runtime || session !== this.session) return
-    const generation: Generation = { control: undefined!, epoch: 0, startedAt: this.clock(), ended: false }
+    const generation: Generation = {
+      control: undefined!,
+      epoch: 0,
+      startedAt: this.clock(),
+      ended: false,
+      grants: new Map(),
+      exposing: new Set(),
+    }
     generation.control = new ControlChannel(runtime.http, () => runtime.account.origin, this.dial, runtime.heartbeats, {
       onClosed: () => {
         if (this.generation === generation) this.lost()
@@ -364,6 +390,9 @@ export class Connector {
       await this.reconcile(runtime, generation)
     } catch (error) {
       if (!this.live(generation)) return
+      if (error instanceof ConnectError && error.code === "protocol_incompatible") {
+        return this.disable("protocol_incompatible")
+      }
       const cooldown = error instanceof ConnectError ? (error.retryAfterMs ?? 0) : 0
       const wait = Math.max(
         Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** attempt),
@@ -375,7 +404,11 @@ export class Connector {
     }
   }
 
-  private lost(error?: unknown): void {
+  private lost(error?: unknown, reason?: "service_unreachable"): void {
+    if (error instanceof ConnectError && error.code === "protocol_incompatible") {
+      void this.disable("protocol_incompatible")
+      return
+    }
     const generation = this.generation
     const stable = generation && generation.epoch > 0 && this.clock() - generation.startedAt >= STABLE_MS
     this.endGeneration()
@@ -385,7 +418,7 @@ export class Connector {
     const cooldown = error instanceof ConnectError ? (error.retryAfterMs ?? 0) : 0
     const wait = Math.max(backoff, cooldown, this.runtime?.http.cooldownRemainingMs() ?? 0)
     this.reconnectAttempts += 1
-    this.publish({ state: "reconnecting", retryInMs: wait, phones: this.lastPhones })
+    this.publish({ state: "reconnecting", retryInMs: wait, phones: this.lastPhones, ...(reason ? { reason } : {}) })
     clearInterval(this.accountTimer)
     this.runtime = undefined
     const session = this.session
@@ -396,6 +429,7 @@ export class Connector {
   private endGeneration(): void {
     const generation = this.generation
     this.generation = undefined
+    if (this.pairing) this.pairing.cancelled = true
     clearTimeout(this.reconcileTimer)
     for (const retry of this.retries.values()) clearTimeout(retry.timer)
     this.retries.clear()
@@ -433,15 +467,12 @@ export class Connector {
     for (const { binding } of bindings) {
       const consent = state.consents[binding.bindingId]
       if (binding.state === "active") {
-        if (consent && this.consentHolds(consent, runtime.account))
-          void this.expose(runtime, generation, binding, consent)
+        if (consent && this.consentHolds(consent, runtime, binding))
+          void this.expose(runtime, generation, binding.bindingId)
         continue
       }
-      // A revoked binding is confirmed while the service still waits for this connector,
-      // also when local records were lost; otherwise only leftover local records are cleared.
-      const hasGate = Object.keys(state.gates).some((key) => key.startsWith(`${binding.bindingId}:`))
-      if (binding.relayFence === "pending" || consent || hasGate)
-        await this.confirmRevoked(runtime, generation, binding)
+      // A revoked binding is never served again; its local records go.
+      if (consent || this.groups.has(binding.bindingId)) await this.forget(binding.bindingId)
     }
     // Consents for bindings the service no longer lists cannot be exposed again.
     await this.state.update((next) => {
@@ -454,133 +485,144 @@ export class Connector {
     this.refresh()
   }
 
-  private consentHolds(consent: Consent, account: ConnectorAccount): boolean {
-    return consent.subject === account.subject && consent.environment === account.environment
+  private consentHolds(consent: Consent, runtime: Runtime, binding: BindingView): boolean {
+    return (
+      consent.subject === runtime.account.subject &&
+      consent.environment === runtime.account.environment &&
+      consent.bindingId === binding.bindingId &&
+      consent.phoneId === binding.phoneId &&
+      consent.connectorId === runtime.deviceId &&
+      binding.connectorId === runtime.deviceId &&
+      consent.revocationVersion === binding.revocationVersion
+    )
   }
 
-  /** Publish this generation's grant from the stored consent and open a device group for it. */
-  private async expose(
-    runtime: Runtime,
-    generation: Generation,
-    binding: BindingView,
-    consent: Consent,
-  ): Promise<void> {
-    if (!this.live(generation) || this.groups.has(binding.bindingId) || this.exposing.has(binding.bindingId)) return
-    this.exposing.add(binding.bindingId)
+  /** Revalidate consent, settle the generation's grant, then attach one bus group. */
+  private async expose(runtime: Runtime, generation: Generation, bindingId: string): Promise<void> {
+    if (!this.live(generation) || this.groups.has(bindingId) || generation.exposing.has(bindingId)) return
+    generation.exposing.add(bindingId)
     let grant: GrantView
     try {
-      grant = await this.publishGrant(runtime, generation, binding.bindingId, consent.scopes)
+      const binding = await runtime.api.binding(bindingId)
+      if (!this.live(generation)) return
+      if (binding.state === "revoked") return void this.retire(runtime, generation, bindingId)
+      const consent = (await this.state.read()).consents[bindingId]
+      if (!this.live(generation) || !consent || !this.consentHolds(consent, runtime, binding)) return
+      grant = await this.grantFor(runtime, generation, binding, consent.scopes)
     } catch (error) {
-      if (error instanceof ConnectError && error.code === "binding_revoked")
-        return void this.retire(runtime, generation, binding.bindingId)
-      return this.retry(runtime, generation, binding, consent)
+      if (!this.live(generation)) return
+      if (error instanceof ConnectError && error.code === "protocol_incompatible") {
+        return void this.disable("protocol_incompatible")
+      }
+      if (error instanceof ConnectError && error.code === "binding_revoked") {
+        return void this.retire(runtime, generation, bindingId)
+      }
+      return this.retry(runtime, generation, bindingId)
     } finally {
-      this.exposing.delete(binding.bindingId)
+      generation.exposing.delete(bindingId)
     }
     if (!this.live(generation)) return
     const group = new DeviceGroup(this.groupContext(runtime), grant, (end) => {
-      if (this.groups.get(binding.bindingId) !== group) return
-      this.groups.delete(binding.bindingId)
+      if (this.groups.get(bindingId) !== group) return
+      this.groups.delete(bindingId)
       this.refresh()
-      if (end.revoked) return void this.retire(runtime, generation, binding.bindingId)
-      // Grant changes and lane failures rebuild with a fresh grant and group.
-      this.retry(runtime, generation, binding, consent)
+      if (end.incompatible) return void this.disable("protocol_incompatible")
+      if (end.revoked) return void this.retire(runtime, generation, bindingId)
+      this.retry(runtime, generation, bindingId)
     })
-    this.groups.set(binding.bindingId, group)
+    this.groups.set(bindingId, group)
     try {
       await group.open()
-      this.retries.delete(binding.bindingId)
+      clearTimeout(this.retries.get(bindingId)?.timer)
+      this.retries.delete(bindingId)
       this.refresh()
-    } catch {
-      if (this.groups.get(binding.bindingId) === group) {
-        this.groups.delete(binding.bindingId)
-        this.retry(runtime, generation, binding, consent)
+    } catch (error) {
+      if (this.groups.get(bindingId) === group) {
+        this.groups.delete(bindingId)
+        if (error instanceof ConnectError && error.code === "protocol_incompatible") {
+          return void this.disable("protocol_incompatible")
+        }
+        this.retry(runtime, generation, bindingId)
       }
     }
   }
 
-  private async publishGrant(runtime: Runtime, generation: Generation, bindingId: string, scopes: Scopes) {
-    // A conflict means someone (or a lost answer of ours) moved the version: read it again once.
-    for (let attempt = 0; ; attempt++) {
+  private async grantFor(runtime: Runtime, generation: Generation, binding: BindingView, scopes: Scopes) {
+    const { bindingId, revocationVersion } = binding
+    let attempt = generation.grants.get(bindingId)
+    if (!attempt) {
       const meta = await runtime.api.upgradeMetadata(bindingId, generation.epoch)
+      if (meta.connectorId !== runtime.deviceId) throw new ConnectError("protocol")
+      // Freeze the proposed write. No subsequent attempt in this epoch can choose a newer version.
+      attempt = { expectedVersion: meta.grantVersion, scopes, sent: false }
+      generation.grants.set(bindingId, attempt)
+    }
+    const { expectedVersion } = attempt
+    if (!this.live(generation) || scopes.join(",") !== attempt.scopes.join(",")) {
+      throw new ConnectError("grant_unavailable")
+    }
+    let grant: GrantView
+    if (attempt.sent) {
+      // This is either a bus-only rebuild or a read-back after an ambiguous PUT.
+      grant = await runtime.api.grant(bindingId)
+    } else {
+      attempt.sent = true
       try {
-        return await runtime.api.publishGrant(bindingId, {
+        grant = await runtime.api.publishGrant(bindingId, {
           connectionEpoch: generation.epoch,
-          expectedVersion: meta.grantVersion,
+          expectedVersion,
           state: "active",
           scopes,
         })
       } catch (error) {
-        if (attempt === 0 && error instanceof ConnectError && error.code === "conflict") continue
+        // No request during a local cooldown; proof_expired is a pre-execution rejection.
+        // In either case keep the original expectedVersion.
+        if (error instanceof ConnectError && (error.code === "cooldown" || error.code === "proof_expired")) {
+          attempt.sent = false
+        }
         throw error
       }
     }
+    if (
+      grant.state !== "active" ||
+      grant.connectorId !== runtime.deviceId ||
+      grant.revocationVersion !== revocationVersion ||
+      grant.connectionEpoch !== generation.epoch ||
+      grant.grantVersion !== expectedVersion + 1 ||
+      grant.scopes.join(",") !== scopes.join(",")
+    ) {
+      throw new ConnectError("grant_unavailable")
+    }
+    return grant
   }
 
-  private retry(runtime: Runtime, generation: Generation, binding: BindingView, consent: Consent): void {
+  private retry(runtime: Runtime, generation: Generation, bindingId: string): void {
     if (!this.live(generation)) return
-    const retry = this.retries.get(binding.bindingId) ?? { attempts: 0 }
+    const retry = this.retries.get(bindingId) ?? { attempts: 0 }
     clearTimeout(retry.timer)
     const wait = Math.max(
       Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** retry.attempts),
       runtime.http.cooldownRemainingMs(),
     )
     retry.attempts += 1
-    retry.timer = setTimeout(() => void this.expose(runtime, generation, binding, consent), wait)
-    this.retries.set(binding.bindingId, retry)
+    retry.timer = setTimeout(() => void this.expose(runtime, generation, bindingId), wait)
+    this.retries.set(bindingId, retry)
   }
 
-  /** Let the service record that this connector stopped serving a revoked binding. */
-  private async confirmRevoked(runtime: Runtime, generation: Generation, binding: BindingView): Promise<void> {
-    const state = await this.state.read()
-    const gate = Object.entries(state.gates).find(([key]) => key.startsWith(`${binding.bindingId}:`))?.[1]
-    const grantVersion = await runtime.api
-      .grant(binding.bindingId)
-      .then((grant) => grant.grantVersion)
-      .catch(() => gate?.grantVersion)
-    let confirmed = binding.relayFence === "complete"
-    if (!confirmed && grantVersion) {
-      const recovery = {
-        bindingId: binding.bindingId,
-        grantVersion,
-        connectionEpoch: generation.epoch,
-        scopes: [] as Scopes,
-      }
-      await new DeviceGroup(this.groupContext(runtime), recovery, () => {}).confirmRevocation().catch(() => false)
-      // The service is the judge: the binding's fence completes once it recorded our confirmation.
-      confirmed = await runtime.api
-        .binding(binding.bindingId)
-        .then((view) => view.relayFence === "complete")
-        .catch(() => false)
-    }
-    if (confirmed) await this.forget(binding.bindingId)
-    else {
-      await this.state.update((next) => {
-        delete next.consents[binding.bindingId]
-      })
-    }
-  }
-
-  /**
-   * A binding was revoked while this connector served it: stop exposing it at
-   * once, but keep its gates until the service confirms the revocation.
-   */
+  /** A binding was revoked while this connector served it: stop exposing it at once. */
   private async retire(runtime: Runtime, generation: Generation, bindingId: string): Promise<void> {
-    this.groups.get(bindingId)?.close()
-    this.groups.delete(bindingId)
-    await this.state.update((state) => {
-      delete state.consents[bindingId]
-    })
-    this.refresh()
-    await this.reconcileUntilDone(runtime, generation, 0)
+    if (!this.live(generation)) return
+    await this.forget(bindingId)
+    if (this.live(generation)) await this.reconcileUntilDone(runtime, generation, 0)
   }
 
   private async forget(bindingId: string): Promise<void> {
+    clearTimeout(this.retries.get(bindingId)?.timer)
+    this.retries.delete(bindingId)
     this.groups.get(bindingId)?.close()
     this.groups.delete(bindingId)
     await this.state.update((state) => {
       delete state.consents[bindingId]
-      for (const key of Object.keys(state.gates)) if (key.startsWith(`${bindingId}:`)) delete state.gates[key]
     })
     this.refresh()
   }
@@ -591,10 +633,8 @@ export class Connector {
       http: runtime.http,
       origin: () => runtime.account.origin,
       dial: this.dial,
-      heartbeats: runtime.heartbeats,
       backend: this.options.backend,
       submissions: this.submissions,
-      state: this.state,
       clock: this.options.clock,
     }
   }
@@ -603,6 +643,7 @@ export class Connector {
 
   private async awaitClaim(
     runtime: Runtime,
+    generation: Generation,
     pairing: { challengeId: string; status: PairingStatus; cancelled: boolean },
   ): Promise<PairingOutcome> {
     const expiresAt = Date.parse(pairing.status.expiresAt)
@@ -610,6 +651,7 @@ export class Connector {
       await Bun.sleep(this.options.pairingPollMs ?? PAIRING_POLL_MS)
       if (pairing.cancelled) break
       const status = await runtime.api.pairingStatus(pairing.challengeId).catch(() => undefined)
+      if (pairing.cancelled || !this.live(generation)) return "cancelled"
       if (!status) continue
       if (status.status === "open") continue
       if (status.status !== "claimed" || !status.request) {
@@ -619,22 +661,22 @@ export class Connector {
       }
       pairing.status = { ...pairing.status, phoneName: status.request.phoneName }
       this.refresh()
-      return this.decide(runtime, pairing, status.request)
+      return this.decide(runtime, generation, pairing, status.request)
     }
     return pairing.cancelled ? "cancelled" : "expired"
   }
 
   private async decide(
     runtime: Runtime,
+    generation: Generation,
     pairing: { challengeId: string; status: PairingStatus; cancelled: boolean },
     request: { requestId: string; phoneName: string },
   ): Promise<PairingOutcome> {
     const answer = await this.options.host
       .confirmPairing({ phoneName: request.phoneName, code: pairing.status.code })
       .catch(() => undefined)
-    const generation = this.generation
-    if (!generation || !this.live(generation)) return "failed"
-    if (!answer || pairing.cancelled) {
+    if (pairing.cancelled || !this.live(generation)) return "cancelled"
+    if (!answer) {
       await runtime.api.decide(request.requestId, "reject", generation.epoch).catch(() => undefined)
       return "rejected"
     }
@@ -645,10 +687,12 @@ export class Connector {
         phoneName: request.phoneName,
         subject: runtime.account.subject,
         environment: runtime.account.environment,
+        connectorId: runtime.deviceId,
         scopes: answer.canSend ? READ_SEND : READ_ONLY,
         confirmedAt: this.clock(),
       }
     })
+    if (pairing.cancelled || !this.live(generation)) return "cancelled"
     const decision = await runtime.api.decide(request.requestId, "approve", generation.epoch).catch(() => undefined)
     // Settles the confirmation into a consent and exposes the binding, also when the approve answer was lost.
     await this.reconcile(runtime, generation).catch(() => undefined)
@@ -682,11 +726,12 @@ export class Connector {
       if (request?.status === "approved" && !binding) continue
       await this.state.update((state) => {
         delete state.pending[requestId]
-        if (binding)
+        if (binding?.state === "active" && binding.connectorId === confirmation.connectorId)
           state.consents[binding.bindingId] = {
             ...confirmation,
             bindingId: binding.bindingId,
             phoneId: binding.phoneId,
+            revocationVersion: binding.revocationVersion,
           }
       })
     }

@@ -26,12 +26,13 @@ export type GroupScope = {
   canSend: boolean
 }
 
-/** Sends one frame on a lane of this group; false when the lane cannot carry it. */
-export type Outbox = (lane: Lane, frame: Record<string, Json>) => boolean
+/** Publishes one reply; true only after its ACK while the reply still belongs to a live request. */
+export type Outbox = (lane: Lane, frame: Record<string, Json>, signal?: AbortSignal) => Promise<boolean>
 
 type Target = Record<string, Json>
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const SESSION_SCOPED_OPERATIONS = new Set(["subscribe-session", "send", "submission-status"])
 
 export class Dispatcher {
   private readonly catalog: Catalog
@@ -81,15 +82,15 @@ export class Dispatcher {
       case "sessions-watch":
         return this.observe(
           target,
-          new CatalogWatch(this.backend, this.catalog, target, this.reply, this.done, this.clock),
+          new CatalogWatch(this.backend, this.catalog, target, this.outbox, this.done, this.clock),
         )
       case "subscribe-session":
         if (typeof frame.sessionId !== "string" || !WIRE_ID.test(frame.sessionId)) {
-          return void this.reply(target, "request-error", { code: "not_found" })
+          return this.reply(target, "request-error", { code: "not_found" })
         }
         return this.observe(
           target,
-          new SessionReading(this.backend, frame.sessionId, target, this.reply, this.outbox, this.done, this.clock),
+          new SessionReading(this.backend, frame.sessionId, target, this.outbox, this.done, this.clock),
         )
       case "unsubscribe": {
         const id = frame.subscriptionRequestId
@@ -98,7 +99,7 @@ export class Dispatcher {
           if (observation.requestId === id) this.retire(dispatchId)
         }
         // Idempotent: the phone also unsubscribes observations that already ended.
-        return void this.reply(target, "unsubscribed", { subscriptionRequestId: id })
+        return this.reply(target, "unsubscribed", { subscriptionRequestId: id })
       }
       case "send":
         return this.send(frame, target)
@@ -112,15 +113,15 @@ export class Dispatcher {
       typeof frame.limit === "number" && Number.isInteger(frame.limit) ? Math.min(Math.max(frame.limit, 1), 50) : 50
     const cursor = typeof frame.cursor === "string" ? frame.cursor : null
     const sessions = await this.backend.listSessions().catch(() => undefined)
-    if (!sessions) return void this.reply(target, "request-error", { code: "source_unavailable" })
+    if (!sessions) return this.reply(target, "request-error", { code: "source_unavailable" })
     const page = await this.catalog.page(sessions, cursor, limit)
-    if (typeof page === "string") return void this.reply(target, "request-error", { code: page })
-    this.reply(target, "sessions-page", page as unknown as Record<string, Json>)
+    if (typeof page === "string") return this.reply(target, "request-error", { code: page })
+    await this.reply(target, "sessions-page", page as unknown as Record<string, Json>)
   }
 
   private async send(frame: Record<string, unknown>, target: Target): Promise<void> {
     if (typeof frame.text !== "string" || typeof target.sessionId !== "string") {
-      return void this.reply(target, "submission-result", { status: "rejected", reason: "invalid" })
+      return this.reply(target, "submission-result", { status: "rejected", reason: "invalid" })
     }
     const result = this.submissions.send({
       bindingId: this.scope.bindingId,
@@ -129,17 +130,17 @@ export class Dispatcher {
       text: frame.text,
       canSend: this.scope.canSend,
     })
-    this.reply(target, "submission-result", await answerBy(result, SUBMIT_ANSWER_MS))
+    await this.reply(target, "submission-result", await answerBy(result, SUBMIT_ANSWER_MS))
   }
 
   private async status(target: Target): Promise<void> {
-    if (typeof target.sessionId !== "string") return void this.reply(target, "submission-result", { status: "unknown" })
+    if (typeof target.sessionId !== "string") return this.reply(target, "submission-result", { status: "unknown" })
     const result = this.submissions.status({
       bindingId: this.scope.bindingId,
       sessionId: target.sessionId,
       requestId: target.requestId as string,
     })
-    this.reply(target, "submission-result", await answerBy(result, SUBMIT_ANSWER_MS))
+    await this.reply(target, "submission-result", await answerBy(result, SUBMIT_ANSWER_MS))
   }
 
   private observe(target: Target, observation: Observation): void {
@@ -153,13 +154,13 @@ export class Dispatcher {
     this.observations.delete(dispatchId)
   }
 
-  private readonly done = (dispatchId: string) => {
-    this.observations.delete(dispatchId)
+  private readonly done = (observation: Observation) => {
+    if (this.observations.get(observation.dispatchId) === observation) this.observations.delete(observation.dispatchId)
   }
 
-  private readonly reply = (target: Target, type: string, fields: Record<string, Json>): boolean => {
-    if (this.closed) return false
-    return this.outbox("command", { ...target, type, ...fields })
+  private async reply(target: Target, type: string, fields: Record<string, Json>): Promise<void> {
+    if (this.closed) return
+    await this.outbox("command", { ...target, type, ...fields })
   }
 
   /** The exact target every answer must carry, or undefined for a frame outside this group. */
@@ -187,7 +188,7 @@ export class Dispatcher {
       grantVersion,
       dispatchId: frame.dispatchId,
     }
-    if ("sessionId" in frame) {
+    if (typeof frame.operation === "string" && SESSION_SCOPED_OPERATIONS.has(frame.operation) && "sessionId" in frame) {
       if (typeof frame.sessionId !== "string") return undefined
       target.sessionId = frame.sessionId
     }
@@ -195,25 +196,31 @@ export class Dispatcher {
   }
 }
 
-type Reply = (target: Target, type: string, fields: Record<string, Json>) => boolean
-
 abstract class Observation {
   private dirty = false
   private running = false
   private timer: ReturnType<typeof setTimeout> | undefined
   private last = Number.NEGATIVE_INFINITY
   protected started = false
-  protected stopped = false
+  private readonly lifetime = new AbortController()
 
   constructor(
     protected readonly target: Target,
-    protected readonly reply: Reply,
-    private readonly done: (dispatchId: string) => void,
+    private readonly outbox: Outbox,
+    private readonly done: (observation: Observation) => void,
     protected readonly clock: () => number,
   ) {}
 
   get requestId(): string {
     return this.target.requestId as string
+  }
+
+  get dispatchId(): string {
+    return this.target.dispatchId as string
+  }
+
+  protected get stopped(): boolean {
+    return this.lifetime.signal.aborted
   }
 
   async start(): Promise<void> {
@@ -227,7 +234,7 @@ abstract class Observation {
   protected abstract refresh(): Promise<string | undefined>
 
   stop(): void {
-    this.stopped = true
+    this.lifetime.abort()
     clearTimeout(this.timer)
   }
 
@@ -247,20 +254,28 @@ abstract class Observation {
     this.running = true
     this.dirty = false
     this.last = this.clock()
-    const failure = await this.refresh().catch(() => "source_unavailable")
-    this.running = false
-    if (this.stopped) return
-    if (failure) return this.fail(failure)
-    if (this.dirty) {
-      this.dirty = false
-      this.kick()
+    try {
+      const failure = await this.refresh().catch(() => "source_unavailable")
+      if (this.stopped) return
+      if (failure) {
+        await this.publish("command", { type: this.started ? "subscription-closed" : "request-error", code: failure })
+        this.finish()
+      }
+    } finally {
+      this.running = false
+      if (this.dirty) this.kick()
     }
   }
 
-  protected fail(code: string): void {
+  protected async publish(lane: Lane, frame: Record<string, Json>): Promise<boolean> {
+    if (this.stopped) return false
+    const acknowledged = await this.outbox(lane, { ...this.target, ...frame }, this.lifetime.signal)
+    return acknowledged && !this.stopped
+  }
+
+  protected finish(): void {
     this.stop()
-    this.done(this.target.dispatchId as string)
-    this.reply(this.target, this.started ? "subscription-closed" : "request-error", { code })
+    this.done(this)
   }
 }
 
@@ -271,11 +286,11 @@ class CatalogWatch extends Observation {
     private readonly backend: AgentBackend,
     private readonly catalog: Catalog,
     target: Target,
-    reply: Reply,
-    done: (dispatchId: string) => void,
+    outbox: Outbox,
+    done: (observation: Observation) => void,
     clock: () => number,
   ) {
-    super(target, reply, done, clock)
+    super(target, outbox, done, clock)
   }
 
   changed(): void {
@@ -285,7 +300,10 @@ class CatalogWatch extends Observation {
   protected async refresh(): Promise<string | undefined> {
     const revision = await this.catalog.revision(await this.backend.listSessions())
     if (this.stopped || revision === this.revision) return undefined
-    if (!this.reply(this.target, "sessions-changed", { revision })) return undefined
+    if (!(await this.publish("command", { type: "sessions-changed", revision }))) {
+      this.finish()
+      return undefined
+    }
     this.revision = revision
     this.started = true
     return undefined
@@ -299,12 +317,11 @@ class SessionReading extends Observation {
     private readonly backend: AgentBackend,
     private readonly sessionId: string,
     target: Target,
-    reply: Reply,
-    private readonly outbox: Outbox,
-    done: (dispatchId: string) => void,
+    outbox: Outbox,
+    done: (observation: Observation) => void,
     clock: () => number,
   ) {
-    super(target, reply, done, clock)
+    super(target, outbox, done, clock)
     this.projection = new SessionProjection(sessionId)
   }
 
@@ -325,10 +342,11 @@ class SessionReading extends Observation {
       ["state", frames.state],
     ] as const) {
       if (!frame) continue
-      if (!this.outbox(lane, { ...this.target, ...frame })) {
-        // A dropped frame would be a sequence gap; restart the stream instead.
-        this.started = true
-        return "resync_required"
+      if (!(await this.publish(lane, frame))) {
+        // Never reuse a projection with an unacknowledged frame. A partial stream must resync.
+        if (this.started) return "resync_required"
+        this.finish()
+        return undefined
       }
       this.started = true
     }

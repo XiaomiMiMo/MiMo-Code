@@ -7,6 +7,7 @@
 import { createHash, randomBytes } from "node:crypto"
 import net from "node:net"
 import tls from "node:tls"
+import { decodeWireUtf8, parseWireFrame } from "./json"
 
 export interface FrameSocket {
   readonly protocol: string
@@ -31,6 +32,8 @@ export type DialInput = {
   echo: string[]
   /** Inbound frames larger than this close the socket with 1009. */
   maxFrameBytes: number
+  /** One message may carry several JSON objects separated by newlines (the bus), each delivered on its own. */
+  lines?: boolean
   handlers: SocketHandlers
 }
 
@@ -123,7 +126,7 @@ export const wsDial: Dial = (input) =>
       clearTimeout(timeout)
       raw.removeAllListeners("close")
       raw.removeAllListeners("error")
-      resolve(new Connection(raw, input.protocol, input.maxFrameBytes, input.handlers, rest))
+      resolve(new Connection(raw, input.protocol, input.maxFrameBytes, input.handlers, rest, input.lines ?? false))
     }
     raw.on("data", onHandshake)
   })
@@ -170,6 +173,7 @@ class Connection implements FrameSocket {
     private readonly maxFrameBytes: number,
     private readonly handlers: SocketHandlers,
     initial: Buffer,
+    private readonly lines: boolean,
   ) {
     this.buffer = initial
     raw.on("data", (chunk: Buffer) => {
@@ -241,17 +245,30 @@ class Connection implements FrameSocket {
     const data = Buffer.concat(this.message)
     this.message = []
     this.messageBytes = 0
-    let parsed: unknown
+    let text: string
     try {
-      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(data))
+      text = decodeWireUtf8(data)
     } catch {
       return this.protocolError(CLOSE_POLICY, "invalid_json")
     }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return this.protocolError(CLOSE_POLICY, "invalid_frame")
+    const parts = this.lines ? text.split("\n").filter((line) => !/^[ \t\r]*$/.test(line)) : [text]
+    const frames: Record<string, unknown>[] = []
+    for (const part of parts) {
+      let parsed: unknown
+      try {
+        parsed = parseWireFrame(part, this.lines)
+      } catch {
+        return this.protocolError(CLOSE_POLICY, "invalid_json")
+      }
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        return this.protocolError(CLOSE_POLICY, "invalid_frame")
+      }
+      frames.push(parsed as Record<string, unknown>)
     }
-    if (this.closing) return true
-    this.handlers.onFrame(parsed as Record<string, unknown>)
+    for (const frame of frames) {
+      if (this.closing || this.ended) return !this.ended
+      this.handlers.onFrame(frame)
+    }
     return !this.ended
   }
 

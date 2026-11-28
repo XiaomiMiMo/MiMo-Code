@@ -107,51 +107,54 @@ describe("phone connection end to end", () => {
                 (status) => status.state === "online" && status.phones.some((phone) => phone.connected),
               )
 
-              const attach = service.frames.findLast(
-                (f) => f.path.endsWith("/command") && f.frame.type === "attach",
-              )!.frame
-              const target = {
-                protocolVersion: 1,
-                bindingId: attach.bindingId,
-                connectionEpoch: attach.connectionEpoch,
-                deviceGroupId: attach.deviceGroupId,
-                grantVersion: attach.grantVersion,
+              const bindingId = [...service.bindings.keys()][0]
+              const registration = service.registrations.get(bindingId)!
+              expect(service.subscriptions.has(`cmd:${bindingId}`)).toBe(true)
+              const ask = (type: string, fields: Record<string, unknown> = {}, requestId = crypto.randomUUID()) => {
+                const dispatchId = service.phoneCommand(bindingId, {
+                  protocolVersion: 1,
+                  type,
+                  requestId,
+                  grantVersion: registration.grantVersion,
+                  ...fields,
+                })
+                return { requestId, dispatchId }
               }
-              const ask = (operation: string, fields: Record<string, unknown> = {}) => {
-                const ids = { requestId: crypto.randomUUID(), dispatchId: crypto.randomUUID() }
-                service.sendOnLane("command", { ...target, ...ids, type: "request", operation, ...fields })
-                return ids
-              }
-              const answer = (requestId: string, type: string) =>
-                until(
-                  () => service.frames.find((f) => f.frame.requestId === requestId && f.frame.type === type)?.frame,
-                  (frame) => frame !== undefined,
+              const replies = (requestId: string) =>
+                service.published
+                  .filter(({ channel }) => channel === `rep:${bindingId}:${requestId}`)
+                  .map(({ data }) => ({ lane: data.lane, frame: data.frame as Record<string, unknown> }))
+              const answer = async ({ requestId, dispatchId }: ReturnType<typeof ask>, type: string) => {
+                const reply = await until(
+                  () =>
+                    replies(requestId).find(({ frame }) => frame.dispatchId === dispatchId && frame.type === type),
+                  (reply) => reply !== undefined,
                 )
+                const frame = reply!.frame
+                expect(frame).toMatchObject({ protocolVersion: 1, bindingId, requestId, dispatchId, ...registration })
+                return frame
+              }
               const frames = (lane: string, requestId: string) =>
-                service.frames
-                  .filter((f) => f.path.endsWith(`/${lane}`) && f.frame.requestId === requestId)
-                  .map((f) => f.frame)
+                replies(requestId).filter((reply) => reply.lane === lane).map(({ frame }) => frame)
 
-              // The catalog lists the project's session.
+              // [TP-R63-01] The catalog lists the project's session.
               const list = ask("sessions-list", { cursor: null, limit: 50 })
-              const page = (await answer(list.requestId, "sessions-page"))!
+              const page = await answer(list, "sessions-page")
               expect(
                 (page.entries as { sessionId: string; title: string }[]).map((e) => [e.sessionId, e.title]),
               ).toEqual([[session.id, "From the phone"]])
 
-              // Reading starts with a paired snapshot of the empty session.
+              // [TP-R63-03] Reading starts with a paired snapshot of the empty session.
               const reading = ask("subscribe-session", { sessionId: session.id })
-              await until(
-                () => frames("state", reading.requestId),
-                (state) => state.length === 1,
-              )
+              await answer(reading, "event-state")
+              await answer(reading, "event-text")
               expect(frames("text", reading.requestId)[0]).toMatchObject({ sequence: 0, snapshot: true, parts: [] })
               expect(frames("state", reading.requestId)[0]).toMatchObject({ sessionPhase: "idle", turns: [] })
 
-              // Sending continues the session; the reply streams back and the turn completes.
+              // [TP-R64-01] Sending continues the original session and streams the reply.
               await Effect.runPromise(llm.text("Hi from MiMo Code"))
               const send = ask("send", { sessionId: session.id, text: "hello from the phone" })
-              const result = (await answer(send.requestId, "submission-result"))!
+              const result = await answer(send, "submission-result")
               expect(result).toMatchObject({ status: "accepted", sessionId: session.id })
               const messageId = result.messageId as string
 
@@ -183,10 +186,8 @@ describe("phone connection end to end", () => {
               const textRevisions = texts.map((frame) => frame.contentRevision as number)
               expect(textRevisions).toEqual([...textRevisions].sort((a, b) => a - b))
               expect(new Set(textRevisions).size).toBe(textRevisions.length)
-              const lanes = service.frames.filter(
-                (f) =>
-                  f.frame.requestId === reading.requestId &&
-                  (f.frame.type === "event-text" || f.frame.type === "event-state"),
+              const lanes = replies(reading.requestId).filter(
+                ({ frame }) => frame.type === "event-text" || frame.type === "event-state",
               )
               let published = 0
               let stateRevision = 0
@@ -202,23 +203,18 @@ describe("phone connection end to end", () => {
                 }
               }
 
-              // Asking about the send again answers from the record without a second prompt.
-              service.sendOnLane("command", {
-                ...target,
-                requestId: send.requestId,
-                dispatchId: crypto.randomUUID(),
-                type: "request",
-                operation: "submission-status",
-                sessionId: session.id,
-              })
-              await until(
-                () =>
-                  service.frames.filter(
-                    (f) => f.frame.requestId === send.requestId && f.frame.type === "submission-result",
-                  ),
-                (answers) => answers.length === 2,
-              )
+              // [TP-R64-04] Querying the original request returns its record without another prompt.
+              const lookup = ask("submission-status", { sessionId: session.id }, send.requestId)
+              expect(await answer(lookup, "submission-result")).toMatchObject({ status: "accepted", messageId })
               expect(await Effect.runPromise(llm.calls)).toBe(1)
+
+              // A phone-side unbind withdraws the command subscription and removes the local phone.
+              service.phoneRevokes(bindingId)
+              await until(
+                () => connector.status,
+                (status) => status.state === "online" && status.phones.length === 0,
+              )
+              expect(service.subscriptions.has(`cmd:${bindingId}`)).toBe(false)
             } finally {
               await connector.stop()
               backend.dispose()

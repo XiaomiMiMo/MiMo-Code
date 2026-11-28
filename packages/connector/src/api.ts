@@ -1,6 +1,8 @@
-// Typed Connect endpoints used by a CLI connector (role=cli, cli-connector-v1).
-// Every response is parsed with a closed schema: unknown or missing fields are a
-// protocol error, never silently tolerated.
+// Typed Connect endpoints used by a CLI connector (role=cli, profile cli-connector).
+// Forward compatibility (connect-protocol R63): inbound objects validate their
+// required and optional fields and ignore unregistered fields, while still
+// rejecting forbidden cross-view identity fields and failing closed on
+// unregistered authorization/binding/pairing enum values.
 
 import z from "zod"
 import { ConnectError, type ConnectHttp } from "./http"
@@ -10,14 +12,52 @@ const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 const Count = z.number().int().nonnegative()
 const Iso = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
 
-export const Scopes = z.union([
-  z.tuple([z.literal("sessions:list"), z.literal("sessions:read")]),
-  z.tuple([z.literal("sessions:list"), z.literal("sessions:read"), z.literal("sessions:send")]),
-  z.tuple([]),
-])
-export type Scopes = z.infer<typeof Scopes>
+const KNOWN_CLI_SCOPES = new Set(["sessions:list", "sessions:read", "sessions:send"])
 
-export const BindingView = z.strictObject({
+export type Scopes =
+  | []
+  | ["sessions:list", "sessions:read"]
+  | ["sessions:list", "sessions:read", "sessions:send"]
+
+/**
+ * Unregistered scopes are ignored (treated as ungranted) without rejecting the
+ * known scopes of the grant (connect-protocol R63).
+ */
+export const Scopes = z.array(z.string()).transform((raw, ctx): Scopes => {
+  const known = raw.filter((scope) => KNOWN_CLI_SCOPES.has(scope))
+  if (new Set(known).size !== known.length) {
+    ctx.addIssue({ code: "custom", message: "duplicate scope" })
+    return z.NEVER
+  }
+  if (known.length === 0) return []
+  if (known.length === 2 && known.includes("sessions:list") && known.includes("sessions:read")) {
+    return ["sessions:list", "sessions:read"]
+  }
+  if (
+    known.length === 3 &&
+    known.includes("sessions:list") &&
+    known.includes("sessions:read") &&
+    known.includes("sessions:send")
+  ) {
+    return ["sessions:list", "sessions:read", "sessions:send"]
+  }
+  ctx.addIssue({ code: "custom", message: "invalid cli scopes" })
+  return z.NEVER
+})
+
+/** Reject mutually-exclusive Desktop view identity fields mixed into a CLI view (R63). */
+const FORBIDDEN_DESKTOP_FIELDS = ["desktopId", "desktopName"] as const
+
+function withoutDesktopFields<T extends z.ZodRawShape>(shape: T) {
+  return z.preprocess((raw) => {
+    if (typeof raw === "object" && raw !== null && FORBIDDEN_DESKTOP_FIELDS.some((key) => key in raw)) {
+      return null
+    }
+    return raw
+  }, z.object(shape))
+}
+
+export const BindingView = withoutDesktopFields({
   bindingId: Uuid,
   phoneId: Uuid,
   connectorId: Uuid,
@@ -29,35 +69,35 @@ export const BindingView = z.strictObject({
 })
 export type BindingView = z.infer<typeof BindingView>
 
-const Discovery = z.strictObject({ contract: z.literal("connector-discovery-v1"), profiles: z.array(z.string()) })
-const Registered = z.strictObject({ deviceId: Uuid, role: z.literal("cli"), name: z.string().min(1) })
-const Challenge = z.strictObject({ challengeId: Uuid, code: z.string().regex(/^\d{4}$/), expiresAt: Iso })
-export const ChallengeStatus = z.strictObject({
+const Discovery = z.object({ contract: z.literal("connector-discovery"), profiles: z.array(z.string()) })
+const Registered = z.object({ deviceId: Uuid, role: z.literal("cli"), name: z.string().min(1) })
+const Challenge = z.object({ challengeId: Uuid, code: z.string().regex(/^\d{4}$/), expiresAt: Iso })
+export const ChallengeStatus = z.object({
   challengeId: Uuid,
   status: z.enum(["open", "claimed", "approved", "rejected", "cancelled", "expired"]),
-  request: z.strictObject({ requestId: Uuid, phoneName: z.string() }).nullable(),
+  request: z.object({ requestId: Uuid, phoneName: z.string() }).nullable(),
 })
 export type ChallengeStatus = z.infer<typeof ChallengeStatus>
-const Decision = z.strictObject({
+const Decision = z.object({
   requestId: Uuid,
   status: z.enum(["open", "claimed", "approved", "rejected", "cancelled", "expired"]),
   bindingId: Uuid.nullable(),
 })
 export type Decision = z.infer<typeof Decision>
-const BindingsPage = z.strictObject({
-  contract: z.literal("connector-bindings-v1"),
+const BindingsPage = z.object({
+  contract: z.literal("connector-bindings"),
   deviceId: Uuid,
-  bindings: z.array(z.strictObject({ binding: BindingView, phoneName: z.string() })),
+  bindings: z.array(z.object({ binding: BindingView, phoneName: z.string() })),
   nextCursor: z.string().nullable(),
 })
-const UpgradeMetadata = z.strictObject({
+const UpgradeMetadata = withoutDesktopFields({
   bindingId: Uuid,
   connectorId: Uuid,
   targetKind: z.literal("cli").nullable(),
   protocolVersion: z.literal(1).nullable(),
   grantVersion: Count,
 })
-export const GrantView = z.strictObject({
+export const GrantView = withoutDesktopFields({
   protocolVersion: z.literal(1),
   targetKind: z.literal("cli"),
   bindingId: Uuid,
@@ -72,23 +112,15 @@ export const GrantView = z.strictObject({
 export type GrantView = z.infer<typeof GrantView>
 export const Lane = z.enum(["command", "state", "text"])
 export type Lane = z.infer<typeof Lane>
-export const ChannelCredential = z.strictObject({
+export const BusRegistration = z.object({
   protocolVersion: z.literal(1),
-  targetKind: z.literal("cli"),
   bindingId: Uuid,
-  connectorId: Uuid,
-  role: z.literal("cli"),
-  lane: Lane,
   deviceGroupId: Uuid,
-  grantVersion: z.number().int().positive(),
   connectionEpoch: z.number().int().positive(),
-  revocationVersion: Count,
-  scopes: Scopes,
-  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  audience: z.string(),
-  expiresAt: z.number().int().positive(),
+  grantVersion: z.number().int().positive(),
+  expiresInMs: z.number().int().positive(),
 })
-export type ChannelCredential = z.infer<typeof ChannelCredential>
+export type BusRegistration = z.infer<typeof BusRegistration>
 
 function parse<T>(schema: z.ZodType<T>, data: unknown): T {
   const result = schema.safeParse(data)
@@ -99,23 +131,24 @@ function parse<T>(schema: z.ZodType<T>, data: unknown): T {
 export class ConnectApi {
   constructor(private readonly http: ConnectHttp) {}
 
-  /**
-   * Whether the service offers the CLI profile. A legal not_found from a service
-   * without the endpoint means "not offered"; every other failure is reported.
-   */
+  /** Only a valid empty discovery response means the service has not enabled CLI. */
   async offersCliProfile(): Promise<boolean> {
-    try {
-      const data = await this.http.request({
-        method: "GET",
-        path: `${ROOT}/connector-capabilities`,
-          profile: false,
-        proof: false,
-      })
-      return parse(Discovery, data).profiles.includes("cli-connector-v1")
-    } catch (error) {
-      if (error instanceof ConnectError && error.code === "not_found") return false
+    const data = await this.http.request({
+      method: "GET",
+      path: `${ROOT}/connector-capabilities`,
+      profile: false,
+      proof: false,
+    }).catch((error: unknown) => {
+      if (error instanceof ConnectError && error.code === "not_found") {
+        throw new ConnectError("discovery_failed", error.status, error.retryAfterMs, error.requestId)
+      }
       throw error
-    }
+    })
+    const { profiles } = parse(Discovery, data)
+    if (new Set(profiles).size !== profiles.length) throw new ConnectError("protocol")
+    if (profiles.length === 0) return false
+    if (!profiles.includes("cli-connector")) throw new ConnectError("protocol_incompatible")
+    return true
   }
 
   async register(name: string) {
@@ -242,28 +275,36 @@ export class ConnectApi {
     return grant
   }
 
-  async channelToken(
+  /**
+   * Register (or renew) this connector's bus group for the current epoch and
+   * grant (bus-channel §4.3). A CLI connector declares nothing beyond the group.
+   */
+  async busRegistration(
     bindingId: string,
-    input: { deviceGroupId: string; lane: Lane; grantVersion: number; connectionEpoch: number },
+    input: { deviceGroupId: string; grantVersion: number; connectionEpoch: number },
   ) {
     const data = await this.http.request({
       method: "POST",
-      path: `${ROOT}/bindings/${bindingId}/content-channel-tokens/cli`,
-      body: { protocolVersion: 1, ...input },
+      path: `${ROOT}/bindings/${bindingId}/bus-registration`,
+      body: {
+        protocolVersion: 1,
+        connectionEpoch: input.connectionEpoch,
+        grantVersion: input.grantVersion,
+        deviceGroupId: input.deviceGroupId,
+      },
       profile: true,
       proof: true,
     })
-    const credential = parse(ChannelCredential, data)
+    const registration = parse(BusRegistration, data)
     if (
-      credential.bindingId !== bindingId ||
-      credential.lane !== input.lane ||
-      credential.deviceGroupId !== input.deviceGroupId ||
-      credential.grantVersion !== input.grantVersion ||
-      credential.connectionEpoch !== input.connectionEpoch
+      registration.bindingId !== bindingId ||
+      registration.deviceGroupId !== input.deviceGroupId ||
+      registration.grantVersion !== input.grantVersion ||
+      registration.connectionEpoch !== input.connectionEpoch
     ) {
       throw new ConnectError("protocol")
     }
-    return credential
+    return registration
   }
 
   private get1(path: string) {
