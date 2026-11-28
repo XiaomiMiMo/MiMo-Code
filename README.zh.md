@@ -493,6 +493,22 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
 
 要声明自定义模型支持哪些输入模态（图片、音频、视频、PDF），在 TUI 中运行 `/modalities`——多选对话框会把设置持久化到配置，无需手动编辑。
 
+#### OpenDesign Go
+
+[OpenDesign Go](https://go.open-design.ai/) 可使用上面的自定义 Provider 配置，无需新增内置
+Provider。订阅 Go 套餐后，在具备该套餐访问权限的工作区创建 API Key，详见
+[API 接入说明](https://open-design.ai/help/cloud-api/)。
+
+将 `custom` 替换为 `opendesign-go`，`name` 设为 `OpenDesign Go`，
+`options.baseURL` 设为 `https://amr-link.open-design.ai/v1`。将 `options.apiKey` 设为
+`"{env:OPENDESIGN_API_KEY}"`，并向 `mimo` 进程提供该环境变量，避免把 Key 写入配置文件。
+把 `models` 和 `model` 中的 `MODEL_NAME` 都替换为工作区实际可用的模型 ID；选择的模型为
+`opendesign-go/MODEL_NAME`。模型可用性及用量限制取决于套餐。
+
+运行 `mimo models opendesign-go` 确认模型已加载，再在 TUI 中选择它并发送简短消息。
+编程任务需要支持工具调用的模型。此配置复用已有 OpenAI 兼容适配器，不包含 OpenDesign
+账号登录或套餐用量显示。
+
 ### 主要选项
 
 - Provider 和模型选择

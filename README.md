@@ -504,6 +504,23 @@ Put user-wide settings in `~/.config/mimocode/mimocode.jsonc` (or `mimocode.json
 
 To declare which input modalities a custom model supports (image, audio, video, PDF), run `/modalities` in the TUI — a multi-select dialog that persists the setting to config without hand-editing.
 
+#### OpenDesign Go
+
+[OpenDesign Go](https://go.open-design.ai/) works through the custom-provider configuration above;
+it does not require a new built-in provider. Subscribe to a Go plan and create an API key in a
+workspace with access to that plan ([API setup](https://open-design.ai/help/cloud-api/)).
+
+Use `opendesign-go` instead of `custom`, set `name` to `OpenDesign Go`, and set
+`options.baseURL` to `https://amr-link.open-design.ai/v1`. Set `options.apiKey` to
+`"{env:OPENDESIGN_API_KEY}"` and provide that environment variable to the `mimo` process, rather
+than putting the key in the configuration file. Replace `MODEL_NAME` in both `models` and
+`model` with the exact ID available to your workspace; the selected model becomes
+`opendesign-go/MODEL_NAME`. Model availability and limits depend on the plan.
+
+Run `mimo models opendesign-go` to confirm the model is loaded, then select it in the TUI and
+send a short message. Coding tasks need a model that supports tool calling. This uses the
+existing OpenAI-compatible adapter; it does not sign in to OpenDesign or display plan usage.
+
 ### Key Options
 
 - Provider and model selection
