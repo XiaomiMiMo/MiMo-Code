@@ -1,12 +1,11 @@
 import { indexImportedParts } from "../history/import"
 import path from "path"
-import { existsSync } from "fs"
-import { readFile } from "fs/promises"
+import { closeSync, existsSync, openSync, readSync } from "fs"
 import { Slug } from "@mimo-ai/shared/util/slug"
 import { Glob } from "@mimo-ai/shared/util/glob"
 import { Global } from "../global"
 import { Log, Filesystem } from "../util"
-import { Database, eq, and, inArray } from "../storage"
+import { Database, eq, and, inArray, sql } from "../storage"
 import { ProjectTable } from "../project/project.sql"
 import { ProjectID } from "../project/schema"
 import { resolveMainGitDir, resolveProjectId } from "../project/project-id"
@@ -51,40 +50,77 @@ function stringifyToolContent(content: unknown): string {
 }
 
 type Built = { info: MessageV2.Info; parts: { part: MessageV2.Part; time: number }[] }
+// The state a tool result gives the tool part it answers.
+type Settle = (part: MessageV2.ToolPart) => MessageV2.ToolPart["state"]
 
-function parse(text: string, sessionId: SessionID) {
-  const entries = text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)]
-      } catch {
-        return []
+// Yields the lines of the first `limit` bytes of a file, reading one chunk at a time, so a
+// transcript is never held in memory as a whole (#1671). Synchronous because the import stores
+// messages inside a database transaction, which cannot await.
+export function* lines(file: string, limit: number, chunkSize = 1 << 20): Generator<string> {
+  const fd = openSync(file, "r")
+  try {
+    const buf = Buffer.allocUnsafe(chunkSize)
+    const decoder = new TextDecoder()
+    let pending: string[] = []
+    let offset = 0
+    while (offset < limit) {
+      const read = readSync(fd, buf, 0, Math.min(chunkSize, limit - offset), offset)
+      if (read === 0) break
+      offset += read
+      const text = decoder.decode(buf.subarray(0, read), { stream: true })
+      let start = 0
+      for (let end = text.indexOf("\n"); end !== -1; end = text.indexOf("\n", start)) {
+        pending.push(text.slice(start, end))
+        yield pending.join("")
+        pending = []
+        start = end + 1
       }
-    })
-  if (entries.length === 0) return undefined
+      if (start < text.length) pending.push(text.slice(start))
+    }
+    const tail = pending.join("") + decoder.decode()
+    if (tail) yield tail
+  } finally {
+    closeSync(fd)
+  }
+}
 
+// Builds messages from transcript entries one entry at a time. A message goes to `emit` as soon
+// as it is complete, so the caller can store it and let it go; a tool result that arrives after
+// its message was emitted goes to `update`, with the id of the stored part.
+function parser(sessionId: SessionID, emit: (message: Built) => void, update: (id: PartID, settle: Settle) => void) {
   let cwd: string | undefined
   let version: string | undefined
   let timeCreated: number | undefined
   let timeUpdated = 0
   let title: string | undefined
+  let count = 0
 
-  const messages: Built[] = []
+  // Tool calls of the message being built. Once a message is emitted only the ids of its tool
+  // parts are kept, so finished tool output does not pile up here.
   const toolByCall = new Map<string, { part: MessageV2.ToolPart; start: number }>()
+  const storedCalls = new Map<string, { id: PartID; start: number }>()
   let current: Built | null = null
   let lastUserId: MessageID | null = null
   let lastModel = splitModel(undefined)
 
+  const push = (message: Built) => {
+    count++
+    emit(message)
+    for (const { part } of message.parts) {
+      if (part.type !== "tool") continue
+      const ref = toolByCall.get(part.callID)
+      if (!ref || ref.part !== part) continue
+      toolByCall.delete(part.callID)
+      storedCalls.set(part.callID, { id: part.id, start: ref.start })
+    }
+  }
   const flushAssistant = () => {
-    if (current) messages.push(current)
+    if (current) push(current)
     current = null
   }
 
-  for (const entry of entries) {
-    if (entry.type !== "user" && entry.type !== "assistant") continue
+  function add(entry: any) {
+    if (entry.type !== "user" && entry.type !== "assistant") return
     const t = entry.timestamp ? Date.parse(entry.timestamp) : Date.now()
     if (!cwd && entry.cwd) cwd = entry.cwd
     if (!version && entry.version) version = entry.version
@@ -92,26 +128,29 @@ function parse(text: string, sessionId: SessionID) {
     timeUpdated = Math.max(timeUpdated, t)
 
     const msg = entry.message
-    if (!msg) continue
+    if (!msg) return
 
     if (entry.type === "user") {
       const content = msg.content
       const blocks: any[] = typeof content === "string" ? [] : Array.isArray(content) ? content : []
 
       for (const r of blocks.filter((b) => b?.type === "tool_result")) {
-        const ref = toolByCall.get(r.tool_use_id)
+        const ref = toolByCall.get(r.tool_use_id) ?? storedCalls.get(r.tool_use_id)
         if (!ref) continue
         const out = stringifyToolContent(r.content)
-        ref.part.state = r.is_error
-          ? { status: "error", input: ref.part.state.input ?? {}, error: out, time: { start: ref.start, end: t } }
-          : {
-              status: "completed",
-              input: ref.part.state.input ?? {},
-              output: out,
-              title: ref.part.tool,
-              metadata: {},
-              time: { start: ref.start, end: t },
-            }
+        const settle: Settle = (part) =>
+          r.is_error
+            ? { status: "error", input: part.state.input ?? {}, error: out, time: { start: ref.start, end: t } }
+            : {
+                status: "completed",
+                input: part.state.input ?? {},
+                output: out,
+                title: part.tool,
+                metadata: {},
+                time: { start: ref.start, end: t },
+              }
+        if ("part" in ref) ref.part.state = settle(ref.part)
+        else update(ref.id, settle)
       }
 
       const textBlocks =
@@ -121,7 +160,7 @@ function parse(text: string, sessionId: SessionID) {
             : []
           : blocks.filter((b) => b?.type === "text" && typeof b.text === "string" && b.text.trim()).map((b) => b.text)
       const imageBlocks = blocks.filter((b) => b?.type === "image" && b.source)
-      if (textBlocks.length === 0 && imageBlocks.length === 0) continue
+      if (textBlocks.length === 0 && imageBlocks.length === 0) return
 
       flushAssistant()
       const id = MessageID.ascending()
@@ -141,13 +180,13 @@ function parse(text: string, sessionId: SessionID) {
         time: { created: t },
         model: { providerID: lastModel.providerID, modelID: lastModel.modelID },
       }
-      messages.push({ info, parts })
+      push({ info, parts })
       lastUserId = id
       if (!title) {
         const candidate = textBlocks.find((x) => x.trim() && !x.trim().startsWith("<"))
         if (candidate) title = candidate.trim().replace(/\s+/g, " ").slice(0, 100)
       }
-      continue
+      return
     }
 
     // assistant
@@ -155,7 +194,7 @@ function parse(text: string, sessionId: SessionID) {
     lastModel = model
     if (!lastUserId) {
       const uid = MessageID.ascending()
-      messages.push({
+      push({
         info: {
           id: uid,
           sessionID: sessionId,
@@ -213,16 +252,45 @@ function parse(text: string, sessionId: SessionID) {
       }
     }
   }
-  flushAssistant()
 
-  return {
-    cwd: cwd ?? "",
-    version,
-    title: title ?? "Claude Code session",
-    timeCreated: timeCreated ?? Date.now(),
-    timeUpdated: timeUpdated || timeCreated || Date.now(),
-    messages,
+  // The session header, or undefined when the transcript holds no message.
+  function finish() {
+    flushAssistant()
+    if (count === 0) return undefined
+    return {
+      cwd: cwd ?? "",
+      version,
+      title: title ?? "Claude Code session",
+      timeCreated: timeCreated ?? Date.now(),
+      timeUpdated: timeUpdated || timeCreated || Date.now(),
+    }
   }
+
+  return { add, finish }
+}
+
+// Reads the first `size` bytes of a transcript, hands every message to `emit` / `update` without
+// keeping it, and returns the session header.
+function scan(
+  file: string,
+  size: number,
+  sessionId: SessionID,
+  emit: (message: Built) => void,
+  update: (id: PartID, settle: Settle) => void,
+) {
+  const p = parser(sessionId, emit, update)
+  for (const raw of lines(file, size)) {
+    const line = raw.trim()
+    if (!line) continue
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    p.add(entry)
+  }
+  return p.finish()
 }
 
 function resolveProject(cwd: string): { id: ProjectID; worktree: string; vcs: string | null } {
@@ -277,16 +345,45 @@ export async function run(opts?: { force?: boolean }) {
       }
 
       const sessionId = existing ? existing.session_id : SessionID.descending()
-      const parsed = parse(await readFile(file, "utf-8"), sessionId)
-      if (!parsed || parsed.messages.length === 0) {
-        stats.skipped++
-        continue
-      }
-      const project = resolveProject(parsed.cwd)
-      const now = Date.now()
-      const messageIds = parsed.messages.map((m) => m.info.id)
+      const messageIds: MessageID[] = []
+      const partIds: PartID[] = []
+      const infos: MessageV2.Info[] = []
 
-      Database.transaction((tx) => {
+      const imported = Database.transaction((tx) => {
+        // The transcript is read a line at a time and each message is stored as soon as it is
+        // built, instead of reading the whole file first (#1671). The session row needs the title
+        // and times, known only at the end, so it is written last and foreign keys are checked at
+        // commit. Reading stops at the size stat() returned while Claude Code may still append.
+        tx.run(sql`PRAGMA defer_foreign_keys = ON`)
+        const store = (m: Built) => {
+          const { id, sessionID: _s, agentID: _a, ...data } = m.info
+          tx.insert(MessageTable)
+            .values({ id, session_id: sessionId, agent_id: "main", time_created: m.info.time.created, data })
+            .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
+            .run()
+          for (const p of m.parts) {
+            const { id: pid, sessionID: _ps, messageID: _pm, ...pdata } = p.part
+            tx.insert(PartTable)
+              .values({ id: pid, message_id: m.info.id, session_id: sessionId, time_created: p.time, data: pdata })
+              .onConflictDoUpdate({ target: PartTable.id, set: { data: pdata } })
+              .run()
+            partIds.push(pid)
+          }
+          messageIds.push(id)
+          infos.push(m.info)
+        }
+        const parsed = scan(file, Number(st.size), sessionId, store, (id, settle) => {
+          const row = tx.select().from(PartTable).where(eq(PartTable.id, id)).get()
+          const part = row && ({ ...row.data, id, sessionID: sessionId, messageID: row.message_id } as MessageV2.Part)
+          if (!part || part.type !== "tool") return
+          const { id: _id, sessionID: _s, messageID: _m, ...data } = { ...part, state: settle(part) }
+          tx.update(PartTable).set({ data }).where(eq(PartTable.id, id)).run()
+        })
+        // No message: nothing was written.
+        if (!parsed) return false
+        const project = resolveProject(parsed.cwd)
+        const now = Date.now()
+
         tx.insert(ProjectTable)
           .values({
             id: project.id,
@@ -333,25 +430,10 @@ export async function run(opts?: { force?: boolean }) {
             .run()
         }
 
-        for (const m of parsed.messages) {
-          const { id, sessionID: _s, agentID: _a, ...data } = m.info
-          tx.insert(MessageTable)
-            .values({ id, session_id: sessionId, agent_id: "main", time_created: m.info.time.created, data })
-            .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
-            .run()
-          for (const p of m.parts) {
-            const { id: pid, sessionID: _ps, messageID: _pm, ...pdata } = p.part
-            tx.insert(PartTable)
-              .values({ id: pid, message_id: m.info.id, session_id: sessionId, time_created: p.time, data: pdata })
-              .onConflictDoUpdate({ target: PartTable.id, set: { data: pdata } })
-              .run()
-          }
-        }
-
-        indexImportedParts(tx, parsed.messages.flatMap((m) => m.parts.map((p) => p.part.id)))
+        indexImportedParts(tx, partIds)
         QueueSync.materializeHistory({
           sessionID: sessionId, source: "cc", sourceKey: sourceUuid,
-          messages: parsed.messages.map((message) => message.info), replacedMessageIDs: existing?.message_ids ?? [],
+          messages: infos, replacedMessageIDs: existing?.message_ids ?? [],
         }, tx)
 
         tx.insert(ExternalImportTable)
@@ -369,7 +451,12 @@ export async function run(opts?: { force?: boolean }) {
             set: { session_id: sessionId, source_path: file, source_mtime: mtime, time_imported: now, message_ids: messageIds },
           })
           .run()
+        return true
       })
+      if (!imported) {
+        stats.skipped++
+        continue
+      }
 
       if (existing) stats.resynced++
       else stats.imported++
