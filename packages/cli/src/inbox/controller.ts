@@ -516,7 +516,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         return { revision, relevant: rows.length < revision - afterRevision || rows.some((row) =>
           row.type !== "actor_notification" || row.sender_session_id !== source.sessionID || row.sender_actor_id !== source.actorID,
         ) }
-      }))
+      }, { behavior: "deferred" }))
       for (;;) {
         const current = yield* read()
         if (current.revision > afterRevision) {
